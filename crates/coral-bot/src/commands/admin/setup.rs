@@ -322,9 +322,6 @@ fn build_role_section(
                 CreateButton::new(format!("setup_rule_remove:{}:{}", guild_id, rule.id))
                     .label("Remove")
                     .style(ButtonStyle::Danger),
-                CreateButton::new(format!("setup_role_strip:{}:{}", guild_id, role_id))
-                    .label("Strip Role")
-                    .style(ButtonStyle::Danger),
             ]),
         ));
     } else {
@@ -334,6 +331,9 @@ fn build_role_section(
                 CreateButton::new(format!("setup_condition_edit:{guild_id}:{role_id}"))
                     .label("Set Condition")
                     .style(ButtonStyle::Primary),
+                CreateButton::new(format!("setup_role_strip:{guild_id}:{role_id}"))
+                    .label("Strip Role")
+                    .style(ButtonStyle::Danger),
             ]),
         ));
     }
@@ -393,9 +393,26 @@ pub async fn handle_link_role_select(
     }
 
     let repo = GuildConfigRepository::new(data.db.pool());
+    let old_config = repo.get(guild_id as i64).await?;
+    let old_role = old_config.and_then(|c| c.link_role_id).map(|r| RoleId::new(r as u64));
+    let new_role = role_id;
+
     repo.set_link_role(guild_id as i64, role_id.map(|r| r.get() as i64))
         .await?;
-    spawn_guild_sync(ctx, data, guild_id);
+
+    if old_role != new_role {
+        let ctx_clone = ctx.clone();
+        let data_clone = data.clone();
+        tokio::spawn(async move {
+            crate::sync::swap_role(
+                ctx_clone.clone(), data_clone.clone(), GuildId::new(guild_id),
+                old_role, new_role, crate::sync::RoleConfigField::Link,
+            ).await;
+            crate::sync::sync_guild(ctx_clone, data_clone, GuildId::new(guild_id)).await;
+        });
+    } else {
+        spawn_guild_sync(ctx, data, guild_id);
+    }
 
     refresh_main(ctx, component, data, guild_id).await
 }
@@ -426,9 +443,26 @@ pub async fn handle_unlinked_role_select(
     }
 
     let repo = GuildConfigRepository::new(data.db.pool());
+    let old_config = repo.get(guild_id as i64).await?;
+    let old_role = old_config.and_then(|c| c.unlinked_role_id).map(|r| RoleId::new(r as u64));
+    let new_role = role_id;
+
     repo.set_unlinked_role(guild_id as i64, role_id.map(|r| r.get() as i64))
         .await?;
-    spawn_guild_sync(ctx, data, guild_id);
+
+    if old_role != new_role {
+        let ctx_clone = ctx.clone();
+        let data_clone = data.clone();
+        tokio::spawn(async move {
+            crate::sync::swap_role(
+                ctx_clone.clone(), data_clone.clone(), GuildId::new(guild_id),
+                old_role, new_role, crate::sync::RoleConfigField::Unlinked,
+            ).await;
+            crate::sync::sync_guild(ctx_clone, data_clone, GuildId::new(guild_id)).await;
+        });
+    } else {
+        spawn_guild_sync(ctx, data, guild_id);
+    }
 
     refresh_main(ctx, component, data, guild_id).await
 }

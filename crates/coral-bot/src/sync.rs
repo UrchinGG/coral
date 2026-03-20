@@ -576,6 +576,85 @@ async fn try_clear_role(ctx: &Context, guild_id: GuildId, role_id: RoleId) -> Re
     Ok(())
 }
 
+pub async fn swap_role(
+    ctx: Context,
+    data: Data,
+    guild_id: GuildId,
+    old_role: Option<RoleId>,
+    new_role: Option<RoleId>,
+    config_field: RoleConfigField,
+) {
+    if let Err(e) = try_swap_role(&ctx, &data, guild_id, old_role, new_role, config_field).await {
+        tracing::warn!("Failed to swap role in {guild_id}: {e}");
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum RoleConfigField {
+    Link,
+    Unlinked,
+}
+
+async fn try_swap_role(
+    ctx: &Context,
+    data: &Data,
+    guild_id: GuildId,
+    old_role: Option<RoleId>,
+    new_role: Option<RoleId>,
+    config_field: RoleConfigField,
+) -> Result<()> {
+    if old_role == new_role {
+        return Ok(());
+    }
+
+    let mut after = None;
+    let mut changed = 0usize;
+
+    loop {
+        let current_config = GuildConfigRepository::new(data.db.pool())
+            .get(guild_id.get() as i64)
+            .await?;
+        let current_role_id = current_config.as_ref().and_then(|c| match config_field {
+            RoleConfigField::Link => c.link_role_id,
+            RoleConfigField::Unlinked => c.unlinked_role_id,
+        });
+        if current_role_id != new_role.map(|r| r.get() as i64) {
+            tracing::info!("Role swap cancelled — config changed in {guild_id}");
+            return Ok(());
+        }
+
+        let page_limit = serenity::nonmax::NonMaxU16::new(MEMBERS_PER_PAGE).unwrap();
+        let chunk = guild_id.members(&ctx.http, Some(page_limit), after).await?;
+        if chunk.is_empty() {
+            break;
+        }
+
+        after = chunk.last().map(|m| m.user.id);
+
+        for member in &chunk {
+            if member.user.bot() {
+                continue;
+            }
+
+            if let Some(old) = old_role {
+                if member.roles.contains(&old) {
+                    let _ = member.remove_role(&ctx.http, old, None).await;
+                    changed += 1;
+                }
+            }
+        }
+
+        if changed > 0 && changed % BATCH_SIZE == 0 {
+            tokio::time::sleep(BATCH_DELAY).await;
+        }
+
+        tokio::time::sleep(PAGE_DELAY).await;
+    }
+
+    tracing::info!("Role swap complete in {guild_id}: {changed} members updated");
+    Ok(())
+}
+
 async fn resolve_hypixel_data(data: &Data, uuid: &str) -> Option<Value> {
     let cache = CacheRepository::new(data.db.pool());
 
