@@ -399,6 +399,13 @@ impl Handler {
             _ if id.starts_with("setup_rule_remove:") => {
                 commands::admin::setup::handle_rule_remove_button(ctx, component, &self.data).await
             }
+            _ if id.starts_with("setup_role_strip:") => {
+                commands::admin::setup::handle_role_strip_button(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("setup_nickname_reset:") => {
+                commands::admin::setup::handle_nickname_reset_button(ctx, component, &self.data)
+                    .await
+            }
             _ if id.starts_with("setup_autorole_back:") => {
                 commands::admin::setup::handle_cancel_button(ctx, component, &self.data).await
             }

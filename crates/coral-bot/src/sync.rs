@@ -494,6 +494,88 @@ async fn sync_unlinked_member(
     Ok(updated)
 }
 
+pub async fn clear_nicknames(ctx: Context, data: Data, guild_id: GuildId) {
+    if let Err(e) = try_clear_nicknames(&ctx, &data, guild_id).await {
+        tracing::warn!("Failed to clear nicknames for {guild_id}: {e}");
+    }
+}
+
+async fn try_clear_nicknames(ctx: &Context, data: &Data, guild_id: GuildId) -> Result<()> {
+    let mut after = None;
+    let mut cleared = 0usize;
+
+    loop {
+        let config = GuildConfigRepository::new(data.db.pool())
+            .get(guild_id.get() as i64)
+            .await?;
+        if config.as_ref().and_then(|c| c.nickname_template.as_ref()).is_some() {
+            tracing::info!("Nickname reset cancelled — new template set in {guild_id}");
+            return Ok(());
+        }
+
+        let page_limit = serenity::nonmax::NonMaxU16::new(MEMBERS_PER_PAGE).unwrap();
+        let chunk = guild_id.members(&ctx.http, Some(page_limit), after).await?;
+        if chunk.is_empty() {
+            break;
+        }
+
+        after = chunk.last().map(|m| m.user.id);
+
+        for member in &chunk {
+            if member.nick.is_some() && !member.user.bot() {
+                let _ = guild_id
+                    .edit_member(&ctx.http, member.user.id, EditMember::new().nickname(""))
+                    .await;
+                cleared += 1;
+                if cleared % BATCH_SIZE == 0 {
+                    tokio::time::sleep(BATCH_DELAY).await;
+                }
+            }
+        }
+
+        tokio::time::sleep(PAGE_DELAY).await;
+    }
+
+    tracing::info!("Cleared {cleared} nicknames in {guild_id}");
+    Ok(())
+}
+
+pub async fn clear_role(ctx: Context, guild_id: GuildId, role_id: RoleId) {
+    if let Err(e) = try_clear_role(&ctx, guild_id, role_id).await {
+        tracing::warn!("Failed to clear role {role_id} in {guild_id}: {e}");
+    }
+}
+
+async fn try_clear_role(ctx: &Context, guild_id: GuildId, role_id: RoleId) -> Result<()> {
+    let mut after = None;
+    let mut removed = 0usize;
+
+    loop {
+        let page_limit = serenity::nonmax::NonMaxU16::new(MEMBERS_PER_PAGE).unwrap();
+        let chunk = guild_id.members(&ctx.http, Some(page_limit), after).await?;
+        if chunk.is_empty() {
+            break;
+        }
+
+        after = chunk.last().map(|m| m.user.id);
+
+        for member in &chunk {
+            if member.roles.contains(&role_id) {
+                let _ = member.remove_role(&ctx.http, role_id, None).await;
+                removed += 1;
+                if removed % BATCH_SIZE == 0 {
+                    tokio::time::sleep(BATCH_DELAY).await;
+                }
+            }
+        }
+
+        tokio::time::sleep(PAGE_DELAY).await;
+    }
+
+    tracing::info!("Removed role {role_id} from {removed} members in {guild_id}");
+    Ok(())
+}
+
 async fn resolve_hypixel_data(data: &Data, uuid: &str) -> Option<Value> {
     let cache = CacheRepository::new(data.db.pool());
 

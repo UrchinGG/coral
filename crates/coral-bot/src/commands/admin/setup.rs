@@ -283,6 +283,9 @@ fn build_nickname_panel(
                 CreateButton::new(format!("setup_nickname_edit:{guild_id}"))
                     .label("Set Format")
                     .style(ButtonStyle::Primary),
+                CreateButton::new(format!("setup_nickname_reset:{guild_id}"))
+                    .label("Reset All Nicknames")
+                    .style(ButtonStyle::Danger),
             ]),
         ));
     }
@@ -318,6 +321,9 @@ fn build_role_section(
                     .style(ButtonStyle::Primary),
                 CreateButton::new(format!("setup_rule_remove:{}:{}", guild_id, rule.id))
                     .label("Remove")
+                    .style(ButtonStyle::Danger),
+                CreateButton::new(format!("setup_role_strip:{}:{}", guild_id, role_id))
+                    .label("Strip Role")
                     .style(ButtonStyle::Danger),
             ]),
         ));
@@ -389,6 +395,7 @@ pub async fn handle_link_role_select(
     let repo = GuildConfigRepository::new(data.db.pool());
     repo.set_link_role(guild_id as i64, role_id.map(|r| r.get() as i64))
         .await?;
+    spawn_guild_sync(ctx, data, guild_id);
 
     refresh_main(ctx, component, data, guild_id).await
 }
@@ -421,6 +428,7 @@ pub async fn handle_unlinked_role_select(
     let repo = GuildConfigRepository::new(data.db.pool());
     repo.set_unlinked_role(guild_id as i64, role_id.map(|r| r.get() as i64))
         .await?;
+    spawn_guild_sync(ctx, data, guild_id);
 
     refresh_main(ctx, component, data, guild_id).await
 }
@@ -505,7 +513,6 @@ pub async fn handle_nickname_clear_button(
 
     let repo = GuildConfigRepository::new(data.db.pool());
     repo.set_nickname_template(guild_id as i64, None).await?;
-    spawn_guild_sync(ctx, data, guild_id);
 
     let (config, rules) = fetch_config(data, guild_id).await?;
     let panel = build_nickname_panel(guild_id, None, None);
@@ -691,7 +698,6 @@ pub async fn handle_rule_remove_button(
         .map(|r| r.role_id as u64);
 
     repo.remove_role_rule(rule_id as i64).await?;
-    spawn_guild_sync(ctx, data, guild_id);
 
     refresh_autorole(ctx, component, data, guild_id, role_id).await
 }
@@ -936,6 +942,55 @@ async fn fetch_config(
         .ok_or_else(|| anyhow::anyhow!("guild config not found for {guild_id}"))?;
     let rules = repo.get_role_rules(guild_id as i64).await?;
     Ok((config, rules))
+}
+
+pub async fn handle_nickname_reset_button(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let guild_id = interact::parse_id(&component.data.custom_id)
+        .ok_or_else(|| anyhow::anyhow!("invalid guild ID"))?;
+
+    interact::send_component_error(
+        ctx,
+        component,
+        "Resetting Nicknames",
+        "Clearing all nicknames set by Coral. This may take a moment.",
+    )
+    .await?;
+
+    let ctx_clone = ctx.clone();
+    let data_clone = data.clone();
+    tokio::spawn(crate::sync::clear_nicknames(ctx_clone, data_clone, GuildId::new(guild_id)));
+
+    Ok(())
+}
+
+pub async fn handle_role_strip_button(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    _data: &Data,
+) -> Result<()> {
+    let (guild_id, role_id) = interact::parse_compound_id(&component.data.custom_id)
+        .ok_or_else(|| anyhow::anyhow!("invalid compound ID"))?;
+
+    interact::send_component_error(
+        ctx,
+        component,
+        "Stripping Role",
+        &format!("Removing <@&{role_id}> from all members. This may take a moment."),
+    )
+    .await?;
+
+    let ctx_clone = ctx.clone();
+    tokio::spawn(crate::sync::clear_role(
+        ctx_clone,
+        GuildId::new(guild_id),
+        RoleId::new(role_id),
+    ));
+
+    Ok(())
 }
 
 fn spawn_guild_sync(ctx: &Context, data: &Data, guild_id: u64) {
