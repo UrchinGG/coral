@@ -48,4 +48,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Portainer redeploy
-        run: curl -X POST "${{ secrets.PORTAINER_WEBHOOK }}"
+        run: |
+          response=$(curl -s -L -w "\nHTTP_CODE:%{http_code}" -X POST "${{ secrets.PORTAINER_WEBHOOK }}")
+          echo "$response"
+          http_code=$(echo "$response" | grep "HTTP_CODE:" | cut -d: -f2)
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            echo "Webhook failed with HTTP $http_code"
+            exit 1
+          fi
