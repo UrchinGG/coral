@@ -15,23 +15,26 @@ RUN apt-get update && apt-get install -y \
 COPY Cargo.docker.toml ./Cargo.toml
 COPY Cargo.lock ./
 
-# Copy crates needed for coral-api and coral-admin
+# Copy all workspace crates
 COPY crates/hypixel ./crates/hypixel
 COPY crates/blacklist ./crates/blacklist
-COPY crates/clients ./crates/clients
 COPY crates/database ./crates/database
 COPY crates/coral-redis ./crates/coral-redis
 COPY crates/render ./crates/render
 COPY crates/coral-api ./crates/coral-api
+COPY crates/coral-bot ./crates/coral-bot
 COPY crates/coral-admin ./crates/coral-admin
 COPY crates/migration ./crates/migration
 
-# Build API and Admin binaries
+# Build all binaries (GIT_AUTH_TOKEN allows cargo to clone private deps)
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target \
-    cargo build --release --bin coral-api --bin coral-admin \
-    && cp target/release/coral-api target/release/coral-admin /usr/local/bin/
+    --mount=type=secret,id=git_auth_token \
+    git config --global url."https://$(cat /run/secrets/git_auth_token)@github.com/".insteadOf "https://github.com/" \
+    && cargo build --release --bin coral-api --bin coral-bot --bin coral-admin \
+    && cp target/release/coral-api target/release/coral-bot target/release/coral-admin /usr/local/bin/ \
+    && git config --global --unset url."https://$(cat /run/secrets/git_auth_token)@github.com/".insteadOf
 
 # Runtime stage for coral-api
 FROM debian:bookworm-slim AS coral-api
@@ -48,6 +51,20 @@ ENV RUST_LOG=info
 EXPOSE 8000
 
 CMD ["coral-api"]
+
+# Runtime stage for coral-bot
+FROM debian:bookworm-slim AS coral-bot
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/bin/coral-bot /usr/local/bin/
+
+ENV RUST_LOG=info
+
+CMD ["coral-bot"]
 
 # Runtime stage for coral-admin
 FROM debian:bookworm-slim AS coral-admin

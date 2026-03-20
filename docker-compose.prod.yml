@@ -1,0 +1,98 @@
+services:
+  postgres:
+    image: ghcr.io/hexze/coral/coral-postgres:latest
+    container_name: coral-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-coral}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      POSTGRES_DB: ${POSTGRES_DB:-coral}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-coral} -d ${POSTGRES_DB:-coral}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - coral-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: coral-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - coral-network
+
+  coral-api:
+    image: ghcr.io/hexze/coral/coral-api:latest
+    container_name: coral-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-coral}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-coral}
+      REDIS_URL: redis://redis:6379
+      HYPIXEL_API_KEYS: ${HYPIXEL_API_KEYS:?HYPIXEL_API_KEYS required}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY required}
+      PORT: ${API_PORT:-8000}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "${API_PORT:-8000}:${API_PORT:-8000}"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://localhost:${API_PORT:-8000}/health | grep -q healthy || exit 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - coral-network
+
+  coral-bot:
+    image: ghcr.io/hexze/coral/coral-bot:latest
+    container_name: coral-bot
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      coral-api:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-coral}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-coral}
+      REDIS_URL: redis://redis:6379
+      DISCORD_TOKEN: ${DISCORD_TOKEN:?DISCORD_TOKEN required}
+      CORAL_API_URL: http://coral-api:${API_PORT:-8000}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      HYPIXEL_API_KEYS: ${HYPIXEL_API_KEYS:?HYPIXEL_API_KEYS required}
+      VERIFICATION_ROLE_ID: ${VERIFICATION_ROLE_ID:-}
+      OWNER_IDS: ${OWNER_IDS:-}
+      BLACKLIST_CHANNEL_ID: ${BLACKLIST_CHANNEL_ID:-}
+      MOD_CHANNEL_ID: ${MOD_CHANNEL_ID:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    networks:
+      - coral-network
+
+volumes:
+  postgres_data:
+
+networks:
+  coral-network:
+    driver: bridge
