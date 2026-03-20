@@ -100,9 +100,7 @@ pub(crate) async fn active_tags(data: &Data, uuid: &str) -> Vec<String> {
 
 const REFRESH_THRESHOLD: Duration = Duration::from_secs(4 * 3600);
 const MEMBERS_PER_PAGE: u16 = 1000;
-const BATCH_SIZE: usize = 50;
-const BATCH_DELAY: Duration = Duration::from_secs(60);
-const PAGE_DELAY: Duration = Duration::from_millis(1000);
+const RATE_LIMIT_DELAY: Duration = Duration::from_millis(1100);
 
 pub async fn handle_member_update(ctx: &Context, data: &Data, member: &Member) {
     let guild_id = member.guild_id;
@@ -322,12 +320,6 @@ async fn try_sync_guild(ctx: &Context, data: &Data, guild_id: GuildId) -> Result
 
         total += page_total;
         updates += page_updates;
-
-        if updates > 0 && updates % BATCH_SIZE < page_updates {
-            tokio::time::sleep(BATCH_DELAY).await;
-        }
-
-        tokio::time::sleep(PAGE_DELAY).await;
     }
 
     tracing::info!("Guild sync {guild_id}: {updates}/{total} members updated");
@@ -383,7 +375,10 @@ async fn sync_member_batch(
         };
 
         match result {
-            Ok(true) => updates += 1,
+            Ok(true) => {
+                updates += 1;
+                tokio::time::sleep(RATE_LIMIT_DELAY).await;
+            }
             Ok(false) => {}
             Err(e) => tracing::debug!("Sync failed for {} in {guild_id}: {e}", member.user.id),
         }
@@ -406,92 +401,98 @@ pub(crate) async fn sync_member(
     let tags = active_tags(data, uuid).await;
     let template_ctx = build_template_context(hypixel_data, member, &tags);
 
-    let mut updated = false;
+    let mut roles: Vec<RoleId> = member.roles.iter().copied().collect();
+    let original_roles = roles.clone();
 
-    if let Some(role_id) = config.link_role_id {
-        let role_id = RoleId::new(role_id as u64);
-        if !member.roles.contains(&role_id) {
-            member.add_role(&ctx.http, role_id, None).await?;
-            updated = true;
+    if let Some(id) = config.link_role_id {
+        let role = RoleId::new(id as u64);
+        if !roles.contains(&role) {
+            roles.push(role);
         }
     }
 
-    if let Some(role_id) = config.unlinked_role_id {
-        let role_id = RoleId::new(role_id as u64);
-        if member.roles.contains(&role_id) {
-            member.remove_role(&ctx.http, role_id, None).await?;
-            updated = true;
+    if let Some(id) = config.unlinked_role_id {
+        let role = RoleId::new(id as u64);
+        roles.retain(|r| *r != role);
+    }
+
+    for rule in rules {
+        let role = RoleId::new(rule.role_id as u64);
+        let matches = expr::eval_condition(&rule.condition, &template_ctx).unwrap_or(false);
+        if matches && !roles.contains(&role) {
+            roles.push(role);
+        } else if !matches {
+            roles.retain(|r| *r != role);
         }
     }
 
-    if let Some(template) = &config.nickname_template {
+    let roles_changed = roles != original_roles;
+
+    let nickname = config.nickname_template.as_ref().and_then(|template| {
         let prefix = expr::render_template(template, &template_ctx).to_truncated(NICKNAME_MAX_LEN);
-        let nickname = if preserve_custom {
+        let nick = if preserve_custom {
             build_nickname(&prefix, member.nick.as_deref())
         } else {
             prefix
         };
-        if !nickname.is_empty() && member.nick.as_deref() != Some(&nickname) {
-            guild_id
-                .edit_member(
-                    &ctx.http,
-                    member.user.id,
-                    EditMember::new().nickname(&nickname),
-                )
-                .await?;
-            updated = true;
+        if !nick.is_empty() && member.nick.as_deref() != Some(&nick) {
+            Some(nick)
+        } else {
+            None
         }
+    });
+
+    if !roles_changed && nickname.is_none() {
+        return Ok(false);
     }
 
-    for rule in rules {
-        let matches = expr::eval_condition(&rule.condition, &template_ctx).unwrap_or(false);
-        let role_id = RoleId::new(rule.role_id as u64);
-        if matches && !member.roles.contains(&role_id) {
-            member.add_role(&ctx.http, role_id, None).await?;
-            updated = true;
-        } else if !matches && member.roles.contains(&role_id) {
-            member.remove_role(&ctx.http, role_id, None).await?;
-            updated = true;
-        }
+    let mut edit = EditMember::new();
+    if roles_changed {
+        edit = edit.roles(&roles);
+    }
+    if let Some(ref nick) = nickname {
+        edit = edit.nickname(nick);
     }
 
-    Ok(updated)
+    guild_id.edit_member(&ctx.http, member.user.id, edit).await?;
+    Ok(true)
 }
 
 async fn sync_unlinked_member(
     ctx: &Context,
-    _guild_id: GuildId,
+    guild_id: GuildId,
     member: &Member,
     config: &GuildConfig,
     rules: &[GuildRoleRule],
 ) -> Result<bool> {
-    let mut updated = false;
+    let mut roles: Vec<RoleId> = member.roles.iter().copied().collect();
+    let original_roles = roles.clone();
 
-    if let Some(role_id) = config.unlinked_role_id {
-        let role_id = RoleId::new(role_id as u64);
-        if !member.roles.contains(&role_id) {
-            member.add_role(&ctx.http, role_id, None).await?;
-            updated = true;
+    if let Some(id) = config.unlinked_role_id {
+        let role = RoleId::new(id as u64);
+        if !roles.contains(&role) {
+            roles.push(role);
         }
     }
 
-    if let Some(role_id) = config.link_role_id {
-        let role_id = RoleId::new(role_id as u64);
-        if member.roles.contains(&role_id) {
-            member.remove_role(&ctx.http, role_id, None).await?;
-            updated = true;
-        }
+    if let Some(id) = config.link_role_id {
+        let role = RoleId::new(id as u64);
+        roles.retain(|r| *r != role);
     }
 
     for rule in rules {
-        let role_id = RoleId::new(rule.role_id as u64);
-        if member.roles.contains(&role_id) {
-            member.remove_role(&ctx.http, role_id, None).await?;
-            updated = true;
-        }
+        let role = RoleId::new(rule.role_id as u64);
+        roles.retain(|r| *r != role);
     }
 
-    Ok(updated)
+    if roles == original_roles {
+        return Ok(false);
+    }
+
+    guild_id
+        .edit_member(&ctx.http, member.user.id, EditMember::new().roles(&roles))
+        .await?;
+    Ok(true)
 }
 
 pub async fn clear_nicknames(ctx: Context, data: Data, guild_id: GuildId) {
@@ -527,13 +528,9 @@ async fn try_clear_nicknames(ctx: &Context, data: &Data, guild_id: GuildId) -> R
                     .edit_member(&ctx.http, member.user.id, EditMember::new().nickname(""))
                     .await;
                 cleared += 1;
-                if cleared % BATCH_SIZE == 0 {
-                    tokio::time::sleep(BATCH_DELAY).await;
-                }
+                tokio::time::sleep(RATE_LIMIT_DELAY).await;
             }
         }
-
-        tokio::time::sleep(PAGE_DELAY).await;
     }
 
     tracing::info!("Cleared {cleared} nicknames in {guild_id}");
@@ -563,13 +560,9 @@ async fn try_clear_role(ctx: &Context, guild_id: GuildId, role_id: RoleId) -> Re
             if member.roles.contains(&role_id) {
                 let _ = member.remove_role(&ctx.http, role_id, None).await;
                 removed += 1;
-                if removed % BATCH_SIZE == 0 {
-                    tokio::time::sleep(BATCH_DELAY).await;
-                }
+                tokio::time::sleep(RATE_LIMIT_DELAY).await;
             }
         }
-
-        tokio::time::sleep(PAGE_DELAY).await;
     }
 
     tracing::info!("Removed role {role_id} from {removed} members in {guild_id}");
@@ -640,15 +633,10 @@ async fn try_swap_role(
                 if member.roles.contains(&old) {
                     let _ = member.remove_role(&ctx.http, old, None).await;
                     changed += 1;
+                    tokio::time::sleep(RATE_LIMIT_DELAY).await;
                 }
             }
         }
-
-        if changed > 0 && changed % BATCH_SIZE == 0 {
-            tokio::time::sleep(BATCH_DELAY).await;
-        }
-
-        tokio::time::sleep(PAGE_DELAY).await;
     }
 
     tracing::info!("Role swap complete in {guild_id}: {changed} members updated");
