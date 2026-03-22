@@ -14,7 +14,6 @@ database = { path = "../database" }
 blacklist = { path = "../blacklist" }
 coral-redis = { path = "../coral-redis" }
 render = { path = "../render" }
-mc-verify = { path = "../mc-verify" }
 
 serenity.workspace = true
 image.workspace = true

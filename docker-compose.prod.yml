@@ -93,6 +93,23 @@ services:
     networks:
       - coral-network
 
+  coral-verify:
+    image: ghcr.io/hexze/coral/coral-verify:latest
+    pull_policy: always
+    container_name: coral-verify
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379
+      VERIFY_SERVER_ADDRESS: 0.0.0.0:25565
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "25565:25565"
+    networks:
+      - coral-network
+
 volumes:
   postgres_data:
 

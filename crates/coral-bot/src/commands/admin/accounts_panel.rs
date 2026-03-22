@@ -482,7 +482,8 @@ pub async fn handle_add_code_modal(
         return interact::send_modal_error(ctx, modal, "Error", "User is not registered").await;
     };
 
-    let Some(player) = data.verify_handle.redeem(&code) else {
+    let mut conn = data.redis.connection();
+    let Some(player) = coral_redis::verify::redeem_code(&mut conn, &code).await else {
         return interact::send_modal_error(
             ctx, modal, "Invalid Code",
             "That code is invalid or has expired.\n\nJoin the verification server to get a new code.",
@@ -490,7 +491,7 @@ pub async fn handle_add_code_modal(
         .await;
     };
 
-    let uuid = player.uuid.as_simple().to_string();
+    let uuid = player.uuid.simple().to_string();
     crate::accounts::link_alt(ctx, data, target_id, member.id, &uuid).await?;
 
     let can_modify = resolve_can_modify(prefix, invoker_rank, target_rank, is_self);

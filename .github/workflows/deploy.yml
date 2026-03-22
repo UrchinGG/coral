@@ -17,7 +17,7 @@ jobs:
 
     strategy:
       matrix:
-        target: [coral-api, coral-bot, coral-admin, coral-postgres]
+        target: [coral-api, coral-bot, coral-admin, coral-verify, coral-postgres]
 
     steps:
       - uses: actions/checkout@v4

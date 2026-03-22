@@ -5,7 +5,13 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "coral-verify"
+path = "src/main.rs"
+
 [dependencies]
+coral-redis = { path = "../coral-redis" }
+
 tokio.workspace = true
 reqwest.workspace = true
 serde.workspace = true
@@ -13,6 +19,10 @@ serde_json.workspace = true
 uuid.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
+redis.workspace = true
+anyhow.workspace = true
+dotenvy.workspace = true
+tracing-subscriber.workspace = true
 
 base64 = "0.22"
 

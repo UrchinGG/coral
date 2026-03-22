@@ -34,8 +34,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
     --mount=type=secret,id=git_auth_token \
     git config --global url."https://$(cat /run/secrets/git_auth_token)@github.com/".insteadOf "https://github.com/" \
-    && cargo build --release --bin coral-api --bin coral-bot --bin coral-admin \
-    && cp target/release/coral-api target/release/coral-bot target/release/coral-admin /usr/local/bin/ \
+    && cargo build --release --bin coral-api --bin coral-bot --bin coral-admin --bin coral-verify \
+    && cp target/release/coral-api target/release/coral-bot target/release/coral-admin target/release/coral-verify /usr/local/bin/ \
     && git config --global --unset url."https://$(cat /run/secrets/git_auth_token)@github.com/".insteadOf
 
 # Runtime stage for coral-api
@@ -84,6 +84,21 @@ ENV RUST_LOG=info
 EXPOSE 8080
 
 CMD ["coral-admin"]
+
+# Runtime stage for coral-verify
+FROM debian:bookworm-slim AS coral-verify
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/bin/coral-verify /usr/local/bin/
+
+ENV RUST_LOG=info
+EXPOSE 25565
+
+CMD ["coral-verify"]
 
 # Postgres with migrations baked in
 FROM postgres:16-alpine AS coral-postgres

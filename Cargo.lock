@@ -702,7 +702,6 @@ dependencies = [
  "dotenvy",
  "hypixel",
  "image",
- "mc-verify",
  "mctext",
  "render",
  "reqwest",
@@ -2382,8 +2381,12 @@ name = "mc-verify"
 version = "0.1.0"
 dependencies = [
  "aes",
+ "anyhow",
  "base64",
+ "coral-redis",
+ "dotenvy",
  "rand 0.8.5",
+ "redis",
  "reqwest",
  "rsa",
  "serde",
@@ -2392,6 +2395,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

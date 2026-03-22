@@ -11,10 +11,8 @@ use serenity::all::{
 use serenity::async_trait;
 
 use clients::SkinProvider;
-use coral_redis::EventPublisher;
+use coral_redis::{EventPublisher, RedisPool};
 use database::{Database, Member};
-
-use mc_verify::VerifyHandle;
 
 use crate::api::CoralApiClient;
 use crate::commands;
@@ -88,12 +86,12 @@ pub struct Data {
     pub mod_channel_id: Option<ChannelId>,
     pub review_forum_id: Option<ChannelId>,
     pub evidence_forum_id: Option<ChannelId>,
+    pub redis: RedisPool,
     pub redis_url: String,
     pub event_publisher: EventPublisher,
     pub bedwars_images: Arc<Mutex<HashMap<String, BedwarsCache>>>,
     pub session_images: Arc<Mutex<HashMap<String, SessionCache>>>,
     pub pending_overwrites: Arc<Mutex<HashMap<String, PendingOverwrite>>>,
-    pub verify_handle: VerifyHandle,
     pub sync_cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
 }
 
