@@ -2,6 +2,7 @@ use axum::extract::{Path, Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use clients::{is_uuid, normalize_uuid};
 
@@ -11,12 +12,12 @@ use crate::state::AppState;
 const MAX_USERNAME_LENGTH: usize = 16;
 const EXP_PER_LEVEL_AFTER_15: u64 = 3_000_000;
 
-#[derive(Deserialize)]
-pub struct GuildQuery {
-    by: Option<String>,
+#[derive(Deserialize, ToSchema, utoipa::IntoParams)]
+pub(crate) struct GuildQuery {
+    pub by: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct GuildResponse {
     pub id: String,
     pub name: String,
@@ -33,7 +34,7 @@ pub struct GuildResponse {
     pub player: Option<GuildMemberInfo>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct GuildMemberInfo {
     pub uuid: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -48,7 +49,25 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/guild/{identifier}", get(get_guild))
 }
 
-async fn get_guild(
+#[utoipa::path(
+    get,
+    path = "/v1/guild/{identifier}",
+    params(
+        ("identifier" = String, Path, description = "Guild name or player UUID/username"),
+        GuildQuery
+    ),
+    responses(
+        (status = 200, description = "Guild data retrieved", body = Option<GuildResponse>),
+        (status = 400, description = "Invalid request", body = crate::error::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::ErrorResponse),
+        (status = 404, description = "Guild not found", body = crate::error::ErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::ErrorResponse),
+        (status = 502, description = "External API error", body = crate::error::ErrorResponse),
+    ),
+    tag = "Guild",
+    security(("api_key" = []))
+)]
+pub async fn get_guild(
     State(state): State<AppState>,
     Path(identifier): Path<String>,
     Query(query): Query<GuildQuery>,

@@ -36,6 +36,11 @@ axum = { version = "0.8", features = ["macros"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 
+# OpenAPI documentation
+utoipa = { version = "5", features = ["axum_extras"] }
+utoipa-axum = "0.2"
+utoipa-scalar = { version = "0.3", features = ["axum"] }
+
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid", "migrate"] }
 

@@ -5,7 +5,7 @@ use std::time::Instant;
 use serenity::all::{
     ChannelId, Command, ComponentInteraction, Context, CreateCommand, CreateComponent,
     CreateContainer, CreateInteractionResponse, CreateInteractionResponseMessage, EventHandler,
-    FullEvent, InstallationContext, Interaction, InteractionContext, MessageFlags,
+    FullEvent, GuildId, InstallationContext, Interaction, InteractionContext, MessageFlags,
     ModalInteraction, UserId,
 };
 use serenity::async_trait;
@@ -93,6 +93,8 @@ pub struct Data {
     pub session_images: Arc<Mutex<HashMap<String, SessionCache>>>,
     pub pending_overwrites: Arc<Mutex<HashMap<String, PendingOverwrite>>>,
     pub sync_cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
+    pub sync_progress: Arc<Mutex<HashMap<GuildId, Arc<crate::sync::SyncProgress>>>>,
+    pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Data {
@@ -546,9 +548,21 @@ impl EventHandler for Handler {
                 }
 
                 crate::events::spawn_subscriber(ctx.clone(), self.data.clone());
+
+                let ctx = ctx.clone();
+                let data = self.data.clone();
+                tokio::spawn(async move {
+                    crate::sync::startup_sync(ctx, data).await;
+                });
             }
             FullEvent::InteractionCreate { interaction, .. } => {
+                self.data
+                    .active_interactions
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 self.handle_interaction(ctx, interaction.clone()).await;
+                self.data
+                    .active_interactions
+                    .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
             }
             FullEvent::GuildMemberAddition { new_member, .. } => {
                 if let Err(e) =

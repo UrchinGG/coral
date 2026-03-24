@@ -3,17 +3,18 @@ use axum::http::StatusCode;
 use axum::routing::{delete, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::state::AppState;
 
-#[derive(Deserialize)]
-pub struct StoreCodeRequest {
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct StoreCodeRequest {
     pub code: String,
     pub uuid: String,
     pub username: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct RedeemCodeResponse {
     pub uuid: String,
     pub username: String,
@@ -25,7 +26,20 @@ pub fn router() -> Router<AppState> {
         .route("/verify/codes/{code}", delete(redeem_code))
 }
 
-async fn store_code(
+#[utoipa::path(
+    post,
+    path = "/v1/verify/codes",
+    request_body = StoreCodeRequest,
+    responses(
+        (status = 201, description = "Code stored"),
+        (status = 400, description = "Invalid request"),
+        (status = 409, description = "Code already exists"),
+        (status = 500, description = "Internal error"),
+    ),
+    tag = "Internal",
+    security(("api_key" = []))
+)]
+pub async fn store_code(
     State(state): State<AppState>,
     Json(body): Json<StoreCodeRequest>,
 ) -> StatusCode {
@@ -42,7 +56,20 @@ async fn store_code(
     }
 }
 
-async fn redeem_code(
+#[utoipa::path(
+    delete,
+    path = "/v1/verify/codes/{code}",
+    params(
+        ("code" = String, Path, description = "Verification code")
+    ),
+    responses(
+        (status = 200, description = "Code redeemed", body = RedeemCodeResponse),
+        (status = 404, description = "Code not found"),
+        (status = 500, description = "Internal error"),
+    ),
+    tag = "Internal",
+)]
+pub async fn redeem_code(
     State(state): State<AppState>,
     Path(code): Path<String>,
 ) -> Result<Json<RedeemCodeResponse>, StatusCode> {

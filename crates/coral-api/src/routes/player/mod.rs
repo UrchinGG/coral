@@ -11,21 +11,36 @@ use clients::{is_uuid, normalize_uuid};
 use database::{BlacklistRepository, CacheRepository};
 
 use crate::cache::SNAPSHOT_SOURCE;
-use crate::error::ApiError;
+use crate::error::{ApiError, ErrorResponse};
 use crate::responses::{PlayerStatsResponse, PlayerTagsResponse, TagResponse};
 use crate::state::AppState;
 
 pub fn public_router() -> Router<AppState> {
-    Router::new().route("/player/tags/{identifier}", get(get_player_tags))
+    Router::new().route("/player/tags/{identifier}", get(player_tags))
 }
 
 pub fn internal_router() -> Router<AppState> {
     Router::new()
-        .route("/player/stats/{identifier}", get(get_player_stats))
-        .route("/player/skin/{identifier}", get(get_player_skin))
+        .route("/player/stats/{identifier}", get(player_stats))
+        .route("/player/skin/{identifier}", get(player_skin))
 }
 
-async fn get_player_tags(
+#[utoipa::path(
+    get,
+    path = "/v1/player/tags/{identifier}",
+    params(
+        ("identifier" = String, Path, description = "Player UUID or username")
+    ),
+    responses(
+        (status = 200, description = "Player tags retrieved", body = PlayerTagsResponse),
+        (status = 400, description = "Invalid identifier", body = ErrorResponse),
+        (status = 404, description = "Player not found", body = ErrorResponse),
+        (status = 429, description = "Rate limited", body = ErrorResponse),
+        (status = 502, description = "External API error", body = ErrorResponse),
+    ),
+    tag = "Player",
+)]
+pub async fn player_tags(
     State(state): State<AppState>,
     Path(identifier): Path<String>,
 ) -> Result<Json<PlayerTagsResponse>, ApiError> {
@@ -46,7 +61,24 @@ async fn get_player_tags(
     }))
 }
 
-async fn get_player_stats(
+#[utoipa::path(
+    get,
+    path = "/v1/player/stats/{identifier}",
+    params(
+        ("identifier" = String, Path, description = "Player UUID or username")
+    ),
+    responses(
+        (status = 200, description = "Player stats retrieved", body = PlayerStatsResponse),
+        (status = 400, description = "Invalid identifier", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Player not found", body = ErrorResponse),
+        (status = 429, description = "Rate limited", body = ErrorResponse),
+        (status = 502, description = "External API error", body = ErrorResponse),
+    ),
+    tag = "Player",
+    security(("api_key" = []))
+)]
+pub async fn player_stats(
     State(state): State<AppState>,
     Path(identifier): Path<String>,
 ) -> Result<Json<PlayerStatsResponse>, ApiError> {
@@ -98,7 +130,23 @@ async fn get_player_stats(
     }))
 }
 
-async fn get_player_skin(
+#[utoipa::path(
+    get,
+    path = "/v1/player/skin/{identifier}",
+    params(
+        ("identifier" = String, Path, description = "Player UUID or username")
+    ),
+    responses(
+        (status = 200, description = "Player skin PNG", content_type = "image/png"),
+        (status = 400, description = "Invalid identifier", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Skin not found", body = ErrorResponse),
+        (status = 500, description = "Skin rendering unavailable", body = ErrorResponse),
+    ),
+    tag = "Player",
+    security(("api_key" = []))
+)]
+pub async fn player_skin(
     State(state): State<AppState>,
     Path(identifier): Path<String>,
 ) -> Result<Response, ApiError> {

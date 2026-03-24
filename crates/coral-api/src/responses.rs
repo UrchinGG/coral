@@ -1,23 +1,25 @@
 use serde::Serialize;
+use utoipa::ToSchema;
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct PlayerStatsResponse {
     pub uuid: String,
     pub username: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<serde_json::Value>)]
     pub hypixel: Option<serde_json::Value>,
     pub tags: Vec<TagResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skin_url: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct PlayerTagsResponse {
     pub uuid: String,
     pub tags: Vec<TagResponse>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct TagResponse {
     pub id: i64,
     pub tag_type: String,
@@ -27,19 +29,19 @@ pub struct TagResponse {
     pub hide_username: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct CubelifyResponse {
     pub score: CubelifyScore,
     pub tags: Vec<CubelifyTag>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct CubelifyScore {
     pub value: f64,
     pub mode: &'static str,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct CubelifyTag {
     pub icon: String,
     pub color: u32,

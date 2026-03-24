@@ -4,6 +4,7 @@ use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use clients::{is_uuid, normalize_uuid};
 use database::BlacklistRepository;
@@ -14,21 +15,32 @@ use crate::state::AppState;
 
 const MAX_BATCH_SIZE: usize = 100;
 
-#[derive(Deserialize)]
-struct BatchRequest {
-    uuids: Vec<String>,
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct BatchRequest {
+    pub uuids: Vec<String>,
 }
 
-#[derive(Serialize)]
-struct BatchResponse {
-    players: HashMap<String, Vec<TagResponse>>,
+#[derive(Serialize, ToSchema)]
+pub(crate) struct BatchResponse {
+    pub players: HashMap<String, Vec<TagResponse>>,
 }
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/players", post(batch_lookup))
 }
 
-async fn batch_lookup(
+#[utoipa::path(
+    post,
+    path = "/v1/players",
+    request_body = BatchRequest,
+    responses(
+        (status = 200, description = "Batch lookup completed", body = BatchResponse),
+        (status = 400, description = "Invalid request", body = crate::error::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::ErrorResponse),
+    ),
+    tag = "Batch",
+)]
+pub async fn batch_lookup(
     State(state): State<AppState>,
     Json(request): Json<BatchRequest>,
 ) -> Result<Json<BatchResponse>, ApiError> {

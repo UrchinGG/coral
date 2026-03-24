@@ -2,6 +2,7 @@ use axum::extract::{Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::Deserialize;
+use utoipa::ToSchema;
 
 use clients::normalize_uuid;
 use database::{BlacklistRepository, Member, MemberRepository, PlayerTagRow};
@@ -12,21 +13,33 @@ use crate::cache::refresh_player_cache;
 use crate::responses::{CubelifyResponse, CubelifyScore, CubelifyTag};
 use crate::state::AppState;
 
-#[derive(Deserialize)]
-struct CubelifyQuery {
-    id: String,
-    key: String,
+#[derive(Deserialize, ToSchema, utoipa::IntoParams)]
+pub(crate) struct CubelifyQuery {
+    pub id: String,
+    pub key: String,
     #[allow(dead_code)]
-    name: String,
+    pub name: String,
     #[allow(dead_code)]
-    sources: String,
+    pub sources: String,
 }
 
 pub fn router(_state: AppState) -> Router<AppState> {
     Router::new().route("/cubelify/{uuid}", get(get_cubelify))
 }
 
-async fn get_cubelify(
+#[utoipa::path(
+    get,
+    path = "/v1/cubelify/{uuid}",
+    params(
+        ("uuid" = String, Path, description = "Player UUID"),
+        CubelifyQuery
+    ),
+    responses(
+        (status = 200, description = "Cubelify data", body = CubelifyResponse),
+    ),
+    tag = "Cubelify",
+)]
+pub async fn get_cubelify(
     State(state): State<AppState>,
     Query(query): Query<CubelifyQuery>,
 ) -> Json<CubelifyResponse> {

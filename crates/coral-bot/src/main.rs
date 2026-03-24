@@ -79,6 +79,8 @@ async fn init_data() -> Result<Data> {
         session_images: Arc::new(Mutex::new(HashMap::new())),
         pending_overwrites: Arc::new(Mutex::new(HashMap::new())),
         sync_cooldowns: Arc::new(Mutex::new(HashMap::new())),
+        sync_progress: Arc::new(Mutex::new(HashMap::new())),
+        active_interactions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     })
 }
 

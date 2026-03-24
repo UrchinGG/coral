@@ -58,6 +58,24 @@ async fn resolve_target_discord_name(
         .unwrap_or_default()
 }
 
+async fn linked_uuids(data: &Data, target_id: u64) -> std::collections::HashSet<String> {
+    let members = MemberRepository::new(data.db.pool());
+    let accounts = AccountRepository::new(data.db.pool());
+    let member = members.get_by_discord_id(target_id as i64).await.ok().flatten();
+    let mut set = std::collections::HashSet::new();
+    if let Some(m) = &member {
+        if let Some(uuid) = &m.uuid {
+            set.insert(uuid.clone());
+        }
+        if let Ok(alts) = accounts.list(m.id).await {
+            for alt in alts {
+                set.insert(alt.uuid);
+            }
+        }
+    }
+    set
+}
+
 // --- View builders ---
 
 async fn build_accounts_view(
@@ -132,7 +150,7 @@ async fn build_primary_section(
     let mut options = vec![
         CreateSelectMenuOption::new(name.to_string(), uuid.to_string()).default_selection(true),
     ];
-    for alt in alts {
+    for alt in alts.iter().filter(|a| a.uuid != *uuid) {
         let alt_name = resolve_username(&alt.uuid, data).await;
         let label = alt_name.unwrap_or_else(|| alt.uuid.clone());
         options.push(CreateSelectMenuOption::new(label, alt.uuid.clone()));
@@ -219,6 +237,12 @@ async fn build_link_new_view(
         .find_by_discord_username(discord_name)
         .await
         .unwrap_or_default();
+
+    let linked = linked_uuids(data, target_id).await;
+    let matches: Vec<_> = matches
+        .into_iter()
+        .filter(|(uuid, _)| !linked.contains(uuid.as_str()))
+        .collect();
 
     let mut parts = vec![text("### Link New Account")];
     parts.extend(crate::commands::user::link::build_link_parts(
@@ -496,6 +520,7 @@ pub async fn handle_add_code_modal(
     };
 
     let uuid = player.uuid.clone();
+    let _ = data.api.get_player_stats(&uuid).await;
     crate::accounts::link_alt(ctx, data, target_id, member.id, &uuid).await?;
 
     let can_modify = resolve_can_modify(prefix, invoker_rank, target_rank, is_self);

@@ -2,6 +2,7 @@ use axum::extract::{Path, State};
 use axum::routing::{delete, patch, post};
 use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use clients::normalize_uuid;
 use coral_redis::BlacklistEvent;
@@ -23,48 +24,48 @@ const ACCESS_LEVEL_MODERATOR: i16 = 3;
 const MAX_REASON_LENGTH: usize = 500;
 const MAX_IDENTIFIER_LENGTH: usize = 36;
 
-#[derive(Deserialize)]
-struct AddTagRequest {
-    uuid: String,
-    tag_type: String,
-    reason: String,
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct AddTagRequest {
+    pub uuid: String,
+    pub tag_type: String,
+    pub reason: String,
     #[serde(default)]
-    hide_username: bool,
+    pub hide_username: bool,
 }
 
-#[derive(Deserialize)]
-struct OverwriteTagRequest {
-    expected: ExpectedTag,
-    update: UpdateTag,
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct OverwriteTagRequest {
+    pub expected: ExpectedTag,
+    pub update: UpdateTag,
 }
 
-#[derive(Deserialize)]
-struct ExpectedTag {
-    tag_type: String,
-    reason: String,
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct ExpectedTag {
+    pub tag_type: String,
+    pub reason: String,
 }
 
-#[derive(Deserialize)]
-struct UpdateTag {
-    tag_type: String,
-    reason: String,
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct UpdateTag {
+    pub tag_type: String,
+    pub reason: String,
     #[serde(default)]
-    hide_username: bool,
+    pub hide_username: bool,
 }
 
-#[derive(Deserialize)]
-struct LockRequest {
-    reason: String,
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct LockRequest {
+    pub reason: String,
 }
 
-#[derive(Serialize)]
-struct TagIdResponse {
-    id: i64,
+#[derive(Serialize, ToSchema)]
+pub(crate) struct TagIdResponse {
+    pub id: i64,
 }
 
-#[derive(Serialize)]
-struct SuccessResponse {
-    success: bool,
+#[derive(Serialize, ToSchema)]
+pub(crate) struct SuccessResponse {
+    pub success: bool,
 }
 
 pub fn router() -> Router<AppState> {
@@ -80,7 +81,20 @@ pub fn mod_router() -> Router<AppState> {
         .route("/player/lock/{uuid}", delete(unlock_player))
 }
 
-async fn add_tag(
+#[utoipa::path(
+    post,
+    path = "/v1/tags",
+    request_body = AddTagRequest,
+    responses(
+        (status = 200, description = "Tag added", body = TagIdResponse),
+        (status = 400, description = "Invalid request", body = crate::error::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::ErrorResponse),
+    ),
+    tag = "Tags",
+    security(("api_key" = []))
+)]
+pub async fn add_tag(
     State(state): State<AppState>,
     Extension(member): Extension<AuthenticatedMember>,
     Json(request): Json<AddTagRequest>,
@@ -143,7 +157,23 @@ async fn add_tag(
     Ok(Json(TagIdResponse { id }))
 }
 
-async fn remove_tag(
+#[utoipa::path(
+    delete,
+    path = "/v1/tags/{uuid}/{tag_id}",
+    params(
+        ("uuid" = String, Path, description = "Player UUID"),
+        ("tag_id" = i64, Path, description = "Tag ID to remove")
+    ),
+    responses(
+        (status = 200, description = "Tag removed", body = SuccessResponse),
+        (status = 403, description = "Forbidden", body = crate::error::ErrorResponse),
+        (status = 404, description = "Tag not found", body = crate::error::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::ErrorResponse),
+    ),
+    tag = "Tags",
+    security(("api_key" = []))
+)]
+pub async fn remove_tag(
     State(state): State<AppState>,
     Extension(member): Extension<AuthenticatedMember>,
     Path((uuid, tag_id)): Path<(String, i64)>,
@@ -190,7 +220,26 @@ async fn remove_tag(
     Ok(Json(SuccessResponse { success }))
 }
 
-async fn overwrite_tag(
+#[utoipa::path(
+    patch,
+    path = "/v1/tags/{uuid}/{tag_id}",
+    params(
+        ("uuid" = String, Path, description = "Player UUID"),
+        ("tag_id" = i64, Path, description = "Tag ID to update")
+    ),
+    request_body = OverwriteTagRequest,
+    responses(
+        (status = 200, description = "Tag overwritten", body = TagIdResponse),
+        (status = 400, description = "Invalid request", body = crate::error::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::ErrorResponse),
+        (status = 404, description = "Tag not found", body = crate::error::ErrorResponse),
+        (status = 409, description = "Conflict - tag modified", body = crate::error::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::ErrorResponse),
+    ),
+    tag = "Tags",
+    security(("api_key" = []))
+)]
+pub async fn overwrite_tag(
     State(state): State<AppState>,
     Extension(member): Extension<AuthenticatedMember>,
     Path((uuid, tag_id)): Path<(String, i64)>,
@@ -270,7 +319,23 @@ async fn overwrite_tag(
     Ok(Json(TagIdResponse { id }))
 }
 
-async fn lock_player(
+#[utoipa::path(
+    post,
+    path = "/v1/player/lock/{uuid}",
+    params(
+        ("uuid" = String, Path, description = "Player UUID to lock")
+    ),
+    request_body = LockRequest,
+    responses(
+        (status = 200, description = "Player locked", body = SuccessResponse),
+        (status = 400, description = "Invalid request", body = crate::error::ErrorResponse),
+        (status = 403, description = "Forbidden - moderator access required", body = crate::error::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::ErrorResponse),
+    ),
+    tag = "Tags",
+    security(("api_key" = []))
+)]
+pub async fn lock_player(
     State(state): State<AppState>,
     Extension(member): Extension<AuthenticatedMember>,
     Path(uuid): Path<String>,
@@ -308,7 +373,21 @@ async fn lock_player(
     Ok(Json(SuccessResponse { success }))
 }
 
-async fn unlock_player(
+#[utoipa::path(
+    delete,
+    path = "/v1/player/lock/{uuid}",
+    params(
+        ("uuid" = String, Path, description = "Player UUID to unlock")
+    ),
+    responses(
+        (status = 200, description = "Player unlocked", body = SuccessResponse),
+        (status = 403, description = "Forbidden - moderator access required", body = crate::error::ErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::ErrorResponse),
+    ),
+    tag = "Tags",
+    security(("api_key" = []))
+)]
+pub async fn unlock_player(
     State(state): State<AppState>,
     Extension(member): Extension<AuthenticatedMember>,
     Path(uuid): Path<String>,

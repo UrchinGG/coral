@@ -4,13 +4,13 @@ use axum::middleware;
 use crate::auth::{allow_internal_or_auth, require_internal_or_admin, require_moderator};
 use crate::state::AppState;
 
-mod batch;
-mod cubelify;
-mod guild;
-mod player;
-mod resolve;
-mod tags;
-mod verify;
+pub mod batch;
+pub mod cubelify;
+pub mod guild;
+pub mod player;
+pub mod resolve;
+pub mod tags;
+pub mod verify;
 
 pub fn router(state: AppState) -> Router<AppState> {
     let public_routes = Router::new()

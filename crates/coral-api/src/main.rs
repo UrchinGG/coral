@@ -10,6 +10,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
+use utoipa::OpenApi;
+use utoipa_scalar::{Scalar, Servable};
 
 use clients::{HypixelClient, LocalSkinProvider, MojangClient, SkinProvider};
 use coral_redis::RedisPool;
@@ -19,6 +21,7 @@ mod auth;
 mod cache;
 mod error;
 mod middleware;
+mod openapi;
 mod responses;
 mod routes;
 mod state;
@@ -87,11 +90,21 @@ fn parse_hypixel_keys() -> Vec<String> {
 fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health_check))
+        .merge(Scalar::with_url("/docs", openapi::ApiDoc::openapi()))
         .nest("/v1", routes::router(state.clone()))
         .with_state(state)
 }
 
-async fn health_check(State(state): State<AppState>) -> Response {
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses(
+        (status = 200, description = "Service is healthy", body = serde_json::Value),
+        (status = 503, description = "Service is degraded", body = serde_json::Value),
+    ),
+    tag = "Health",
+)]
+pub async fn health_check(State(state): State<AppState>) -> Response {
     let db_ok = sqlx::query("SELECT 1")
         .execute(state.db.pool())
         .await

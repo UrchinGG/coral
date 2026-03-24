@@ -2,6 +2,7 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
+use utoipa::ToSchema;
 
 #[derive(Debug)]
 pub enum ApiError {
@@ -14,9 +15,9 @@ pub enum ApiError {
     Internal(String),
 }
 
-#[derive(Serialize)]
-struct ErrorResponse {
-    error: String,
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ErrorResponse {
+    pub error: String,
 }
 
 impl IntoResponse for ApiError {

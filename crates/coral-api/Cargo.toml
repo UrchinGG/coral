@@ -29,3 +29,7 @@ sqlx.workspace = true
 redis.workspace = true
 uuid.workspace = true
 image.workspace = true
+
+utoipa.workspace = true
+utoipa-axum.workspace = true
+utoipa-scalar.workspace = true
