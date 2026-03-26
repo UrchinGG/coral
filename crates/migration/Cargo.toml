@@ -10,7 +10,6 @@ path = "src/main.rs"
 [dependencies]
 database.workspace = true
 mongodb.workspace = true
-sqlx.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -19,3 +18,4 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 dotenvy.workspace = true
 anyhow.workspace = true
+reqwest.workspace = true

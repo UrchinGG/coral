@@ -1,132 +1,156 @@
 use anyhow::Result;
 use mongodb::{Database, bson::doc};
 use serde::Deserialize;
-use sqlx::PgPool;
+use serde_json::json;
 use tracing::{info, warn};
+
+use crate::client::CoralClient;
+
+const BATCH_SIZE: usize = 200;
+
+const VALID_TAG_TYPES: &[&str] = &[
+    "sniper",
+    "blatant_cheater",
+    "closet_cheater",
+    "confirmed_cheater",
+];
 
 #[derive(Debug, Deserialize)]
 struct MongoBlacklistPlayer {
     uuid: String,
     is_locked: Option<bool>,
     lock_reason: Option<String>,
-    locked_by: Option<String>,
+    locked_by: Option<serde_json::Value>,
     lock_timestamp: Option<mongodb::bson::DateTime>,
+    evidence_thread: Option<String>,
     tags: Option<Vec<MongoTag>>,
 }
 
 #[derive(Debug, Deserialize)]
 struct MongoTag {
     tag_type: String,
-    reason: String,
-    added_by: Option<i64>,
+    reason: Option<String>,
+    added_by: Option<serde_json::Value>,
     added_on: Option<String>,
-    evidence: Option<String>,
+    hide_username: Option<bool>,
 }
 
-pub async fn migrate(mongo_db: &Database, pg_pool: &PgPool) -> Result<usize> {
+fn parse_i64(val: &serde_json::Value) -> Option<i64> {
+    match val {
+        serde_json::Value::Number(n) => n.as_i64(),
+        serde_json::Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
+}
+
+fn map_tag(tag: &MongoTag) -> Option<serde_json::Value> {
+    let reason = tag.reason.as_deref().unwrap_or("");
+    let added_by = tag.added_by.as_ref().and_then(parse_i64).unwrap_or(0);
+
+    if tag.tag_type == "caution" {
+        if reason.to_lowercase().contains("replays needed") {
+            return Some(json!({
+                "tag_type": "replays_needed",
+                "reason": "",
+                "added_by": added_by,
+                "added_on": tag.added_on,
+                "hide_username": tag.hide_username.unwrap_or(false),
+            }));
+        }
+        return None;
+    }
+
+    if !VALID_TAG_TYPES.contains(&tag.tag_type.as_str()) {
+        return None;
+    }
+
+    Some(json!({
+        "tag_type": tag.tag_type,
+        "reason": reason,
+        "added_by": added_by,
+        "added_on": tag.added_on,
+        "hide_username": tag.hide_username.unwrap_or(false),
+    }))
+}
+
+impl MongoBlacklistPlayer {
+    fn to_payload(&self) -> Option<serde_json::Value> {
+        let tags: Vec<serde_json::Value> = self.tags.as_deref().unwrap_or(&[])
+            .iter()
+            .filter_map(map_tag)
+            .collect();
+
+        if tags.is_empty() {
+            return None;
+        }
+
+        let locked_at = self.lock_timestamp.map(|dt| {
+            chrono::DateTime::from_timestamp_millis(dt.timestamp_millis())
+                .unwrap_or_else(chrono::Utc::now)
+                .to_rfc3339()
+        });
+
+        let locked_by = self.locked_by.as_ref().and_then(parse_i64);
+
+        Some(json!({
+            "uuid": self.uuid,
+            "is_locked": self.is_locked.unwrap_or(false),
+            "lock_reason": self.lock_reason,
+            "locked_by": locked_by,
+            "locked_at": locked_at,
+            "evidence_thread": self.evidence_thread,
+            "tags": tags,
+        }))
+    }
+}
+
+pub async fn migrate(mongo_db: &Database, client: &CoralClient) -> Result<usize> {
     let collection = mongo_db.collection::<MongoBlacklistPlayer>("blacklist");
     let mut cursor = collection.find(doc! {}).await?;
 
     let mut count = 0;
+    let mut skipped = 0;
     let mut errors = 0;
+    let mut batch = Vec::with_capacity(BATCH_SIZE);
 
     while cursor.advance().await? {
         let player = match cursor.deserialize_current() {
             Ok(p) => p,
             Err(e) => {
-                warn!("Failed to deserialize blacklist player: {}", e);
+                warn!("Failed to deserialize blacklist player: {e}");
                 errors += 1;
                 continue;
             }
         };
 
-        if let Err(e) = insert_player(pg_pool, &player).await {
-            warn!("Failed to insert blacklist player {}: {}", player.uuid, e);
-            errors += 1;
-            continue;
+        match player.to_payload() {
+            Some(payload) => batch.push(payload),
+            None => {
+                skipped += 1;
+                continue;
+            }
         }
 
-        count += 1;
-        if count % 100 == 0 {
-            info!("Processed {} blacklisted players...", count);
+        if batch.len() >= BATCH_SIZE {
+            let result = client.post(&json!({"type": "blacklist", "data": batch})).await?;
+            let errs = result["errors"].as_u64().unwrap_or(0);
+            count += batch.len() - errs as usize;
+            errors += errs as usize;
+            batch.clear();
+            info!("  {count} players migrated ({errors} errors, {skipped} skipped)");
         }
+    }
+
+    if !batch.is_empty() {
+        let result = client.post(&json!({"type": "blacklist", "data": batch})).await?;
+        let errs = result["errors"].as_u64().unwrap_or(0);
+        count += batch.len() - errs as usize;
+        errors += errs as usize;
     }
 
     if errors > 0 {
-        warn!("Completed with {} errors", errors);
+        warn!("Blacklist completed with {errors} errors");
     }
-
+    info!("Blacklist: {count} migrated, {skipped} skipped (no valid tags)");
     Ok(count)
-}
-
-async fn insert_player(pool: &PgPool, player: &MongoBlacklistPlayer) -> Result<()> {
-    let lock_timestamp = player.lock_timestamp.map(|dt| {
-        chrono::DateTime::from_timestamp_millis(dt.timestamp_millis())
-            .unwrap_or_else(chrono::Utc::now)
-    });
-
-    let locked_by = player.locked_by.as_ref().and_then(|s| {
-        s.parse::<i64>().ok().or_else(|| {
-            warn!("Invalid locked_by value '{}' for player {}", s, player.uuid);
-            None
-        })
-    });
-
-    sqlx::query(
-        r#"
-        INSERT INTO blacklist_players (uuid, is_locked, lock_reason, locked_by, locked_at)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (uuid) DO UPDATE SET
-            is_locked = EXCLUDED.is_locked,
-            lock_reason = EXCLUDED.lock_reason,
-            locked_by = EXCLUDED.locked_by,
-            locked_at = EXCLUDED.locked_at
-        "#,
-    )
-    .bind(&player.uuid)
-    .bind(player.is_locked.unwrap_or(false))
-    .bind(&player.lock_reason)
-    .bind(locked_by)
-    .bind(lock_timestamp)
-    .execute(pool)
-    .await?;
-
-    if let Some(ref tags) = player.tags {
-        for tag in tags {
-            if let Err(e) = insert_tag(pool, &player.uuid, tag).await {
-                warn!("Failed to insert tag for {}: {}", player.uuid, e);
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn insert_tag(pool: &PgPool, uuid: &str, tag: &MongoTag) -> Result<()> {
-    let added_on = tag
-        .added_on
-        .as_ref()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.with_timezone(&chrono::Utc))
-        .unwrap_or_else(chrono::Utc::now);
-
-    sqlx::query(
-        r#"
-        INSERT INTO player_tags (uuid, tag_type, reason, evidence, added_by, added_on)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (uuid, tag_type) DO UPDATE SET
-            reason = EXCLUDED.reason,
-            evidence = EXCLUDED.evidence
-        "#,
-    )
-    .bind(uuid)
-    .bind(&tag.tag_type)
-    .bind(&tag.reason)
-    .bind(&tag.evidence)
-    .bind(tag.added_by)
-    .bind(added_on)
-    .execute(pool)
-    .await?;
-
-    Ok(())
 }

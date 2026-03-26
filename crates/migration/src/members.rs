@@ -1,12 +1,16 @@
 use anyhow::Result;
 use mongodb::{Database, bson::doc};
 use serde::Deserialize;
-use sqlx::PgPool;
+use serde_json::json;
 use tracing::{info, warn};
+
+use crate::client::CoralClient;
+
+const BATCH_SIZE: usize = 200;
 
 #[derive(Debug, Deserialize)]
 struct MongoMember {
-    discord_id: i64,
+    discord_id: serde_json::Value,
     uuid: Option<String>,
     api_key: Option<String>,
     join_date: Option<String>,
@@ -15,7 +19,6 @@ struct MongoMember {
     is_admin: Option<bool>,
     is_mod: Option<bool>,
     private: Option<bool>,
-    beta_access: Option<bool>,
     key_locked: Option<bool>,
     ip_history: Option<Vec<IpHistoryEntry>>,
     minecraft_accounts: Option<Vec<String>>,
@@ -23,183 +26,105 @@ struct MongoMember {
 
 #[derive(Debug, Deserialize)]
 struct IpHistoryEntry {
-    ip_address: String,
+    ip_address: Option<String>,
     first_seen: Option<String>,
 }
 
-pub async fn migrate(mongo_db: &Database, pg_pool: &PgPool) -> Result<usize> {
+impl MongoMember {
+    fn discord_id_i64(&self) -> Option<i64> {
+        match &self.discord_id {
+            serde_json::Value::Number(n) => n.as_i64(),
+            serde_json::Value::String(s) => s.parse().ok(),
+            _ => None,
+        }
+    }
+
+    fn access_level(&self) -> i16 {
+        if self.is_admin.unwrap_or(false) {
+            4
+        } else if self.is_mod.unwrap_or(false) {
+            3
+        } else if self.private.unwrap_or(false) {
+            1
+        } else {
+            0
+        }
+    }
+
+    fn to_payload(&self) -> Option<serde_json::Value> {
+        let discord_id = self.discord_id_i64()?;
+
+        let ip_history: Vec<serde_json::Value> = self.ip_history.as_deref().unwrap_or(&[])
+            .iter()
+            .filter_map(|ip| {
+                Some(json!({
+                    "ip_address": ip.ip_address.as_ref()?,
+                    "first_seen": ip.first_seen,
+                }))
+            })
+            .collect();
+
+        Some(json!({
+            "discord_id": discord_id,
+            "uuid": self.uuid,
+            "api_key": self.api_key,
+            "join_date": self.join_date,
+            "request_count": self.request_count.unwrap_or(0),
+            "access_level": self.access_level(),
+            "key_locked": self.key_locked.unwrap_or(false),
+            "config": self.config.clone().unwrap_or_else(|| json!({})),
+            "ip_history": ip_history,
+            "minecraft_accounts": self.minecraft_accounts.clone().unwrap_or_default(),
+        }))
+    }
+}
+
+pub async fn migrate(mongo_db: &Database, client: &CoralClient) -> Result<usize> {
     let collection = mongo_db.collection::<MongoMember>("members");
     let mut cursor = collection.find(doc! {}).await?;
 
     let mut count = 0;
     let mut errors = 0;
+    let mut batch = Vec::with_capacity(BATCH_SIZE);
 
     while cursor.advance().await? {
         let member = match cursor.deserialize_current() {
             Ok(m) => m,
             Err(e) => {
-                warn!("Failed to deserialize member: {}", e);
+                warn!("Failed to deserialize member: {e}");
                 errors += 1;
                 continue;
             }
         };
 
-        if let Err(e) = insert_member(pg_pool, &member).await {
-            warn!("Failed to insert member {}: {}", member.discord_id, e);
-            errors += 1;
-            continue;
-        }
-
-        if let Some(ref ips) = member.ip_history {
-            if let Err(e) = insert_ip_history(pg_pool, member.discord_id, ips).await {
-                warn!(
-                    "Failed to insert IP history for {}: {}",
-                    member.discord_id, e
-                );
+        match member.to_payload() {
+            Some(payload) => batch.push(payload),
+            None => {
+                warn!("Skipping member with invalid discord_id: {:?}", member.discord_id);
+                errors += 1;
+                continue;
             }
         }
 
-        if let Some(ref accounts) = member.minecraft_accounts {
-            if let Err(e) = insert_minecraft_accounts(pg_pool, member.discord_id, accounts).await {
-                warn!(
-                    "Failed to insert minecraft accounts for {}: {}",
-                    member.discord_id, e
-                );
-            }
+        if batch.len() >= BATCH_SIZE {
+            let result = client.post(&json!({"type": "members", "data": batch})).await?;
+            let errs = result["errors"].as_u64().unwrap_or(0);
+            count += batch.len() - errs as usize;
+            errors += errs as usize;
+            batch.clear();
+            info!("  {count} members migrated ({errors} errors)");
         }
+    }
 
-        count += 1;
-        if count % 100 == 0 {
-            info!("Processed {} members...", count);
-        }
+    if !batch.is_empty() {
+        let result = client.post(&json!({"type": "members", "data": batch})).await?;
+        let errs = result["errors"].as_u64().unwrap_or(0);
+        count += batch.len() - errs as usize;
+        errors += errs as usize;
     }
 
     if errors > 0 {
-        warn!("Completed with {} errors", errors);
+        warn!("Members completed with {errors} errors");
     }
-
     Ok(count)
-}
-
-async fn insert_member(pool: &PgPool, member: &MongoMember) -> Result<()> {
-    let join_date = member
-        .join_date
-        .as_ref()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.with_timezone(&chrono::Utc))
-        .unwrap_or_else(chrono::Utc::now);
-
-    let config = member
-        .config
-        .clone()
-        .unwrap_or_else(|| serde_json::json!({}));
-
-    sqlx::query(
-        r#"
-        INSERT INTO members (
-            discord_id, uuid, api_key, join_date, request_count,
-            is_admin, is_mod, is_private, is_beta, key_locked, config
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        ON CONFLICT (discord_id) DO UPDATE SET
-            uuid = EXCLUDED.uuid,
-            api_key = EXCLUDED.api_key,
-            request_count = EXCLUDED.request_count,
-            is_admin = EXCLUDED.is_admin,
-            is_mod = EXCLUDED.is_mod,
-            is_private = EXCLUDED.is_private,
-            is_beta = EXCLUDED.is_beta,
-            key_locked = EXCLUDED.key_locked,
-            config = EXCLUDED.config
-        "#,
-    )
-    .bind(member.discord_id)
-    .bind(&member.uuid)
-    .bind(&member.api_key)
-    .bind(join_date)
-    .bind(member.request_count.unwrap_or(0))
-    .bind(member.is_admin.unwrap_or(false))
-    .bind(member.is_mod.unwrap_or(false))
-    .bind(member.private.unwrap_or(false))
-    .bind(member.beta_access.unwrap_or(false))
-    .bind(member.key_locked.unwrap_or(false))
-    .bind(config)
-    .execute(pool)
-    .await?;
-
-    Ok(())
-}
-
-async fn insert_ip_history(pool: &PgPool, discord_id: i64, ips: &[IpHistoryEntry]) -> Result<()> {
-    let member_id: Option<(i64,)> = sqlx::query_as("SELECT id FROM members WHERE discord_id = $1")
-        .bind(discord_id)
-        .fetch_optional(pool)
-        .await?;
-
-    let Some((member_id,)) = member_id else {
-        return Ok(());
-    };
-
-    for ip in ips {
-        let first_seen = ip
-            .first_seen
-            .as_ref()
-            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.with_timezone(&chrono::Utc))
-            .unwrap_or_else(chrono::Utc::now);
-
-        sqlx::query(
-            r#"
-            INSERT INTO api_key_ips (member_id, ip_address, first_seen, last_seen)
-            VALUES ($1, $2::inet, $3, $3)
-            ON CONFLICT (member_id, ip_address) DO NOTHING
-            "#,
-        )
-        .bind(member_id)
-        .bind(&ip.ip_address)
-        .bind(first_seen)
-        .execute(pool)
-        .await?;
-    }
-
-    Ok(())
-}
-
-async fn insert_minecraft_accounts(
-    pool: &PgPool,
-    discord_id: i64,
-    accounts: &[String],
-) -> Result<()> {
-    let member_id: Option<(i64,)> = sqlx::query_as("SELECT id FROM members WHERE discord_id = $1")
-        .bind(discord_id)
-        .fetch_optional(pool)
-        .await?;
-
-    let Some((member_id,)) = member_id else {
-        return Ok(());
-    };
-
-    let member_uuid: Option<String> = sqlx::query_scalar("SELECT uuid FROM members WHERE id = $1")
-        .bind(member_id)
-        .fetch_optional(pool)
-        .await?;
-
-    for uuid in accounts {
-        let is_primary = member_uuid.as_deref() == Some(uuid.as_str());
-
-        sqlx::query(
-            r#"
-            INSERT INTO minecraft_accounts (member_id, uuid, is_primary)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (member_id, uuid) DO NOTHING
-            "#,
-        )
-        .bind(member_id)
-        .bind(uuid)
-        .bind(is_primary)
-        .execute(pool)
-        .await?;
-    }
-
-    Ok(())
 }

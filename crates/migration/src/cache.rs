@@ -4,10 +4,12 @@ use database::calculate_delta;
 use mongodb::{Database, bson::doc};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
-use sqlx::PgPool;
 use tracing::{info, warn};
 
-const BATCH_SIZE: usize = 500;
+use crate::client::CoralClient;
+
+const PLAYER_BATCH_SIZE: usize = 2000;
+const SNAPSHOT_BATCH_SIZE: usize = 5000;
 
 #[derive(Debug, Deserialize)]
 struct MongoCacheDocument {
@@ -23,28 +25,32 @@ struct PendingSnapshot {
     data: Value,
 }
 
-pub async fn migrate(mongo_db: &Database, pg_pool: &PgPool) -> Result<usize> {
-    let deleted = sqlx::query("DELETE FROM player_snapshots WHERE source = 'migration'")
-        .execute(pg_pool)
-        .await?
-        .rows_affected();
-    if deleted > 0 {
-        info!("Cleaned up {} existing migration rows", deleted);
+impl PendingSnapshot {
+    fn to_payload(&self) -> Value {
+        json!({
+            "uuid": self.uuid,
+            "timestamp": self.timestamp.to_rfc3339(),
+            "username": self.username,
+            "is_baseline": self.is_baseline,
+            "data": self.data,
+        })
     }
+}
 
+pub async fn migrate(mongo_db: &Database, client: &CoralClient) -> Result<usize> {
     let collection = mongo_db.collection::<MongoCacheDocument>("cache");
     let mut cursor = collection.find(doc! {}).await?;
 
     let mut players = 0;
     let mut snapshots = 0;
     let mut errors = 0;
-    let mut batch: Vec<PendingSnapshot> = Vec::with_capacity(BATCH_SIZE * 20);
+    let mut batch: Vec<PendingSnapshot> = Vec::new();
 
     while cursor.advance().await? {
         let doc = match cursor.deserialize_current() {
             Ok(d) => d,
             Err(e) => {
-                warn!("Failed to deserialize cache document: {}", e);
+                warn!("Failed to deserialize cache document: {e}");
                 errors += 1;
                 continue;
             }
@@ -53,28 +59,39 @@ pub async fn migrate(mongo_db: &Database, pg_pool: &PgPool) -> Result<usize> {
         collect_player_snapshots(&doc, &mut batch);
         players += 1;
 
-        if players % BATCH_SIZE == 0 {
-            let count = flush_batch(pg_pool, &batch).await?;
+        if players % PLAYER_BATCH_SIZE == 0 {
+            let count = flush_batch(client, &batch).await?;
             snapshots += count;
             batch.clear();
-            info!("Processed {} players ({} snapshots)...", players, snapshots);
+            info!("  {players} players ({snapshots} snapshots)...");
         }
     }
 
     if !batch.is_empty() {
-        let count = flush_batch(pg_pool, &batch).await?;
+        let count = flush_batch(client, &batch).await?;
         snapshots += count;
     }
 
     if errors > 0 {
-        warn!("Completed with {} errors", errors);
+        warn!("Cache completed with {errors} errors");
+    }
+    info!("Cache: {snapshots} snapshots across {players} players");
+    Ok(players)
+}
+
+async fn flush_batch(client: &CoralClient, batch: &[PendingSnapshot]) -> Result<usize> {
+    if batch.is_empty() {
+        return Ok(0);
     }
 
-    info!(
-        "Migrated {} snapshots across {} players",
-        snapshots, players
-    );
-    Ok(players)
+    let mut total = 0;
+    for chunk in batch.chunks(SNAPSHOT_BATCH_SIZE) {
+        let payloads: Vec<Value> = chunk.iter().map(|s| s.to_payload()).collect();
+        let result = client.post(&json!({"type": "snapshots", "data": payloads})).await?;
+        total += result["migrated"].as_u64().unwrap_or(0) as usize;
+    }
+
+    Ok(total)
 }
 
 fn collect_player_snapshots(doc: &MongoCacheDocument, batch: &mut Vec<PendingSnapshot>) {
@@ -110,51 +127,6 @@ fn collect_player_snapshots(doc: &MongoCacheDocument, batch: &mut Vec<PendingSna
     }
 }
 
-async fn flush_batch(pool: &PgPool, batch: &[PendingSnapshot]) -> Result<usize> {
-    if batch.is_empty() {
-        return Ok(0);
-    }
-
-    let mut tx = pool.begin().await?;
-
-    for chunk in batch.chunks(1000) {
-        let mut query = String::from(
-            "INSERT INTO player_snapshots (uuid, timestamp, source, username, is_baseline, data) VALUES ",
-        );
-        let mut first = true;
-        for (i, _) in chunk.iter().enumerate() {
-            if !first {
-                query.push(',');
-            }
-            first = false;
-            let base = i * 5;
-            query.push_str(&format!(
-                "(${}, ${}, 'migration', ${}, ${}, ${})",
-                base + 1,
-                base + 2,
-                base + 3,
-                base + 4,
-                base + 5,
-            ));
-        }
-
-        let mut q = sqlx::query(&query);
-        for snap in chunk {
-            q = q
-                .bind(&snap.uuid)
-                .bind(snap.timestamp)
-                .bind(&snap.username)
-                .bind(snap.is_baseline)
-                .bind(&snap.data);
-        }
-
-        q.execute(&mut *tx).await?;
-    }
-
-    tx.commit().await?;
-    Ok(batch.len())
-}
-
 fn all_snapshots(data: &[Value]) -> Vec<(DateTime<Utc>, &Value)> {
     let mut snapshots: Vec<(DateTime<Utc>, &Value)> = data
         .iter()
@@ -173,7 +145,6 @@ fn all_snapshots(data: &[Value]) -> Vec<(DateTime<Utc>, &Value)> {
     snapshots
 }
 
-/// Converts a UrchinV1 pre-transformed player snapshot back into raw Hypixel API format.
 fn reverse_transform(urchin: &Value) -> Value {
     let mut player = Map::new();
 
@@ -236,34 +207,16 @@ fn reverse_mode(raw_bw: &mut Map<String, Value>, modes: &Value, mode_name: &str,
         map.insert(format!("{prefix}{suffix}"), value.clone());
     };
 
-    if let Some(v) = mode.get("games_played") {
-        set(raw_bw, "games_played_bedwars", v);
-    }
-    if let Some(v) = mode.get("wins") {
-        set(raw_bw, "wins_bedwars", v);
-    }
-    if let Some(v) = mode.get("losses") {
-        set(raw_bw, "losses_bedwars", v);
-    }
-    if let Some(v) = mode.get("final_kills") {
-        set(raw_bw, "final_kills_bedwars", v);
-    }
-    if let Some(v) = mode.get("final_deaths") {
-        set(raw_bw, "final_deaths_bedwars", v);
-    }
-    if let Some(v) = mode.get("beds_broken") {
-        set(raw_bw, "beds_broken_bedwars", v);
-    }
-    if let Some(v) = mode.get("beds_lost") {
-        set(raw_bw, "beds_lost_bedwars", v);
-    }
+    if let Some(v) = mode.get("games_played") { set(raw_bw, "games_played_bedwars", v); }
+    if let Some(v) = mode.get("wins") { set(raw_bw, "wins_bedwars", v); }
+    if let Some(v) = mode.get("losses") { set(raw_bw, "losses_bedwars", v); }
+    if let Some(v) = mode.get("final_kills") { set(raw_bw, "final_kills_bedwars", v); }
+    if let Some(v) = mode.get("final_deaths") { set(raw_bw, "final_deaths_bedwars", v); }
+    if let Some(v) = mode.get("beds_broken") { set(raw_bw, "beds_broken_bedwars", v); }
+    if let Some(v) = mode.get("beds_lost") { set(raw_bw, "beds_lost_bedwars", v); }
 
     if let Some(v) = mode.get("winstreak") {
-        let key = if prefix.is_empty() {
-            "winstreak".into()
-        } else {
-            format!("{prefix}winstreak")
-        };
+        let key = if prefix.is_empty() { "winstreak".into() } else { format!("{prefix}winstreak") };
         if v.as_str() == Some("?") {
             raw_bw.insert(key, Value::Null);
         } else {
@@ -272,65 +225,29 @@ fn reverse_mode(raw_bw: &mut Map<String, Value>, modes: &Value, mode_name: &str,
     }
 
     if let Some(kills) = mode.get("kills") {
-        if let Some(v) = kills.get("kills") {
-            set(raw_bw, "kills_bedwars", v);
-        }
-        if let Some(v) = kills.get("projectile_kills") {
-            set(raw_bw, "projectile_kills_bedwars", v);
-        }
-        if let Some(v) = kills.get("void_kills") {
-            set(raw_bw, "void_kills_bedwars", v);
-        }
-        if let Some(v) = kills.get("fall_kills") {
-            set(raw_bw, "fall_kills_bedwars", v);
-        }
-        if let Some(v) = kills.get("explosion_kills") {
-            set(raw_bw, "entity_explosion_kills_bedwars", v);
-        }
-        if let Some(v) = kills.get("magic_kills") {
-            set(raw_bw, "magic_kills_bedwars", v);
-        }
-        if let Some(v) = kills.get("fire_tick_kills") {
-            set(raw_bw, "fire_tick_kills_bedwars", v);
-        }
+        if let Some(v) = kills.get("kills") { set(raw_bw, "kills_bedwars", v); }
+        if let Some(v) = kills.get("projectile_kills") { set(raw_bw, "projectile_kills_bedwars", v); }
+        if let Some(v) = kills.get("void_kills") { set(raw_bw, "void_kills_bedwars", v); }
+        if let Some(v) = kills.get("fall_kills") { set(raw_bw, "fall_kills_bedwars", v); }
+        if let Some(v) = kills.get("explosion_kills") { set(raw_bw, "entity_explosion_kills_bedwars", v); }
+        if let Some(v) = kills.get("magic_kills") { set(raw_bw, "magic_kills_bedwars", v); }
+        if let Some(v) = kills.get("fire_tick_kills") { set(raw_bw, "fire_tick_kills_bedwars", v); }
     }
 
     if let Some(deaths) = mode.get("deaths") {
-        if let Some(v) = deaths.get("deaths") {
-            set(raw_bw, "deaths_bedwars", v);
-        }
-        if let Some(v) = deaths.get("void_deaths") {
-            set(raw_bw, "void_deaths_bedwars", v);
-        }
-        if let Some(v) = deaths.get("fall_deaths") {
-            set(raw_bw, "fall_deaths_bedwars", v);
-        }
-        if let Some(v) = deaths.get("explosion_deaths") {
-            set(raw_bw, "entity_explosion_deaths_bedwars", v);
-        }
-        if let Some(v) = deaths.get("magic_deaths") {
-            set(raw_bw, "magic_deaths_bedwars", v);
-        }
-        if let Some(v) = deaths.get("fire_tick_deaths") {
-            set(raw_bw, "fire_tick_deaths_bedwars", v);
-        }
-        if let Some(v) = deaths.get("projectile_deaths") {
-            set(raw_bw, "projectile_deaths_bedwars", v);
-        }
+        if let Some(v) = deaths.get("deaths") { set(raw_bw, "deaths_bedwars", v); }
+        if let Some(v) = deaths.get("void_deaths") { set(raw_bw, "void_deaths_bedwars", v); }
+        if let Some(v) = deaths.get("fall_deaths") { set(raw_bw, "fall_deaths_bedwars", v); }
+        if let Some(v) = deaths.get("explosion_deaths") { set(raw_bw, "entity_explosion_deaths_bedwars", v); }
+        if let Some(v) = deaths.get("magic_deaths") { set(raw_bw, "magic_deaths_bedwars", v); }
+        if let Some(v) = deaths.get("fire_tick_deaths") { set(raw_bw, "fire_tick_deaths_bedwars", v); }
+        if let Some(v) = deaths.get("projectile_deaths") { set(raw_bw, "projectile_deaths_bedwars", v); }
     }
 
     if let Some(resources) = mode.get("resources") {
-        if let Some(v) = resources.get("emeralds_collected") {
-            set(raw_bw, "emerald_resources_collected_bedwars", v);
-        }
-        if let Some(v) = resources.get("gold_collected") {
-            set(raw_bw, "gold_resources_collected_bedwars", v);
-        }
-        if let Some(v) = resources.get("diamonds_collected") {
-            set(raw_bw, "diamond_resources_collected_bedwars", v);
-        }
-        if let Some(v) = resources.get("iron_collected") {
-            set(raw_bw, "iron_resources_collected_bedwars", v);
-        }
+        if let Some(v) = resources.get("emeralds_collected") { set(raw_bw, "emerald_resources_collected_bedwars", v); }
+        if let Some(v) = resources.get("gold_collected") { set(raw_bw, "gold_resources_collected_bedwars", v); }
+        if let Some(v) = resources.get("diamonds_collected") { set(raw_bw, "diamond_resources_collected_bedwars", v); }
+        if let Some(v) = resources.get("iron_collected") { set(raw_bw, "iron_resources_collected_bedwars", v); }
     }
 }
