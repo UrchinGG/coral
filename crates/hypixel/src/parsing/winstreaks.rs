@@ -61,8 +61,10 @@ pub fn calculate(snapshots: &[(DateTime<Utc>, WinstreakSnapshot)], mode: Mode) -
                     let delta_wins = wins.saturating_sub(prev_wins);
                     let mut best = peak;
                     if delta_losses == 1 {
-                        let after_loss = api_ws.unwrap_or(0);
-                        best = best.max(wins.saturating_sub(start_wins).saturating_sub(after_loss));
+                        best = match api_ws {
+                            Some(after) => best.max(wins.saturating_sub(start_wins).saturating_sub(after)),
+                            None => best.max(prev_wins.saturating_sub(start_wins)),
+                        };
                     } else {
                         best = best.max(prev_wins.saturating_sub(start_wins));
                     }
