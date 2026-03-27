@@ -242,15 +242,15 @@ async fn fetch_player_data(data: &Data, player: &str) -> Result<BedwarsCache, St
     let (resp, guild_result, skin_result, history_result) = match cached_uuid {
         Some(ref uuid) => {
             let cache_repo = CacheRepository::new(data.db.pool());
-            let (api, guild, skin, history) = tokio::join!(
+            let (api, guild, history) = tokio::join!(
                 data.api.get_player_stats(player),
                 data.api.get_guild(uuid, Some("player")),
-                data.skin_provider.fetch(uuid),
                 cache_repo.get_all_snapshots_mapped(uuid, extract_winstreak_snapshot),
             );
             let resp = api.map_err(map_api_error)?;
 
             if resp.uuid == *uuid {
+                let skin = fetch_skin(data, &resp.uuid, resp.skin_url.as_deref()).await;
                 (resp, guild, skin, history)
             } else {
                 let cache_repo = CacheRepository::new(data.db.pool());

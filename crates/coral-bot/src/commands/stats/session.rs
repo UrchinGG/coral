@@ -1085,13 +1085,13 @@ async fn fetch_player(
 > {
     match cached_uuid {
         Some(uuid) => {
-            let (api, guild, skin) = tokio::join!(
+            let (api, guild) = tokio::join!(
                 data.api.get_player_stats(player),
                 data.api.get_guild(uuid, Some("player")),
-                data.skin_provider.fetch(uuid),
             );
             let resp = api.map_err(map_api_error)?;
             if resp.uuid == uuid {
+                let skin = fetch_skin(data, &resp.uuid, resp.skin_url.as_deref()).await;
                 return Ok((resp, guild, skin));
             }
             let (guild, skin) = tokio::join!(
