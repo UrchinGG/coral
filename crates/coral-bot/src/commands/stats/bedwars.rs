@@ -256,7 +256,7 @@ async fn fetch_player_data(data: &Data, player: &str) -> Result<BedwarsCache, St
                 let cache_repo = CacheRepository::new(data.db.pool());
                 let (guild, skin, history) = tokio::join!(
                     data.api.get_guild(&resp.uuid, Some("player")),
-                    fetch_skin(data, &resp.uuid, resp.skin_url.as_deref()),
+                    fetch_skin(data, &resp.uuid, resp.skin_url.as_deref(), resp.slim),
                     cache_repo.get_all_snapshots_mapped(&resp.uuid, extract_winstreak_snapshot),
                 );
                 (resp, guild, skin, history)
@@ -267,7 +267,7 @@ async fn fetch_player_data(data: &Data, player: &str) -> Result<BedwarsCache, St
             let cache_repo = CacheRepository::new(data.db.pool());
             let (guild, skin, history) = tokio::join!(
                 data.api.get_guild(&resp.uuid, Some("player")),
-                fetch_skin(data, &resp.uuid, resp.skin_url.as_deref()),
+                fetch_skin(data, &resp.uuid, resp.skin_url.as_deref(), resp.slim),
                 cache_repo.get_all_snapshots_mapped(&resp.uuid, extract_winstreak_snapshot),
             );
             (resp, guild, skin, history)

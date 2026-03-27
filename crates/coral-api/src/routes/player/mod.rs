@@ -121,7 +121,10 @@ pub async fn player_stats(
         state.mojang.get_profile(&uuid),
     );
     let (player_data, tags) = (player_data?, tags?);
-    let skin_url = profile.ok().and_then(|p| p.skin_url);
+    let (skin_url, slim) = match profile.ok() {
+        Some(p) => (p.skin_url, p.slim),
+        None => (None, false),
+    };
     let username = resolve_username(username_hint, &player_data, &uuid);
 
     if let Some(ref data) = player_data {
@@ -134,6 +137,7 @@ pub async fn player_stats(
         hypixel: player_data,
         tags: tags.iter().map(TagResponse::from_db).collect(),
         skin_url,
+        slim,
     }))
 }
 

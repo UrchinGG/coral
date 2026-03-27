@@ -28,5 +28,7 @@ impl Skin {
 
     pub fn is_slim(&self) -> bool { self.slim }
 
+    pub fn set_slim(&mut self, slim: bool) { self.slim = slim; }
+
     pub fn texture(&self) -> &RgbaImage { &self.texture }
 }

@@ -34,6 +34,8 @@ pub struct PlayerStatsResponse {
     #[serde(default)]
     pub tags: Vec<TagInfo>,
     pub skin_url: Option<String>,
+    #[serde(default)]
+    pub slim: bool,
 }
 
 

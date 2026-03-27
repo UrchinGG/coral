@@ -1096,7 +1096,7 @@ async fn fetch_player(
             }
             let (guild, skin) = tokio::join!(
                 data.api.get_guild(&resp.uuid, Some("player")),
-                fetch_skin(data, &resp.uuid, resp.skin_url.as_deref()),
+                fetch_skin(data, &resp.uuid, resp.skin_url.as_deref(), resp.slim),
             );
             Ok((resp, guild, skin))
         }
@@ -1104,7 +1104,7 @@ async fn fetch_player(
             let resp = data.api.get_player_stats(player).await.map_err(map_api_error)?;
             let (guild, skin) = tokio::join!(
                 data.api.get_guild(&resp.uuid, Some("player")),
-                fetch_skin(data, &resp.uuid, resp.skin_url.as_deref()),
+                fetch_skin(data, &resp.uuid, resp.skin_url.as_deref(), resp.slim),
             );
             Ok((resp, guild, skin))
         }

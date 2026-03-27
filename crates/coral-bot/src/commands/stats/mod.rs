@@ -207,9 +207,10 @@ pub(super) async fn fetch_skin(
     data: &Data,
     uuid: &str,
     skin_url: Option<&str>,
+    slim: bool,
 ) -> Option<clients::SkinImage> {
     match skin_url {
-        Some(url) => data.skin_provider.fetch_with_url(uuid, url).await,
+        Some(url) => data.skin_provider.fetch_with_url(uuid, url, slim).await,
         None => data.skin_provider.fetch(uuid).await,
     }
 }

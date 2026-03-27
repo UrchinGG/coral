@@ -12,6 +12,7 @@ pub struct PlayerStatsResponse {
     pub tags: Vec<TagResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skin_url: Option<String>,
+    pub slim: bool,
 }
 
 
