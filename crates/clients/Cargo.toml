@@ -1,0 +1,21 @@
+[package]
+name = "clients"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+hypixel = { path = "../hypixel" }
+render = { path = "../render" }
+
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+image.workspace = true
+async-trait = "0.1"
+base64 = "0.22"
+moka = { version = "0.12", features = ["future"] }

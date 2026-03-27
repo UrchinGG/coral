@@ -51,7 +51,7 @@ async fn init_state() -> Result<AppState> {
         tracing::warn!("Migration skipped: {e}");
     }
     let redis = RedisPool::connect(&env::var("REDIS_URL").expect("REDIS_URL required")).await?;
-    let hypixel = HypixelClient::new(parse_hypixel_keys())?;
+    let hypixel = HypixelClient::new(env::var("HYPIXEL_API_KEY").expect("HYPIXEL_API_KEY required"))?;
     let mojang = MojangClient::new();
     let skin_provider = match LocalSkinProvider::new() {
         Some(p) => {
@@ -72,15 +72,6 @@ async fn init_state() -> Result<AppState> {
         redis,
         env::var("DISCORD_TOKEN").ok(),
     ))
-}
-
-
-fn parse_hypixel_keys() -> Vec<String> {
-    env::var("HYPIXEL_API_KEYS")
-        .expect("HYPIXEL_API_KEYS required")
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .collect()
 }
 
 

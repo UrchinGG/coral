@@ -52,8 +52,7 @@ fn main() {
 
     init_canvas();
 
-    let api_keys = env::var("HYPIXEL_API_KEYS").expect("HYPIXEL_API_KEYS not set");
-    let api_key = api_keys.split(',').next().expect("No API key found");
+    let api_key = env::var("HYPIXEL_API_KEY").expect("HYPIXEL_API_KEY not set");
     let player_name = env::args().nth(1).unwrap_or_else(|| "WarOG".to_string());
 
     let http = Client::builder()

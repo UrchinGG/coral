@@ -18,6 +18,7 @@ COPY Cargo.lock ./
 # Copy all workspace crates
 COPY crates/hypixel ./crates/hypixel
 COPY crates/blacklist ./crates/blacklist
+COPY crates/clients ./crates/clients
 COPY crates/database ./crates/database
 COPY crates/coral-redis ./crates/coral-redis
 COPY crates/render ./crates/render
@@ -28,15 +29,12 @@ COPY crates/coral-admin ./crates/coral-admin
 COPY crates/migration ./crates/migration
 COPY migrations ./migrations
 
-# Build all binaries (GIT_AUTH_TOKEN allows cargo to clone private deps)
+# Build all binaries
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target \
-    --mount=type=secret,id=git_auth_token \
-    git config --global url."https://$(cat /run/secrets/git_auth_token)@github.com/".insteadOf "https://github.com/" \
-    && cargo build --release --bin coral-api --bin coral-bot --bin coral-admin --bin coral-verify \
-    && cp target/release/coral-api target/release/coral-bot target/release/coral-admin target/release/coral-verify /usr/local/bin/ \
-    && git config --global --unset url."https://$(cat /run/secrets/git_auth_token)@github.com/".insteadOf
+    cargo build --release --bin coral-api --bin coral-bot --bin coral-admin --bin coral-verify \
+    && cp target/release/coral-api target/release/coral-bot target/release/coral-admin target/release/coral-verify /usr/local/bin/
 
 # Runtime stage for coral-api
 FROM debian:bookworm-slim AS coral-api

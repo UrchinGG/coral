@@ -22,10 +22,7 @@ Thumbs.db
 # Docker volumes (if local)
 postgres_data/
 
-# Private crates (kept locally, sourced from private repo)
-crates/clients/
-
-# Cargo config (contains local path overrides)
+# Cargo config (may contain production path overrides)
 .cargo/
 
 # Claude
