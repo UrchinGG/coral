@@ -24,7 +24,6 @@ mod utils;
 use api::CoralApiClient;
 use framework::{Data, Handler};
 
-
 #[tokio::main]
 async fn main() -> Result<()> {
     init_logging();
@@ -35,7 +34,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-
 fn init_logging() {
     dotenvy::dotenv().ok();
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
@@ -43,7 +41,6 @@ fn init_logging() {
     });
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
-
 
 async fn init_data() -> Result<Data> {
     render::init_canvas();
@@ -87,7 +84,9 @@ async fn init_data() -> Result<Data> {
         redis_url,
         event_publisher,
         bedwars_images: Arc::new(Mutex::new(HashMap::new())),
+        duels_images: Arc::new(Mutex::new(HashMap::new())),
         session_images: Arc::new(Mutex::new(HashMap::new())),
+        session_duels_images: Arc::new(Mutex::new(HashMap::new())),
         pending_overwrites: Arc::new(Mutex::new(HashMap::new())),
         pending_tag_changes: Arc::new(Mutex::new(HashMap::new())),
         sync_cooldowns: Arc::new(Mutex::new(HashMap::new())),
@@ -95,7 +94,6 @@ async fn init_data() -> Result<Data> {
         active_interactions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     })
 }
-
 
 fn parse_owner_ids() -> Vec<u64> {
     env::var("OWNER_IDS")
@@ -105,20 +103,17 @@ fn parse_owner_ids() -> Vec<u64> {
         .collect()
 }
 
-
 fn parse_channel_id(name: &str) -> Option<ChannelId> {
     let raw = env::var(name).ok()?;
     let id = raw.trim().parse::<u64>().ok()?;
     Some(ChannelId::new(id))
 }
 
-
 fn parse_guild_id(name: &str) -> Option<GuildId> {
     let raw = env::var(name).ok()?;
     let id = raw.trim().parse::<u64>().ok()?;
     Some(GuildId::new(id))
 }
-
 
 async fn build_client(data: Data) -> Result<Client> {
     let token = Token::from_env("DISCORD_TOKEN").expect("Invalid DISCORD_TOKEN");

@@ -357,7 +357,14 @@ fn player_option() -> CreateCommandOption<'static> {
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("session")
         .description("View your session stats over time")
-        .add_option(player_option())
+        .add_option(
+            CreateCommandOption::new(CommandOptionType::SubCommand, "bedwars", "View BedWars session stats")
+                .add_sub_option(player_option()),
+        )
+        .add_option(
+            CreateCommandOption::new(CommandOptionType::SubCommand, "duels", "View Duels session stats")
+                .add_sub_option(player_option()),
+        )
 }
 
 
@@ -383,7 +390,10 @@ pub fn register_monthly() -> CreateCommand<'static> {
 
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
-    run_with_preferred_view(ctx, command, data, None).await
+    match command.data.options.first().map(|o| o.name.as_str()) {
+        Some("duels") => super::session_duels::run(ctx, command, data).await,
+        _ => run_with_preferred_view(ctx, command, data, None).await,
+    }
 }
 
 
@@ -403,9 +413,10 @@ pub async fn run_monthly(ctx: &Context, command: &CommandInteraction, data: &Dat
 
 
 async fn run_with_preferred_view(ctx: &Context, command: &CommandInteraction, data: &Data, preferred: Option<&str>) -> Result<()> {
-    let player_input = command.data.options.first()
-        .and_then(|o| o.value.as_str())
-        .map(|s| s.to_string());
+    let player_input = command.data.options.first().and_then(|o| match &o.value {
+        CommandDataOptionValue::SubCommand(sub) => sub.first().and_then(|s| s.value.as_str()).map(|s| s.to_string()),
+        _ => o.value.as_str().map(|s| s.to_string()),
+    });
     let discord_id = command.user.id.get() as i64;
 
     let player = match player_input {

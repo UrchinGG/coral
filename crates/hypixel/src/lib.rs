@@ -14,5 +14,14 @@ pub use parsing::bedwars::{
     extract_winstreak_snapshot, level_progress, ratio,
 };
 pub use parsing::delta::{SessionPlayerStats, SessionStats};
+pub use parsing::duels::{
+    DUELS_CATEGORIES, DUELS_MODES, DivisionTrack, DuelsBreakdownEntry, DuelsCategoryMeta,
+    DuelsCategoryStats, DuelsDivision, DuelsModeMeta, DuelsModeStats, DuelsOverview, DuelsStats,
+    DuelsView, DuelsViewStats, DuelsWinstreak, division_for_wins, division_progress,
+    duels_category_meta, extract_duels_stats, next_division,
+};
+pub use parsing::duels_winstreaks::{
+    DuelsWinstreakSnapshot, extract_duels_winstreak_snapshot,
+};
 pub use parsing::player::{calculate_network_level, color_code, extract_rank_prefix};
 pub use parsing::winstreaks::{Streak, StreakSource, WinstreakHistory};

@@ -1,6 +1,8 @@
 pub mod bedwars;
+pub mod duels;
 pub mod prestiges;
 pub mod session;
+pub mod session_duels;
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -8,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use hypixel::{BedwarsPlayerStats, GuildInfo, Mode};
+use hypixel::{BedwarsPlayerStats, DuelsStats, DuelsView, GuildInfo, Mode};
 use image::RgbaImage;
 use serenity::all::*;
 
@@ -17,7 +19,6 @@ use render::TagIcon;
 
 use crate::api::{GuildResponse, TagInfo};
 use crate::framework::Data;
-
 
 pub(super) const CACHE_TTL_SECS: u64 = 2 * 60;
 
@@ -32,7 +33,6 @@ const MODE_CHOICES: &[(Mode, &str)] = &[
 pub const ALL_MODES: &[Mode] = &[
     Mode::Solos, Mode::Doubles, Mode::Threes, Mode::Fours, Mode::FourVFour,
 ];
-
 
 pub fn create_mode_dropdown(
     custom_id: &str,
@@ -52,18 +52,62 @@ pub fn create_mode_dropdown(
 
     CreateSelectMenu::new(
         custom_id.to_string(),
-        CreateSelectMenuKind::String { options: options.into() },
+        CreateSelectMenuKind::String {
+            options: options.into(),
+        },
     )
     .min_values(1)
     .max_values(MODE_CHOICES.len() as u8)
 }
-
 
 pub fn parse_mode_value(value: &str) -> Option<(&str, Mode)> {
     let (mode_str, cache_key) = value.split_once(':')?;
     Some((cache_key, Mode::from_str(mode_str)?))
 }
 
+pub fn create_duels_dropdown(
+    custom_id: &str,
+    cache_key: &str,
+    current: DuelsView,
+    stats: &DuelsStats,
+) -> CreateSelectMenu<'static> {
+    let options: Vec<CreateSelectMenuOption<'static>> = stats
+        .active_views()
+        .into_iter()
+        .filter_map(|view| {
+            let view_stats = stats.view_stats(view)?;
+            let title = view_stats.title.clone();
+            let description = format!(
+                "{} W/L, {} K/D",
+                format!("{:.2}", hypixel::ratio(view_stats.wins, view_stats.losses)),
+                format!("{:.2}", hypixel::ratio(view_stats.kills, view_stats.deaths)),
+            );
+            Some(
+                CreateSelectMenuOption::new(title, format!("{}:{cache_key}", view.slug()))
+                    .default_selection(view == current)
+                    .description(description),
+            )
+        })
+        .collect();
+
+    let placeholder = stats
+        .view_stats(current)
+        .map(|view| view.title)
+        .unwrap_or_else(|| "Overall".to_string());
+
+    CreateSelectMenu::new(
+        custom_id.to_string(),
+        CreateSelectMenuKind::String {
+            options: options.into(),
+        },
+    )
+    .placeholder(placeholder)
+}
+
+pub fn parse_duels_value(value: &str) -> Option<(&str, DuelsView)> {
+    let (view_str, cache_key) = value.split_once(':')?;
+    Some((cache_key, DuelsView::from_slug(view_str)?))
+}
 
 pub fn extract_select_value(component: &ComponentInteraction) -> Option<&str> {
     match &component.data.kind {
@@ -71,6 +115,7 @@ pub fn extract_select_value(component: &ComponentInteraction) -> Option<&str> {
         _ => None,
     }
 }
+
 
 
 pub fn extract_select_modes(component: &ComponentInteraction) -> Option<(&str, Vec<Mode>)> {
@@ -95,7 +140,6 @@ pub fn encode_png(image: &RgbaImage) -> Result<Vec<u8>> {
     Ok(buf.into_inner())
 }
 
-
 pub fn extract_tag_icons(tags: &[TagInfo]) -> Vec<TagIcon> {
     tags.iter()
         .filter_map(|t| blacklist::lookup(&t.tag_type))
@@ -103,12 +147,10 @@ pub fn extract_tag_icons(tags: &[TagInfo]) -> Vec<TagIcon> {
         .collect()
 }
 
-
 pub(crate) fn looks_like_uuid(s: &str) -> bool {
     let s = s.replace('-', "");
     s.len() == 32 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
-
 
 pub(crate) fn to_guild_info(guild: &GuildResponse) -> GuildInfo {
     let player = guild.player.as_ref();
@@ -122,9 +164,7 @@ pub(crate) fn to_guild_info(guild: &GuildResponse) -> GuildInfo {
     }
 }
 
-
 pub use crate::interact::send_deferred_error;
-
 
 pub async fn disable_components(ctx: &Context, component: &ComponentInteraction) -> Result<()> {
     component
@@ -140,7 +180,6 @@ pub async fn disable_components(ctx: &Context, component: &ComponentInteraction)
     Ok(())
 }
 
-
 fn extract_gallery_components(components: &[Component]) -> Vec<CreateComponent<'static>> {
     components
         .iter()
@@ -154,13 +193,14 @@ fn extract_gallery_components(components: &[Component]) -> Vec<CreateComponent<'
                         CreateMediaGalleryItem::new(CreateUnfurledMediaItem::new(url.to_string()))
                     })
                     .collect();
-                Some(CreateComponent::MediaGallery(CreateMediaGallery::new(items)))
+                Some(CreateComponent::MediaGallery(CreateMediaGallery::new(
+                    items,
+                )))
             }
             _ => None,
         })
         .collect()
 }
-
 
 pub(super) async fn resolve_uuid(data: &Data, player: &str) -> Option<String> {
     if looks_like_uuid(player) {
@@ -174,7 +214,6 @@ pub(super) async fn resolve_uuid(data: &Data, player: &str) -> Option<String> {
     }
 }
 
-
 pub(super) fn spawn_expiry<T: Send + 'static>(
     http: Arc<Http>,
     token: String,
@@ -184,7 +223,6 @@ pub(super) fn spawn_expiry<T: Send + 'static>(
 ) {
     spawn_expiry_with_retain(http, token, cache, cache_key, get_last_interaction, vec![]);
 }
-
 
 pub(super) fn spawn_expiry_with_retain<T: Send + 'static>(
     http: Arc<Http>,
@@ -221,7 +259,6 @@ pub(super) fn spawn_expiry_with_retain<T: Send + 'static>(
         }
     });
 }
-
 
 pub(super) async fn fetch_skin(
     data: &Data,
