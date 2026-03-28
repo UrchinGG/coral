@@ -20,8 +20,11 @@ pub fn router() -> Router<AppState> {
 #[derive(Deserialize)]
 #[serde(tag = "type")]
 enum Payload {
-    #[serde(rename = "wipe")]
-    Wipe,
+    #[serde(rename = "wipe_members")]
+    WipeMembers,
+
+    #[serde(rename = "wipe_blacklist")]
+    WipeBlacklist,
 
     #[serde(rename = "members")]
     Members { data: Vec<MemberPayload> },
@@ -37,20 +40,12 @@ enum Payload {
 struct MemberPayload {
     discord_id: i64,
     uuid: Option<String>,
-    api_key: Option<String>,
     join_date: Option<String>,
     request_count: i64,
     access_level: i16,
     key_locked: bool,
     config: serde_json::Value,
-    ip_history: Vec<IpEntry>,
     minecraft_accounts: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct IpEntry {
-    ip_address: String,
-    first_seen: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -96,7 +91,8 @@ async fn migrate(
     let pool = state.db.pool();
 
     match payload {
-        Payload::Wipe => wipe(pool).await,
+        Payload::WipeMembers => wipe_members(pool).await,
+        Payload::WipeBlacklist => wipe_blacklist(pool).await,
         Payload::Members { data } => migrate_members(pool, &data).await,
         Payload::Blacklist { data } => migrate_blacklist(pool, &data).await,
         Payload::Snapshots { data } => migrate_snapshots(pool, &data).await,
@@ -104,22 +100,26 @@ async fn migrate(
 }
 
 
-async fn wipe(pool: &sqlx::PgPool) -> std::result::Result<Json<Result>, ApiError> {
-    let snapshots = sqlx::query("DELETE FROM player_snapshots WHERE source = 'migration'")
-        .execute(pool).await?.rows_affected();
-    let tags = sqlx::query("DELETE FROM player_tags")
-        .execute(pool).await?.rows_affected();
-    let players = sqlx::query("DELETE FROM blacklist_players")
-        .execute(pool).await?.rows_affected();
-    let ips = sqlx::query("DELETE FROM api_key_ips")
-        .execute(pool).await?.rows_affected();
+async fn wipe_members(pool: &sqlx::PgPool) -> std::result::Result<Json<Result>, ApiError> {
     let alts = sqlx::query("DELETE FROM minecraft_accounts")
         .execute(pool).await?.rows_affected();
     let members = sqlx::query("DELETE FROM members")
         .execute(pool).await?.rows_affected();
 
-    let total = (members + players + tags + snapshots) as usize;
-    info!("Wiped: {members} members, {players} players, {tags} tags, {snapshots} snapshots, {ips} ips, {alts} alts");
+    let total = (members + alts) as usize;
+    info!("Wiped members: {members} members, {alts} alts");
+    Ok(Json(Result { migrated: total, errors: 0 }))
+}
+
+
+async fn wipe_blacklist(pool: &sqlx::PgPool) -> std::result::Result<Json<Result>, ApiError> {
+    let tags = sqlx::query("DELETE FROM player_tags")
+        .execute(pool).await?.rows_affected();
+    let players = sqlx::query("DELETE FROM blacklist_players")
+        .execute(pool).await?.rows_affected();
+
+    let total = (players + tags) as usize;
+    info!("Wiped blacklist: {players} players, {tags} tags");
     Ok(Json(Result { migrated: total, errors: 0 }))
 }
 
@@ -181,9 +181,15 @@ async fn migrate_snapshots(pool: &sqlx::PgPool, data: &[SnapshotPayload]) -> std
 
 async fn insert_member(pool: &sqlx::PgPool, m: &MemberPayload) -> std::result::Result<(), sqlx::Error> {
     let join_date = m.join_date.as_ref()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .and_then(|s| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .inspect_err(|e| warn!("Bad join_date '{}' for member {}: {e}", s, m.discord_id))
+                .ok()
+        })
         .map(|dt| dt.with_timezone(&chrono::Utc))
         .unwrap_or_else(chrono::Utc::now);
+
+    let api_key = uuid::Uuid::new_v4().to_string();
 
     let (member_id,): (i64,) = sqlx::query_as(
         r#"
@@ -196,21 +202,10 @@ async fn insert_member(pool: &sqlx::PgPool, m: &MemberPayload) -> std::result::R
         RETURNING id
         "#,
     )
-    .bind(m.discord_id).bind(&m.uuid).bind(&m.api_key)
+    .bind(m.discord_id).bind(&m.uuid).bind(&api_key)
     .bind(join_date).bind(m.request_count).bind(m.access_level)
     .bind(m.key_locked).bind(&m.config)
     .fetch_one(pool).await?;
-
-    for ip in &m.ip_history {
-        let first_seen = ip.first_seen.as_ref()
-            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.with_timezone(&chrono::Utc))
-            .unwrap_or_else(chrono::Utc::now);
-
-        let _ = sqlx::query(
-            "INSERT INTO api_key_ips (member_id, ip_address, first_seen, last_seen) VALUES ($1, $2::inet, $3, $3) ON CONFLICT DO NOTHING",
-        ).bind(member_id).bind(&ip.ip_address).bind(first_seen).execute(pool).await;
-    }
 
     for uuid in &m.minecraft_accounts {
         let _ = sqlx::query(
@@ -242,9 +237,16 @@ async fn insert_blacklist_player(pool: &sqlx::PgPool, p: &BlacklistPayload) -> s
     .bind(p.locked_by).bind(locked_at).bind(&p.evidence_thread)
     .fetch_one(pool).await?;
 
+    sqlx::query("DELETE FROM player_tags WHERE player_id = $1")
+        .bind(player_id).execute(pool).await?;
+
     for tag in &p.tags {
         let added_on = tag.added_on.as_ref()
-            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .and_then(|s| {
+                chrono::DateTime::parse_from_rfc3339(s)
+                    .inspect_err(|e| warn!("Bad added_on '{}' for player {}: {e}", s, p.uuid))
+                    .ok()
+            })
             .map(|dt| dt.with_timezone(&chrono::Utc))
             .unwrap_or_else(chrono::Utc::now);
 
@@ -277,6 +279,8 @@ async fn insert_snapshot_batch(pool: &sqlx::PgPool, batch: &[SnapshotPayload]) -
             base + 1, base + 2, base + 3, base + 4, base + 5
         ));
     }
+
+    query.push_str(" ON CONFLICT DO NOTHING");
 
     let mut bound = sqlx::query(&query);
     for snap in batch {
