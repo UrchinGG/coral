@@ -78,7 +78,7 @@ async fn init_state() -> Result<AppState> {
 fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health_check))
-        .merge(Scalar::with_url("/docs", openapi::ApiDoc::openapi()))
+        .merge(Scalar::with_url("/", openapi::ApiDoc::openapi()))
         .nest("/v3", routes::router(state.clone()))
         .with_state(state)
 }
