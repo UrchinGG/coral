@@ -11,7 +11,7 @@ use crate::error::ClientError;
 const MOJANG_API: &str = "https://api.mojang.com";
 const SESSION_API: &str = "https://sessionserver.mojang.com";
 
-const CACHE_TTL_DEFAULT: Duration = Duration::from_secs(30);
+const CACHE_TTL_DEFAULT: Duration = Duration::from_secs(45);
 const CACHE_TTL_NAME_LOCKED: Duration = Duration::from_secs(30 * 24 * 60 * 60); // 30 days
 
 #[derive(Debug, Clone)]

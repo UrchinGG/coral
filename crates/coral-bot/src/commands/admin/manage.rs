@@ -53,7 +53,7 @@ pub(crate) async fn build_main_view(
     let repo = MemberRepository::new(data.db.pool());
     let target = repo.get_by_discord_id(target_id as i64).await.ok().flatten();
     let target_rank = AccessRank::of(data, target_id, target.as_ref());
-    let can_modify = invoker_rank > target_rank;
+    let can_modify = invoker_rank > target_rank || invoker_rank >= AccessRank::Owner;
 
     let mut parts: Vec<CreateContainerComponent> = vec![text(format!("## User Management — <@{target_id}>"))];
     match &target {
@@ -275,7 +275,7 @@ async fn refresh_main_from_modal(ctx: &Context, modal: &ModalInteraction, data: 
 
 
 fn require_mod_over(invoker_rank: AccessRank, target_rank: AccessRank) -> bool {
-    invoker_rank >= AccessRank::Moderator && invoker_rank > target_rank
+    invoker_rank >= AccessRank::Owner || (invoker_rank >= AccessRank::Moderator && invoker_rank > target_rank)
 }
 
 
@@ -450,7 +450,7 @@ pub async fn handle_toggle_tagging(ctx: &Context, component: &ComponentInteracti
     let invoker_id = component.user.id.get();
     let (invoker_rank, target, target_rank) = fetch_context(data, invoker_id, target_id).await?;
 
-    if invoker_rank < AccessRank::Helper || invoker_rank <= target_rank {
+    if invoker_rank < AccessRank::Helper || (invoker_rank <= target_rank && invoker_rank < AccessRank::Owner) {
         return interact::send_component_error(ctx, component, "Error", "Insufficient permissions").await;
     }
 

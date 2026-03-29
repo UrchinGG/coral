@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::error::ClientError;
 
 const HYPIXEL_API_BASE: &str = "https://api.hypixel.net/v2";
-const CACHE_TTL: Duration = Duration::from_secs(30);
+const CACHE_TTL: Duration = Duration::from_secs(45);
 
 
 #[derive(Clone)]
