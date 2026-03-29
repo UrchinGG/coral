@@ -1,11 +1,12 @@
 use std::io::Cursor;
 
 use axum::body::Body;
-use axum::extract::{Path, State};
+use axum::extract::{Query, State};
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Extension, Json, Router};
+use serde::Deserialize;
 use serde_json::Value;
 
 use clients::{is_uuid, normalize_uuid};
@@ -20,15 +21,22 @@ use crate::{
 };
 
 
+#[derive(Deserialize)]
+pub(crate) struct PlayerQuery {
+    pub uuid: Option<String>,
+    pub name: Option<String>,
+}
+
+
 pub fn public_router() -> Router<AppState> {
-    Router::new().route("/player/tags/{identifier}", get(player_tags))
+    Router::new().route("/player/tags", get(player_tags))
 }
 
 
 pub fn internal_router() -> Router<AppState> {
     Router::new()
-        .route("/player/stats/{identifier}", get(player_stats))
-        .route("/player/skin/{identifier}", get(player_skin))
+        .route("/player/profile", get(player_stats))
+        .route("/player/skin", get(player_skin))
 }
 
 
@@ -39,6 +47,13 @@ pub async fn resolve_identifier(state: &AppState, identifier: &str) -> Result<(S
         let id = state.mojang.resolve(identifier).await?;
         Ok((normalize_uuid(&id.uuid), Some(id.username)))
     }
+}
+
+
+fn extract_identifier(query: &PlayerQuery) -> Result<&str, ApiError> {
+    query.uuid.as_deref()
+        .or(query.name.as_deref())
+        .ok_or_else(|| ApiError::BadRequest("query parameter 'uuid' or 'name' required".into()))
 }
 
 
@@ -64,9 +79,10 @@ fn spawn_cache_update(state: &AppState, uuid: &str, data: &Value, username: &str
 
 #[utoipa::path(
     get,
-    path = "/v3/player/tags/{identifier}",
+    path = "/v3/player/tags",
     params(
-        ("identifier" = String, Path, description = "Player UUID or username")
+        ("uuid" = Option<String>, Query, description = "Player UUID"),
+        ("name" = Option<String>, Query, description = "Player username"),
     ),
     responses(
         (status = 200, description = "Player tags retrieved", body = PlayerTagsResponse),
@@ -79,9 +95,10 @@ fn spawn_cache_update(state: &AppState, uuid: &str, data: &Value, username: &str
 )]
 pub async fn player_tags(
     State(state): State<AppState>,
-    Path(identifier): Path<String>,
+    Query(query): Query<PlayerQuery>,
 ) -> Result<Json<PlayerTagsResponse>, ApiError> {
-    let (uuid, _) = resolve_identifier(&state, &identifier).await?;
+    let identifier = extract_identifier(&query)?;
+    let (uuid, _) = resolve_identifier(&state, identifier).await?;
     let tags = BlacklistRepository::new(state.db.pool()).get_tags(&uuid).await?;
     Ok(Json(PlayerTagsResponse {
         uuid,
@@ -92,12 +109,13 @@ pub async fn player_tags(
 
 #[utoipa::path(
     get,
-    path = "/v3/player/stats/{identifier}",
+    path = "/v3/player/profile",
     params(
-        ("identifier" = String, Path, description = "Player UUID or username")
+        ("uuid" = Option<String>, Query, description = "Player UUID"),
+        ("name" = Option<String>, Query, description = "Player username"),
     ),
     responses(
-        (status = 200, description = "Player stats retrieved", body = PlayerStatsResponse),
+        (status = 200, description = "Player profile retrieved", body = PlayerStatsResponse),
         (status = 400, description = "Invalid identifier", body = ErrorResponse),
         (status = 401, description = "Unauthorized", body = ErrorResponse),
         (status = 404, description = "Player not found", body = ErrorResponse),
@@ -110,10 +128,11 @@ pub async fn player_tags(
 pub async fn player_stats(
     State(state): State<AppState>,
     dev_auth: Option<Extension<DeveloperKeyAuth>>,
-    Path(identifier): Path<String>,
+    Query(query): Query<PlayerQuery>,
 ) -> Result<Json<PlayerStatsResponse>, ApiError> {
     if let Some(Extension(ref dev)) = dev_auth { dev.require(permissions::PLAYER_DATA)?; }
-    let (uuid, username_hint) = resolve_identifier(&state, &identifier).await?;
+    let identifier = extract_identifier(&query)?;
+    let (uuid, username_hint) = resolve_identifier(&state, identifier).await?;
     let repo = BlacklistRepository::new(state.db.pool());
     let (player_data, tags, profile) = tokio::join!(
         state.hypixel.get_player(&uuid),
@@ -144,9 +163,10 @@ pub async fn player_stats(
 
 #[utoipa::path(
     get,
-    path = "/v3/player/skin/{identifier}",
+    path = "/v3/player/skin",
     params(
-        ("identifier" = String, Path, description = "Player UUID or username")
+        ("uuid" = Option<String>, Query, description = "Player UUID"),
+        ("name" = Option<String>, Query, description = "Player username"),
     ),
     responses(
         (status = 200, description = "Player skin PNG", content_type = "image/png"),
@@ -161,12 +181,13 @@ pub async fn player_stats(
 pub async fn player_skin(
     State(state): State<AppState>,
     dev_auth: Option<Extension<DeveloperKeyAuth>>,
-    Path(identifier): Path<String>,
+    Query(query): Query<PlayerQuery>,
 ) -> Result<Response, ApiError> {
     if let Some(Extension(ref dev)) = dev_auth { dev.require(permissions::PLAYER_DATA)?; }
     let provider = state.skin_provider.as_ref()
         .ok_or_else(|| ApiError::Internal("skin rendering unavailable".into()))?;
-    let (uuid, _) = resolve_identifier(&state, &identifier).await?;
+    let identifier = extract_identifier(&query)?;
+    let (uuid, _) = resolve_identifier(&state, identifier).await?;
     let skin = provider.fetch(&uuid).await
         .ok_or_else(|| ApiError::NotFound("skin not found".into()))?;
 

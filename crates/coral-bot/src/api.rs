@@ -84,7 +84,8 @@ impl CoralApiClient {
     }
 
     pub async fn get_player_stats(&self, identifier: &str) -> Result<PlayerStatsResponse, ApiError> {
-        self.get(&format!("{}/v3/player/stats/{}", self.base_url, identifier)).await
+        let param = if identifier.len() == 32 && identifier.chars().all(|c| c.is_ascii_hexdigit()) { "uuid" } else { "name" };
+        self.get(&format!("{}/v3/player/profile?{}={}", self.base_url, param, identifier)).await
     }
 
     pub async fn get_guild(&self, identifier: &str, by: Option<&str>) -> Result<Option<GuildResponse>, ApiError> {

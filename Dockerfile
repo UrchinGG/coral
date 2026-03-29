@@ -33,7 +33,9 @@ COPY migrations ./migrations
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target \
-    cargo build --release --bin coral-api --bin coral-bot --bin coral-admin --bin coral-verify \
+    --mount=type=secret,id=git_auth_token \
+    git config --global url."https://$(cat /run/secrets/git_auth_token)@github.com/".insteadOf "https://github.com/" \
+    && cargo build --release --bin coral-api --bin coral-bot --bin coral-admin --bin coral-verify \
     && cp target/release/coral-api target/release/coral-bot target/release/coral-admin target/release/coral-verify /usr/local/bin/
 
 # Runtime stage for coral-api

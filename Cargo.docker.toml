@@ -68,7 +68,7 @@ mongodb = "3"
 # Internal crates
 hypixel = { path = "crates/hypixel" }
 blacklist = { path = "crates/blacklist" }
-clients = { path = "crates/clients" }
+clients = { git = "https://github.com/Hexze/coral-clients", branch = "master" }
 database = { path = "crates/database" }
 coral-redis = { path = "crates/coral-redis" }
 render = { path = "crates/render" }
