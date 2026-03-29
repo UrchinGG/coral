@@ -226,6 +226,18 @@ impl<'a> MemberRepository<'a> {
         .map(|r| r.rows_affected() > 0)
     }
 
+    pub async fn count(&self) -> Result<i64, sqlx::Error> {
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM members")
+            .fetch_one(self.pool).await?;
+        Ok(count)
+    }
+
+    pub async fn total_requests(&self) -> Result<i64, sqlx::Error> {
+        let (total,): (i64,) = sqlx::query_as("SELECT COALESCE(SUM(request_count), 0) FROM members")
+            .fetch_one(self.pool).await?;
+        Ok(total)
+    }
+
     pub async fn record_ip(&self, member_id: i64, ip: &str) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT INTO api_key_ips (member_id, ip_address) VALUES ($1, $2::inet)

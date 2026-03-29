@@ -349,18 +349,60 @@ fn create_session_dropdown(
 }
 
 
+fn player_option() -> CreateCommandOption<'static> {
+    CreateCommandOption::new(CommandOptionType::String, "player", "Minecraft username or UUID")
+}
+
+
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("session")
         .description("View your session stats over time")
-        .add_option(CreateCommandOption::new(
-            CommandOptionType::String,
-            "player",
-            "Minecraft username or UUID",
-        ))
+        .add_option(player_option())
+}
+
+
+pub fn register_daily() -> CreateCommand<'static> {
+    CreateCommand::new("daily")
+        .description("View your daily session stats")
+        .add_option(player_option())
+}
+
+
+pub fn register_weekly() -> CreateCommand<'static> {
+    CreateCommand::new("weekly")
+        .description("View your weekly session stats")
+        .add_option(player_option())
+}
+
+
+pub fn register_monthly() -> CreateCommand<'static> {
+    CreateCommand::new("monthly")
+        .description("View your monthly session stats")
+        .add_option(player_option())
 }
 
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
+    run_with_preferred_view(ctx, command, data, None).await
+}
+
+
+pub async fn run_daily(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
+    run_with_preferred_view(ctx, command, data, Some("daily")).await
+}
+
+
+pub async fn run_weekly(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
+    run_with_preferred_view(ctx, command, data, Some("weekly")).await
+}
+
+
+pub async fn run_monthly(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
+    run_with_preferred_view(ctx, command, data, Some("monthly")).await
+}
+
+
+async fn run_with_preferred_view(ctx: &Context, command: &CommandInteraction, data: &Data, preferred: Option<&str>) -> Result<()> {
     let player_input = command.data.options.first()
         .and_then(|o| o.value.as_str())
         .map(|s| s.to_string());
@@ -394,10 +436,9 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
 
     match result {
         Ok(session_cache) => {
-            let initial_view = PERIODS
-                .iter()
-                .map(|p| p.key())
-                .find(|k| session_cache.images.contains_key(*k))
+            let initial_view = preferred
+                .filter(|k| session_cache.images.contains_key(*k))
+                .or_else(|| PERIODS.iter().map(|p| p.key()).find(|k| session_cache.images.contains_key(*k)))
                 .unwrap_or("daily");
             let initial_png = session_cache.images.get(initial_view).cloned();
             let uuid = session_cache.uuid.clone();

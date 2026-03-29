@@ -249,6 +249,24 @@ impl<'a> BlacklistRepository<'a> {
             .collect())
     }
 
+    pub async fn count_players(&self) -> Result<i64, sqlx::Error> {
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blacklist_players")
+            .fetch_one(self.pool).await?;
+        Ok(count)
+    }
+
+    pub async fn count_active_tags(&self) -> Result<i64, sqlx::Error> {
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM player_tags WHERE removed_on IS NULL")
+            .fetch_one(self.pool).await?;
+        Ok(count)
+    }
+
+    pub async fn count_tags_by_type(&self) -> Result<Vec<(String, i64)>, sqlx::Error> {
+        sqlx::query_as(
+            "SELECT tag_type, COUNT(*) as count FROM player_tags WHERE removed_on IS NULL GROUP BY tag_type ORDER BY count DESC"
+        ).fetch_all(self.pool).await
+    }
+
     pub async fn count_tags_by_user(&self, discord_id: i64) -> Result<i64, sqlx::Error> {
         let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM player_tags WHERE added_by = $1")
             .bind(discord_id)
