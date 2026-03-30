@@ -18,7 +18,6 @@ use database::{
 use crate::{expr, framework::Data};
 
 pub const NICKNAME_MAX_LEN: usize = 32;
-const NICKNAME_SEPARATOR: &str = " | ";
 const BULK_CONCURRENCY: usize = 5;
 const REFRESH_THRESHOLD: Duration = Duration::from_secs(4 * 3600);
 const MEMBERS_PER_PAGE: u16 = 1000;
@@ -41,39 +40,20 @@ fn is_cancelled(token: &CancelToken) -> bool {
 }
 
 
-
-pub fn build_nickname(prefix: &str, current_nick: Option<&str>) -> String {
-    if prefix.is_empty() {
-        return String::new();
-    }
-
-    let Some(current) = current_nick else {
-        return prefix.to_string();
+fn extract_custom_nickname(template: &str, template_ctx: &mut Value, current_nick: Option<&str>) -> String {
+    let current = match current_nick {
+        Some(nick) if !nick.is_empty() => nick,
+        _ => return String::new(),
     };
 
-    if current.starts_with(prefix) {
-        return truncate_nick(current, NICKNAME_MAX_LEN);
-    }
+    template_ctx["discord"]["nickname"] = Value::String(String::new());
+    let base = expr::render_template(template, template_ctx).to_truncated(NICKNAME_MAX_LEN);
 
-    let custom = current
-        .strip_prefix(prefix.split(NICKNAME_SEPARATOR).next().unwrap_or(prefix))
-        .map(|rest| rest.trim_start_matches(NICKNAME_SEPARATOR).trim())
+    current
+        .strip_prefix(base.trim_end())
+        .map(|rest| rest.trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or(current.trim());
-
-    if custom.is_empty() || prefix.len() + NICKNAME_SEPARATOR.len() >= NICKNAME_MAX_LEN {
-        return prefix.to_string();
-    }
-
-    truncate_nick(&format!("{prefix}{NICKNAME_SEPARATOR}{custom}"), NICKNAME_MAX_LEN)
-}
-
-
-fn truncate_nick(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len { return s.to_string() }
-    let mut end = max_len;
-    while !s.is_char_boundary(end) { end -= 1 }
-    s[..end].trim_end().to_string()
+        .unwrap_or_default()
 }
 
 
@@ -372,13 +352,15 @@ pub(crate) async fn sync_member(
     let roles_changed = roles != original_roles;
 
     let nickname = config.nickname_template.as_ref().and_then(|template| {
-        let prefix = expr::render_template(template, &template_ctx).to_truncated(NICKNAME_MAX_LEN);
-        let nick = if preserve_custom {
-            build_nickname(&prefix, member.nick.as_deref())
+        let nick = if preserve_custom && template.contains("discord.nickname") {
+            let mut ctx = template_ctx.clone();
+            let custom = extract_custom_nickname(template, &mut ctx, member.nick.as_deref());
+            ctx["discord"]["nickname"] = Value::String(custom);
+            expr::render_template(template, &ctx).to_truncated(NICKNAME_MAX_LEN)
         } else {
-            prefix
+            expr::render_template(template, &template_ctx).to_truncated(NICKNAME_MAX_LEN)
         };
-        (nick != "" && member.nick.as_deref() != Some(&nick)).then_some(nick)
+        (!nick.is_empty() && member.nick.as_deref() != Some(&nick)).then_some(nick)
     });
 
     if !roles_changed && nickname.is_none() { return Ok(false) }
