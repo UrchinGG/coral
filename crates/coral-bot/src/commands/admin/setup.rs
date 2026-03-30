@@ -83,20 +83,32 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         return interact::send_error(ctx, command, "Error", "This command can only be used in a server.").await;
     };
 
+    command
+        .create_response(&ctx.http, CreateInteractionResponse::Defer(
+            CreateInteractionResponseMessage::new().flags(MessageFlags::EPHEMERAL),
+        ))
+        .await?;
+
+    let gid = guild_id.get() as i64;
+    let uid = command.user.id.get() as i64;
     let repo = GuildConfigRepository::new(data.db.pool());
-    let config = repo.upsert(guild_id.get() as i64, command.user.id.get() as i64).await?;
-    let rules = repo.get_role_rules(guild_id.get() as i64).await?;
-    let preview_ctx = build_preview_context(ctx, data, guild_id.get(), command.user.id.get()).await;
+    let member_repo = MemberRepository::new(data.db.pool());
+
+    let (config, rules, member) = tokio::try_join!(
+        repo.upsert(gid, uid),
+        repo.get_role_rules(gid),
+        async { member_repo.get_by_discord_id(uid).await },
+    )?;
+
+    let preview_ctx = build_preview_from_member(ctx, data, guild_id.get(), command.user.id.get(), member).await;
     let components = build_main_view(&config, &rules, guild_id.get(), preview_ctx.as_ref());
 
     command
-        .create_response(
+        .edit_response(
             &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
-                    .components(components),
-            ),
+            EditInteractionResponse::new()
+                .flags(MessageFlags::IS_COMPONENTS_V2)
+                .components(components),
         )
         .await?;
     Ok(())
@@ -847,12 +859,28 @@ async fn build_preview_context(
 ) -> Option<serde_json::Value> {
     let member = MemberRepository::new(data.db.pool())
         .get_by_discord_id(user_id as i64).await.ok()??;
-    let uuid = member.uuid.as_deref()?;
-    let hypixel_data = CacheRepository::new(data.db.pool())
-        .get_latest_snapshot(uuid).await.ok()??;
-    let discord_member = GuildId::new(guild_id)
-        .member(&ctx.http, UserId::new(user_id)).await.ok()?;
-    let tags = crate::sync::active_tags(data, uuid).await;
+    build_preview_from_member(ctx, data, guild_id, user_id, Some(member)).await
+}
+
+
+async fn build_preview_from_member(
+    ctx: &Context,
+    data: &Data,
+    guild_id: u64,
+    user_id: u64,
+    member: Option<database::Member>,
+) -> Option<serde_json::Value> {
+    let uuid = member?.uuid?;
+
+    let cache_repo = CacheRepository::new(data.db.pool());
+    let (hypixel_data, discord_member, tags) = tokio::join!(
+        cache_repo.get_latest_snapshot(&uuid),
+        GuildId::new(guild_id).member(&ctx.http, UserId::new(user_id)),
+        crate::sync::active_tags(data, &uuid),
+    );
+
+    let hypixel_data = hypixel_data.ok()??;
+    let discord_member = discord_member.ok()?;
     Some(crate::sync::build_template_context(&hypixel_data, &discord_member, &tags))
 }
 
