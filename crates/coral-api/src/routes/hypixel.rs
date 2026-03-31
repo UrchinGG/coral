@@ -5,8 +5,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use clients::{is_uuid, normalize_uuid};
+use database::CacheRepository;
 
-use crate::{error::ApiError, state::AppState};
+use crate::{cache::SNAPSHOT_SOURCE, error::ApiError, state::AppState};
 
 use super::player::resolve_identifier;
 
@@ -39,8 +40,23 @@ async fn player(
 ) -> Result<Json<Value>, ApiError> {
     let identifier = query.uuid.as_deref().or(query.name.as_deref())
         .ok_or_else(|| ApiError::BadRequest("query parameter 'uuid' or 'name' required".into()))?;
-    let (uuid, _) = resolve_identifier(&state, identifier).await?;
+    let (uuid, username_hint) = resolve_identifier(&state, identifier).await?;
     let data = state.hypixel.get_player(&uuid).await?;
+
+    if let Some(ref player) = data {
+        let username = username_hint
+            .or_else(|| player["displayname"].as_str().map(String::from))
+            .unwrap_or_else(|| uuid.clone());
+        let pool = state.db.pool().clone();
+        let uuid_clone = uuid.clone();
+        let player_clone = player.clone();
+        tokio::spawn(async move {
+            let _ = CacheRepository::new(&pool)
+                .store_snapshot(&uuid_clone, &player_clone, None, Some(SNAPSHOT_SOURCE), Some(&username))
+                .await;
+        });
+    }
+
     Ok(Json(json!({ "success": true, "player": data })))
 }
 

@@ -37,6 +37,9 @@ enum Payload {
 
     #[serde(rename = "snapshots")]
     Snapshots { data: Vec<SnapshotPayload> },
+
+    #[serde(rename = "replace_snapshots")]
+    ReplaceSnapshots { data: Vec<SnapshotPayload> },
 }
 
 #[derive(Deserialize)]
@@ -100,6 +103,7 @@ async fn migrate(
         Payload::Members { data } => migrate_members(pool, &data).await,
         Payload::Blacklist { data } => migrate_blacklist(pool, &data).await,
         Payload::Snapshots { data } => migrate_snapshots(pool, &data).await,
+        Payload::ReplaceSnapshots { data } => replace_snapshots(pool, &data).await,
     }
 }
 
@@ -312,4 +316,38 @@ async fn insert_snapshot_batch(pool: &sqlx::PgPool, batch: &[SnapshotPayload]) -
 
     bound.execute(pool).await?;
     Ok(batch.len())
+}
+
+
+async fn replace_snapshots(pool: &sqlx::PgPool, data: &[SnapshotPayload]) -> std::result::Result<Json<Result>, ApiError> {
+    let mut uuids: Vec<String> = data.iter().map(|s| s.uuid.clone()).collect();
+    uuids.sort();
+    uuids.dedup();
+
+    let mut deleted = 0u64;
+    for uuid in &uuids {
+        deleted += sqlx::query("DELETE FROM player_snapshots WHERE uuid = $1 AND source != 'migration'")
+            .bind(uuid)
+            .execute(pool)
+            .await
+            .map_err(|e| ApiError::Internal(format!("failed to delete snapshots for {uuid}: {e}")))?
+            .rows_affected();
+    }
+
+    info!("Deleted {deleted} non-migration snapshots for {} players", uuids.len());
+
+    let mut total = 0;
+    let mut errors = 0;
+    for chunk in data.chunks(1000) {
+        match insert_snapshot_batch(pool, chunk).await {
+            Ok(n) => total += n,
+            Err(e) => {
+                warn!("Snapshot batch insert failed: {e}");
+                errors += chunk.len();
+            }
+        }
+    }
+
+    info!("Inserted {total} migration snapshots ({errors} errors)");
+    Ok(Json(Result { migrated: total, errors }))
 }

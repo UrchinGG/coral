@@ -8,7 +8,7 @@ use clients::normalize_uuid;
 use coral_redis::BlacklistEvent;
 use database::{AccessRank, BlacklistRepository};
 
-use crate::{auth::AuthenticatedMember, error::ApiError, state::AppState};
+use crate::{auth::AuthenticatedMember, cache::refresh_player_cache, error::ApiError, state::AppState};
 
 const MAX_REASON_LENGTH: usize = 500;
 const MAX_IDENTIFIER_LENGTH: usize = 36;
@@ -135,10 +135,13 @@ pub async fn add_tag(
         .map_err(|e| ApiError::Internal(format!("failed to add tag: {e}")))?;
 
     state.event_publisher.publish(&BlacklistEvent::TagAdded {
-        uuid,
+        uuid: uuid.clone(),
         tag_id: id,
         added_by: member.0.discord_id,
     }).await;
+
+    let state = state.clone();
+    tokio::spawn(async move { refresh_player_cache(&state, &uuid, None).await });
 
     Ok(Json(TagIdResponse { id }))
 }
@@ -182,11 +185,15 @@ pub async fn remove_tag(
         .map_err(|e| ApiError::Internal(format!("failed to remove tag: {e}")))?;
 
     if success {
+        let uuid = normalize_uuid(&uuid);
         state.event_publisher.publish(&BlacklistEvent::TagRemoved {
-            uuid: normalize_uuid(&uuid),
+            uuid: uuid.clone(),
             tag_id,
             removed_by: member.0.discord_id,
         }).await;
+
+        let state = state.clone();
+        tokio::spawn(async move { refresh_player_cache(&state, &uuid, None).await });
     }
     Ok(Json(SuccessResponse { success }))
 }
@@ -247,13 +254,16 @@ pub async fn overwrite_tag(
         .map_err(|e| ApiError::Internal(format!("failed to add new tag: {e}")))?;
 
     state.event_publisher.publish(&BlacklistEvent::TagOverwritten {
-        uuid,
+        uuid: uuid.clone(),
         old_tag_id: tag_id,
         old_tag_type: tag.tag_type.clone(),
         old_reason: tag.reason.clone(),
         new_tag_id: id,
         overwritten_by: member.0.discord_id,
     }).await;
+
+    let state = state.clone();
+    tokio::spawn(async move { refresh_player_cache(&state, &uuid, None).await });
 
     Ok(Json(TagIdResponse { id }))
 }
