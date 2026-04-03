@@ -64,7 +64,7 @@ async fn run_login_flow(
     let server_hash = minecraft_hex_digest(&shared_secret, &state.key.der_public_key);
     let player = auth::verify_session(&state.http, &username, &server_hash).await?;
 
-    let code = state.codes.insert(player.uuid, player.username.clone()).await;
+    let code = state.codes.insert(player.uuid, player.username.clone()).await?;
     send_encrypted_disconnect(&mut stream, &mut cipher, &(state.format_disconnect)(&code), protocol).await
 }
 
@@ -242,4 +242,6 @@ pub enum ConnectionError {
     TokenMismatch,
     #[error("shared secret must be 16 bytes")]
     InvalidSecretLength,
+    #[error("code generation: {0}")]
+    CodeGeneration(#[from] anyhow::Error),
 }

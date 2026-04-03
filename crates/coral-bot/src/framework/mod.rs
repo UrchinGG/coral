@@ -157,10 +157,10 @@ impl Handler {
                     commands::admin::accounts_panel::handle_link_pick(ctx, component, &self.data).await
                 }
                 _ if action.starts_with("add_account:") => {
-                    commands::admin::accounts_panel::handle_add_account_button(ctx, component).await
+                    commands::admin::accounts_panel::handle_add_account_button(ctx, component, &self.data).await
                 }
                 _ if action.starts_with("add_code:") => {
-                    commands::admin::accounts_panel::handle_add_code_button(ctx, component).await
+                    commands::admin::accounts_panel::handle_add_code_button(ctx, component, &self.data).await
                 }
                 _ if action.starts_with("remove_account:") => {
                     commands::admin::accounts_panel::handle_remove_account(ctx, component, &self.data).await

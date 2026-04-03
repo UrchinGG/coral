@@ -21,7 +21,6 @@ mod auth;
 mod cache;
 mod discord;
 mod error;
-mod middleware;
 mod openapi;
 mod responses;
 mod routes;

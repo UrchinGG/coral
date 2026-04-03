@@ -1,3 +1,5 @@
+use anyhow::{Result, bail};
+use rand::Rng;
 use reqwest::Client;
 use uuid::Uuid;
 
@@ -19,7 +21,7 @@ impl CodeStore {
         Self { http, api_url, api_key }
     }
 
-    pub async fn insert(&self, uuid: Uuid, username: String) -> String {
+    pub async fn insert(&self, uuid: Uuid, username: String) -> Result<String> {
         let url = format!("{}/v3/verify/codes", self.api_url);
         for _ in 0..MAX_ATTEMPTS {
             let code = generate_code();
@@ -33,17 +35,16 @@ impl CodeStore {
                     "username": username,
                 }))
                 .send()
-                .await
-                .expect("failed to store verification code");
+                .await?;
             if resp.status().is_success() {
-                return code;
+                return Ok(code);
             }
         }
-        panic!("failed to generate unique code after {MAX_ATTEMPTS} attempts");
+        bail!("failed to generate unique code after {MAX_ATTEMPTS} attempts")
     }
 }
 
 
 fn generate_code() -> String {
-    (CODE_MIN + rand::random::<u16>() % (CODE_MAX - CODE_MIN + 1)).to_string()
+    rand::thread_rng().gen_range(CODE_MIN..=CODE_MAX).to_string()
 }

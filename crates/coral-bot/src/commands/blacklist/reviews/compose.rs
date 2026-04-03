@@ -157,7 +157,7 @@ pub async fn handle_addplayer_reason_modal(
             let mut current_tags = Vec::new();
             if let Some(aw) = tags.awaiting_evidence { current_tags.push(aw); }
             current_tags.push(tag_id);
-            let _ = set_forum_tags(ctx, modal.channel_id.expect_thread(), &current_tags).await;
+            let _ = set_forum_tags(ctx, thread_id(modal.channel_id), &current_tags).await;
         }
     }
 

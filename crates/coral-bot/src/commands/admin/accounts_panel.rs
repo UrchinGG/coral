@@ -349,6 +349,14 @@ pub async fn handle_link_new(
 ) -> Result<()> {
     let target_id = interact::parse_id(&component.data.custom_id)
         .ok_or_else(|| anyhow!("Invalid button ID"))?;
+    let invoker_id = component.user.id.get();
+    let is_self = invoker_id == target_id;
+    let (invoker_rank, _, target_rank) = fetch_context(data, invoker_id, target_id).await?;
+
+    if !is_self && (invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank) {
+        return interact::send_component_error(ctx, component, "Error", "Insufficient permissions").await;
+    }
+
     let prefix = context_prefix(&component.data.custom_id);
     let discord_name = resolve_discord_name(ctx, &component.user, target_id).await;
     let components = build_link_new_view(data, &discord_name, prefix, target_id).await;
@@ -391,9 +399,18 @@ pub async fn handle_link_pick(
 pub async fn handle_add_account_button(
     ctx: &Context,
     component: &ComponentInteraction,
+    data: &Data,
 ) -> Result<()> {
     let target_id = interact::parse_id(&component.data.custom_id)
         .ok_or_else(|| anyhow!("Invalid button ID"))?;
+    let invoker_id = component.user.id.get();
+    let is_self = invoker_id == target_id;
+    let (invoker_rank, _, target_rank) = fetch_context(data, invoker_id, target_id).await?;
+
+    if !is_self && (invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank) {
+        return interact::send_component_error(ctx, component, "Error", "Insufficient permissions").await;
+    }
+
     let prefix = context_prefix(&component.data.custom_id);
 
     let input = CreateInputText::new(InputTextStyle::Short, "username")
@@ -410,9 +427,17 @@ pub async fn handle_add_account_button(
 }
 
 
-pub async fn handle_add_code_button(ctx: &Context, component: &ComponentInteraction) -> Result<()> {
+pub async fn handle_add_code_button(ctx: &Context, component: &ComponentInteraction, data: &Data) -> Result<()> {
     let target_id = interact::parse_id(&component.data.custom_id)
         .ok_or_else(|| anyhow!("Invalid button ID"))?;
+    let invoker_id = component.user.id.get();
+    let is_self = invoker_id == target_id;
+    let (invoker_rank, _, target_rank) = fetch_context(data, invoker_id, target_id).await?;
+
+    if !is_self && (invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank) {
+        return interact::send_component_error(ctx, component, "Error", "Insufficient permissions").await;
+    }
+
     let prefix = context_prefix(&component.data.custom_id);
 
     let input = CreateInputText::new(InputTextStyle::Short, "code")
@@ -583,9 +608,9 @@ pub async fn handle_force_add(
         .ok_or_else(|| anyhow!("Invalid button ID"))?;
     let invoker_id = component.user.id.get();
     let is_self = invoker_id == target_id;
-    let (invoker_rank, target, _) = fetch_context(data, invoker_id, target_id).await?;
+    let (invoker_rank, target, target_rank) = fetch_context(data, invoker_id, target_id).await?;
 
-    if !is_self && invoker_rank < AccessRank::Moderator {
+    if !is_self && (invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank) {
         return interact::send_component_error(ctx, component, "Error", "Insufficient permissions").await;
     }
 

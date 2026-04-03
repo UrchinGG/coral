@@ -120,6 +120,6 @@ impl SkinProvider for LocalSkinProvider {
             .render(&skin, &Pose::standing(), OutputType::face(size))
             .ok()?;
 
-        Some(output.to_png_bytes())
+        output.to_png_bytes().ok()
     }
 }

@@ -45,7 +45,7 @@ pub async fn handle_submit(
     if state.players.iter().any(|p| p.is_nicked) {
         if let Some(id) = tags.nicked { tag_ids.push(id); }
     }
-    let _ = set_forum_tags(ctx, component.channel_id.expect_thread(), &tag_ids).await;
+    let _ = set_forum_tags(ctx, thread_id(component.channel_id), &tag_ids).await;
     Ok(())
 }
 
@@ -160,11 +160,15 @@ pub async fn handle_approve(
     }
 
     let member_repo = MemberRepository::new(data.db.pool());
-    let _ = member_repo.increment_accepted_tags(submitter_id as i64).await;
+    if let Err(e) = member_repo.increment_accepted_tags(submitter_id as i64).await {
+        tracing::error!("Failed to increment accepted tags for {submitter_id}: {e}");
+    }
 
     let accurate_ids: Vec<i64> = state.players[player_index].accept_votes.iter().map(|&id| id as i64).collect();
     if !accurate_ids.is_empty() {
-        let _ = member_repo.increment_accurate_verdicts(&accurate_ids).await;
+        if let Err(e) = member_repo.increment_accurate_verdicts(&accurate_ids).await {
+            tracing::error!("Failed to increment accurate verdicts: {e}");
+        }
     }
 
     state.players[player_index].status = PlayerStatus::Approved;
@@ -182,7 +186,7 @@ pub async fn handle_approve(
     );
     let _ = ctx.http.send_message(channel_id.into(), Vec::<CreateAttachment>::new(), &msg).await;
 
-    check_all_resolved(ctx, data, component.channel_id.expect_thread(), &state).await
+    check_all_resolved(ctx, data, thread_id(component.channel_id), &state).await
 }
 
 
@@ -252,11 +256,15 @@ pub async fn handle_reject(
     let player_username = state.players[player_index].username.clone();
 
     let member_repo = MemberRepository::new(data.db.pool());
-    let _ = member_repo.increment_rejected_tags(submitter_id as i64).await;
+    if let Err(e) = member_repo.increment_rejected_tags(submitter_id as i64).await {
+        tracing::error!("Failed to increment rejected tags for {submitter_id}: {e}");
+    }
 
     let accurate_ids: Vec<i64> = state.players[player_index].reject_votes.iter().map(|&id| id as i64).collect();
     if !accurate_ids.is_empty() {
-        let _ = member_repo.increment_accurate_verdicts(&accurate_ids).await;
+        if let Err(e) = member_repo.increment_accurate_verdicts(&accurate_ids).await {
+            tracing::error!("Failed to increment accurate verdicts: {e}");
+        }
     }
 
     let vote_msg = build_vote_message(discord_id, "reject", &player_tag_type, &player_username, false, 0, 3);
@@ -270,7 +278,7 @@ pub async fn handle_reject(
     update_builder(ctx, component.channel_id, &message, &state).await?;
     let _ = ctx.http.send_message(component.channel_id.into(), Vec::<CreateAttachment>::new(), &vote_msg).await;
 
-    check_all_resolved(ctx, data, component.channel_id.expect_thread(), &state).await
+    check_all_resolved(ctx, data, thread_id(component.channel_id), &state).await
 }
 
 
@@ -304,11 +312,15 @@ pub async fn handle_reject_modal(
     let player_tag_type = player.tag_type.clone();
 
     let member_repo = MemberRepository::new(data.db.pool());
-    let _ = member_repo.increment_rejected_tags(submitter_id as i64).await;
+    if let Err(e) = member_repo.increment_rejected_tags(submitter_id as i64).await {
+        tracing::error!("Failed to increment rejected tags for {submitter_id}: {e}");
+    }
 
     let accurate_ids: Vec<i64> = state.players[player_index].reject_votes.iter().map(|&id| id as i64).collect();
     if !accurate_ids.is_empty() {
-        let _ = member_repo.increment_accurate_verdicts(&accurate_ids).await;
+        if let Err(e) = member_repo.increment_accurate_verdicts(&accurate_ids).await {
+            tracing::error!("Failed to increment accurate verdicts: {e}");
+        }
     }
 
     state.players[player_index].status = PlayerStatus::Rejected;
@@ -324,7 +336,7 @@ pub async fn handle_reject_modal(
 
     modal.edit_response(&ctx.http, EditInteractionResponse::new().content("Rejected")).await?;
 
-    check_all_resolved(ctx, data, modal.channel_id.expect_thread(), &state).await
+    check_all_resolved(ctx, data, thread_id(modal.channel_id), &state).await
 }
 
 

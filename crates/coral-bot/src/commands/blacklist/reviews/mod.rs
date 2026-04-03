@@ -143,6 +143,11 @@ async fn send_vote_error(ctx: &Context, component: &ComponentInteraction, messag
 }
 
 
+fn thread_id(channel_id: GenericChannelId) -> ThreadId {
+    ThreadId::new(channel_id.get())
+}
+
+
 fn attachment_id_from_cdn_url(url: &str) -> Option<AttachmentId> {
     let path = url.split("/attachments/").nth(1)?;
     let id_str = path.split('/').nth(1)?;
@@ -178,7 +183,7 @@ async fn update_builder(
         .flags(MessageFlags::IS_COMPONENTS_V2)
         .components(builder::build_review_message(state, &gallery_url_map(message)));
     ctx.http.edit_message(channel_id, message.id, &edit, Vec::new()).await?;
-    let thread_id = channel_id.expect_thread();
+    let thread_id = thread_id(channel_id);
     let _ = thread_id.edit(&ctx.http, EditThread::new().name(thread_title(state))).await;
     Ok(())
 }

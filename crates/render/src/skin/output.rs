@@ -1,4 +1,4 @@
-use image::{ImageEncoder, RgbaImage};
+use image::{ImageEncoder, ImageError, RgbaImage};
 
 
 #[derive(Debug, Clone)]
@@ -24,7 +24,7 @@ pub struct RenderOutput {
 impl RenderOutput {
     pub fn into_image(self) -> RgbaImage { self.image }
 
-    pub fn to_png_bytes(&self) -> Vec<u8> {
+    pub fn to_png_bytes(&self) -> Result<Vec<u8>, ImageError> {
         let mut bytes = Vec::new();
         image::codecs::png::PngEncoder::new(&mut bytes)
             .write_image(
@@ -32,8 +32,7 @@ impl RenderOutput {
                 self.image.width(),
                 self.image.height(),
                 image::ExtendedColorType::Rgba8,
-            )
-            .expect("failed to encode PNG");
-        bytes
+            )?;
+        Ok(bytes)
     }
 }
