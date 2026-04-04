@@ -4,7 +4,9 @@ use serde_json::Value;
 use super::duels::{DuelsView, DUELS_CATEGORIES, DUELS_MODES};
 use super::winstreaks::{Streak, StreakSource, WinstreakHistory};
 
+
 const MIN_STREAK_THRESHOLD: u64 = 15;
+
 
 #[derive(Clone)]
 pub struct DuelsCategorySnapshot {
@@ -14,6 +16,7 @@ pub struct DuelsCategorySnapshot {
     pub winstreak: Option<u64>,
 }
 
+
 #[derive(Clone, Default)]
 pub struct DuelsWinstreakSnapshot {
     pub overall_wins: u64,
@@ -21,6 +24,7 @@ pub struct DuelsWinstreakSnapshot {
     pub overall_winstreak: Option<u64>,
     pub categories: Vec<DuelsCategorySnapshot>,
 }
+
 
 pub fn extract_duels_winstreak_snapshot(player: &Value) -> Option<DuelsWinstreakSnapshot> {
     let duels = player.get("stats")?.get("Duels")?;
@@ -67,6 +71,7 @@ pub fn extract_duels_winstreak_snapshot(player: &Value) -> Option<DuelsWinstreak
         categories,
     })
 }
+
 
 pub fn calculate(
     snapshots: &[(DateTime<Utc>, DuelsWinstreakSnapshot)],
@@ -145,6 +150,7 @@ pub fn calculate(
     WinstreakHistory { streaks }
 }
 
+
 fn view_wins_losses(stats: &DuelsWinstreakSnapshot, view: DuelsView) -> (u64, u64) {
     match view {
         DuelsView::Overall => (stats.overall_wins, stats.overall_losses),
@@ -157,6 +163,7 @@ fn view_wins_losses(stats: &DuelsWinstreakSnapshot, view: DuelsView) -> (u64, u6
     }
 }
 
+
 fn api_winstreak(stats: &DuelsWinstreakSnapshot, view: DuelsView) -> Option<u64> {
     match view {
         DuelsView::Overall => stats.overall_winstreak,
@@ -167,6 +174,7 @@ fn api_winstreak(stats: &DuelsWinstreakSnapshot, view: DuelsView) -> Option<u64>
             .and_then(|c| c.winstreak),
     }
 }
+
 
 fn stat(json: &Value, key: &str) -> u64 {
     json.get(key).and_then(|value| value.as_u64()).unwrap_or(0)

@@ -13,7 +13,6 @@ use render::TagIcon;
 
 use crate::framework::Data;
 use crate::rendering::render_duels;
-
 use super::{
     CACHE_TTL_SECS, create_duels_dropdown, disable_components, encode_png, extract_select_value,
     extract_tag_icons, fetch_skin, parse_duels_value, resolve_uuid, send_deferred_error,

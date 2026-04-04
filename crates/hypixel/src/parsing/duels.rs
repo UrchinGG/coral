@@ -106,7 +106,7 @@ const DIVISION_REQUIREMENTS: [DuelsDivision; 12] = [
         step: 10,
         max: 5,
         name: "Rookie",
-        color_name: "DARK_GRAY",
+        color_name: "GRAY",
         bold: false,
     },
     DuelsDivision {
@@ -917,6 +917,34 @@ pub fn next_division(division: DuelsDivision, level: u32) -> Option<(DuelsDivisi
     } else {
         None // At ASCENDED max
     }
+}
+
+
+pub fn win_progress(wins: u64, track: DivisionTrack) -> (u64, u64) {
+    let adjusted = match track {
+        DivisionTrack::Default => wins,
+        DivisionTrack::Half => wins * 2,
+        DivisionTrack::Overall => wins / 2,
+    };
+    let (division, level) = division_for_wins(wins, track);
+
+    if division.name == "None" || level == 0 {
+        return (adjusted, 50);
+    }
+
+    let div_index = DIVISION_REQUIREMENTS.iter().position(|d| d.name == division.name).unwrap_or(0);
+
+    if div_index == DIVISION_REQUIREMENTS.len() - 1 && level >= division.max {
+        return (adjusted, adjusted);
+    }
+
+    let next_threshold = if level < division.max {
+        division.req + level as u64 * division.step
+    } else {
+        DIVISION_REQUIREMENTS[div_index + 1].req
+    };
+
+    (adjusted, next_threshold)
 }
 
 

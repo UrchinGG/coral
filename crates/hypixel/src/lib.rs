@@ -18,7 +18,7 @@ pub use parsing::duels::{
     DUELS_CATEGORIES, DUELS_MODES, DivisionTrack, DuelsBreakdownEntry, DuelsCategoryMeta,
     DuelsCategoryStats, DuelsDivision, DuelsModeMeta, DuelsModeStats, DuelsOverview, DuelsStats,
     DuelsView, DuelsViewStats, DuelsWinstreak, division_for_wins, division_progress,
-    duels_category_meta, extract_duels_stats, next_division,
+    duels_category_meta, extract_duels_stats, next_division, win_progress,
 };
 pub use parsing::duels_winstreaks::{
     DuelsWinstreakSnapshot, extract_duels_winstreak_snapshot,
