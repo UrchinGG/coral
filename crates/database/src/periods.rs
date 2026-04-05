@@ -38,6 +38,17 @@ impl Period {
         }
     }
 
+    pub fn dropdown_label(&self, now: DateTime<Utc>) -> String {
+        let reset = self.last_reset(now);
+        let eastern = (reset - Duration::hours(5)).date_naive();
+        match self {
+            Self::Daily => format!("Today ({})", eastern.format("%b %-d")),
+            Self::Weekly => "Weekly (Since Sunday)".to_string(),
+            Self::Monthly => format!("Monthly ({})", eastern.format("%B")),
+            Self::Yearly => format!("Yearly ({})", eastern.year()),
+        }
+    }
+
     pub fn duration(&self) -> Duration {
         match self {
             Self::Daily => Duration::hours(24),

@@ -130,8 +130,17 @@ pub(super) async fn run_with_preferred_view<G: GameStats>(
 
     match result {
         Ok(session_cache) => {
+            let latest_marker = if preferred.is_none() {
+                session_cache.markers.last().map(|m| format!("marker:{}", m.name))
+                    .filter(|key| session_cache.render_data.previous_stats.contains_key(key))
+            } else {
+                None
+            };
+            let preferred_missing = preferred
+                .filter(|key| !session_cache.render_data.previous_stats.contains_key(*key));
             let initial_period = preferred
                 .filter(|key| session_cache.render_data.previous_stats.contains_key(*key))
+                .or(latest_marker.as_deref())
                 .or_else(|| {
                     PERIODS.iter()
                         .map(|p| p.key())
@@ -147,12 +156,24 @@ pub(super) async fn run_with_preferred_view<G: GameStats>(
                 .await
                 .unwrap_or(false);
 
-            let components = build_session_components::<G>(
+            let mut components = build_session_components::<G>(
                 &cache_key, &uuid, initial_period, &initial_mode,
                 &session_cache.render_data.current_stats, &session_cache.descriptions,
                 &session_cache.markers, &session_cache.auto_presets, is_owner,
             );
             let expiry_key = cache_key.clone();
+
+            if let Some(period_key) = preferred_missing {
+                let period_label = database::Period::from_str(period_key)
+                    .map(|p| p.label().to_lowercase())
+                    .unwrap_or_else(|| period_key.to_string());
+                let showing = database::Period::from_str(initial_period)
+                    .map(|p| p.label().to_lowercase())
+                    .unwrap_or_else(|| initial_period.to_string());
+                components.push(CreateComponent::TextDisplay(
+                    CreateTextDisplay::new(format!("-# No data for {period_label}, showing {showing} session")),
+                ));
+            }
 
             {
                 let mut cache = G::session_cache(data).lock().unwrap();
@@ -563,6 +584,30 @@ pub(super) async fn handle_mgmt_delete_button<G: GameStats>(
         return Ok(());
     }
 
+    let (components, png) = {
+        let cache = G::session_cache(data).lock().unwrap();
+        let Some(entry) = cache.get(cache_key) else { return Ok(()) };
+        let png = render_selected_png::<G>(entry, &entry.current_period.clone(), &entry.current_mode.clone());
+        (build_confirm_delete_components::<G>(cache_key, uuid, name, entry), png)
+    };
+
+    component.create_response(&ctx.http, v2_update(components, png)).await?;
+
+    Ok(())
+}
+
+
+pub(super) async fn handle_confirm_delete_button<G: GameStats>(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let custom_id = component.data.custom_id.strip_prefix(G::CONFIRM_DELETE_PREFIX).unwrap_or("");
+    let parts: Vec<&str> = custom_id.splitn(3, ':').collect();
+    if parts.len() < 3 { return Ok(()) }
+    let (cache_key, uuid, name) = (parts[0], parts[1], parts[2]);
+    let discord_id = component.user.id.get() as i64;
+
     match SessionRepository::new(data.db.pool())
         .delete(uuid, discord_id, name)
         .await
@@ -576,16 +621,17 @@ pub(super) async fn handle_mgmt_delete_button<G: GameStats>(
         .await
         .unwrap_or_default();
 
-    let (is_sender, components, png) = {
+    let result = {
         let mut cache = G::session_cache(data).lock().unwrap();
-        let Some(entry) = cache.get_mut(cache_key) else { return Ok(()) };
+        let Some(entry) = cache.get_mut(cache_key) else {
+            return Ok(());
+        };
 
-        let is_sender = entry.sender_id == component.user.id.get();
         let deleted_key = format!("marker:{name}");
         entry.descriptions.remove(&deleted_key);
         entry.render_data.previous_stats.remove(&deleted_key);
 
-        if is_sender && entry.current_period == deleted_key {
+        if entry.current_period == deleted_key {
             entry.current_period = PERIODS
                 .iter()
                 .map(|p| p.key().to_string())
@@ -593,9 +639,7 @@ pub(super) async fn handle_mgmt_delete_button<G: GameStats>(
                 .unwrap_or_else(|| "daily".to_string());
         }
         entry.markers = fresh_markers;
-        if is_sender {
-            entry.last_interaction = Instant::now();
-        }
+        entry.last_interaction = Instant::now();
 
         let png = render_selected_png::<G>(entry, &entry.current_period.clone(), &entry.current_mode.clone());
         let components = build_session_components::<G>(
@@ -603,24 +647,10 @@ pub(super) async fn handle_mgmt_delete_button<G: GameStats>(
             &entry.render_data.current_stats, &entry.descriptions,
             &entry.markers, &entry.auto_presets, entry.is_owner,
         );
-        (is_sender, components, png)
+        (components, png)
     };
 
-    if is_sender {
-        component.create_response(&ctx.http, v2_update(components, png)).await?;
-    } else {
-        component
-            .create_response(
-                &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .content("Bookmark deleted.")
-                        .ephemeral(true),
-                ),
-            )
-            .await?;
-        update_original_components(ctx, component, components).await;
-    }
+    component.create_response(&ctx.http, v2_update(result.0, result.1)).await?;
 
     Ok(())
 }
@@ -685,6 +715,36 @@ fn build_session_components<G: GameStats>(
             ));
         }
     }
+
+    vec![CreateComponent::Container(CreateContainer::new(container_rows))]
+}
+
+
+fn build_confirm_delete_components<G: GameStats>(
+    cache_key: &str,
+    uuid: &str,
+    marker_name: &str,
+    entry: &SessionCacheEntry<G>,
+) -> Vec<CreateComponent<'static>> {
+    let container_rows = vec![
+        CreateContainerComponent::ActionRow(CreateActionRow::SelectMenu(
+            create_session_dropdown::<G>(
+                cache_key, &entry.current_period, &entry.descriptions,
+                &entry.markers, &entry.auto_presets, entry.is_owner,
+            ),
+        )),
+        CreateContainerComponent::ActionRow(CreateActionRow::SelectMenu(
+            G::create_mode_dropdown(G::SESSION_MODE_ID, cache_key, &entry.current_mode, &entry.render_data.current_stats),
+        )),
+        CreateContainerComponent::ActionRow(CreateActionRow::Buttons(
+            vec![
+                CreateButton::new(format!("{}{cache_key}:{uuid}:{marker_name}", G::CONFIRM_DELETE_PREFIX))
+                    .label(format!("Confirm Delete \"{}\"", marker_name))
+                    .style(ButtonStyle::Danger),
+            ]
+            .into(),
+        )),
+    ];
 
     vec![CreateComponent::Container(CreateContainer::new(container_rows))]
 }

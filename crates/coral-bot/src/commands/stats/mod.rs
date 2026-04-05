@@ -40,6 +40,7 @@ pub trait GameStats: Sized + Send + 'static {
     const SESSION_SWITCH_ID: &'static str;
     const MGMT_RENAME_PREFIX: &'static str;
     const MGMT_DELETE_PREFIX: &'static str;
+    const CONFIRM_DELETE_PREFIX: &'static str;
     const RENAME_MODAL_PREFIX: &'static str;
 
     fn extract_stats(username: &str, data: &serde_json::Value, guild: Option<GuildInfo>) -> Option<Self::Stats>;
@@ -409,11 +410,10 @@ fn create_session_dropdown<G: GameStats>(
     for period in PERIODS {
         let key = period.key();
         let desc = descriptions.get(key).map(String::as_str).unwrap_or("No Data");
-        let elapsed = now.signed_duration_since(period.last_reset(now));
 
         options.push(
             CreateSelectMenuOption::new(
-                format!("{} ({})", period.label(), format_duration(elapsed)),
+                period.dropdown_label(now),
                 format!("{key}:{cache_key}"),
             )
             .default_selection(current == key)
@@ -469,7 +469,7 @@ fn create_session_dropdown<G: GameStats>(
     let placeholder = PERIODS
         .iter()
         .find(|p| p.key() == current)
-        .map(|p| p.label().to_string())
+        .map(|p| p.dropdown_label(now))
         .or_else(|| match current {
             "past_24h" => Some("Past 24 Hours".to_string()),
             "past_7d" => Some("Past 7 Days".to_string()),

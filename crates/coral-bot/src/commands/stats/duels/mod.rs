@@ -77,6 +77,7 @@ impl GameStats for Duels {
     const SESSION_SWITCH_ID: &'static str = "session_duels_switch";
     const MGMT_RENAME_PREFIX: &'static str = "session_duels_mgmt_rename:";
     const MGMT_DELETE_PREFIX: &'static str = "session_duels_mgmt_delete:";
+    const CONFIRM_DELETE_PREFIX: &'static str = "session_duels_confirm_delete:";
     const RENAME_MODAL_PREFIX: &'static str = "session_duels_rename_modal:";
 
     fn extract_stats(username: &str, data: &serde_json::Value, guild: Option<GuildInfo>) -> Option<DuelsStats> {
@@ -181,6 +182,11 @@ pub async fn handle_rename_modal(ctx: &Context, modal: &ModalInteraction, data: 
 
 pub async fn handle_mgmt_delete_button(ctx: &Context, component: &ComponentInteraction, data: &Data) -> Result<()> {
     session::handle_mgmt_delete_button::<Duels>(ctx, component, data).await
+}
+
+
+pub async fn handle_confirm_delete_button(ctx: &Context, component: &ComponentInteraction, data: &Data) -> Result<()> {
+    session::handle_confirm_delete_button::<Duels>(ctx, component, data).await
 }
 
 
