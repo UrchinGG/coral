@@ -77,6 +77,15 @@ impl<'a> SessionRepository<'a> {
             .map(|r| r.rows_affected() > 0)
     }
 
+    pub async fn delete_by_id(&self, id: i64, discord_id: i64) -> Result<bool, sqlx::Error> {
+        sqlx::query("DELETE FROM session_markers WHERE id = $1 AND discord_id = $2")
+            .bind(id)
+            .bind(discord_id)
+            .execute(self.pool)
+            .await
+            .map(|r| r.rows_affected() > 0)
+    }
+
     pub async fn rename(&self, uuid: &str, discord_id: i64, old_name: &str, new_name: &str) -> Result<bool, sqlx::Error> {
         sqlx::query("UPDATE session_markers SET name = $4 WHERE uuid = $1 AND discord_id = $2 AND name = $3")
             .bind(uuid)

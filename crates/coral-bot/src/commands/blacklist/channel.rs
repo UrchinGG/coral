@@ -355,7 +355,9 @@ async fn send_to_mod_channel(
     files: Vec<CreateAttachment<'static>>,
 ) {
     let Some(channel_id) = data.mod_channel_id else { return };
-    let _ = send_container(ctx, channel_id, container, files).await;
+    if send_container(ctx, channel_id, container, files).await.is_none() {
+        tracing::warn!("Failed to post to mod channel {channel_id}");
+    }
 }
 
 

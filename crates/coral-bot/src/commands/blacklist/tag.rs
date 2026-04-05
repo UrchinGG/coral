@@ -739,7 +739,9 @@ async fn run_unlock(ctx: &Context, command: &CommandInteraction, data: &Data) ->
 async fn try_archive_evidence(repo: &BlacklistRepository<'_>, ctx: &Context, data: &Data, uuid: &str) {
     if let Ok(Some(p)) = repo.get_player(uuid).await {
         if let Some(url) = &p.evidence_thread {
-            let _ = super::evidence::archive_evidence_by_url(ctx, data, url).await;
+            if let Err(e) = super::evidence::archive_evidence_by_url(ctx, data, url).await {
+                tracing::error!("Failed to archive evidence for {uuid}: {e}");
+            }
         }
     }
 }

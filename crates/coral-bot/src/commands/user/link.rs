@@ -107,6 +107,7 @@ pub fn build_link_parts(
 
 
 pub async fn handle_guild_join(ctx: &Context, new_member: &Member, data: &Data) -> Result<()> {
+    if new_member.user.bot() { return Ok(()) }
     let discord_id = new_member.user.id.get() as i64;
     let members = MemberRepository::new(data.db.pool());
 

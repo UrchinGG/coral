@@ -95,6 +95,7 @@ pub(crate) async fn active_tags(data: &Data, uuid: &str) -> Vec<String> {
 
 
 pub async fn handle_member_update(ctx: &Context, data: &Data, member: &Member) {
+    if member.user.bot() { return }
     let guild_id = member.guild_id;
     let discord_id = member.user.id.get() as i64;
 
@@ -468,7 +469,7 @@ async fn try_clear_role(
     role_id: RoleId,
     cancel: &CancelToken,
 ) -> Result<()> {
-    let targets = scan_members(ctx, guild_id, |m| m.roles.contains(&role_id)).await?;
+    let targets = scan_members(ctx, guild_id, |m| !m.user.bot() && m.roles.contains(&role_id)).await?;
 
     for user_id in targets {
         if is_cancelled(cancel) { break }

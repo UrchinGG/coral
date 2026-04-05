@@ -331,12 +331,15 @@ impl Handler {
                     .components(vec![container]),
             );
 
-            let _ = match interaction {
+            let error_response_result = match interaction {
                 Interaction::Command(cmd) => cmd.create_response(&ctx.http, response).await,
                 Interaction::Component(cmp) => cmp.create_response(&ctx.http, response).await,
                 Interaction::Modal(modal) => modal.create_response(&ctx.http, response).await,
                 _ => Ok(()),
             };
+            if let Err(e) = error_response_result {
+                tracing::error!("Failed to send error response: {e}");
+            }
         }
     }
 }

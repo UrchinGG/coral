@@ -562,7 +562,8 @@ pub(super) async fn handle_mgmt_delete_button<G: GameStats>(
     let custom_id = component.data.custom_id.strip_prefix(G::MGMT_DELETE_PREFIX).unwrap_or("");
     let parts: Vec<&str> = custom_id.splitn(3, ':').collect();
     if parts.len() < 3 { return Ok(()) }
-    let (cache_key, uuid, name) = (parts[0], parts[1], parts[2]);
+    let (cache_key, uuid, marker_id_str) = (parts[0], parts[1], parts[2]);
+    let marker_id: i64 = marker_id_str.parse().unwrap_or(0);
     let discord_id = component.user.id.get() as i64;
 
     let is_owner = AccountRepository::new(data.db.pool())
@@ -587,8 +588,12 @@ pub(super) async fn handle_mgmt_delete_button<G: GameStats>(
     let (components, png) = {
         let cache = G::session_cache(data).lock().unwrap();
         let Some(entry) = cache.get(cache_key) else { return Ok(()) };
+        let marker_name = entry.markers.iter()
+            .find(|m| m.id == marker_id)
+            .map(|m| m.name.as_str())
+            .unwrap_or("Unknown");
         let png = render_selected_png::<G>(entry, &entry.current_period.clone(), &entry.current_mode.clone());
-        (build_confirm_delete_components::<G>(cache_key, uuid, name, entry), png)
+        (build_confirm_delete_components::<G>(cache_key, uuid, marker_id, marker_name, entry), png)
     };
 
     component.create_response(&ctx.http, v2_update(components, png)).await?;
@@ -605,15 +610,27 @@ pub(super) async fn handle_confirm_delete_button<G: GameStats>(
     let custom_id = component.data.custom_id.strip_prefix(G::CONFIRM_DELETE_PREFIX).unwrap_or("");
     let parts: Vec<&str> = custom_id.splitn(3, ':').collect();
     if parts.len() < 3 { return Ok(()) }
-    let (cache_key, uuid, name) = (parts[0], parts[1], parts[2]);
+    let (cache_key, uuid, marker_id_str) = (parts[0], parts[1], parts[2]);
+    let marker_id: i64 = marker_id_str.parse().unwrap_or(0);
     let discord_id = component.user.id.get() as i64;
 
+    let marker_name = {
+        let cache = G::session_cache(data).lock().unwrap();
+        cache.get(cache_key)
+            .and_then(|e| e.markers.iter().find(|m| m.id == marker_id).map(|m| m.name.clone()))
+    };
+    let Some(name) = marker_name else { return Ok(()) };
+
     match SessionRepository::new(data.db.pool())
-        .delete(uuid, discord_id, name)
+        .delete_by_id(marker_id, discord_id)
         .await
     {
-        Ok(false) | Err(_) => return Ok(()),
         Ok(true) => {}
+        Ok(false) => return Ok(()),
+        Err(e) => {
+            tracing::error!("Failed to delete session marker {marker_id}: {e}");
+            return Ok(());
+        }
     }
 
     let fresh_markers = SessionRepository::new(data.db.pool())
@@ -700,13 +717,14 @@ fn build_session_components<G: GameStats>(
 
     if let Some(marker_name) = current_period.strip_prefix("marker:") {
         if is_owner {
+            let marker_id = markers.iter().find(|m| m.name == marker_name).map(|m| m.id).unwrap_or(0);
             container_rows.push(CreateContainerComponent::ActionRow(
                 CreateActionRow::Buttons(
                     vec![
                         CreateButton::new(format!("{}{cache_key}:{uuid}:{marker_name}", G::MGMT_RENAME_PREFIX))
                             .label("Rename")
                             .style(ButtonStyle::Primary),
-                        CreateButton::new(format!("{}{cache_key}:{uuid}:{marker_name}", G::MGMT_DELETE_PREFIX))
+                        CreateButton::new(format!("{}{cache_key}:{uuid}:{marker_id}", G::MGMT_DELETE_PREFIX))
                             .label("Delete")
                             .style(ButtonStyle::Danger),
                     ]
@@ -723,6 +741,7 @@ fn build_session_components<G: GameStats>(
 fn build_confirm_delete_components<G: GameStats>(
     cache_key: &str,
     uuid: &str,
+    marker_id: i64,
     marker_name: &str,
     entry: &SessionCacheEntry<G>,
 ) -> Vec<CreateComponent<'static>> {
@@ -738,7 +757,7 @@ fn build_confirm_delete_components<G: GameStats>(
         )),
         CreateContainerComponent::ActionRow(CreateActionRow::Buttons(
             vec![
-                CreateButton::new(format!("{}{cache_key}:{uuid}:{marker_name}", G::CONFIRM_DELETE_PREFIX))
+                CreateButton::new(format!("{}{cache_key}:{uuid}:{marker_id}", G::CONFIRM_DELETE_PREFIX))
                     .label(format!("Confirm Delete \"{}\"", marker_name))
                     .style(ButtonStyle::Danger),
             ]
