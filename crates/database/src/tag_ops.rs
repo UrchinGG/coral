@@ -1,6 +1,5 @@
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
-
 use blacklist::permissions;
 
 use crate::blacklist::{BlacklistRepository, PlayerTagRow};
@@ -8,20 +7,19 @@ use crate::blacklist::{BlacklistRepository, PlayerTagRow};
 
 #[derive(Debug)]
 pub enum TagOpError {
-    TaggingDisabled,
     PlayerLocked,
     InsufficientPermissions,
     InvalidTagType,
     TagAlreadyExists,
     PriorityConflict(PlayerTagRow),
     TagNotFound,
+    EditWindowExpired,
+    ModeratorRequired,
     Database(sqlx::Error),
 }
 
 
-impl From<sqlx::Error> for TagOpError {
-    fn from(e: sqlx::Error) -> Self { Self::Database(e) }
-}
+impl From<sqlx::Error> for TagOpError { fn from(e: sqlx::Error) -> Self { Self::Database(e) } }
 
 
 pub struct TagOp<'a> {
@@ -34,6 +32,9 @@ impl<'a> TagOp<'a> {
         Self { repo: BlacklistRepository::new(pool) }
     }
 
+    pub fn repo(&self) -> &BlacklistRepository<'a> { &self.repo }
+
+
     pub async fn add(
         &self,
         uuid: &str,
@@ -45,7 +46,7 @@ impl<'a> TagOp<'a> {
         reviewed_by: Option<&[i64]>,
         expires_at: Option<DateTime<Utc>>,
     ) -> Result<PlayerTagRow, TagOpError> {
-        if !blacklist::lookup(tag_type).is_some() {
+        if blacklist::lookup(tag_type).is_none() {
             return Err(TagOpError::InvalidTagType);
         }
         if !permissions::can_add(tag_type, actor_level) {
@@ -63,10 +64,10 @@ impl<'a> TagOp<'a> {
         }
 
         self.repo.add_tag_with_expiry(uuid, tag_type, reason, actor_id, hide, reviewed_by, expires_at).await?;
-
         self.repo.get_tag_by_type(uuid, tag_type).await?
             .ok_or(TagOpError::Database(sqlx::Error::RowNotFound))
     }
+
 
     pub async fn remove(
         &self,
@@ -88,6 +89,7 @@ impl<'a> TagOp<'a> {
         self.repo.remove_tag(tag.id, actor_id).await?;
         Ok(tag)
     }
+
 
     pub async fn modify(
         &self,
@@ -113,6 +115,7 @@ impl<'a> TagOp<'a> {
         self.repo.update_tag(uuid, tag_type, new_reason, hide).await?
             .ok_or(TagOpError::TagNotFound)
     }
+
 
     pub async fn change_type(
         &self,
@@ -142,15 +145,17 @@ impl<'a> TagOp<'a> {
         let old_priority = blacklist::lookup(old_type).map(|d| d.priority).unwrap_or(0);
         if new_priority != old_priority {
             if let Some(conflict) = self.find_priority_conflict(uuid, new_type).await? {
-                return Err(TagOpError::PriorityConflict(conflict));
+                if conflict.id != tag.id {
+                    return Err(TagOpError::PriorityConflict(conflict));
+                }
             }
         }
 
         self.repo.modify_tag(tag.id, Some(new_type), None).await?;
-
         self.repo.get_tag_by_id(tag.id).await?
             .ok_or(TagOpError::TagNotFound)
     }
+
 
     pub async fn overwrite(
         &self,
@@ -188,6 +193,7 @@ impl<'a> TagOp<'a> {
         Ok((old_tag, new_tag))
     }
 
+
     pub async fn remove_by_id(
         &self,
         tag_id: i64,
@@ -213,7 +219,28 @@ impl<'a> TagOp<'a> {
         Ok((uuid, tag))
     }
 
-    pub fn repo(&self) -> &BlacklistRepository<'a> { &self.repo }
+
+    pub async fn lock_player(
+        &self,
+        uuid: &str,
+        reason: &str,
+        actor_id: i64,
+        actor_level: i16,
+    ) -> Result<(), TagOpError> {
+        if actor_level < 3 { return Err(TagOpError::ModeratorRequired); }
+        self.repo.lock_player(uuid, reason, actor_id).await?;
+        Ok(())
+    }
+
+
+    pub async fn unlock_player(
+        &self,
+        uuid: &str,
+        actor_level: i16,
+    ) -> Result<bool, TagOpError> {
+        if actor_level < 3 { return Err(TagOpError::ModeratorRequired); }
+        Ok(self.repo.unlock_player(uuid).await?)
+    }
 
 
     async fn check_lock(&self, uuid: &str) -> Result<(), TagOpError> {

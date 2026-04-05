@@ -7,7 +7,7 @@ use utoipa::ToSchema;
 
 use clients::normalize_uuid;
 use coral_redis::{BlacklistEvent, RateLimitResult};
-use database::{AccessRank, TagOp, TagOpError};
+use database::{TagOp, TagOpError};
 
 use crate::{
     auth::AuthenticatedMember,
@@ -45,7 +45,9 @@ pub(crate) struct RemoveTagBody {
 pub(crate) struct UpdateTagBody {
     #[serde(rename = "type")]
     pub tag_type: String,
-    pub reason: Option<String>,
+    pub reason: String,
+    pub new_type: Option<String>,
+    pub new_reason: Option<String>,
     pub hide_username: Option<bool>,
 }
 
@@ -87,13 +89,14 @@ fn validate_reason(reason: &str) -> Result<(), ApiError> {
 
 fn map_op_error(e: TagOpError) -> ApiError {
     match e {
-        TagOpError::TaggingDisabled => ApiError::Forbidden("tagging is disabled on your account".into()),
         TagOpError::PlayerLocked => ApiError::Forbidden("player is locked".into()),
         TagOpError::InsufficientPermissions => ApiError::Forbidden("insufficient permissions".into()),
         TagOpError::InvalidTagType => ApiError::BadRequest("invalid tag type".into()),
         TagOpError::TagAlreadyExists => ApiError::Conflict("player already has this tag type".into()),
         TagOpError::PriorityConflict(t) => ApiError::Conflict(format!("conflicts with existing '{}' tag", t.tag_type)),
         TagOpError::TagNotFound => ApiError::NotFound("tag not found".into()),
+        TagOpError::EditWindowExpired => ApiError::Forbidden("edit window has expired".into()),
+        TagOpError::ModeratorRequired => ApiError::Forbidden("moderator access required".into()),
         TagOpError::Database(e) => ApiError::Internal(format!("database error: {e}")),
     }
 }
@@ -212,11 +215,16 @@ pub async fn update_tag(
     if member.0.tagging_disabled {
         return Err(ApiError::Forbidden("tagging is disabled on your account".into()));
     }
-    enforce_tag_limit(&state, &member.0).await?;
-
-    if let Some(ref reason) = body.reason {
+    if body.new_type.is_none() && body.new_reason.is_none() && body.hide_username.is_none() {
+        return Err(ApiError::BadRequest("at least one of new_type, new_reason, or hide_username is required".into()));
+    }
+    if body.new_type.as_deref() == Some("confirmed_cheater") {
+        return Err(ApiError::Forbidden("confirmed cheater tags can only be applied through the review system".into()));
+    }
+    if let Some(ref reason) = body.new_reason {
         validate_reason(reason)?;
     }
+    enforce_tag_limit(&state, &member.0).await?;
 
     let uuid = validate_uuid(&query.uuid)?;
     let ops = TagOp::new(state.db.pool());
@@ -224,21 +232,44 @@ pub async fn update_tag(
     let old_tag = ops.repo().get_tag_by_type(&uuid, &body.tag_type).await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound("tag not found".into()))?;
-    let old_reason = old_tag.reason.clone();
 
-    let updated = ops.modify(
-        &uuid, &body.tag_type,
-        member.0.discord_id, member.0.access_level,
-        body.reason.as_deref(), body.hide_username,
-    ).await.map_err(map_op_error)?;
+    if old_tag.reason != body.reason {
+        return Err(ApiError::Conflict("provided reason does not match current tag reason".into()));
+    }
 
-    state.event_publisher.publish(&BlacklistEvent::TagEdited {
-        uuid: uuid.clone(),
-        tag_id: updated.id,
-        old_tag_type: body.tag_type.clone(),
-        old_reason,
-        edited_by: member.0.discord_id,
-    }).await;
+    let updated = if let Some(ref new_type) = body.new_type {
+        let reason = body.new_reason.as_deref().unwrap_or(&old_tag.reason);
+        let hide = body.hide_username.unwrap_or(old_tag.hide_username);
+        let (_removed, new_tag) = ops.overwrite(
+            &uuid, old_tag.id, new_type, reason,
+            member.0.discord_id, member.0.access_level, hide,
+        ).await.map_err(map_op_error)?;
+
+        state.event_publisher.publish(&BlacklistEvent::TagOverwritten {
+            uuid: uuid.clone(), old_tag_id: old_tag.id,
+            old_tag_type: old_tag.tag_type.clone(), old_reason: old_tag.reason.clone(),
+            new_tag_id: new_tag.id, overwritten_by: member.0.discord_id,
+        }).await;
+
+        new_tag
+    } else {
+        let tag = ops.modify(
+            &uuid, &body.tag_type,
+            member.0.discord_id, member.0.access_level,
+            body.new_reason.as_deref(), body.hide_username,
+        ).await.map_err(map_op_error)?;
+
+        state.event_publisher.publish(&BlacklistEvent::TagEdited {
+            uuid: uuid.clone(), tag_id: tag.id,
+            old_tag_type: body.tag_type.clone(), old_reason: body.reason.clone(),
+            edited_by: member.0.discord_id,
+        }).await;
+
+        tag
+    };
+
+    let state = state.clone();
+    tokio::spawn(async move { refresh_player_cache(&state, &uuid, None).await });
 
     Ok(Json(TagResponse::from_db(&updated)))
 }
@@ -260,16 +291,13 @@ pub async fn lock_player(
     Query(query): Query<UuidQuery>,
     Json(req): Json<LockRequest>,
 ) -> Result<StatusCode, ApiError> {
-    if AccessRank::from_level(member.0.access_level) < AccessRank::Moderator {
-        return Err(ApiError::Forbidden("moderator access required".into()));
-    }
     validate_reason(&req.reason)?;
 
     let uuid = validate_uuid(&query.uuid)?;
     let ops = TagOp::new(state.db.pool());
 
-    ops.repo().lock_player(&uuid, &req.reason, member.0.discord_id).await
-        .map_err(|e| ApiError::Internal(format!("failed to lock player: {e}")))?;
+    ops.lock_player(&uuid, &req.reason, member.0.discord_id, member.0.access_level)
+        .await.map_err(map_op_error)?;
 
     state.event_publisher.publish(&BlacklistEvent::PlayerLocked {
         uuid,
@@ -295,16 +323,11 @@ pub async fn unlock_player(
     Extension(member): Extension<AuthenticatedMember>,
     Query(query): Query<UuidQuery>,
 ) -> Result<StatusCode, ApiError> {
-    if AccessRank::from_level(member.0.access_level) < AccessRank::Moderator {
-        return Err(ApiError::Forbidden("moderator access required".into()));
-    }
-
     let uuid = validate_uuid(&query.uuid)?;
 
-    TagOp::new(state.db.pool()).repo()
-        .unlock_player(&uuid)
-        .await
-        .map_err(|e| ApiError::Internal(format!("failed to unlock player: {e}")))?;
+    TagOp::new(state.db.pool())
+        .unlock_player(&uuid, member.0.access_level)
+        .await.map_err(map_op_error)?;
 
     state.event_publisher.publish(&BlacklistEvent::PlayerUnlocked {
         uuid,
