@@ -2,9 +2,172 @@ use chrono::{DateTime, Utc};
 use image::Rgba;
 use mctext::{MCText, NamedColor};
 
-use crate::canvas::{DrawContext, blend};
+use crate::canvas::{
+    Align, BOX_BACKGROUND, DrawContext, RoundedRect, Shape, TextBlock, blend,
+};
 
-pub mod colors {
+
+pub type TagIcon = (String, u32);
+
+
+#[derive(Clone)]
+pub enum SessionType {
+    Custom(String),
+    Daily,
+    Weekly,
+    Monthly,
+    Yearly,
+}
+
+
+impl SessionType {
+    pub fn display_name(&self) -> &str {
+        match self {
+            SessionType::Custom(name) => name,
+            SessionType::Daily => "Daily",
+            SessionType::Weekly => "Weekly",
+            SessionType::Monthly => "Monthly",
+            SessionType::Yearly => "Yearly",
+        }
+    }
+}
+
+
+pub struct ModeGames {
+    pub solos: u64,
+    pub doubles: u64,
+    pub threes: u64,
+    pub fours: u64,
+    pub four_v_four: u64,
+}
+
+
+struct ModeEntry {
+    label: &'static str,
+    count: u64,
+    color: NamedColor,
+}
+
+
+impl ModeGames {
+    fn total(&self) -> u64 {
+        self.solos + self.doubles + self.threes + self.fours + self.four_v_four
+    }
+
+    fn entries(&self) -> Vec<ModeEntry> {
+        [("1s", self.solos), ("2s", self.doubles), ("3s", self.threes), ("4s", self.fours), ("4v4", self.four_v_four)]
+            .into_iter()
+            .map(|(label, count)| ModeEntry { label, count, color: NamedColor::Green })
+            .collect()
+    }
+}
+
+
+pub struct VerticalGamesBox<'a> {
+    mode_games: &'a ModeGames,
+    width: u32,
+    height: u32,
+}
+
+
+impl<'a> VerticalGamesBox<'a> {
+    pub fn new(mode_games: &'a ModeGames, width: u32, height: u32) -> Self {
+        Self { mode_games, width, height }
+    }
+}
+
+
+impl Shape for VerticalGamesBox<'_> {
+    fn draw(&self, ctx: &mut DrawContext) {
+        let padding = 12u32;
+        let scale = 1.5f32;
+        let font = scale * 16.0;
+        let label_scale = 1.25f32;
+        let label_font = label_scale * 16.0;
+
+        RoundedRect::new(self.width, self.height)
+            .corner_radius(18)
+            .background(BOX_BACKGROUND)
+            .draw(ctx);
+
+        let total = self.mode_games.total();
+        let entries = self.mode_games.entries();
+
+        let title = MCText::new()
+            .span("Games: ").color(NamedColor::Gray)
+            .then(&format_number(total)).color(NamedColor::White)
+            .build();
+        let (_, title_h) = ctx.renderer.measure(&title, font);
+        TextBlock::new()
+            .push(title).scale(scale).align_x(Align::Center).max_width(self.width)
+            .draw(&mut ctx.at(0, padding as i32));
+
+        if entries.is_empty() { return; }
+
+        let sample_label = MCText::new().span("4v4").color(NamedColor::Gray).build();
+        let (_, label_h) = ctx.renderer.measure(&sample_label, label_font);
+
+        let bar_top = padding + title_h as u32 + 8;
+        let bar_bottom = self.height - padding - label_h as u32 - 4;
+        let max_bar_h = bar_bottom.saturating_sub(bar_top);
+        let inner_w = self.width - padding * 2;
+        let max_count = entries.iter().map(|e| e.count).max().unwrap_or(1).max(1);
+
+        let bar_count = entries.len() as u32;
+        let gap = 6u32;
+        let bar_w = inner_w.saturating_sub(gap * bar_count.saturating_sub(1)) / bar_count;
+        let origin = (ctx.x, ctx.y);
+        let (bw, bh) = ctx.buffer.dimensions();
+
+        for (i, entry) in entries.iter().enumerate() {
+            let x = padding + i as u32 * (bar_w + gap);
+            let bar_h = (entry.count as f64 / max_count as f64 * max_bar_h as f64).round() as u32;
+            let bar_h = bar_h.max(2);
+            let bar_y = bar_bottom - bar_h;
+
+            let bg_color = Rgba([50, 50, 55, 220]);
+            for py in bar_y..bar_bottom {
+                for px in x..x + bar_w {
+                    let abs_x = (origin.0 + px as i32) as u32;
+                    let abs_y = (origin.1 + py as i32) as u32;
+                    if abs_x < bw && abs_y < bh {
+                        let bg = *ctx.buffer.get_pixel(abs_x, abs_y);
+                        ctx.buffer.put_pixel(abs_x, abs_y, blend(bg, bg_color));
+                    }
+                }
+            }
+
+            if total > 0 && entry.count > 0 {
+                let pct = (entry.count as f64 / total as f64 * 100.0).round() as u32;
+                let pct_text = MCText::new().span(&format!("{}%", pct)).color(NamedColor::Green).build();
+                let pct_font = 1.1f32 * 16.0;
+                let (pw, ph) = ctx.renderer.measure(&pct_text, pct_font);
+                if (ph as u32) + 4 <= bar_h && (pw as u32) + 2 <= bar_w {
+                    ctx.renderer.draw(
+                        ctx.buffer.as_mut(), bw, bh,
+                        origin.0 as f32 + x as f32 + (bar_w as f32 - pw) / 2.0,
+                        (origin.1 + bar_y as i32 + ((bar_h as f32 - ph) / 2.0) as i32) as f32,
+                        &pct_text, pct_font, true,
+                    );
+                }
+            }
+
+            let label = MCText::new().span(entry.label).color(entry.color).build();
+            let (lw, _) = ctx.renderer.measure(&label, label_font);
+            ctx.renderer.draw(
+                ctx.buffer.as_mut(), bw, bh,
+                origin.0 as f32 + x as f32 + (bar_w as f32 - lw) / 2.0,
+                (origin.1 + (bar_bottom + 4) as i32) as f32,
+                &label, label_font, true,
+            );
+        }
+    }
+
+    fn size(&self) -> (u32, u32) { (self.width, self.height) }
+}
+
+
+pub mod bedwars_colors {
     use mctext::NamedColor;
 
     pub fn wlr(v: f64) -> NamedColor {
@@ -183,6 +346,86 @@ pub mod colors {
             v if v >= 25 => NamedColor::DarkGreen,
             v if v >= 15 => NamedColor::Green,
             v if v >= 5 => NamedColor::White,
+            _ => NamedColor::Gray,
+        }
+    }
+}
+
+
+pub mod duels_colors {
+    use mctext::NamedColor;
+
+    pub fn wlr(v: f64) -> NamedColor {
+        match v {
+            v if v >= 42.0 => NamedColor::DarkPurple,
+            v if v >= 20.0 => NamedColor::LightPurple,
+            v if v >= 12.5 => NamedColor::DarkRed,
+            v if v >= 8.2 => NamedColor::Red,
+            v if v >= 4.4 => NamedColor::Gold,
+            v if v >= 3.2 => NamedColor::Yellow,
+            v if v >= 1.9 => NamedColor::DarkGreen,
+            v if v >= 1.2 => NamedColor::Green,
+            v if v >= 0.4 => NamedColor::White,
+            _ => NamedColor::Gray,
+        }
+    }
+
+    pub fn kdr(v: f64) -> NamedColor {
+        match v {
+            v if v >= 33.0 => NamedColor::DarkPurple,
+            v if v >= 16.0 => NamedColor::LightPurple,
+            v if v >= 10.0 => NamedColor::DarkRed,
+            v if v >= 6.5 => NamedColor::Red,
+            v if v >= 3.5 => NamedColor::Gold,
+            v if v >= 2.5 => NamedColor::Yellow,
+            v if v >= 1.5 => NamedColor::DarkGreen,
+            v if v >= 1.0 => NamedColor::Green,
+            v if v >= 0.3 => NamedColor::White,
+            _ => NamedColor::Gray,
+        }
+    }
+
+    pub fn wins(v: u64) -> NamedColor {
+        match v {
+            v if v >= 95000 => NamedColor::DarkPurple,
+            v if v >= 48000 => NamedColor::LightPurple,
+            v if v >= 24000 => NamedColor::DarkRed,
+            v if v >= 14000 => NamedColor::Red,
+            v if v >= 7000 => NamedColor::Gold,
+            v if v >= 4750 => NamedColor::Yellow,
+            v if v >= 2250 => NamedColor::DarkGreen,
+            v if v >= 1000 => NamedColor::Green,
+            v if v >= 450 => NamedColor::White,
+            _ => NamedColor::Gray,
+        }
+    }
+
+    pub fn kills(v: u64) -> NamedColor {
+        match v {
+            v if v >= 75000 => NamedColor::DarkPurple,
+            v if v >= 38000 => NamedColor::LightPurple,
+            v if v >= 19000 => NamedColor::DarkRed,
+            v if v >= 11000 => NamedColor::Red,
+            v if v >= 5500 => NamedColor::Gold,
+            v if v >= 3750 => NamedColor::Yellow,
+            v if v >= 1750 => NamedColor::DarkGreen,
+            v if v >= 750 => NamedColor::Green,
+            v if v >= 350 => NamedColor::White,
+            _ => NamedColor::Gray,
+        }
+    }
+
+    pub fn winstreak(v: u64) -> NamedColor {
+        match v {
+            v if v >= 1000 => NamedColor::DarkPurple,
+            v if v >= 500 => NamedColor::LightPurple,
+            v if v >= 200 => NamedColor::DarkRed,
+            v if v >= 150 => NamedColor::Red,
+            v if v >= 100 => NamedColor::Gold,
+            v if v >= 80 => NamedColor::Yellow,
+            v if v >= 50 => NamedColor::DarkGreen,
+            v if v >= 30 => NamedColor::Green,
+            v if v >= 10 => NamedColor::White,
             _ => NamedColor::Gray,
         }
     }

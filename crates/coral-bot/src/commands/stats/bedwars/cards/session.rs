@@ -4,17 +4,16 @@ use mctext::{MCText, NamedColor};
 
 use hypixel::{BedwarsPlayerStats, Mode, SessionStats, color_code, combined_mode_name, level_progress};
 
-use crate::canvas::{
-    Align, BOX_BACKGROUND, CANVAS_BACKGROUND, Canvas, DrawContext, Image, Rgba, RgbaImage,
-    RoundedRect, Shape, TextBlock, TextBox, blend,
+use render::canvas::{
+    Align, BOX_BACKGROUND, CANVAS_BACKGROUND, Canvas, DrawContext, Image, RgbaImage,
+    RoundedRect, Shape, TextBlock, TextBox,
 };
+use render::cards::{
+    BAR_COLOR, ModeGames, SessionType, TagIcon, VerticalGamesBox, bedwars_colors as colors, color_name_to_named,
+    draw_progress_bar, format_number, format_percent, format_ratio, format_timestamp, stat_line,
+};
+use super::prestiges::{prestige_colors, prestige_star, build_prestige_text};
 
-use super::bedwars::TagIcon;
-use super::common::{
-    BAR_COLOR, color_name_to_named, colors, draw_progress_bar, format_number, format_percent,
-    format_ratio, format_timestamp, stat_line,
-};
-use super::prestiges::{build_prestige_text, prestige_colors, prestige_star};
 
 const BOX_CORNER_RADIUS: u32 = 18;
 const CANVAS_WIDTH: u32 = 800;
@@ -42,29 +41,6 @@ fn col_x(col: u32) -> u32 {
         1 => 272,
         2 => 544,
         _ => 0,
-    }
-}
-
-
-#[derive(Clone)]
-pub enum SessionType {
-    Custom(String),
-    Daily,
-    Weekly,
-    Monthly,
-    Yearly,
-}
-
-
-impl SessionType {
-    pub fn display_name(&self) -> &str {
-        match self {
-            SessionType::Custom(name) => name,
-            SessionType::Daily => "Daily",
-            SessionType::Weekly => "Weekly",
-            SessionType::Monthly => "Monthly",
-            SessionType::Yearly => "Yearly",
-        }
     }
 }
 
@@ -173,7 +149,6 @@ impl Shape for StatsSection<'_> {
             ("BBLR:", "Beds:", self.stats.bblr(), self.stats.beds_broken, self.stats.beds_lost, colors::session_bblr(self.stats.bblr()), colors::beds_broken(self.stats.beds_broken)),
         ];
 
-        let mut max_ratio_w: f32 = 0.0;
         let mut max_right_w: f32 = 0.0;
         let mut measurements = Vec::new();
 
@@ -182,7 +157,7 @@ impl Shape for StatsSection<'_> {
                 .span(*ratio_label).color(NamedColor::Gray)
                 .then(" ").then(&format_ratio(*ratio)).color(*ratio_color)
                 .build();
-            let (ratio_w, main_h) = ctx.renderer.measure(&ratio_text, main_font);
+            let (_, main_h) = ctx.renderer.measure(&ratio_text, main_font);
 
             let pos_text = MCText::new()
                 .span(*pos_label).color(NamedColor::Gray)
@@ -196,14 +171,13 @@ impl Shape for StatsSection<'_> {
                 .build();
             let (neg_w, neg_h) = ctx.renderer.measure(&neg_text, neg_font);
 
-            max_ratio_w = max_ratio_w.max(ratio_w);
             max_right_w = max_right_w.max(pos_w + neg_w);
             measurements.push((ratio_text, pos_text, neg_text, pos_w, main_h, neg_h));
         }
 
-        let left_end = padding as f32 + max_ratio_w;
         let right_edge = STATS_BOX_WIDTH as f32 - padding as f32;
-        let col_pos = left_end + (right_edge - left_end - max_right_w) / 2.0;
+        let ideal_pos = (STATS_BOX_WIDTH - COL_WIDTH + padding) as f32;
+        let col_pos = ideal_pos.min(right_edge - max_right_w);
 
         for (i, (ratio_text, pos_text, neg_text, pos_w, main_h, neg_h)) in
             measurements.into_iter().enumerate()
@@ -360,36 +334,6 @@ impl Shape for ModeShareBox {
 }
 
 
-pub struct ModeGames {
-    pub solos: u64,
-    pub doubles: u64,
-    pub threes: u64,
-    pub fours: u64,
-    pub four_v_four: u64,
-}
-
-
-struct ModeEntry {
-    label: &'static str,
-    count: u64,
-    color: NamedColor,
-}
-
-
-impl ModeGames {
-    fn total(&self) -> u64 {
-        self.solos + self.doubles + self.threes + self.fours + self.four_v_four
-    }
-
-    fn entries(&self) -> Vec<ModeEntry> {
-        [("1s", self.solos), ("2s", self.doubles), ("3s", self.threes), ("4s", self.fours), ("4v4", self.four_v_four)]
-            .into_iter()
-            .map(|(label, count)| ModeEntry { label, count, color: NamedColor::Green })
-            .collect()
-    }
-}
-
-
 fn compute_mode_games(current: &BedwarsPlayerStats, previous: &BedwarsPlayerStats) -> ModeGames {
     let delta = |cur: &hypixel::ModeStats, prev: &hypixel::ModeStats| -> u64 {
         (cur.wins + cur.losses).saturating_sub(prev.wins + prev.losses)
@@ -443,110 +387,6 @@ fn efficiency_box(win_rate: f64, finals_per_star: f64, clutch_rate: f64) -> Text
         .push(stat_line("Win Rate: ", &fmt_pct(win_rate), wr_color))
         .push(stat_line("Finals/\u{2606}: ", &fmt_val(finals_per_star), fps_color))
         .push(stat_line("Clutch: ", &fmt_pct(clutch_rate), cr_color))
-}
-
-
-pub struct VerticalGamesBox<'a> {
-    mode_games: &'a ModeGames,
-    width: u32,
-    height: u32,
-}
-
-
-impl<'a> VerticalGamesBox<'a> {
-    pub fn new(mode_games: &'a ModeGames, width: u32, height: u32) -> Self {
-        Self { mode_games, width, height }
-    }
-}
-
-
-impl Shape for VerticalGamesBox<'_> {
-    fn draw(&self, ctx: &mut DrawContext) {
-        let padding = 12u32;
-        let scale = 1.5f32;
-        let font = scale * 16.0;
-        let label_scale = 1.25f32;
-        let label_font = label_scale * 16.0;
-
-        RoundedRect::new(self.width, self.height)
-            .corner_radius(BOX_CORNER_RADIUS)
-            .background(BOX_BACKGROUND)
-            .draw(ctx);
-
-        let total = self.mode_games.total();
-        let entries = self.mode_games.entries();
-
-        let title = MCText::new()
-            .span("Games: ").color(NamedColor::Gray)
-            .then(&format_number(total)).color(NamedColor::White)
-            .build();
-        let (_, title_h) = ctx.renderer.measure(&title, font);
-        TextBlock::new()
-            .push(title).scale(scale).align_x(Align::Center).max_width(self.width)
-            .draw(&mut ctx.at(0, padding as i32));
-
-        if entries.is_empty() { return; }
-
-        let sample_label = MCText::new().span("4v4").color(NamedColor::Gray).build();
-        let (_, label_h) = ctx.renderer.measure(&sample_label, label_font);
-
-        let bar_top = padding + title_h as u32 + 8;
-        let bar_bottom = self.height - padding - label_h as u32 - 4;
-        let max_bar_h = bar_bottom.saturating_sub(bar_top);
-        let inner_w = self.width - padding * 2;
-        let max_count = entries.iter().map(|e| e.count).max().unwrap_or(1).max(1);
-
-        let bar_count = entries.len() as u32;
-        let gap = 6u32;
-        let bar_w = inner_w.saturating_sub(gap * bar_count.saturating_sub(1)) / bar_count;
-        let origin = (ctx.x, ctx.y);
-        let (bw, bh) = ctx.buffer.dimensions();
-
-        for (i, entry) in entries.iter().enumerate() {
-            let x = padding + i as u32 * (bar_w + gap);
-            let bar_h = (entry.count as f64 / max_count as f64 * max_bar_h as f64).round() as u32;
-            let bar_h = bar_h.max(2);
-            let bar_y = bar_bottom - bar_h;
-
-            let bg_color = Rgba([50, 50, 55, 220]);
-            for py in bar_y..bar_bottom {
-                for px in x..x + bar_w {
-                    let abs_x = (origin.0 + px as i32) as u32;
-                    let abs_y = (origin.1 + py as i32) as u32;
-                    if abs_x < bw && abs_y < bh {
-                        let bg = *ctx.buffer.get_pixel(abs_x, abs_y);
-                        ctx.buffer.put_pixel(abs_x, abs_y, blend(bg, bg_color));
-                    }
-                }
-            }
-
-            if total > 0 && entry.count > 0 {
-                let pct = (entry.count as f64 / total as f64 * 100.0).round() as u32;
-                let pct_text = MCText::new().span(&format!("{}%", pct)).color(NamedColor::Green).build();
-                let pct_font = 1.1f32 * 16.0;
-                let (pw, ph) = ctx.renderer.measure(&pct_text, pct_font);
-                if (ph as u32) + 4 <= bar_h && (pw as u32) + 2 <= bar_w {
-                    ctx.renderer.draw(
-                        ctx.buffer.as_mut(), bw, bh,
-                        origin.0 as f32 + x as f32 + (bar_w as f32 - pw) / 2.0,
-                        (origin.1 + bar_y as i32 + ((bar_h as f32 - ph) / 2.0) as i32) as f32,
-                        &pct_text, pct_font, true,
-                    );
-                }
-            }
-
-            let label = MCText::new().span(entry.label).color(entry.color).build();
-            let (lw, _) = ctx.renderer.measure(&label, label_font);
-            ctx.renderer.draw(
-                ctx.buffer.as_mut(), bw, bh,
-                origin.0 as f32 + x as f32 + (bar_w as f32 - lw) / 2.0,
-                (origin.1 + (bar_bottom + 4) as i32) as f32,
-                &label, label_font, true,
-            );
-        }
-    }
-
-    fn size(&self) -> (u32, u32) { (self.width, self.height) }
 }
 
 
@@ -686,7 +526,7 @@ impl Shape for HeaderSection<'_> {
             let mut icon_x = 20.0 + name_w + 8.0;
             let icon_y = 13.0 + (name_font - icon_size as f32) / 2.0;
             for (icon_name, color) in self.tags {
-                if let Some(icon) = crate::icons::tag_icon(icon_name, icon_size, *color) {
+                if let Some(icon) = render::icons::tag_icon(icon_name, icon_size, *color) {
                     Image::new(&icon).draw(&mut ctx.at(icon_x as i32, icon_y as i32));
                     icon_x += icon_size as f32 + icon_gap as f32;
                 }
@@ -856,4 +696,13 @@ impl Shape for SkinSection<'_> {
     }
 
     fn size(&self) -> (u32, u32) { (COL_WIDTH, SKIN_BOX_HEIGHT) }
+}
+
+
+pub fn preview(data: &crate::preview::PlayerData, _args: &[String]) -> image::RgbaImage {
+    use hypixel::Mode;
+    let stats = hypixel::extract_bedwars_stats(&data.username, &data.hypixel, data.guild_info())
+        .expect("No Bedwars stats");
+    let modes = vec![Mode::Solos, Mode::Doubles, Mode::Threes, Mode::Fours, Mode::FourVFour];
+    render_session(&stats, &stats, SessionType::Daily, chrono::Utc::now(), None, &modes, data.skin.as_ref(), &[])
 }

@@ -2,76 +2,22 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use anyhow::Result;
-use chrono::{DateTime, Duration, Utc};
-use hypixel::parsing::bedwars::{GuildInfo, Stats};
-use hypixel::{Mode, experience_for_level, extract_bedwars_stats};
-use image::DynamicImage;
+use chrono::{DateTime, Utc};
 use serenity::all::*;
-use tracing::debug;
 
-use database::{AccountRepository, CacheRepository, MemberRepository, Period, SessionMarker, SessionRepository};
-use render::TagIcon;
+use database::{
+    AccountRepository, CacheRepository, MemberRepository, SessionMarker, SessionRepository,
+};
+use render::SessionType;
 
 use crate::framework::Data;
-use crate::rendering::{SessionType, render_session};
 use super::{
-    CACHE_TTL_SECS, create_mode_dropdown, disable_components, encode_png, extract_select_modes,
-    extract_select_value, extract_tag_icons, fetch_skin, resolve_uuid, send_deferred_error,
-    spawn_expiry_with_retain,
+    AutoPreset, CACHE_TTL_SECS, GameStats, PERIODS, SessionCacheEntry, SessionRenderData, StatsError,
+    create_session_dropdown, disable_components, evict_expired, extract_modal_field,
+    extract_tag_icons, fetch_skin, image_gallery, map_api_error,
+    period_session_type, player_option, resolve_uuid, send_deferred_error,
+    send_ephemeral_modal, spawn_expiry_with_retain, update_original_components, v2_update,
 };
-
-
-#[derive(Clone)]
-struct AutoPreset {
-    key: String,
-    label: String,
-    timestamp: DateTime<Utc>,
-}
-
-
-pub struct SessionCache {
-    uuid: String,
-    sender_id: u64,
-    is_owner: bool,
-    images: HashMap<String, Vec<u8>>,
-    descriptions: HashMap<String, String>,
-    markers: Vec<SessionMarker>,
-    auto_presets: Vec<AutoPreset>,
-    modes: Vec<Mode>,
-    current_view: String,
-    render_data: SessionRenderData,
-    last_interaction: Instant,
-}
-
-
-struct SessionRenderData {
-    current_stats: Stats,
-    previous_stats: HashMap<String, (Stats, SessionType, DateTime<Utc>)>,
-    skin: Option<DynamicImage>,
-    tag_icons: Vec<TagIcon>,
-    username: String,
-    guild_info: Option<GuildInfo>,
-}
-
-
-fn period_session_type(period: Period) -> SessionType {
-    match period {
-        Period::Daily => SessionType::Daily,
-        Period::Weekly => SessionType::Weekly,
-        Period::Monthly => SessionType::Monthly,
-        Period::Yearly => SessionType::Yearly,
-    }
-}
-
-
-const PERIODS: [Period; 4] = [Period::Daily, Period::Weekly, Period::Monthly, Period::Yearly];
-
-
-enum SessionError {
-    PlayerNotFound,
-    NoStats(String),
-    ApiError,
-}
 
 
 enum SwitchResult {
@@ -81,331 +27,79 @@ enum SwitchResult {
 }
 
 
-enum ModeOwnership {
-    Sender,
-    Ephemeral(Vec<u8>),
-    Expired,
-}
-
-
-fn image_gallery() -> CreateComponent<'static> {
-    CreateComponent::MediaGallery(CreateMediaGallery::new(vec![CreateMediaGalleryItem::new(
-        CreateUnfurledMediaItem::new("attachment://session.png"),
-    )]))
-}
-
-
-fn sanitize(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    for c in name.chars() {
-        if matches!(c, '*' | '_' | '~' | '`' | '|' | '>' | '\\' | '[' | ']') {
-            out.push('\\');
-        }
-        out.push(c);
-    }
-    out
-}
-
-
-fn v2_update(
-    components: Vec<CreateComponent<'static>>,
-    png: Option<Vec<u8>>,
-) -> CreateInteractionResponse<'static> {
-    let mut all = Vec::with_capacity(components.len() + 1);
-    if png.is_some() {
-        all.push(image_gallery());
-    }
-    all.extend(components);
-
-    let mut msg = CreateInteractionResponseMessage::new()
-        .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(all);
-    if let Some(png) = png {
-        msg = msg.add_file(CreateAttachment::bytes(png, "session.png"));
-    }
-    CreateInteractionResponse::UpdateMessage(msg)
-}
-
-
-fn view_display_name(view: &str) -> String {
-    view.strip_prefix("marker:").unwrap_or(view).to_string()
-}
-
-
-fn format_duration(duration: Duration) -> String {
-    let total_hours = duration.num_hours();
-    if total_hours >= 24 {
-        format!("{}d", duration.num_days())
-    } else if total_hours >= 1 {
-        let minutes = duration.num_minutes() % 60;
-        if minutes > 0 { format!("{}h {}m", total_hours, minutes) }
-        else { format!("{}h", total_hours) }
-    } else {
-        format!("{}m", duration.num_minutes().max(1))
-    }
-}
-
-
-fn format_stats_delta(current: &Stats, previous: &Stats, modes: &[Mode]) -> String {
-    let star_diff = current.level as i64 - previous.level as i64;
-    let cur = current.get_combined_mode_stats(modes);
-    let prev = previous.get_combined_mode_stats(modes);
-    let fk = cur.final_kills as i64 - prev.final_kills as i64;
-    let fd = cur.final_deaths as i64 - prev.final_deaths as i64;
-    let fkdr = if fd == 0 { fk as f64 } else { fk as f64 / fd as f64 };
-    format!("+{}\u{272B}, +{} finals, {:.2} fkdr", star_diff, fk, fkdr)
-}
-
-
-fn extract_modal_field<'a>(modal: &'a ModalInteraction, field_name: &str) -> Option<&'a str> {
-    modal.data.components.iter().find_map(|c| {
-        if let Component::Label(label) = c {
-            if let LabelComponent::InputText(input) = &label.component {
-                if input.custom_id == field_name {
-                    return input.value.as_ref().map(|v| v.as_str());
-                }
-            }
-        }
-        None
-    })
-}
-
-
-async fn send_ephemeral_modal(ctx: &Context, modal: &ModalInteraction, content: &str) -> Result<()> {
-    modal
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new().content(content).ephemeral(true),
-            ),
-        )
-        .await?;
-    Ok(())
-}
-
-
-async fn update_original_components(
-    ctx: &Context,
-    component: &ComponentInteraction,
-    components: Vec<CreateComponent<'static>>,
-) {
-    let mut all = Vec::with_capacity(components.len() + 1);
-    all.push(image_gallery());
-    all.extend(components);
-
-    let edit = EditMessage::new()
-        .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(all);
-    let msg = &component.message;
-    let _ = ctx.http.edit_message(msg.channel_id, msg.id, &edit, Vec::new()).await;
-}
-
-
-fn evict_expired(cache: &mut HashMap<String, SessionCache>) {
-    cache.retain(|_, v| v.last_interaction.elapsed().as_secs() <= CACHE_TTL_SECS);
-}
-
-
-fn build_session_components(
-    cache_key: &str,
-    uuid: &str,
-    current_view: &str,
-    modes: &[Mode],
-    stats: &Stats,
-    descriptions: &HashMap<String, String>,
-    markers: &[SessionMarker],
-    auto_presets: &[AutoPreset],
-    is_owner: bool,
-) -> Vec<CreateComponent<'static>> {
-    let mode_row = CreateComponent::ActionRow(CreateActionRow::SelectMenu(create_mode_dropdown(
-        "session_mode", cache_key, modes, stats,
-    )));
-
-    let mut container_rows = vec![CreateContainerComponent::ActionRow(
-        CreateActionRow::SelectMenu(create_session_dropdown(
-            cache_key, current_view, descriptions, markers, auto_presets, is_owner,
-        )),
-    )];
-
-    if let Some(marker_name) = current_view.strip_prefix("marker:") {
-        if is_owner {
-            container_rows.push(CreateContainerComponent::ActionRow(
-                CreateActionRow::Buttons(
-                    vec![
-                        CreateButton::new(format!("session_mgmt_rename:{cache_key}:{uuid}:{marker_name}"))
-                            .label("Rename")
-                            .style(ButtonStyle::Primary),
-                        CreateButton::new(format!("session_mgmt_delete:{cache_key}:{uuid}:{marker_name}"))
-                            .label("Delete")
-                            .style(ButtonStyle::Danger),
-                    ]
-                    .into(),
-                ),
-            ));
-        }
-    }
-
-    vec![
-        mode_row,
-        CreateComponent::Container(CreateContainer::new(container_rows)),
-    ]
-}
-
-
-fn create_session_dropdown(
-    cache_key: &str,
-    current: &str,
-    descriptions: &HashMap<String, String>,
-    markers: &[SessionMarker],
-    auto_presets: &[AutoPreset],
-    is_owner: bool,
-) -> CreateSelectMenu<'static> {
-    let mut options: Vec<CreateSelectMenuOption<'static>> = Vec::new();
-    let now = Utc::now();
-
-    for period in PERIODS {
-        let key = period.key();
-        let desc = descriptions.get(key).map(|s| s.as_str()).unwrap_or("No Data");
-        let elapsed = now.signed_duration_since(period.last_reset(now));
-
-        options.push(
-            CreateSelectMenuOption::new(
-                format!("{} ({})", period.label(), format_duration(elapsed)),
-                format!("{key}:{cache_key}"),
-            )
-            .default_selection(current == key)
-            .description(desc.to_string()),
-        );
-
-        if let Some((fp_key, fp_label)) = period.fixed_preset() {
-            let fp_desc = descriptions.get(fp_key).map(|s| s.as_str()).unwrap_or("No Data");
-            options.push(
-                CreateSelectMenuOption::new(fp_label, format!("{fp_key}:{cache_key}"))
-                    .default_selection(current == fp_key)
-                    .description(fp_desc.to_string()),
-            );
-        }
-    }
-
-    for preset in auto_presets {
-        let key = format!("preset:{}", preset.key);
-        let age = format_duration(now.signed_duration_since(preset.timestamp));
-        let mut option = CreateSelectMenuOption::new(
-            format!("{} ({})", preset.label, age),
-            format!("preset:{}:{}", cache_key, preset.key),
-        )
-        .default_selection(current == key);
-        if let Some(desc) = descriptions.get(&key) {
-            option = option.description(desc.clone());
-        }
-        options.push(option);
-    }
-
-    let remaining_slots = 25 - options.len() - if is_owner { 1 } else { 0 };
-    for marker in markers.iter().take(remaining_slots) {
-        let key = format!("marker:{}", marker.name);
-        let age = format_duration(now.signed_duration_since(marker.snapshot_timestamp));
-        let mut option = CreateSelectMenuOption::new(
-            format!("\"{}\" ({})", sanitize(&marker.name), age),
-            format!("marker:{}:{}", cache_key, marker.name),
-        )
-        .default_selection(current == key);
-        if let Some(desc) = descriptions.get(&key) {
-            option = option.description(desc.clone());
-        }
-        options.push(option);
-    }
-
-    if is_owner {
-        options.push(
-            CreateSelectMenuOption::new("Create New Bookmark", format!("create:{cache_key}"))
-                .description("Bookmark your current stats"),
-        );
-    }
-
-    let placeholder = PERIODS
-        .iter()
-        .find(|p| p.key() == current)
-        .map(|p| p.label().to_string())
-        .or_else(|| match current {
-            "past_24h" => Some("Past 24 Hours".to_string()),
-            "past_7d" => Some("Past 7 Days".to_string()),
-            "past_30d" => Some("Past 30 Days".to_string()),
-            _ => None,
-        })
-        .unwrap_or_else(|| {
-            auto_presets
-                .iter()
-                .find(|p| format!("preset:{}", p.key) == current)
-                .map(|p| p.label.clone())
-                .unwrap_or_else(|| view_display_name(current))
-        });
-
-    CreateSelectMenu::new(
-        "session_switch",
-        CreateSelectMenuKind::String { options: options.into() },
-    )
-    .placeholder(placeholder)
-}
-
-
-fn player_option() -> CreateCommandOption<'static> {
-    CreateCommandOption::new(CommandOptionType::String, "player", "Minecraft username or UUID")
-}
-
-
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("session")
         .description("View your session stats over time")
-        .add_option(player_option())
+        .add_option(
+            CreateCommandOption::new(CommandOptionType::SubCommand, "bedwars", "View BedWars session stats")
+                .add_sub_option(player_option()),
+        )
+        .add_option(
+            CreateCommandOption::new(CommandOptionType::SubCommand, "duels", "View Duels session stats")
+                .add_sub_option(player_option()),
+        )
 }
 
 
-pub fn register_daily() -> CreateCommand<'static> {
-    CreateCommand::new("daily")
-        .description("View your daily session stats")
-        .add_option(player_option())
+fn game_subcommands(name: &'static str) -> CreateCommand<'static> {
+    CreateCommand::new(name)
+        .description(format!("View your {name} session stats"))
+        .add_option(
+            CreateCommandOption::new(CommandOptionType::SubCommand, "bedwars", "View BedWars session stats")
+                .add_sub_option(player_option()),
+        )
+        .add_option(
+            CreateCommandOption::new(CommandOptionType::SubCommand, "duels", "View Duels session stats")
+                .add_sub_option(player_option()),
+        )
 }
 
 
-pub fn register_weekly() -> CreateCommand<'static> {
-    CreateCommand::new("weekly")
-        .description("View your weekly session stats")
-        .add_option(player_option())
-}
+pub fn register_daily() -> CreateCommand<'static> { game_subcommands("daily") }
 
+pub fn register_weekly() -> CreateCommand<'static> { game_subcommands("weekly") }
 
-pub fn register_monthly() -> CreateCommand<'static> {
-    CreateCommand::new("monthly")
-        .description("View your monthly session stats")
-        .add_option(player_option())
-}
+pub fn register_monthly() -> CreateCommand<'static> { game_subcommands("monthly") }
 
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
-    run_with_preferred_view(ctx, command, data, None).await
+    route(ctx, command, data, None).await
 }
 
 
 pub async fn run_daily(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
-    run_with_preferred_view(ctx, command, data, Some("daily")).await
+    route(ctx, command, data, Some("daily")).await
 }
 
 
 pub async fn run_weekly(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
-    run_with_preferred_view(ctx, command, data, Some("weekly")).await
+    route(ctx, command, data, Some("weekly")).await
 }
 
 
 pub async fn run_monthly(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
-    run_with_preferred_view(ctx, command, data, Some("monthly")).await
+    route(ctx, command, data, Some("monthly")).await
 }
 
 
-async fn run_with_preferred_view(ctx: &Context, command: &CommandInteraction, data: &Data, preferred: Option<&str>) -> Result<()> {
-    let player_input = command.data.options.first()
-        .and_then(|o| o.value.as_str())
-        .map(|s| s.to_string());
+async fn route(ctx: &Context, command: &CommandInteraction, data: &Data, preferred: Option<&str>) -> Result<()> {
+    match command.data.options.first().map(|o| o.name.as_str()) {
+        Some("duels") => super::duels::session_run(ctx, command, data, preferred).await,
+        _ => super::bedwars::session_run(ctx, command, data, preferred).await,
+    }
+}
+
+
+pub(super) async fn run_with_preferred_view<G: GameStats>(
+    ctx: &Context,
+    command: &CommandInteraction,
+    data: &Data,
+    preferred: Option<&str>,
+) -> Result<()> {
+    let player_input = command.data.options.first().and_then(|o| match &o.value {
+        CommandDataOptionValue::SubCommand(sub) => sub.first().and_then(|s| s.value.as_str()).map(|s| s.to_string()),
+        _ => o.value.as_str().map(|s| s.to_string()),
+    });
     let discord_id = command.user.id.get() as i64;
 
     let player = match player_input {
@@ -430,17 +124,22 @@ async fn run_with_preferred_view(ctx: &Context, command: &CommandInteraction, da
     let cache_key = command.id.to_string();
     let (defer_result, result) = tokio::join!(
         command.defer(&ctx.http),
-        precompute_session(data, &player, discord_id, super::ALL_MODES),
+        precompute_session::<G>(data, &player, discord_id),
     );
     defer_result?;
 
     match result {
         Ok(session_cache) => {
-            let initial_view = preferred
-                .filter(|k| session_cache.images.contains_key(*k))
-                .or_else(|| PERIODS.iter().map(|p| p.key()).find(|k| session_cache.images.contains_key(*k)))
+            let initial_period = preferred
+                .filter(|key| session_cache.render_data.previous_stats.contains_key(*key))
+                .or_else(|| {
+                    PERIODS.iter()
+                        .map(|p| p.key())
+                        .find(|key| session_cache.render_data.previous_stats.contains_key(*key))
+                })
                 .unwrap_or("daily");
-            let initial_png = session_cache.images.get(initial_view).cloned();
+            let initial_mode = G::default_mode(&session_cache.render_data.current_stats);
+            let initial_png = render_selected_png::<G>(&session_cache, initial_period, &initial_mode);
             let uuid = session_cache.uuid.clone();
 
             let is_owner = AccountRepository::new(data.db.pool())
@@ -448,20 +147,21 @@ async fn run_with_preferred_view(ctx: &Context, command: &CommandInteraction, da
                 .await
                 .unwrap_or(false);
 
-            let components = build_session_components(
-                &cache_key, &uuid, initial_view, super::ALL_MODES,
+            let components = build_session_components::<G>(
+                &cache_key, &uuid, initial_period, &initial_mode,
                 &session_cache.render_data.current_stats, &session_cache.descriptions,
                 &session_cache.markers, &session_cache.auto_presets, is_owner,
             );
             let expiry_key = cache_key.clone();
 
             {
-                let mut cache = data.session_images.lock().unwrap();
-                evict_expired(&mut cache);
-                let mut sc = session_cache;
-                sc.current_view = initial_view.to_string();
-                sc.is_owner = is_owner;
-                cache.insert(cache_key, sc);
+                let mut cache = G::session_cache(data).lock().unwrap();
+                evict::<G>(&mut cache);
+                let mut session_cache = session_cache;
+                session_cache.current_period = initial_period.to_string();
+                session_cache.current_mode = initial_mode;
+                session_cache.is_owner = is_owner;
+                cache.insert(cache_key, session_cache);
             }
 
             if let Some(png) = initial_png {
@@ -479,22 +179,24 @@ async fn run_with_preferred_view(ctx: &Context, command: &CommandInteraction, da
                     .await?;
 
                 spawn_expiry_with_retain(
-                    ctx.http.clone(), command.token.to_string(),
-                    data.session_images.clone(), expiry_key,
-                    |e: &SessionCache| e.last_interaction,
+                    ctx.http.clone(),
+                    command.token.to_string(),
+                    G::session_cache(data).clone(),
+                    expiry_key,
+                    |entry: &SessionCacheEntry<G>| entry.last_interaction,
                     vec![image_gallery()],
                 );
             } else {
                 send_deferred_error(ctx, command, "No Historical Data", "No snapshot data available yet. Check back later!").await?;
             }
         }
-        Err(SessionError::PlayerNotFound) => {
+        Err(StatsError::PlayerNotFound) => {
             send_deferred_error(ctx, command, "Player Not Found", &format!("Could not find player: {player}")).await?;
         }
-        Err(SessionError::NoStats(username)) => {
-            send_deferred_error(ctx, command, &format!("{username}'s Session Stats"), "This player has no Bedwars stats").await?;
+        Err(StatsError::NoStats(username)) => {
+            send_deferred_error(ctx, command, &format!("{username}'s Session Stats"), &format!("This player has no {} stats", G::GAME_NAME)).await?;
         }
-        Err(SessionError::ApiError) => {
+        Err(StatsError::ApiError) => {
             send_deferred_error(ctx, command, "Error", "Something went wrong. Please try again later.").await?;
         }
     }
@@ -503,28 +205,28 @@ async fn run_with_preferred_view(ctx: &Context, command: &CommandInteraction, da
 }
 
 
-pub async fn handle_switch(
+pub(super) async fn handle_switch<G: GameStats>(
     ctx: &Context,
     component: &ComponentInteraction,
     data: &Data,
 ) -> Result<()> {
-    let Some(value) = extract_select_value(component) else { return Ok(()) };
+    let Some(value) = super::extract_select_value(component) else { return Ok(()) };
 
     let parts: Vec<&str> = value.splitn(3, ':').collect();
     if parts.len() < 2 { return Ok(()) }
     let (selection, cache_key, extra) = (parts[0], parts[1], parts.get(2).copied());
 
     if selection == "create" {
-        return handle_create_bookmark(ctx, component, data, cache_key).await;
+        return handle_create_bookmark::<G>(ctx, component, data, cache_key).await;
     }
 
-    let image_key = match selection {
+    let period_key = match selection {
         "marker" => format!("marker:{}", extra.unwrap_or("")),
         "preset" => format!("preset:{}", extra.unwrap_or("")),
         _ => selection.to_string(),
     };
 
-    match resolve_view_switch(data, cache_key, &image_key, component.user.id.get()) {
+    match resolve_period_switch::<G>(data, cache_key, &period_key, component.user.id.get()) {
         SwitchResult::Ok(png, components) => {
             component.create_response(&ctx.http, v2_update(components, Some(png))).await?;
         }
@@ -549,15 +251,21 @@ pub async fn handle_switch(
 }
 
 
-pub async fn handle_mode_switch(
+pub(super) async fn handle_mode_switch<G: GameStats>(
     ctx: &Context,
     component: &ComponentInteraction,
     data: &Data,
 ) -> Result<()> {
-    let Some((cache_key, modes)) = extract_select_modes(component) else { return Ok(()) };
+    let Some((cache_key, mode)) = G::parse_mode_interaction(component) else { return Ok(()) };
 
-    match check_mode_sender(data, cache_key, &modes, component.user.id.get()) {
-        ModeOwnership::Ephemeral(png) => {
+    match resolve_mode_switch::<G>(data, &cache_key, mode, component.user.id.get()) {
+        SwitchResult::Ok(png, components) => {
+            component.create_response(&ctx.http, v2_update(components, Some(png))).await?;
+        }
+        SwitchResult::Expired => {
+            disable_components(ctx, component).await?;
+        }
+        SwitchResult::Ephemeral(png) => {
             component
                 .create_response(
                     &ctx.http,
@@ -569,24 +277,13 @@ pub async fn handle_mode_switch(
                 )
                 .await?;
         }
-        ModeOwnership::Expired => {
-            disable_components(ctx, component).await?;
-        }
-        ModeOwnership::Sender => match rerender_for_modes(data, cache_key, &modes) {
-            Some((png, components)) => {
-                component.create_response(&ctx.http, v2_update(components, Some(png))).await?;
-            }
-            None => {
-                disable_components(ctx, component).await?;
-            }
-        },
     }
 
     Ok(())
 }
 
 
-async fn handle_create_bookmark(
+async fn handle_create_bookmark<G: GameStats>(
     ctx: &Context,
     component: &ComponentInteraction,
     data: &Data,
@@ -597,7 +294,7 @@ async fn handle_create_bookmark(
     let name = timestamp.format("%b %-d, %Y").to_string();
 
     let (uuid, is_sender) = {
-        let cache = data.session_images.lock().unwrap();
+        let cache = G::session_cache(data).lock().unwrap();
         let Some(entry) = cache.get(cache_key) else { return Ok(()) };
         (entry.uuid.clone(), entry.sender_id == component.user.id.get())
     };
@@ -621,11 +318,11 @@ async fn handle_create_bookmark(
         return Ok(());
     }
 
-    if let Err(e) = SessionRepository::new(data.db.pool())
+    if let Err(error) = SessionRepository::new(data.db.pool())
         .create(&uuid, discord_id, &name, timestamp)
         .await
     {
-        tracing::error!("Failed to create bookmark: {e}");
+        tracing::error!("Failed to create bookmark: {error}");
         return Ok(());
     }
 
@@ -636,35 +333,30 @@ async fn handle_create_bookmark(
         .flatten();
 
     let (components, png, ephemeral_png) = {
-        let mut cache = data.session_images.lock().unwrap();
+        let mut cache = G::session_cache(data).lock().unwrap();
         let Some(entry) = cache.get_mut(cache_key) else { return Ok(()) };
 
-        let to_stats = |v: Option<serde_json::Value>| -> Option<Stats> {
-            extract_bedwars_stats(&entry.render_data.username, &v?, entry.render_data.guild_info.clone())
+        let to_stats = |value: Option<serde_json::Value>| -> Option<G::Stats> {
+            G::extract_stats(&entry.render_data.username, &value?, entry.render_data.guild_info.clone())
         };
 
         let key = format!("marker:{name}");
         let mut bookmark_png = None;
 
-        if let Some(prev_stats) = to_stats(snapshot_data) {
+        if let Some(previous_stats) = to_stats(snapshot_data) {
             let session_type = SessionType::Custom(name.to_string());
-            let image = render_session(
-                &entry.render_data.current_stats, &prev_stats,
-                session_type.clone(), timestamp, None, &entry.modes,
-                entry.render_data.skin.as_ref(), &entry.render_data.tag_icons,
-            );
-            if let Ok(png) = encode_png(&image) {
-                bookmark_png = Some(png.clone());
-                entry.images.insert(key.clone(), png);
-            }
             entry.descriptions.insert(
                 key.clone(),
-                format_stats_delta(&entry.render_data.current_stats, &prev_stats, &entry.modes),
+                G::format_delta(&entry.render_data.current_stats, &previous_stats, &entry.current_mode),
             );
-            entry.render_data.previous_stats.insert(key.clone(), (prev_stats, session_type, timestamp));
+            entry.render_data.previous_stats.insert(
+                key.clone(),
+                (previous_stats, session_type, timestamp),
+            );
             if is_sender {
-                entry.current_view = key;
+                entry.current_period = key.clone();
             }
+            bookmark_png = render_selected_png::<G>(entry, &key, &entry.current_mode.clone());
         }
 
         entry.markers.push(SessionMarker {
@@ -679,9 +371,9 @@ async fn handle_create_bookmark(
             entry.last_interaction = Instant::now();
         }
 
-        let png = entry.images.get(&entry.current_view).cloned();
-        let components = build_session_components(
-            cache_key, &entry.uuid, &entry.current_view, &entry.modes,
+        let png = render_selected_png::<G>(entry, &entry.current_period.clone(), &entry.current_mode.clone());
+        let components = build_session_components::<G>(
+            cache_key, &entry.uuid, &entry.current_period, &entry.current_mode,
             &entry.render_data.current_stats, &entry.descriptions,
             &entry.markers, &entry.auto_presets, entry.is_owner,
         );
@@ -705,12 +397,12 @@ async fn handle_create_bookmark(
 }
 
 
-pub async fn handle_mgmt_rename_button(
+pub(super) async fn handle_mgmt_rename_button<G: GameStats>(
     ctx: &Context,
     component: &ComponentInteraction,
     data: &Data,
 ) -> Result<()> {
-    let rest = component.data.custom_id.strip_prefix("session_mgmt_rename:").unwrap_or("");
+    let rest = component.data.custom_id.strip_prefix(G::MGMT_RENAME_PREFIX).unwrap_or("");
     let parts: Vec<&str> = rest.splitn(3, ':').collect();
     if parts.len() < 3 { return Ok(()) }
     let (uuid, old_name) = (parts[1], parts[2]);
@@ -743,10 +435,13 @@ pub async fn handle_mgmt_rename_button(
         .create_response(
             &ctx.http,
             CreateInteractionResponse::Modal(
-                CreateModal::new(format!("session_rename_modal:{rest}"), format!("Rename \"{old_name}\""))
-                    .components(vec![CreateModalComponent::Label(
-                        CreateLabel::input_text("New Name", input),
-                    )]),
+                CreateModal::new(
+                    format!("{}{rest}", G::RENAME_MODAL_PREFIX),
+                    format!("Rename \"{old_name}\""),
+                )
+                .components(vec![CreateModalComponent::Label(
+                    CreateLabel::input_text("New Name", input),
+                )]),
             ),
         )
         .await?;
@@ -755,12 +450,12 @@ pub async fn handle_mgmt_rename_button(
 }
 
 
-pub async fn handle_rename_modal(
+pub(super) async fn handle_rename_modal<G: GameStats>(
     ctx: &Context,
     modal: &ModalInteraction,
     data: &Data,
 ) -> Result<()> {
-    let rest = modal.data.custom_id.strip_prefix("session_rename_modal:").unwrap_or("");
+    let rest = modal.data.custom_id.strip_prefix(G::RENAME_MODAL_PREFIX).unwrap_or("");
     let parts: Vec<&str> = rest.splitn(3, ':').collect();
     if parts.len() < 3 { return Ok(()) }
     let (cache_key, uuid, old_name) = (parts[0], parts[1], parts[2]);
@@ -768,21 +463,24 @@ pub async fn handle_rename_modal(
     let new_name = extract_modal_field(modal, "new_name").unwrap_or(old_name);
     let discord_id = modal.user.id.get() as i64;
 
-    match SessionRepository::new(data.db.pool()).rename(uuid, discord_id, old_name, new_name).await {
+    match SessionRepository::new(data.db.pool())
+        .rename(uuid, discord_id, old_name, new_name)
+        .await
+    {
         Ok(true) => {}
         Ok(false) => {
             send_ephemeral_modal(ctx, modal, "Session not found").await?;
             return Ok(());
         }
-        Err(e) => {
-            tracing::error!("Failed to rename session: {e}");
+        Err(error) => {
+            tracing::error!("Failed to rename session: {error}");
             send_ephemeral_modal(ctx, modal, "Failed to rename session").await?;
             return Ok(());
         }
     }
 
     let (is_sender, cached_uuid) = {
-        let cache = data.session_images.lock().unwrap();
+        let cache = G::session_cache(data).lock().unwrap();
         let Some(entry) = cache.get(cache_key) else { return Ok(()) };
         (entry.sender_id == modal.user.id.get(), entry.uuid.clone())
     };
@@ -793,35 +491,32 @@ pub async fn handle_rename_modal(
         .unwrap_or_default();
 
     let (components, png) = {
-        let mut cache = data.session_images.lock().unwrap();
+        let mut cache = G::session_cache(data).lock().unwrap();
         let Some(entry) = cache.get_mut(cache_key) else { return Ok(()) };
 
         let old_key = format!("marker:{old_name}");
         let new_key = format!("marker:{new_name}");
 
-        if let Some(img) = entry.images.remove(&old_key) {
-            entry.images.insert(new_key.clone(), img);
-        }
         if let Some(desc) = entry.descriptions.remove(&old_key) {
             entry.descriptions.insert(new_key.clone(), desc);
         }
-        if let Some(ps) = entry.render_data.previous_stats.remove(&old_key) {
+        if let Some(previous) = entry.render_data.previous_stats.remove(&old_key) {
             entry.render_data.previous_stats.insert(
                 new_key.clone(),
-                (ps.0, SessionType::Custom(new_name.to_string()), ps.2),
+                (previous.0, SessionType::Custom(new_name.to_string()), previous.2),
             );
         }
-        if is_sender && entry.current_view == old_key {
-            entry.current_view = new_key;
+        if is_sender && entry.current_period == old_key {
+            entry.current_period = new_key;
         }
         entry.markers = fresh_markers;
         if is_sender {
             entry.last_interaction = Instant::now();
         }
 
-        let png = entry.images.get(&entry.current_view).cloned();
-        let components = build_session_components(
-            cache_key, &entry.uuid, &entry.current_view, &entry.modes,
+        let png = render_selected_png::<G>(entry, &entry.current_period.clone(), &entry.current_mode.clone());
+        let components = build_session_components::<G>(
+            cache_key, &entry.uuid, &entry.current_period, &entry.current_mode,
             &entry.render_data.current_stats, &entry.descriptions,
             &entry.markers, &entry.auto_presets, entry.is_owner,
         );
@@ -838,12 +533,12 @@ pub async fn handle_rename_modal(
 }
 
 
-pub async fn handle_mgmt_delete_button(
+pub(super) async fn handle_mgmt_delete_button<G: GameStats>(
     ctx: &Context,
     component: &ComponentInteraction,
     data: &Data,
 ) -> Result<()> {
-    let custom_id = component.data.custom_id.strip_prefix("session_mgmt_delete:").unwrap_or("");
+    let custom_id = component.data.custom_id.strip_prefix(G::MGMT_DELETE_PREFIX).unwrap_or("");
     let parts: Vec<&str> = custom_id.splitn(3, ':').collect();
     if parts.len() < 3 { return Ok(()) }
     let (cache_key, uuid, name) = (parts[0], parts[1], parts[2]);
@@ -868,7 +563,10 @@ pub async fn handle_mgmt_delete_button(
         return Ok(());
     }
 
-    match SessionRepository::new(data.db.pool()).delete(uuid, discord_id, name).await {
+    match SessionRepository::new(data.db.pool())
+        .delete(uuid, discord_id, name)
+        .await
+    {
         Ok(false) | Err(_) => return Ok(()),
         Ok(true) => {}
     }
@@ -879,20 +577,19 @@ pub async fn handle_mgmt_delete_button(
         .unwrap_or_default();
 
     let (is_sender, components, png) = {
-        let mut cache = data.session_images.lock().unwrap();
+        let mut cache = G::session_cache(data).lock().unwrap();
         let Some(entry) = cache.get_mut(cache_key) else { return Ok(()) };
 
         let is_sender = entry.sender_id == component.user.id.get();
         let deleted_key = format!("marker:{name}");
-        entry.images.remove(&deleted_key);
         entry.descriptions.remove(&deleted_key);
         entry.render_data.previous_stats.remove(&deleted_key);
 
-        if is_sender && entry.current_view == deleted_key {
-            entry.current_view = PERIODS
+        if is_sender && entry.current_period == deleted_key {
+            entry.current_period = PERIODS
                 .iter()
                 .map(|p| p.key().to_string())
-                .find(|k| entry.images.contains_key(k))
+                .find(|key| entry.render_data.previous_stats.contains_key(key))
                 .unwrap_or_else(|| "daily".to_string());
         }
         entry.markers = fresh_markers;
@@ -900,9 +597,9 @@ pub async fn handle_mgmt_delete_button(
             entry.last_interaction = Instant::now();
         }
 
-        let png = entry.images.get(&entry.current_view).cloned();
-        let components = build_session_components(
-            cache_key, &entry.uuid, &entry.current_view, &entry.modes,
+        let png = render_selected_png::<G>(entry, &entry.current_period.clone(), &entry.current_mode.clone());
+        let components = build_session_components::<G>(
+            cache_key, &entry.uuid, &entry.current_period, &entry.current_mode,
             &entry.render_data.current_stats, &entry.descriptions,
             &entry.markers, &entry.auto_presets, entry.is_owner,
         );
@@ -929,34 +626,103 @@ pub async fn handle_mgmt_delete_button(
 }
 
 
-fn resolve_view_switch(
+fn render_selected_png<G: GameStats>(
+    entry: &SessionCacheEntry<G>,
+    period_key: &str,
+    mode: &G::ModeSelection,
+) -> Option<Vec<u8>> {
+    let (previous, session_type, timestamp) = entry.render_data.previous_stats.get(period_key)?;
+    G::render_session(
+        &entry.render_data.current_stats,
+        previous,
+        session_type.clone(),
+        *timestamp,
+        mode,
+        entry.render_data.skin.as_ref(),
+        &entry.render_data.snapshots,
+        &entry.render_data.tag_icons,
+    )
+    .ok()
+}
+
+
+fn build_session_components<G: GameStats>(
+    cache_key: &str,
+    uuid: &str,
+    current_period: &str,
+    current_mode: &G::ModeSelection,
+    current_stats: &G::Stats,
+    descriptions: &HashMap<String, String>,
+    markers: &[SessionMarker],
+    auto_presets: &[AutoPreset],
+    is_owner: bool,
+) -> Vec<CreateComponent<'static>> {
+    let mut container_rows = vec![
+        CreateContainerComponent::ActionRow(CreateActionRow::SelectMenu(
+            create_session_dropdown::<G>(
+                cache_key, current_period, descriptions, markers, auto_presets, is_owner,
+            ),
+        )),
+        CreateContainerComponent::ActionRow(CreateActionRow::SelectMenu(
+            G::create_mode_dropdown(G::SESSION_MODE_ID, cache_key, current_mode, current_stats),
+        )),
+    ];
+
+    if let Some(marker_name) = current_period.strip_prefix("marker:") {
+        if is_owner {
+            container_rows.push(CreateContainerComponent::ActionRow(
+                CreateActionRow::Buttons(
+                    vec![
+                        CreateButton::new(format!("{}{cache_key}:{uuid}:{marker_name}", G::MGMT_RENAME_PREFIX))
+                            .label("Rename")
+                            .style(ButtonStyle::Primary),
+                        CreateButton::new(format!("{}{cache_key}:{uuid}:{marker_name}", G::MGMT_DELETE_PREFIX))
+                            .label("Delete")
+                            .style(ButtonStyle::Danger),
+                    ]
+                    .into(),
+                ),
+            ));
+        }
+    }
+
+    vec![CreateComponent::Container(CreateContainer::new(container_rows))]
+}
+
+
+fn resolve_period_switch<G: GameStats>(
     data: &Data,
     cache_key: &str,
-    image_key: &str,
+    period_key: &str,
     user_id: u64,
 ) -> SwitchResult {
-    let mut cache = data.session_images.lock().unwrap();
-    let Some(entry) = cache.get_mut(cache_key) else { return SwitchResult::Expired };
+    let mut cache = G::session_cache(data).lock().unwrap();
+    let Some(entry) = cache.get_mut(cache_key) else {
+        return SwitchResult::Expired;
+    };
 
     if entry.last_interaction.elapsed().as_secs() > CACHE_TTL_SECS {
         cache.remove(cache_key);
         return SwitchResult::Expired;
     }
+
     if entry.sender_id != user_id {
-        return match render_view(entry, image_key) {
+        return match render_selected_png::<G>(entry, period_key, &entry.current_mode.clone()) {
             Some(png) => SwitchResult::Ephemeral(png),
             None => SwitchResult::Expired,
         };
     }
 
-    entry.current_view = image_key.to_string();
-    entry.last_interaction = Instant::now();
-    let Some(png) = render_view(entry, image_key) else {
-        return SwitchResult::Expired;
+    let mode = entry.current_mode.clone();
+    let png = match render_selected_png::<G>(entry, period_key, &mode) {
+        Some(png) => png,
+        None => return SwitchResult::Expired,
     };
+    entry.current_period = period_key.to_string();
+    entry.last_interaction = Instant::now();
 
-    let components = build_session_components(
-        cache_key, &entry.uuid, image_key, &entry.modes,
+    let components = build_session_components::<G>(
+        cache_key, &entry.uuid, &entry.current_period, &entry.current_mode,
         &entry.render_data.current_stats, &entry.descriptions,
         &entry.markers, &entry.auto_presets, entry.is_owner,
     );
@@ -964,130 +730,97 @@ fn resolve_view_switch(
 }
 
 
-fn check_mode_sender(data: &Data, cache_key: &str, modes: &[Mode], user_id: u64) -> ModeOwnership {
-    let store = data.session_images.lock().unwrap();
-    let Some(entry) = store.get(cache_key) else { return ModeOwnership::Expired };
+fn resolve_mode_switch<G: GameStats>(
+    data: &Data,
+    cache_key: &str,
+    mode: G::ModeSelection,
+    user_id: u64,
+) -> SwitchResult {
+    let mut cache = G::session_cache(data).lock().unwrap();
+    let Some(entry) = cache.get_mut(cache_key) else {
+        return SwitchResult::Expired;
+    };
 
     if entry.last_interaction.elapsed().as_secs() > CACHE_TTL_SECS {
-        return ModeOwnership::Expired;
+        cache.remove(cache_key);
+        return SwitchResult::Expired;
     }
+
     if entry.sender_id != user_id {
-        return match render_view_with_modes(entry, &entry.current_view, modes) {
-            Some(png) => ModeOwnership::Ephemeral(png),
-            None => ModeOwnership::Expired,
+        return match render_selected_png::<G>(entry, &entry.current_period.clone(), &mode) {
+            Some(png) => SwitchResult::Ephemeral(png),
+            None => SwitchResult::Expired,
         };
     }
 
-    ModeOwnership::Sender
-}
-
-
-fn rerender_for_modes(
-    data: &Data,
-    cache_key: &str,
-    modes: &[Mode],
-) -> Option<(Vec<u8>, Vec<CreateComponent<'static>>)> {
-    let mut store = data.session_images.lock().unwrap();
-    let entry = store.get_mut(cache_key)?;
-
-    if entry.last_interaction.elapsed().as_secs() > CACHE_TTL_SECS {
-        store.remove(cache_key);
-        return None;
-    }
-
-    entry.modes = modes.to_vec();
+    let period = entry.current_period.clone();
+    let png = match render_selected_png::<G>(entry, &period, &mode) {
+        Some(png) => png,
+        None => return SwitchResult::Expired,
+    };
+    entry.current_mode = mode;
     entry.last_interaction = Instant::now();
-    update_descriptions(entry, modes);
 
-    let png = render_view(entry, &entry.current_view.clone())?;
-    let components = build_session_components(
-        cache_key, &entry.uuid, &entry.current_view, &entry.modes,
+    let components = build_session_components::<G>(
+        cache_key, &entry.uuid, &entry.current_period, &entry.current_mode,
         &entry.render_data.current_stats, &entry.descriptions,
         &entry.markers, &entry.auto_presets, entry.is_owner,
     );
-    Some((png, components))
+    SwitchResult::Ok(png, components)
 }
 
 
-fn render_view(entry: &SessionCache, view: &str) -> Option<Vec<u8>> {
-    render_view_with_modes(entry, view, &entry.modes)
-}
-
-
-fn render_view_with_modes(entry: &SessionCache, view: &str, modes: &[Mode]) -> Option<Vec<u8>> {
-    let (prev, session_type, started) = entry.render_data.previous_stats.get(view)?;
-    let image = render_session(
-        &entry.render_data.current_stats, prev, session_type.clone(),
-        *started, None, modes, entry.render_data.skin.as_ref(), &entry.render_data.tag_icons,
-    );
-    encode_png(&image).ok()
-}
-
-
-fn update_descriptions(entry: &mut SessionCache, modes: &[Mode]) {
-    let keys: Vec<String> = entry.render_data.previous_stats.keys().cloned().collect();
-    for key in keys {
-        if let Some((prev, _, _)) = entry.render_data.previous_stats.get(&key) {
-            entry.descriptions.insert(key, format_stats_delta(&entry.render_data.current_stats, prev, modes));
-        }
-    }
-}
-
-
-async fn precompute_session(
+async fn precompute_session<G: GameStats>(
     data: &Data,
     player: &str,
     discord_id: i64,
-    modes: &[Mode],
-) -> Result<SessionCache, SessionError> {
-    let t = Instant::now();
+) -> Result<SessionCacheEntry<G>, StatsError> {
     let cached_uuid = resolve_uuid(data, player).await;
-    debug!(at = ?t.elapsed(), cached = cached_uuid.is_some(), "session resolve");
-
     let (resp, guild_result, skin_result) =
         fetch_player(data, player, cached_uuid.as_deref()).await?;
-    debug!(at = ?t.elapsed(), "session api done");
 
-    let hypixel_data = resp.hypixel.ok_or(SessionError::PlayerNotFound)?;
+    let hypixel_data = resp.hypixel.ok_or(StatsError::PlayerNotFound)?;
     let username = resp.username.clone();
     let uuid = resp.uuid.clone();
 
-    let guild_info = guild_result.ok().flatten().map(|g| super::to_guild_info(&g));
-    let skin_image = skin_result.map(|s| s.data);
-    let current_stats = extract_bedwars_stats(&username, &hypixel_data, guild_info.clone())
-        .ok_or_else(|| SessionError::NoStats(username.clone()))?;
+    let guild_info = guild_result.ok().flatten().map(|guild| super::to_guild_info(&guild));
+    let skin_image = skin_result.map(|skin| skin.data);
+    let current_stats = G::extract_stats(&username, &hypixel_data, guild_info.clone())
+        .ok_or_else(|| StatsError::NoStats(username.clone()))?;
 
-    let (snapshots, markers, auto_presets) =
-        fetch_snapshots(data, &uuid, discord_id, current_stats.level as u64).await;
-    debug!(at = ?t.elapsed(), "session snapshots done");
-
-    let to_stats = |v: Option<serde_json::Value>| -> Option<Stats> {
-        extract_bedwars_stats(&username, &v?, guild_info.clone())
+    let cache_repo = CacheRepository::new(data.db.pool());
+    let (session_snapshots, markers, auto_presets, ws_snapshots) = {
+        let (s, m, a) = fetch_snapshots::<G>(data, &uuid, discord_id, &current_stats).await;
+        let ws = cache_repo
+            .get_all_snapshots_mapped(&uuid, G::extract_winstreak_snapshot)
+            .await;
+        (s, m, a, ws)
     };
 
-    let (images, previous_stats, descriptions, marker_list) = render_all_views(
-        &current_stats, snapshots, &markers, &auto_presets,
-        modes, skin_image.as_ref(), &extract_tag_icons(&resp.tags), to_stats,
+    let tags = extract_tag_icons(&resp.tags);
+    let default_mode = G::default_mode(&current_stats);
+    let (previous_stats, descriptions, marker_list) = build_previous_views::<G>(
+        &current_stats, session_snapshots, &markers, &auto_presets,
+        &username, guild_info.clone(), &default_mode,
     );
-    debug!(at = ?t.elapsed(), "session render done");
 
-    Ok(SessionCache {
+    Ok(SessionCacheEntry {
         uuid,
         sender_id: discord_id as u64,
         is_owner: false,
-        images,
         descriptions,
         markers: marker_list,
         auto_presets,
-        modes: modes.to_vec(),
-        current_view: "daily".to_string(),
+        current_period: "daily".to_string(),
+        current_mode: default_mode,
         render_data: SessionRenderData {
             current_stats,
             previous_stats,
             skin: skin_image,
-            tag_icons: extract_tag_icons(&resp.tags),
-            username: username.clone(),
-            guild_info: guild_info.clone(),
+            tag_icons: tags,
+            snapshots: ws_snapshots.unwrap_or_default(),
+            username,
+            guild_info,
         },
         last_interaction: Instant::now(),
     })
@@ -1104,7 +837,7 @@ async fn fetch_player(
         Result<Option<crate::api::GuildResponse>, crate::api::ApiError>,
         Option<clients::SkinImage>,
     ),
-    SessionError,
+    StatsError,
 > {
     match cached_uuid {
         Some(uuid) => {
@@ -1135,22 +868,11 @@ async fn fetch_player(
 }
 
 
-fn map_api_error(e: crate::api::ApiError) -> SessionError {
-    match e {
-        crate::api::ApiError::NotFound => SessionError::PlayerNotFound,
-        other => {
-            tracing::error!("Internal API error: {other}");
-            SessionError::ApiError
-        }
-    }
-}
-
-
-async fn fetch_snapshots(
+async fn fetch_snapshots<G: GameStats>(
     data: &Data,
     uuid: &str,
     discord_id: i64,
-    current_level: u64,
+    current_stats: &G::Stats,
 ) -> (
     Vec<Option<(DateTime<Utc>, serde_json::Value)>>,
     Vec<SessionMarker>,
@@ -1162,7 +884,7 @@ async fn fetch_snapshots(
 
     let (mut markers, auto_presets) = tokio::join!(
         async { session_repo.list(uuid, discord_id).await.unwrap_or_default() },
-        detect_auto_presets(&cache_repo, uuid, current_level),
+        G::detect_auto_presets(&cache_repo, uuid, current_stats),
     );
 
     if markers.is_empty() {
@@ -1171,7 +893,7 @@ async fn fetch_snapshots(
         }
     }
 
-    let mut timestamps: Vec<DateTime<Utc>> = PERIODS.iter().map(|p| p.last_reset(now)).collect();
+    let mut timestamps: Vec<DateTime<Utc>> = PERIODS.iter().map(|period| period.last_reset(now)).collect();
     for period in PERIODS {
         if period.fixed_preset().is_some() {
             timestamps.push(now - period.duration());
@@ -1193,144 +915,75 @@ async fn fetch_snapshots(
 }
 
 
-fn render_all_views(
-    current_stats: &Stats,
+fn build_previous_views<G: GameStats>(
+    current_stats: &G::Stats,
     snapshots: Vec<Option<(DateTime<Utc>, serde_json::Value)>>,
     markers: &[SessionMarker],
     auto_presets: &[AutoPreset],
-    modes: &[Mode],
-    skin: Option<&DynamicImage>,
-    tag_icons: &[TagIcon],
-    to_stats: impl Fn(Option<serde_json::Value>) -> Option<Stats>,
+    username: &str,
+    guild_info: Option<hypixel::GuildInfo>,
+    mode: &G::ModeSelection,
 ) -> (
-    HashMap<String, Vec<u8>>,
-    HashMap<String, (Stats, SessionType, DateTime<Utc>)>,
+    HashMap<String, (G::Stats, SessionType, DateTime<Utc>)>,
     HashMap<String, String>,
     Vec<SessionMarker>,
 ) {
     let now = Utc::now();
-    let mut images = HashMap::new();
     let mut previous_stats = HashMap::new();
     let mut descriptions = HashMap::new();
     let mut snapshot_iter = snapshots.into_iter();
-    let mut first_rendered = false;
 
-    let mut add_view = |key: String, prev_stats: &Stats, session_type: SessionType, timestamp: DateTime<Utc>,
-                        images: &mut HashMap<String, Vec<u8>>, previous_stats: &mut HashMap<String, (Stats, SessionType, DateTime<Utc>)>,
-                        first_rendered: &mut bool| {
-        descriptions.insert(key.clone(), format_stats_delta(current_stats, prev_stats, modes));
-        if !*first_rendered {
-            let image = render_session(
-                current_stats, prev_stats, session_type.clone(),
-                timestamp, None, modes, skin, tag_icons,
-            );
-            if let Ok(png) = encode_png(&image) {
-                images.insert(key.clone(), png);
-                *first_rendered = true;
-            }
-        }
-        previous_stats.insert(key, (prev_stats.clone(), session_type, timestamp));
+    let to_stats = |value: Option<serde_json::Value>| -> Option<G::Stats> {
+        G::extract_stats(username, &value?, guild_info.clone())
     };
+
+    let mut register_view =
+        |key: String, previous: G::Stats, session_type: SessionType, timestamp: DateTime<Utc>| {
+            descriptions.insert(key.clone(), G::format_delta(current_stats, &previous, mode));
+            previous_stats.insert(key, (previous, session_type, timestamp));
+        };
 
     for period in PERIODS {
         let target_time = period.last_reset(now);
-        if let Some(prev) = to_stats(snapshot_iter.next().flatten().map(|(_, v)| v)) {
-            add_view(period.key().to_string(), &prev, period_session_type(period), target_time,
-                     &mut images, &mut previous_stats, &mut first_rendered);
+        if let Some(previous) = to_stats(snapshot_iter.next().flatten().map(|(_, value)| value)) {
+            register_view(period.key().to_string(), previous, period_session_type(period), target_time);
         }
     }
 
     for period in PERIODS {
         let Some((fp_key, fp_label)) = period.fixed_preset() else { continue };
         let target_time = now - period.duration();
-        let snapshot = snapshot_iter.next().flatten();
-
-        if let Some(prev) = to_stats(snapshot.map(|(_, v)| v)) {
-            add_view(fp_key.to_string(), &prev, SessionType::Custom(fp_label.to_string()), target_time,
-                     &mut images, &mut previous_stats, &mut first_rendered);
+        if let Some(previous) = to_stats(snapshot_iter.next().flatten().map(|(_, value)| value)) {
+            register_view(fp_key.to_string(), previous, SessionType::Custom(fp_label.to_string()), target_time);
         }
     }
 
-    let marker_list: Vec<SessionMarker> = markers.to_vec();
     for marker in markers {
-        if let Some(prev) = to_stats(snapshot_iter.next().flatten().map(|(_, v)| v)) {
-            add_view(
-                format!("marker:{}", marker.name), &prev,
-                SessionType::Custom(marker.name.clone()), marker.snapshot_timestamp,
-                &mut images, &mut previous_stats, &mut first_rendered,
+        if let Some(previous) = to_stats(snapshot_iter.next().flatten().map(|(_, value)| value)) {
+            register_view(
+                format!("marker:{}", marker.name),
+                previous,
+                SessionType::Custom(marker.name.clone()),
+                marker.snapshot_timestamp,
             );
         }
     }
 
     for preset in auto_presets {
-        if let Some(prev) = to_stats(snapshot_iter.next().flatten().map(|(_, v)| v)) {
-            add_view(
-                format!("preset:{}", preset.key), &prev,
-                SessionType::Custom(preset.label.clone()), preset.timestamp,
-                &mut images, &mut previous_stats, &mut first_rendered,
+        if let Some(previous) = to_stats(snapshot_iter.next().flatten().map(|(_, value)| value)) {
+            register_view(
+                format!("preset:{}", preset.key),
+                previous,
+                SessionType::Custom(preset.label.clone()),
+                preset.timestamp,
             );
         }
     }
 
-    (images, previous_stats, descriptions, marker_list)
+    (previous_stats, descriptions, markers.to_vec())
 }
 
 
-struct SnapshotFields {
-    experience: u64,
-    losses: u64,
-}
-
-
-async fn detect_auto_presets(
-    cache_repo: &CacheRepository<'_>,
-    uuid: &str,
-    current_level: u64,
-) -> Vec<AutoPreset> {
-    let snapshots = cache_repo
-        .get_all_snapshots_mapped(uuid, |v| {
-            let bw = v.get("stats")?.get("Bedwars")?;
-            Some(SnapshotFields {
-                experience: bw.get("Experience").and_then(|e| e.as_u64()).unwrap_or(0),
-                losses: bw.get("losses_bedwars").and_then(|e| e.as_u64()).unwrap_or(0),
-            })
-        })
-        .await
-        .unwrap_or_default();
-
-    if snapshots.is_empty() {
-        return vec![];
-    }
-
-    let mut presets = Vec::new();
-
-    let current_prestige = current_level / 100;
-    if current_prestige > 0 {
-        let boundary_xp = experience_for_level(current_prestige * 100);
-        if let Some(ts) = snapshots.windows(2).find_map(|w| {
-            let (_, before) = &w[0];
-            let (ts, after) = &w[1];
-            (before.experience < boundary_xp && after.experience >= boundary_xp).then_some(*ts)
-        }) {
-            presets.push(AutoPreset {
-                key: format!("prestige_{current_prestige}"),
-                label: format!("Since {}\u{272B}", current_prestige * 100),
-                timestamp: ts,
-            });
-        }
-    }
-
-    if let Some(ts) = snapshots.windows(2).rev().find_map(|w| {
-        let (_, before) = &w[0];
-        let (ts, after) = &w[1];
-        (after.losses > before.losses).then_some(*ts)
-    }) {
-        presets.push(AutoPreset {
-            key: "last_loss".to_string(),
-            label: "Since Last Loss".to_string(),
-            timestamp: ts,
-        });
-    }
-
-    presets
+fn evict<G: GameStats>(cache: &mut HashMap<String, SessionCacheEntry<G>>) {
+    evict_expired(cache, |e| e.last_interaction);
 }

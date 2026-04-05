@@ -10,19 +10,8 @@ use clients::{LocalSkinProvider, SkinProvider};
 use coral_redis::{EventPublisher, RedisPool};
 use database::Database;
 
-mod accounts;
-mod api;
-mod commands;
-mod events;
-mod expr;
-mod framework;
-mod interact;
-mod rendering;
-mod sync;
-mod utils;
-
-use api::CoralApiClient;
-use framework::{Data, Handler};
+use coral_bot::api::CoralApiClient;
+use coral_bot::framework::{Data, Handler};
 
 
 #[tokio::main]
@@ -87,7 +76,9 @@ async fn init_data() -> Result<Data> {
         redis_url,
         event_publisher,
         bedwars_images: Arc::new(Mutex::new(HashMap::new())),
+        duels_images: Arc::new(Mutex::new(HashMap::new())),
         session_images: Arc::new(Mutex::new(HashMap::new())),
+        session_duels_images: Arc::new(Mutex::new(HashMap::new())),
         pending_overwrites: Arc::new(Mutex::new(HashMap::new())),
         pending_tag_changes: Arc::new(Mutex::new(HashMap::new())),
         sync_cooldowns: Arc::new(Mutex::new(HashMap::new())),

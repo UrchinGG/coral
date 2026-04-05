@@ -21,15 +21,3 @@ bytemuck = { version = "1.21", features = ["derive"] }
 pollster = "0.4"
 tracing.workspace = true
 
-# Preview binary dependencies
-reqwest = { workspace = true, features = ["blocking", "json"], optional = true }
-serde_json = { workspace = true, optional = true }
-base64 = { version = "0.22", optional = true }
-dotenvy = { version = "0.15", optional = true }
-
-[[bin]]
-name = "preview"
-required-features = ["preview"]
-
-[features]
-preview = ["reqwest", "serde_json", "base64", "dotenvy"]

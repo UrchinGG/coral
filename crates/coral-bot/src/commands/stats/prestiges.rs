@@ -2,8 +2,7 @@ use anyhow::Result;
 use serenity::all::*;
 
 use crate::framework::Data;
-use crate::rendering::render_prestiges;
-use super::encode_png;
+use super::{bedwars::cards::prestiges::render_prestiges, encode_png};
 
 
 pub fn register() -> CreateCommand<'static> {

@@ -6,17 +6,16 @@ use hypixel::{
     color_code, combined_mode_name, level_progress,
 };
 
-use crate::canvas::{
+use render::canvas::{
     Align, BOX_BACKGROUND, CANVAS_BACKGROUND, Canvas, DrawContext, Image, RoundedRect, Shape,
     TextBlock, TextBox,
 };
-
-use super::common::{
-    BAR_COLOR, color_name_to_named, colors, draw_progress_bar, format_number, format_percent,
-    format_ratio, format_timestamp,
+use render::cards::{
+    BAR_COLOR, ModeGames, TagIcon, VerticalGamesBox, bedwars_colors as colors, color_name_to_named,
+    draw_progress_bar, format_number, format_percent, format_ratio, format_timestamp,
 };
-use super::prestiges::{build_prestige_text, prestige_colors, prestige_star};
-use super::session::{ModeGames, VerticalGamesBox};
+use super::prestiges::{prestige_colors, prestige_star, build_prestige_text};
+
 
 const CANVAS_WIDTH: u32 = 800;
 const CANVAS_HEIGHT: u32 = 600;
@@ -47,9 +46,6 @@ fn col_x(col: u32) -> u32 {
         _ => 0,
     }
 }
-
-
-pub type TagIcon = (String, u32);
 
 
 pub fn render_bedwars(
@@ -129,7 +125,6 @@ impl Shape for StatsSection<'_> {
             ("BBLR:", "Beds:", self.stats.bblr(), self.stats.beds_broken, self.stats.beds_lost, colors::bblr(self.stats.bblr()), colors::beds_broken(self.stats.beds_broken)),
         ];
 
-        let mut max_ratio_w: f32 = 0.0;
         let mut max_right_w: f32 = 0.0;
         let mut measurements = Vec::new();
 
@@ -138,7 +133,7 @@ impl Shape for StatsSection<'_> {
                 .span(*ratio_label).color(NamedColor::Gray)
                 .then(" ").then(&format_ratio(*ratio)).color(*ratio_color)
                 .build();
-            let (ratio_w, main_h) = ctx.renderer.measure(&ratio_text, main_font);
+            let (_, main_h) = ctx.renderer.measure(&ratio_text, main_font);
 
             let pos_text = MCText::new()
                 .span(*pos_label).color(NamedColor::Gray)
@@ -152,14 +147,13 @@ impl Shape for StatsSection<'_> {
                 .build();
             let (neg_w, neg_h) = ctx.renderer.measure(&neg_text, neg_font);
 
-            max_ratio_w = max_ratio_w.max(ratio_w);
             max_right_w = max_right_w.max(pos_w + neg_w);
             measurements.push((ratio_text, pos_text, neg_text, pos_w, main_h, neg_h));
         }
 
-        let left_end = padding as f32 + max_ratio_w;
         let right_edge = STATS_BOX_WIDTH as f32 - padding as f32;
-        let col_pos = left_end + (right_edge - left_end - max_right_w) / 2.0;
+        let ideal_pos = (STATS_BOX_WIDTH - COL_WIDTH + padding) as f32;
+        let col_pos = ideal_pos.min(right_edge - max_right_w);
 
         for (i, (ratio_text, pos_text, neg_text, pos_w, main_h, neg_h)) in
             measurements.into_iter().enumerate()
@@ -391,8 +385,8 @@ impl Shape for WinstreaksBox<'_> {
         let icon_size = 20u32;
         let icon_radius = 8u32;
         let icon_gap = 4u32;
-        let urchin_icon = crate::icons::urchin(icon_size, icon_radius);
-        let antisniper_icon = crate::icons::antisniper(icon_size, icon_radius);
+        let urchin_icon = render::icons::urchin(icon_size, icon_radius);
+        let antisniper_icon = render::icons::antisniper(icon_size, icon_radius);
 
         for (i, streak) in self.winstreaks.streaks[..display_count].iter().enumerate() {
             let suffix = if streak.approximate { "+" } else { "" };
@@ -474,7 +468,7 @@ impl Shape for HeaderSection<'_> {
             let mut icon_x = 20.0 + name_w + 8.0;
             let icon_y = 13.0 + (name_font - icon_size as f32) / 2.0;
             for (icon_name, color) in self.tags {
-                if let Some(icon) = crate::icons::tag_icon(icon_name, icon_size, *color) {
+                if let Some(icon) = render::icons::tag_icon(icon_name, icon_size, *color) {
                     Image::new(&icon).draw(&mut ctx.at(icon_x as i32, icon_y as i32));
                     icon_x += icon_size as f32 + icon_gap as f32;
                 }
@@ -634,4 +628,13 @@ impl Shape for SkinSection<'_> {
     }
 
     fn size(&self) -> (u32, u32) { (COL_WIDTH, SKIN_BOX_HEIGHT) }
+}
+
+
+pub fn preview(data: &crate::preview::PlayerData, _args: &[String]) -> RgbaImage {
+    let stats = hypixel::extract_bedwars_stats(&data.username, &data.hypixel, data.guild_info())
+        .expect("No Bedwars stats");
+    let modes = vec![Mode::Solos, Mode::Doubles, Mode::Threes, Mode::Fours, Mode::FourVFour];
+    let ws = WinstreakHistory { streaks: vec![] };
+    render_bedwars(&stats, &modes, data.skin.as_ref(), &ws, &[])
 }

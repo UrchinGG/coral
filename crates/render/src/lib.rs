@@ -4,6 +4,5 @@ pub mod icons;
 pub mod skin;
 
 pub use canvas::{Canvas, Shape, init as init_canvas};
-pub use cards::session::SessionType;
-pub use cards::{TagIcon, render_bedwars, render_prestiges, render_session};
+pub use cards::{SessionType, TagIcon};
 pub use skin::{OutputType, Pose, RenderOutput, Rotation, Skin, SkinError, render as render_skin};

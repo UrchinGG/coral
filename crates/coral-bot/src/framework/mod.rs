@@ -14,7 +14,10 @@ use crate::{
     commands::{
         self,
         blacklist::tag::{PendingOverwrite, PendingTagChanges},
-        stats::{bedwars::BedwarsCache, session::SessionCache},
+        stats::{
+            OverallCache, SessionCacheEntry,
+            bedwars::Bedwars, duels::Duels,
+        },
     },
 };
 
@@ -46,8 +49,10 @@ pub struct Data {
     pub redis: RedisPool,
     pub redis_url: String,
     pub event_publisher: EventPublisher,
-    pub bedwars_images: Arc<Mutex<HashMap<String, BedwarsCache>>>,
-    pub session_images: Arc<Mutex<HashMap<String, SessionCache>>>,
+    pub bedwars_images: Arc<Mutex<HashMap<String, OverallCache<Bedwars>>>>,
+    pub duels_images: Arc<Mutex<HashMap<String, OverallCache<Duels>>>>,
+    pub session_images: Arc<Mutex<HashMap<String, SessionCacheEntry<Bedwars>>>>,
+    pub session_duels_images: Arc<Mutex<HashMap<String, SessionCacheEntry<Duels>>>>,
     pub home_guild_id: Option<GuildId>,
     pub pending_overwrites: Arc<Mutex<HashMap<String, PendingOverwrite>>>,
     pub pending_tag_changes: Arc<Mutex<HashMap<String, PendingTagChanges>>>,
@@ -83,6 +88,7 @@ impl Handler {
         let mut cmds: Vec<CreateCommand<'static>> = vec![
             commands::blacklist::tag::register(),
             commands::stats::bedwars::register(),
+            commands::stats::duels::register(),
             commands::stats::prestiges::register(),
             commands::stats::session::register(),
             commands::stats::session::register_daily(),
@@ -122,6 +128,7 @@ impl Handler {
         match command.data.name.as_str() {
             "tag" => commands::blacklist::tag::run(ctx, command, &self.data).await,
             "bedwars" => commands::stats::bedwars::run(ctx, command, &self.data).await,
+            "duels" => commands::stats::duels::run(ctx, command, &self.data).await,
             "prestiges" => commands::stats::prestiges::run(ctx, command, &self.data).await,
             "session" => commands::stats::session::run(ctx, command, &self.data).await,
             "daily" => commands::stats::session::run_daily(ctx, command, &self.data).await,
@@ -198,10 +205,15 @@ impl Handler {
             _ if id.starts_with("dashboard_accounts_back:") => commands::admin::accounts_panel::handle_dashboard_accounts_back(ctx, component, &self.data).await,
             _ if id.starts_with("dashboard_accounts:") => commands::admin::accounts_panel::handle_dashboard_accounts_button(ctx, component, &self.data).await,
             "bedwars_mode" => commands::stats::bedwars::handle_mode_switch(ctx, component, &self.data).await,
-            "session_mode" => commands::stats::session::handle_mode_switch(ctx, component, &self.data).await,
-            "session_switch" => commands::stats::session::handle_switch(ctx, component, &self.data).await,
-            _ if id.starts_with("session_mgmt_rename:") => commands::stats::session::handle_mgmt_rename_button(ctx, component, &self.data).await,
-            _ if id.starts_with("session_mgmt_delete:") => commands::stats::session::handle_mgmt_delete_button(ctx, component, &self.data).await,
+            "duels_mode" => commands::stats::duels::handle_mode_switch(ctx, component, &self.data).await,
+            "session_duels_mode" => commands::stats::duels::handle_session_mode_switch(ctx, component, &self.data).await,
+            "session_duels_switch" => commands::stats::duels::handle_session_switch(ctx, component, &self.data).await,
+            "session_mode" => commands::stats::bedwars::handle_session_mode_switch(ctx, component, &self.data).await,
+            "session_switch" => commands::stats::bedwars::handle_session_switch(ctx, component, &self.data).await,
+            _ if id.starts_with("session_mgmt_rename:") => commands::stats::bedwars::handle_mgmt_rename_button(ctx, component, &self.data).await,
+            _ if id.starts_with("session_mgmt_delete:") => commands::stats::bedwars::handle_mgmt_delete_button(ctx, component, &self.data).await,
+            _ if id.starts_with("session_duels_mgmt_rename:") => commands::stats::duels::handle_mgmt_rename_button(ctx, component, &self.data).await,
+            _ if id.starts_with("session_duels_mgmt_delete:") => commands::stats::duels::handle_mgmt_delete_button(ctx, component, &self.data).await,
             _ if id.starts_with("tag_overwrite:") => commands::blacklist::tag::handle_overwrite_button(ctx, component, &self.data).await,
             _ if id.starts_with("tag_undo:") => commands::blacklist::tag::handle_undo(ctx, component, &self.data).await,
             _ if id.starts_with("tag_edit:") => commands::blacklist::tag::handle_edit(ctx, component, &self.data).await,
@@ -278,7 +290,8 @@ impl Handler {
         let id = modal.data.custom_id.as_str();
 
         match id {
-            _ if id.starts_with("session_rename_modal:") => commands::stats::session::handle_rename_modal(ctx, modal, &self.data).await,
+            _ if id.starts_with("session_rename_modal:") => commands::stats::bedwars::handle_rename_modal(ctx, modal, &self.data).await,
+            _ if id.starts_with("session_duels_rename_modal:") => commands::stats::duels::handle_rename_modal(ctx, modal, &self.data).await,
             _ if id.starts_with("review_addplayer_name:") => commands::blacklist::reviews::handle_addplayer_name_modal(ctx, modal, &self.data).await,
             _ if id.starts_with("review_addplayer_reason:") => commands::blacklist::reviews::handle_addplayer_reason_modal(ctx, modal, &self.data).await,
             _ if id.starts_with("review_replay_modal:") => commands::blacklist::reviews::handle_replay_modal(ctx, modal, &self.data).await,

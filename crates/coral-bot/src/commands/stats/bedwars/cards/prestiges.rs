@@ -1,7 +1,8 @@
 use image::RgbaImage;
 use mctext::MCText;
 
-use crate::canvas::{Align, BOX_BACKGROUND, CANVAS_BACKGROUND, Canvas, DrawContext, Shape, TextBox};
+use render::canvas::{Align, BOX_BACKGROUND, CANVAS_BACKGROUND, Canvas, DrawContext, Shape, TextBox};
+
 
 const IMAGE_WIDTH: u32 = 1200;
 const IMAGE_HEIGHT: u32 = 900;
