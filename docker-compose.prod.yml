@@ -77,6 +77,23 @@ services:
     networks:
       - apps
 
+  coral-web:
+    image: ghcr.io/hexze/coral/coral-web:latest
+    pull_policy: always
+    container_name: coral-web
+    restart: unless-stopped
+    environment:
+      CORAL_API_URL: http://coral-api:${API_PORT:-8000}
+      CORAL_INTERNAL_KEY: ${INTERNAL_API_KEY:-}
+      SITE_URL: https://coral.urchin.gg
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.coral-web.rule=Host(`coral.urchin.gg`)
+      - traefik.http.routers.coral-web.entrypoints=web
+      - traefik.http.services.coral-web.loadbalancer.server.port=3000
+    networks:
+      - apps
+
   coral-bot:
     image: ghcr.io/hexze/coral/coral-bot:latest
     pull_policy: always

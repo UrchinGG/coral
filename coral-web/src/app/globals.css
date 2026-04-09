@@ -173,3 +173,9 @@ button:disabled,
   font-synthesis: none;
   -webkit-font-smoothing: none;
 }
+
+.pixelated {
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  -ms-interpolation-mode: nearest-neighbor;
+}

@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useState } from "react";
-import type { PingRecord } from "@/lib/api/ping";
+import type { PingRecord } from "@/lib/utils/ping";
 import { relativeTime } from "@/lib/utils/general/format";
 import { getPingIcon } from "@/lib/utils/ping";
 import { PillShell } from "@/components/panels/shells/PillShell";

@@ -2,7 +2,7 @@ variable "REGISTRY" { default = "ghcr.io/hexze/coral" }
 variable "SHA"      { default = "" }
 
 group "default" {
-  targets = ["coral-api", "coral-bot", "coral-admin", "coral-verify", "coral-postgres"]
+  targets = ["coral-api", "coral-bot", "coral-admin", "coral-verify", "coral-web", "coral-postgres"]
 }
 
 target "_common" {
@@ -33,6 +33,12 @@ target "coral-verify" {
   inherits = ["_common"]
   target   = "coral-verify"
   tags     = compact(["${REGISTRY}/coral-verify:latest", SHA != "" ? "${REGISTRY}/coral-verify:${SHA}" : ""])
+}
+
+target "coral-web" {
+  inherits = ["_common"]
+  target   = "coral-web"
+  tags     = compact(["${REGISTRY}/coral-web:latest", SHA != "" ? "${REGISTRY}/coral-web:${SHA}" : ""])
 }
 
 target "coral-postgres" {

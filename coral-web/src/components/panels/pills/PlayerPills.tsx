@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { PingPill } from "@/components/panels/pills/PingPill";
 import { UrchinTagPill } from "@/components/panels/pills/UrchinTagPill";
-import type { PingRecord } from "@/lib/api/ping";
-import type { UrchinResponse, UrchinTag } from "@/lib/api/urchin";
+import type { PingRecord } from "@/lib/utils/ping";
+import type { UrchinResponse, UrchinTag } from "@/lib/utils/urchin";
 import { getLatestPing } from "@/lib/utils/ping";
 import { getUrchinLabel, sortUrchinTags } from "@/lib/utils/urchin";
 
@@ -69,7 +69,7 @@ export function PlayerPills() {
           type={t.type}
           label={getUrchinLabel(t.type) ?? "Tag"}
           reason={t.reason ?? undefined}
-          addedBy={t.added_by_username ?? t.added_by_id ?? undefined}
+          addedBy={t.added_by_username ?? (t.added_by_id != null ? String(t.added_by_id) : undefined)}
           addedOn={t.added_on ?? undefined}
         />
       ))}

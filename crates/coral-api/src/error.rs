@@ -9,8 +9,10 @@ use utoipa::ToSchema;
 pub enum ApiError {
     NotFound(String),
     BadRequest(String),
+    Unauthorized(String),
     Forbidden(String),
     Conflict(String),
+    ServiceUnavailable(String),
     RateLimited,
     ExternalApi(String),
     Internal(String),
@@ -28,8 +30,10 @@ impl IntoResponse for ApiError {
         let (status, message) = match self {
             Self::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             Self::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
+            Self::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
             Self::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
             Self::Conflict(msg) => (StatusCode::CONFLICT, msg),
+            Self::ServiceUnavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg),
             Self::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "Rate limited".into()),
             Self::ExternalApi(ref msg) => {
                 tracing::error!("External API error: {msg}");

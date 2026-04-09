@@ -1,25 +1,19 @@
 import { NextResponse } from "next/server";
-import { internalGetJson } from "@/lib/utils/server/internal";
+import { resolve } from "@/lib/api/coral";
+
+function siteRedirect(path: string, request: Request): NextResponse {
+  const origin = request.headers.get("x-forwarded-host")
+    ? `${request.headers.get("x-forwarded-proto") || "https"}://${request.headers.get("x-forwarded-host")}`
+    : process.env.SITE_URL || new URL(request.url).origin;
+  return NextResponse.redirect(new URL(path, origin));
+}
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const raw = (searchParams.get("query") || "").trim();
-  if (!raw) {
-    return NextResponse.redirect(new URL(`/?e=inv`, request.url));
-  }
+  const query = new URL(request.url).searchParams.get("query")?.trim();
+  if (!query) return siteRedirect("/?e=inv", request);
 
-  const resolvedResp = await internalGetJson<{
-    success: boolean;
-    player: { id: string; username: string } | null;
-  }>(`/api/playerdb?identifier=${encodeURIComponent(raw)}`);
-  const resolved = resolvedResp?.player ?? null;
-  if (!resolved) {
-    // invalid username/uuid
-    return NextResponse.redirect(new URL(`/?e=inv`, request.url));
-  }
-  // uuid slug
-  const slug = resolved.id;
-  return NextResponse.redirect(
-    new URL(`/player/${encodeURIComponent(slug)}`, request.url)
-  );
+  const player = await resolve(query);
+  if (!player) return siteRedirect("/?e=inv", request);
+
+  return siteRedirect(`/player/${player.uuid}`, request);
 }

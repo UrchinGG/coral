@@ -1,6 +1,17 @@
-import type { UrchinTag } from "@/lib/api/urchin";
+export type UrchinTag = {
+  type: string;
+  reason?: string;
+  added_by_id?: number;
+  added_by_username?: string;
+  added_on?: string;
+};
 
-export function getUrchinLabel(type?: UrchinTag["type"]): string | undefined {
+export type UrchinResponse = {
+  uuid: string;
+  tags: UrchinTag[];
+};
+
+export function getUrchinLabel(type?: string): string | undefined {
   switch (type) {
     case "caution":
       return "Caution";
@@ -26,12 +37,12 @@ export function getUrchinLabel(type?: UrchinTag["type"]): string | undefined {
 }
 
 export function getUrchinIconPath(
-  type?: UrchinTag["type"]
+  type?: string
 ): string | undefined {
   return type ? `/urchin/${type}.webp` : undefined;
 }
 
-export function getUrchinPriority(type?: UrchinTag["type"]): number {
+export function getUrchinPriority(type?: string): number {
   switch (type) {
     case "sniper":
       return 1;

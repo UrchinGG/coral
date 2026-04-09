@@ -69,5 +69,25 @@ ENV RUST_LOG=info
 EXPOSE 25565
 CMD ["coral-verify"]
 
+FROM node:22-alpine AS web-deps
+WORKDIR /app
+COPY coral-web/package.json coral-web/package-lock.json ./
+RUN npm ci
+
+FROM node:22-alpine AS web-builder
+WORKDIR /app
+COPY --from=web-deps /app/node_modules ./node_modules
+COPY coral-web/ ./
+RUN npm run build
+
+FROM node:22-alpine AS coral-web
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=web-builder /app/.next/standalone ./
+COPY --from=web-builder /app/.next/static ./.next/static
+COPY --from=web-builder /app/public ./public
+EXPOSE 3000
+CMD ["node", "server.js"]
+
 FROM postgres:16-alpine AS coral-postgres
 COPY migrations/*.sql /docker-entrypoint-initdb.d/

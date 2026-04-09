@@ -1,4 +1,10 @@
-import type { PingRecord } from "@/lib/api/ping";
+export type PingRecord = {
+  day: string;
+  timestamp: number;
+  max: number;
+  min: number;
+  avg: number;
+};
 
 export function getLatestPing(
   records: PingRecord[] = []
