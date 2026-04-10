@@ -17,6 +17,16 @@ services:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "work_mem=8MB"
+      - "-c"
+      - "effective_cache_size=512MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
     healthcheck:
       test:
         [
@@ -86,6 +96,8 @@ services:
       CORAL_API_URL: http://coral-api:${API_PORT:-8000}
       CORAL_INTERNAL_KEY: ${INTERNAL_API_KEY:-}
       SITE_URL: https://coral.urchin.gg
+      STARFISH_DISCORD_CLIENT_ID: ${STARFISH_DISCORD_CLIENT_ID:-}
+      STARFISH_DISCORD_CLIENT_SECRET: ${STARFISH_DISCORD_CLIENT_SECRET:-}
     labels:
       - traefik.enable=true
       - traefik.http.routers.coral-web.rule=Host(`coral.urchin.gg`)
