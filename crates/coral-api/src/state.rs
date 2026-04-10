@@ -34,7 +34,10 @@ impl AppState {
         Self {
             event_publisher: EventPublisher::new(redis.clone()),
             rate_limiter: RateLimiter::new(redis.clone()),
-            discord: Arc::new(DiscordResolver::new(discord_token.unwrap_or_default())),
+            discord: Arc::new(DiscordResolver::new(
+                discord_token.unwrap_or_default(),
+                redis.connection(),
+            )),
             db: Arc::new(db),
             hypixel: Arc::new(hypixel),
             mojang: Arc::new(mojang),

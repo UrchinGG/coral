@@ -1,12 +1,9 @@
-use std::collections::HashMap;
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
-
+use redis::AsyncCommands;
+use redis::aio::ConnectionManager;
 use reqwest::Client;
 use serde::Deserialize;
 
-const CACHE_TTL: Duration = Duration::from_secs(900);
-const CACHE_CLEANUP_THRESHOLD: usize = 500;
+const CACHE_TTL_SECS: u64 = 900;
 
 
 #[derive(Deserialize)]
@@ -18,17 +15,19 @@ struct DiscordUser {
 pub struct DiscordResolver {
     http: Client,
     token: String,
-    cache: Mutex<HashMap<u64, (String, Instant)>>,
+    redis: ConnectionManager,
 }
 
 
 impl DiscordResolver {
-    pub fn new(token: String) -> Self {
-        Self { http: Client::new(), token, cache: Mutex::new(HashMap::new()) }
+    pub fn new(token: String, redis: ConnectionManager) -> Self {
+        Self { http: Client::new(), token, redis }
     }
 
     pub async fn resolve_username(&self, user_id: u64) -> Option<String> {
-        if let Some(cached) = self.get_cached(user_id) {
+        let cache_key = format!("cache:discord:{user_id}");
+
+        if let Ok(cached) = self.redis.clone().get::<_, String>(&cache_key).await {
             return Some(cached);
         }
 
@@ -38,17 +37,10 @@ impl DiscordResolver {
             .send().await.ok()?
             .json::<DiscordUser>().await.ok()?;
 
-        let mut cache = self.cache.lock().unwrap();
-        if cache.len() > CACHE_CLEANUP_THRESHOLD {
-            cache.retain(|_, (_, at)| at.elapsed() < CACHE_TTL);
-        }
-        cache.insert(user_id, (user.username.clone(), Instant::now()));
-        Some(user.username)
-    }
+        let _: Result<(), _> = self.redis.clone()
+            .set_ex(&cache_key, &user.username, CACHE_TTL_SECS)
+            .await;
 
-    fn get_cached(&self, user_id: u64) -> Option<String> {
-        let cache = self.cache.lock().unwrap();
-        let (username, at) = cache.get(&user_id)?;
-        (at.elapsed() < CACHE_TTL).then(|| username.clone())
+        Some(user.username)
     }
 }

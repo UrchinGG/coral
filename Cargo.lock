@@ -563,6 +563,7 @@ dependencies = [
  "hypixel",
  "image",
  "moka",
+ "redis",
  "render",
  "reqwest",
  "serde",

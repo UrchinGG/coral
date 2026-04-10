@@ -50,7 +50,7 @@ async fn init_data() -> Result<Data> {
     let event_publisher = EventPublisher::new(redis.clone());
     let api = CoralApiClient::new(api_url, api_key);
     let skin_provider: Arc<dyn SkinProvider> =
-        Arc::new(LocalSkinProvider::new().expect("Failed to initialize skin renderer"));
+        Arc::new(LocalSkinProvider::new(redis.connection()).expect("Failed to initialize skin renderer"));
 
     let review_forum_id = parse_channel_id("REVIEW_FORUM_ID");
     let evidence_forum_id = parse_channel_id("EVIDENCE_FORUM_ID");
@@ -117,7 +117,12 @@ async fn build_client(data: Data) -> Result<Client> {
         | GatewayIntents::GUILD_MEMBERS
         | GatewayIntents::MESSAGE_CONTENT;
 
+    let mut cache_settings = serenity::cache::Settings::default();
+    cache_settings.cache_guilds = false;
+    cache_settings.cache_users = false;
+
     Ok(Client::builder(token, intents)
+        .cache_settings(cache_settings)
         .event_handler(Arc::new(Handler::new(data)))
         .await?)
 }

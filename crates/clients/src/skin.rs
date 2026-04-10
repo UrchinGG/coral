@@ -2,8 +2,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use image::DynamicImage;
-use moka::future::Cache;
+use image::{DynamicImage, RgbaImage};
+use redis::AsyncCommands;
+use redis::aio::ConnectionManager;
 use reqwest::Client;
 
 use render::skin::{OutputType, Pose, Renderer, Skin};
@@ -12,7 +13,6 @@ use crate::MojangClient;
 
 const USER_AGENT: &str = "Coral/1.0";
 const CACHE_TTL_SECS: u64 = 10 * 60;
-const CACHE_CAPACITY: u64 = 2_000;
 
 #[derive(Clone)]
 pub struct SkinImage {
@@ -31,11 +31,11 @@ pub struct LocalSkinProvider {
     http: Client,
     mojang: MojangClient,
     renderer: Arc<Renderer>,
-    uuid_cache: Cache<String, Arc<SkinImage>>,
+    redis: ConnectionManager,
 }
 
 impl LocalSkinProvider {
-    pub fn new() -> Option<Self> {
+    pub fn new(redis: ConnectionManager) -> Option<Self> {
         let http = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -43,16 +43,11 @@ impl LocalSkinProvider {
 
         let renderer = Renderer::new().ok()?;
 
-        let uuid_cache = Cache::builder()
-            .time_to_live(Duration::from_secs(CACHE_TTL_SECS))
-            .max_capacity(CACHE_CAPACITY)
-            .build();
-
         Some(Self {
             http,
             mojang: MojangClient::new(),
             renderer: Arc::new(renderer),
-            uuid_cache,
+            redis,
         })
     }
 
@@ -81,11 +76,36 @@ impl LocalSkinProvider {
             slim: skin.is_slim(),
         };
 
-        self.uuid_cache
-            .insert(uuid.to_string(), Arc::new(skin_image.clone()))
-            .await;
-
+        self.cache_set(uuid, &skin_image).await;
         Some(skin_image)
+    }
+
+    async fn cache_get(&self, uuid: &str) -> Option<SkinImage> {
+        let key = format!("cache:skin:{uuid}");
+        let data: Vec<u8> = self.redis.clone().get(&key).await.ok()?;
+        if data.len() < 9 { return None; }
+
+        let slim = data[0] != 0;
+        let width = u32::from_le_bytes(data[1..5].try_into().ok()?);
+        let height = u32::from_le_bytes(data[5..9].try_into().ok()?);
+        let pixels = data[9..].to_vec();
+
+        let image = RgbaImage::from_raw(width, height, pixels)?;
+        Some(SkinImage { data: DynamicImage::ImageRgba8(image), slim })
+    }
+
+    async fn cache_set(&self, uuid: &str, skin: &SkinImage) {
+        let key = format!("cache:skin:{uuid}");
+        let rgba = skin.data.to_rgba8();
+        let (width, height) = rgba.dimensions();
+
+        let mut buf = Vec::with_capacity(9 + (width * height * 4) as usize);
+        buf.push(skin.slim as u8);
+        buf.extend_from_slice(&width.to_le_bytes());
+        buf.extend_from_slice(&height.to_le_bytes());
+        buf.extend_from_slice(rgba.as_raw());
+
+        let _: Result<(), _> = self.redis.clone().set_ex(&key, buf, CACHE_TTL_SECS).await;
     }
 }
 
@@ -93,8 +113,8 @@ impl LocalSkinProvider {
 #[async_trait]
 impl SkinProvider for LocalSkinProvider {
     async fn fetch(&self, uuid: &str) -> Option<SkinImage> {
-        if let Some(cached) = self.uuid_cache.get(uuid).await {
-            return Some((*cached).clone());
+        if let Some(cached) = self.cache_get(uuid).await {
+            return Some(cached);
         }
 
         let profile = self.mojang.get_profile(uuid).await.ok()?;
@@ -103,8 +123,8 @@ impl SkinProvider for LocalSkinProvider {
     }
 
     async fn fetch_with_url(&self, uuid: &str, skin_url: &str, slim: bool) -> Option<SkinImage> {
-        if let Some(cached) = self.uuid_cache.get(uuid).await {
-            return Some((*cached).clone());
+        if let Some(cached) = self.cache_get(uuid).await {
+            return Some(cached);
         }
 
         self.download_and_render(uuid, skin_url, Some(slim)).await
