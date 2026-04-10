@@ -6,9 +6,6 @@
   --panel-bg: color-mix(in oklab, var(--background) 70%, transparent);
   --panel-border: color-mix(in oklab, var(--foreground) 10%, transparent);
   --panel-shadow: 0 10px 30px rgba(0,0,0,0.08);
-  --wallpaper: url('/daytime.png');
-  --wallpaper-overlay: linear-gradient(rgba(0,0,0,0.28), rgba(0,0,0,0.28));
-  
   /* text colors */
   --color-0: #000000;
   --color-1: #0000AA;
@@ -67,31 +64,9 @@
   --text-6xl: 4.5rem;    /* 72px instead of 60px */
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --wallpaper: url('/nighttime.png');
-    --wallpaper-overlay: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,0));
-  }
-}
-
-/* explicit theme overrides via data-theme on <html> */
-[data-theme='light'] {
-  --wallpaper: url('/daytime.png');
-  --wallpaper-overlay: linear-gradient(rgba(0,0,0,0.28), rgba(0,0,0,0.28));
-}
-
-[data-theme='dark'] {
-  --wallpaper: url('/nighttime.png');
-  --wallpaper-overlay: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,0));
-}
 
 body {
   background: var(--background);
-  background-image: var(--wallpaper-overlay), var(--wallpaper);
-  background-size: cover;
-  background-position: center;
-  background-attachment: fixed;
-  transition: background-color 220ms ease, background-image 400ms ease;
   color: var(--foreground);
   font-family: var(--font-inter), system-ui, -apple-system, Segoe UI, Roboto,
     Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji",

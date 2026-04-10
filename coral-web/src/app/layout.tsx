@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { OceanBackground } from "@/components/OceanBackground";
 import "./globals.css";
 
 const inter = Inter({
@@ -41,6 +42,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="preload" as="font" type="font/woff2" href="/fonts/minecraft-bold.woff2" crossOrigin="anonymous" />
       </head>
       <body className={`${inter.variable} antialiased`}>
+        <OceanBackground />
         {children}
       </body>
     </html>

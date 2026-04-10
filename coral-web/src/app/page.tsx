@@ -19,7 +19,6 @@ export default function Home() {
     <div className="min-h-screen flex flex-col">
       <Nav />
 
-      {/* Hero */}
       <section className="flex items-center justify-center pt-14 min-h-[70vh]">
         <div className="w-full max-w-xl mx-auto px-6 text-center py-20">
           <img src="/logo.png" alt="Coral" width={48} height={48} className="mx-auto mb-5 pixelated" />
