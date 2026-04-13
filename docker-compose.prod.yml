@@ -9,6 +9,7 @@ services:
     pull_policy: always
     container_name: coral-postgres
     restart: unless-stopped
+    mem_limit: 1g
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-coral}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
