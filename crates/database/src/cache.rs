@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
+use futures_util::TryStreamExt;
 use serde_json::{Map, Value};
 use sqlx::{FromRow, PgPool};
 
@@ -205,17 +206,16 @@ impl<'a> CacheRepository<'a> {
         uuid: &str,
         map: impl Fn(&Value) -> Option<T>,
     ) -> Result<Vec<(DateTime<Utc>, T)>, sqlx::Error> {
-        let rows: Vec<SnapshotRow> = sqlx::query_as(
+        let mut stream = sqlx::query_as::<_, SnapshotRow>(
             "SELECT id, is_baseline, data, timestamp FROM player_snapshots
              WHERE uuid = $1 ORDER BY timestamp ASC",
         )
         .bind(uuid)
-        .fetch_all(self.pool)
-        .await?;
+        .fetch(self.pool);
 
-        let mut results = Vec::with_capacity(rows.len());
+        let mut results = Vec::new();
         let mut current = Value::Object(Map::new());
-        for row in rows {
+        while let Some(row) = stream.try_next().await? {
             if row.is_baseline {
                 current = row.data;
             } else {

@@ -35,3 +35,6 @@ chrono.workspace = true
 urlencoding = "2.1.3"
 base64 = "0.22"
 uuid.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+tikv-jemallocator = "0.6"

@@ -1,3 +1,7 @@
+#[cfg(unix)]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use std::collections::HashMap;
 use std::env;
 use std::sync::{Arc, Mutex};
@@ -120,6 +124,7 @@ async fn build_client(data: Data) -> Result<Client> {
     let mut cache_settings = serenity::cache::Settings::default();
     cache_settings.cache_guilds = false;
     cache_settings.cache_users = false;
+    cache_settings.cache_channels = false;
 
     Ok(Client::builder(token, intents)
         .cache_settings(cache_settings)
