@@ -31,12 +31,16 @@ pub enum Platform {
 }
 
 impl Platform {
-    fn matches(&self, filename: &str) -> bool {
+    fn matches_binary(&self, filename: &str) -> bool {
         match self {
             Self::Windows => filename.ends_with(".exe"),
             Self::Linux => filename.ends_with(".AppImage") || filename.ends_with(".tar.gz"),
             Self::Macos => filename.ends_with(".dmg") || filename.ends_with(".app.zip"),
         }
+    }
+
+    fn matches_signature(&self, binary_name: &str, filename: &str) -> bool {
+        filename == format!("{binary_name}.sig")
     }
 }
 
@@ -44,6 +48,8 @@ impl Platform {
 pub struct PlatformAsset {
     pub filename: String,
     pub size: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_filename: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -51,6 +57,7 @@ pub struct ReleaseInfo {
     pub version: String,
     pub name: String,
     pub published_at: String,
+    pub release_notes: Option<String>,
     pub platforms: HashMap<String, PlatformAsset>,
 }
 
@@ -59,6 +66,7 @@ struct GitHubRelease {
     tag_name: String,
     name: Option<String>,
     published_at: String,
+    body: Option<String>,
     assets: Vec<GitHubAsset>,
 }
 
@@ -79,8 +87,15 @@ async fn get_release_info(
 
     let mut platforms = HashMap::new();
     for (platform, key) in [(Platform::Windows, "windows"), (Platform::Linux, "linux"), (Platform::Macos, "macos")] {
-        if let Some(asset) = release.assets.iter().find(|a| platform.matches(&a.name)) {
-            platforms.insert(key.to_string(), PlatformAsset { filename: asset.name.clone(), size: asset.size });
+        if let Some(asset) = release.assets.iter().find(|a| platform.matches_binary(&a.name)) {
+            let signature_filename = release.assets.iter()
+                .find(|a| platform.matches_signature(&asset.name, &a.name))
+                .map(|a| a.name.clone());
+            platforms.insert(key.to_string(), PlatformAsset {
+                filename: asset.name.clone(),
+                size: asset.size,
+                signature_filename,
+            });
         }
     }
 
@@ -88,6 +103,7 @@ async fn get_release_info(
         version: release.tag_name,
         name: release.name.unwrap_or_default(),
         published_at: release.published_at,
+        release_notes: release.body,
         platforms,
     }))
 }
@@ -98,6 +114,7 @@ async fn get_release_info(
 pub struct DownloadQuery {
     pub token: Option<String>,
     pub platform: Option<Platform>,
+    pub asset: Option<String>,
 }
 
 async fn download_latest(
@@ -128,9 +145,20 @@ async fn download_latest(
     let platform = query.platform.unwrap_or(Platform::Windows);
     let release = fetch_latest_release(&config).await?;
 
-    let asset = release.assets.iter()
-        .find(|a| platform.matches(&a.name))
-        .ok_or_else(|| ApiError::NotFound(format!("No {platform:?} asset in release")))?;
+    let requested_signature = query.asset.as_deref() == Some("signature");
+
+    let asset = if requested_signature {
+        let binary = release.assets.iter()
+            .find(|a| platform.matches_binary(&a.name))
+            .ok_or_else(|| ApiError::NotFound(format!("No {platform:?} asset in release")))?;
+        release.assets.iter()
+            .find(|a| platform.matches_signature(&binary.name, &a.name))
+            .ok_or_else(|| ApiError::NotFound(format!("No {platform:?} signature in release")))?
+    } else {
+        release.assets.iter()
+            .find(|a| platform.matches_binary(&a.name))
+            .ok_or_else(|| ApiError::NotFound(format!("No {platform:?} asset in release")))?
+    };
 
     let response = reqwest::Client::new()
         .get(&asset.url)

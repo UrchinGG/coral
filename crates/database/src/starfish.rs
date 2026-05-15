@@ -9,6 +9,9 @@ pub struct StarfishUser {
     pub id: i64,
     pub discord_id: i64,
     pub license_status: String,
+    pub github_user_id: Option<i64>,
+    pub github_username: Option<String>,
+    pub github_linked_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -163,6 +166,20 @@ impl<'a> StarfishRepository<'a> {
         sqlx::query_as("SELECT * FROM starfish_users ORDER BY created_at DESC")
             .fetch_all(self.pool)
             .await
+    }
+
+    pub async fn link_github(&self, user_id: i64, github_user_id: i64, github_username: &str) -> Result<StarfishUser, sqlx::Error> {
+        sqlx::query_as(
+            "UPDATE starfish_users
+                SET github_user_id = $2, github_username = $3, github_linked_at = NOW(), updated_at = NOW()
+                WHERE id = $1
+                RETURNING *",
+        )
+        .bind(user_id)
+        .bind(github_user_id)
+        .bind(github_username)
+        .fetch_one(self.pool)
+        .await
     }
 
 

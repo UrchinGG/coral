@@ -713,9 +713,11 @@ dependencies = [
  "image",
  "rand 0.8.5",
  "redis",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "starfish-crypto",
  "tokio",
@@ -728,6 +730,7 @@ dependencies = [
  "utoipa-axum",
  "utoipa-scalar",
  "uuid",
+ "zip",
 ]
 
 [[package]]

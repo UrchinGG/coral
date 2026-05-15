@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-export function StarfishNav({ active }: { active?: "starfish" | "dashboard" }) {
+export function StarfishNav({ active }: { active?: "starfish" | "dashboard" | "docs" }) {
   return (
     <nav className="fixed top-0 w-full z-50 bg-[rgba(10,10,10,0.8)] backdrop-blur-xl border-b border-white/[0.06]">
       <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
@@ -9,7 +9,7 @@ export function StarfishNav({ active }: { active?: "starfish" | "dashboard" }) {
           <span className="text-base font-bold tracking-tight">Coral</span>
         </Link>
         <div className="flex items-center gap-6 text-sm">
-          <Link href="/docs" className={`hover:text-white/70 transition-colors ${active === "starfish" ? "text-white/70" : "text-white/40"}`}>API</Link>
+          <Link href="/starfish/docs" className={`hover:text-white/70 transition-colors ${active === "docs" ? "text-white/70" : "text-white/40"}`}>Docs</Link>
           <Link href="/starfish" className={`hover:text-white/70 transition-colors ${active === "starfish" ? "text-white/70" : "text-white/40"}`}>Starfish</Link>
           <Link href="/starfish/dashboard" className={`hover:text-white/70 transition-colors ${active === "dashboard" ? "text-white/70" : "text-white/40"}`}>Dashboard</Link>
         </div>

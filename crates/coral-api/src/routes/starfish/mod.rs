@@ -1,6 +1,9 @@
 pub mod auth;
 mod download;
 mod license;
+mod plugins;
+pub mod session_auth;
+mod users;
 
 use std::sync::Arc;
 
@@ -35,6 +38,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .merge(auth::router())
         .merge(license::router())
         .merge(download::router())
+        .merge(users::router(state.clone()))
+        .merge(plugins::router(state))
 }
 
 
