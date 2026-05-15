@@ -248,6 +248,17 @@ impl<'a> PluginRegistryRepository<'a> {
         .await
     }
 
+    pub async fn set_official(&self, plugin_id: i64, official: bool) -> Result<Plugin, sqlx::Error> {
+        sqlx::query_as(
+            "UPDATE plugins SET official = $2, updated_at = NOW()
+             WHERE id = $1 RETURNING *",
+        )
+        .bind(plugin_id)
+        .bind(official)
+        .fetch_one(self.pool)
+        .await
+    }
+
     pub async fn set_unlisted(&self, plugin_id: i64, unlisted: bool) -> Result<Plugin, sqlx::Error> {
         sqlx::query_as(
             "UPDATE plugins SET
@@ -557,6 +568,7 @@ impl<'a> PluginRegistryRepository<'a> {
         sort: PluginSortMode,
         tag: Option<&str>,
         query: Option<&str>,
+        official: Option<bool>,
         limit: i64,
         offset: i64,
     ) -> Result<(i64, Vec<PluginSummary>), sqlx::Error> {
@@ -564,10 +576,12 @@ impl<'a> PluginRegistryRepository<'a> {
             "SELECT COUNT(*)::bigint FROM plugins p
              WHERE NOT p.disabled AND NOT p.unlisted
                AND ($1::text IS NULL OR $1 = ANY(p.tags))
-               AND ($2::text IS NULL OR p.slug ILIKE '%' || $2 || '%' OR p.display_name ILIKE '%' || $2 || '%' OR p.description ILIKE '%' || $2 || '%')",
+               AND ($2::text IS NULL OR p.slug ILIKE '%' || $2 || '%' OR p.display_name ILIKE '%' || $2 || '%' OR p.description ILIKE '%' || $2 || '%')
+               AND ($3::bool IS NULL OR p.official = $3)",
         )
         .bind(tag)
         .bind(query)
+        .bind(official)
         .fetch_one(self.pool)
         .await?;
 
@@ -607,6 +621,7 @@ impl<'a> PluginRegistryRepository<'a> {
                 WHERE NOT p.disabled AND NOT p.unlisted
                   AND ($1::text IS NULL OR $1 = ANY(p.tags))
                   AND ($2::text IS NULL OR p.slug ILIKE '%' || $2 || '%' OR p.display_name ILIKE '%' || $2 || '%' OR p.description ILIKE '%' || $2 || '%')
+                  AND ($3::bool IS NULL OR p.official = $3)
                   AND EXISTS (SELECT 1 FROM plugin_releases WHERE plugin_id = p.id AND NOT yanked)
             ),
             bayes AS (
@@ -630,13 +645,14 @@ impl<'a> PluginRegistryRepository<'a> {
                 (r.velocity_pct * c.velocity_weight + r.rating_pct * c.rating_weight + r.recency_pct * c.recency_weight) AS score
             FROM ranked r, plugin_sort_config c WHERE c.id = 1
             ORDER BY {order_sql}
-            LIMIT $3 OFFSET $4
+            LIMIT $4 OFFSET $5
             "#,
         );
 
         let plugins: Vec<PluginSummary> = sqlx::query_as(&sql)
             .bind(tag)
             .bind(query)
+            .bind(official)
             .bind(limit)
             .bind(offset)
             .fetch_all(self.pool)

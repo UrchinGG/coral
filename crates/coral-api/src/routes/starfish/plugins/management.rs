@@ -5,7 +5,7 @@ use database::PluginRegistryRepository;
 
 use crate::{error::ApiError, state::AppState};
 
-use super::super::session_auth::AuthenticatedStarfishUser;
+use super::super::{require_owner, session_auth::AuthenticatedStarfishUser};
 
 
 const MAX_PAGE_OVERRIDE_BYTES: usize = 16 * 1024;
@@ -23,6 +23,12 @@ pub struct PatchPluginRequest {
 #[derive(Deserialize)]
 pub struct UnlistRequest {
     pub unlisted: bool,
+}
+
+
+#[derive(Deserialize)]
+pub struct SetOfficialRequest {
+    pub official: bool,
 }
 
 
@@ -95,6 +101,21 @@ pub async fn set_unlisted(
     let repo = PluginRegistryRepository::new(state.db.pool());
     let plugin = ensure_owner(&repo, &slug, caller.user.id).await?;
     repo.set_unlisted(plugin.id, req.unlisted).await?;
+    Ok(Json(OkResponse { ok: true }))
+}
+
+
+pub async fn set_official(
+    State(state): State<AppState>,
+    Extension(caller): Extension<AuthenticatedStarfishUser>,
+    Path(slug): Path<String>,
+    Json(req): Json<SetOfficialRequest>,
+) -> Result<Json<OkResponse>, ApiError> {
+    require_owner(&caller)?;
+    let repo = PluginRegistryRepository::new(state.db.pool());
+    let plugin = repo.get_plugin_by_slug(&slug).await?
+        .ok_or_else(|| ApiError::NotFound(format!("plugin {slug} not found")))?;
+    repo.set_official(plugin.id, req.official).await?;
     Ok(Json(OkResponse { ok: true }))
 }
 

@@ -26,7 +26,7 @@ pub async fn list_plugins(
 
     let repo = PluginRegistryRepository::new(state.db.pool());
     let (total, summaries) = repo.list_plugins(
-        sort, q.tag.as_deref(), q.q.as_deref(), limit, offset,
+        sort, q.tag.as_deref(), q.q.as_deref(), q.official, limit, offset,
     ).await?;
 
     let plugins = summaries.into_iter().map(|s| PluginSummaryDto {

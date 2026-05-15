@@ -28,6 +28,27 @@ pub(crate) async fn rate_limit(state: &AppState, key: &str, limit: i64) -> Resul
 }
 
 
+pub(crate) fn is_owner(discord_id: i64) -> bool {
+    static OWNERS: std::sync::OnceLock<std::collections::HashSet<i64>> = std::sync::OnceLock::new();
+    OWNERS.get_or_init(|| {
+        std::env::var("OWNER_IDS")
+            .unwrap_or_default()
+            .split(',')
+            .filter_map(|s| s.trim().parse::<i64>().ok())
+            .collect()
+    }).contains(&discord_id)
+}
+
+
+pub(crate) fn require_owner(caller: &session_auth::AuthenticatedStarfishUser) -> Result<(), ApiError> {
+    if is_owner(caller.user.discord_id) {
+        Ok(())
+    } else {
+        Err(ApiError::Forbidden("owner_only".into()))
+    }
+}
+
+
 pub fn router(state: AppState) -> Router<AppState> {
     if state.starfish.is_none() {
         tracing::info!("Starfish routes disabled (no config)");

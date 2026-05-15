@@ -73,6 +73,7 @@ pub struct PluginListQuery {
     pub q: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+    pub official: Option<bool>,
 }
 
 
