@@ -5,20 +5,27 @@ use serenity::all::*;
 
 use database::{AccountRepository, CacheRepository, MemberRepository};
 
-use super::manage::fetch_context;
-use crate::commands::blacklist::channel;
-use crate::framework::{AccessRank, Data};
+use crate::framework::{AccessRank, AccessRankExt, Data};
 use crate::interact;
 use crate::utils::{resolve_username, separator, text};
+
+
+pub async fn fetch_context(data: &Data, invoker_id: u64, target_id: u64) -> Result<(AccessRank, Option<database::Member>, AccessRank)> {
+    let repo = MemberRepository::new(data.db.pool());
+    let invoker = repo.get_by_discord_id(invoker_id as i64).await?;
+    let mut invoker_rank = AccessRank::of(data, invoker_id, invoker.as_ref());
+    if data.is_owner(invoker_id) { invoker_rank = AccessRank::Owner; }
+    let target = repo.get_by_discord_id(target_id as i64).await?;
+    let target_rank = AccessRank::of(data, target_id, target.as_ref());
+    Ok((invoker_rank, target, target_rank))
+}
 
 
 fn context_prefix(custom_id: &str) -> &'static str {
     if custom_id.starts_with("dashboard_") {
         "dashboard"
-    } else if custom_id.starts_with("link_") {
-        "link"
     } else {
-        "manage"
+        "link"
     }
 }
 
@@ -189,12 +196,16 @@ fn build_accounts_actions(
     target_id: u64,
 ) {
     parts.push(separator());
-    let buttons = vec![
+    let mut buttons = vec![
         CreateButton::new(format!("{prefix}_link_new:{target_id}"))
             .label("Link New Account").style(ButtonStyle::Primary).disabled(!can_modify),
-        CreateButton::new(format!("{prefix}_accounts_back:{target_id}"))
-            .label("Back").style(ButtonStyle::Secondary),
     ];
+    if prefix != "link" {
+        buttons.push(
+            CreateButton::new(format!("{prefix}_accounts_back:{target_id}"))
+                .label("Back").style(ButtonStyle::Secondary),
+        );
+    }
     parts.push(CreateContainerComponent::ActionRow(CreateActionRow::buttons(buttons)));
 }
 
@@ -282,58 +293,13 @@ pub async fn handle_accounts_button(
 }
 
 
-pub async fn handle_dashboard_accounts_button(
-    ctx: &Context,
-    component: &ComponentInteraction,
-    data: &Data,
-) -> Result<()> {
-    let target_id = component.user.id.get();
-    let components = build_accounts_view(data, true, target_id, &component.user.name, "dashboard").await?;
-    interact::update_message(ctx, component, components).await
-}
-
-
 pub async fn handle_accounts_back_generic(
     ctx: &Context,
     component: &ComponentInteraction,
     data: &Data,
 ) -> Result<()> {
-    match context_prefix(&component.data.custom_id) {
-        "dashboard" => handle_dashboard_accounts_back(ctx, component, data).await,
-        "manage" => handle_manage_accounts_back(ctx, component, data).await,
-        "link" => {
-            let target_id = component.user.id.get();
-            let components = build_accounts_view(data, true, target_id, &component.user.name, "link").await?;
-            interact::update_message(ctx, component, components).await
-        }
-        _ => Ok(()),
-    }
-}
-
-
-pub async fn handle_manage_accounts_back(
-    ctx: &Context,
-    component: &ComponentInteraction,
-    data: &Data,
-) -> Result<()> {
-    let target_id = interact::parse_id(&component.data.custom_id)
-        .ok_or_else(|| anyhow!("Invalid button ID"))?;
-    let invoker_id = component.user.id.get();
-    let (invoker_rank, _, _) = fetch_context(data, invoker_id, target_id).await?;
-    interact::update_message(ctx, component, super::manage::build_main_view(data, invoker_rank, target_id).await).await
-}
-
-
-pub async fn handle_dashboard_accounts_back(
-    ctx: &Context,
-    component: &ComponentInteraction,
-    data: &Data,
-) -> Result<()> {
-    let repo = MemberRepository::new(data.db.pool());
-    let Some(member) = repo.get_by_discord_id(component.user.id.get() as i64).await? else {
-        return interact::send_component_error(ctx, component, "Error", "You are not registered.").await;
-    };
-    let components = crate::commands::user::dashboard::build_dashboard_view(&member, data).await;
+    let target_id = component.user.id.get();
+    let components = build_accounts_view(data, true, target_id, &component.user.name, "link").await?;
     interact::update_message(ctx, component, components).await
 }
 
@@ -592,7 +558,7 @@ async fn show_force_link_prompt(
                     .label("Cancel").style(ButtonStyle::Secondary),
             ])),
         ])
-        .accent_color(channel::COLOR_ERROR),
+        .accent_color(crate::interact::COLOR_ERROR),
     ));
     interact::update_modal(ctx, modal, components).await
 }

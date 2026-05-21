@@ -143,5 +143,26 @@ services:
     networks:
       - apps
 
+  coral-verify:
+    image: ghcr.io/${CORAL_GITHUB_REPO:-}/coral-verify:latest
+    pull_policy: always
+    container_name: coral-verify
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      coral-api:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-coral}:${POSTGRES_PASSWORD}@coral-postgres:5432/${POSTGRES_DB:-coral}
+      CORAL_VERIFY_DISCORD_TOKEN: ${CORAL_VERIFY_DISCORD_TOKEN:?CORAL_VERIFY_DISCORD_TOKEN required}
+      CORAL_API_URL: http://coral-api:${API_PORT:-8000}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      OWNER_IDS: ${OWNER_IDS:-}
+      HOME_GUILD_ID: ${HOME_GUILD_ID:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    networks:
+      - apps
+
 volumes:
   postgres_data:

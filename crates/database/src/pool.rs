@@ -23,7 +23,11 @@ impl Database {
     }
 
     pub async fn migrate(&self) -> Result<(), sqlx::migrate::MigrateError> {
-        sqlx::migrate!("../../migrations").run(&self.pool).await
+        // Detach the connection from the pool so it is closed (not returned) when
+        // dropped. Postgres releases session-level advisory locks on close, which
+        // prevents the migration lock from leaking into idle pool connections.
+        let mut conn = self.pool.acquire().await?.detach();
+        sqlx::migrate!("../../migrations").run(&mut conn).await
     }
 
     pub fn pool(&self) -> &PgPool { &self.pool }

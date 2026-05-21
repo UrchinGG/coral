@@ -777,6 +777,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "coral-verify"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blacklist",
+ "chrono",
+ "coral-redis",
+ "database",
+ "dotenvy",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serenity",
+ "thiserror 2.0.17",
+ "tikv-jemallocator",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

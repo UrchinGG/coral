@@ -11,7 +11,7 @@ use serenity::all::*;
 use tracing_subscriber::EnvFilter;
 
 use clients::{LocalSkinProvider, SkinProvider};
-use coral_redis::{EventPublisher, RedisPool};
+use coral_redis::{EventPublisher, RedisPool, SyncEventPublisher};
 use database::Database;
 
 use coral_bot::api::CoralApiClient;
@@ -52,6 +52,7 @@ async fn init_data() -> Result<Data> {
     }
     let redis = RedisPool::connect(&redis_url).await?;
     let event_publisher = EventPublisher::new(redis.clone());
+    let sync_event_publisher = SyncEventPublisher::new(redis.clone());
     let api = CoralApiClient::new(api_url, api_key);
     let skin_provider: Arc<dyn SkinProvider> =
         Arc::new(LocalSkinProvider::new(redis.connection()).expect("Failed to initialize skin renderer"));
@@ -79,13 +80,13 @@ async fn init_data() -> Result<Data> {
         redis,
         redis_url,
         event_publisher,
+        sync_event_publisher,
         bedwars_images: Arc::new(Mutex::new(HashMap::new())),
         duels_images: Arc::new(Mutex::new(HashMap::new())),
         session_images: Arc::new(Mutex::new(HashMap::new())),
         session_duels_images: Arc::new(Mutex::new(HashMap::new())),
         pending_overwrites: Arc::new(Mutex::new(HashMap::new())),
         sync_cooldowns: Arc::new(Mutex::new(HashMap::new())),
-        sync_cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
         active_interactions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     })
 }
