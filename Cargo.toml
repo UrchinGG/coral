@@ -13,6 +13,7 @@ members = [
     "crates/migration",
     "crates/mc-verify",
     "crates/starfish-crypto",
+    "crates/coral-sync",
 ]
 
 [workspace.package]

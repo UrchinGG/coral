@@ -2,7 +2,6 @@ use anyhow::Result;
 use serde_json::Value;
 use serenity::all::*;
 
-use coral_redis::SyncEvent;
 use database::{AccountRepository, MemberRepository};
 
 use crate::framework::Data;
@@ -36,9 +35,6 @@ pub async fn link_primary(ctx: &Context, data: &Data, discord_id: u64, uuid: &st
     let repo = MemberRepository::new(data.db.pool());
     repo.create(discord_id as i64).await?;
     repo.set_uuid(discord_id as i64, uuid).await?;
-    data.sync_event_publisher
-        .publish(&SyncEvent::SyncUser { discord_id })
-        .await;
     tokio::spawn(crate::sync::sync_user(
         ctx.clone(),
         data.clone(),

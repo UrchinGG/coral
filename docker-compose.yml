@@ -78,6 +78,26 @@ services:
       EVIDENCE_FORUM_ID: ${EVIDENCE_FORUM_ID:-}
       RUST_LOG: ${RUST_LOG:-info}
 
+  coral-sync:
+    build:
+      context: .
+      target: coral-sync
+      secrets: [git_auth_token]
+    restart: unless-stopped
+    networks: [default, coolify]
+    depends_on:
+      coral-api:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      CORAL_SYNC_DISCORD_TOKEN: ${CORAL_SYNC_DISCORD_TOKEN}
+      CORAL_API_URL: http://coral-api:${API_PORT:-8000}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      OWNER_IDS: ${OWNER_IDS:-}
+      HOME_GUILD_ID: ${HOME_GUILD_ID:-}
+      RUST_LOG: ${RUST_LOG:-info}
+
   coral-admin:
     build:
       context: .

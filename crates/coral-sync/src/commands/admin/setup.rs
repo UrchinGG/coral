@@ -71,7 +71,7 @@ const NICKNAME_EXAMPLES: &[(&str, &str)] = &[
 
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("setup")
-        .description("Configure Coral for this server")
+        .description("Configure this server's role and nickname sync")
         .default_member_permissions(Permissions::MANAGE_GUILD)
 }
 
@@ -1116,7 +1116,7 @@ async fn can_manage_role(
     target.position < user_highest
 }
 
-fn spawn_bulk_update(
+pub fn spawn_bulk_update(
     ctx: &Context,
     token: &str,
     data: &Data,

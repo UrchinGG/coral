@@ -6,7 +6,7 @@ use serenity::all::*;
 use serenity::async_trait;
 
 use clients::SkinProvider;
-use coral_redis::{EventPublisher, RedisPool};
+use coral_redis::{EventPublisher, RedisPool, SyncEventPublisher};
 use database::{Database, Member};
 
 use crate::{
@@ -43,6 +43,7 @@ pub struct Data {
     pub redis: RedisPool,
     pub redis_url: String,
     pub event_publisher: EventPublisher,
+    pub sync_event_publisher: SyncEventPublisher,
     pub bedwars_images: Arc<Mutex<HashMap<String, OverallCache<Bedwars>>>>,
     pub duels_images: Arc<Mutex<HashMap<String, OverallCache<Duels>>>>,
     pub session_images: Arc<Mutex<HashMap<String, SessionCacheEntry<Bedwars>>>>,
@@ -50,7 +51,6 @@ pub struct Data {
     pub home_guild_id: Option<GuildId>,
     pub pending_overwrites: Arc<Mutex<HashMap<String, PendingOverwrite>>>,
     pub sync_cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
-    pub sync_cancel_tokens: Arc<Mutex<HashMap<GuildId, crate::sync::CancelToken>>>,
     pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -76,7 +76,7 @@ impl Handler {
     }
 
     fn commands() -> Vec<CreateCommand<'static>> {
-        let mut cmds: Vec<CreateCommand<'static>> = vec![
+        let cmds: Vec<CreateCommand<'static>> = vec![
             commands::blacklist::tag::register(),
             commands::stats::bedwars::register(),
             commands::stats::duels::register(),
@@ -106,12 +106,6 @@ impl Handler {
         })
         .collect();
 
-        cmds.push(
-            commands::admin::setup::register()
-                .integration_types(vec![InstallationContext::Guild])
-                .contexts(vec![InteractionContext::Guild]),
-        );
-
         cmds
     }
 
@@ -135,7 +129,6 @@ impl Handler {
             "help" => commands::user::help::run(ctx, command, &self.data).await,
             "stats" => commands::admin::stats::run(ctx, command, &self.data).await,
             "manage" => commands::admin::manage::run(ctx, command, &self.data).await,
-            "setup" => commands::admin::setup::run(ctx, command, &self.data).await,
             "strike" => commands::admin::strike::run(ctx, command, &self.data).await,
             "confirm" => commands::blacklist::evidence::run(ctx, command, &self.data).await,
             "watch" => commands::blacklist::watch::run(ctx, command, &self.data).await,
@@ -232,9 +225,6 @@ impl Handler {
                 commands::user::help::handle_help_button(ctx, component, &self.data).await
             }
             "help_back" => commands::user::help::handle_help_back(ctx, component, &self.data).await,
-            "setup_link" => {
-                commands::admin::setup::handle_link_button(ctx, component, &self.data).await
-            }
             _ if id.starts_with("dashboard_accounts_back:") => {
                 commands::admin::accounts_panel::handle_dashboard_accounts_back(
                     ctx, component, &self.data,
@@ -432,62 +422,6 @@ impl Handler {
             _ if id.starts_with("review_cancel:") => {
                 commands::blacklist::reviews::handle_cancel(ctx, component, &self.data).await
             }
-            _ if id.starts_with("setup_link_role_select:") => {
-                commands::admin::setup::handle_link_role_select(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_unlinked_role_select:") => {
-                commands::admin::setup::handle_unlinked_role_select(ctx, component, &self.data)
-                    .await
-            }
-            _ if id.starts_with("setup_nickname_edit:") => {
-                commands::admin::setup::handle_nickname_edit_button(ctx, component, &self.data)
-                    .await
-            }
-            _ if id.starts_with("setup_nickname_clear:") => {
-                commands::admin::setup::handle_nickname_clear_button(ctx, component, &self.data)
-                    .await
-            }
-            _ if id.starts_with("setup_nickname:") => {
-                commands::admin::setup::handle_nickname_button(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_link_channel_select:") => {
-                commands::admin::setup::handle_link_channel_select(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_autorole:") => {
-                commands::admin::setup::handle_autorole_button(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_role_config:") => {
-                commands::admin::setup::handle_role_config_select(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_condition_edit:") => {
-                commands::admin::setup::handle_condition_edit_button(ctx, component, &self.data)
-                    .await
-            }
-            _ if id.starts_with("setup_rule_edit:") => {
-                commands::admin::setup::handle_rule_edit_button(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_rule_remove:") => {
-                commands::admin::setup::handle_rule_remove_button(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_role_strip:") => {
-                commands::admin::setup::handle_role_strip_button(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_nickname_reset:") => {
-                commands::admin::setup::handle_nickname_reset_button(ctx, component, &self.data)
-                    .await
-            }
-            _ if id.starts_with("setup_autorole_back:") => {
-                commands::admin::setup::handle_cancel_button(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_autorole_cancel:") => {
-                commands::admin::setup::handle_autorole_button(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_sync_cancel:") => {
-                commands::admin::setup::handle_sync_cancel_button(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_cancel:") => {
-                commands::admin::setup::handle_cancel_button(ctx, component, &self.data).await
-            }
             _ => {
                 tracing::warn!("unhandled component interaction: {id}");
                 Ok(())
@@ -527,15 +461,6 @@ impl Handler {
             }
             _ if id.starts_with("review_edit_player_modal:") => {
                 commands::blacklist::reviews::handle_edit_player_modal(ctx, modal, &self.data).await
-            }
-            _ if id.starts_with("setup_nickname_modal:") => {
-                commands::admin::setup::handle_nickname_modal(ctx, modal, &self.data).await
-            }
-            _ if id.starts_with("setup_add_rule_modal:") => {
-                commands::admin::setup::handle_add_rule_modal(ctx, modal, &self.data).await
-            }
-            _ if id.starts_with("setup_rule_edit_modal:") => {
-                commands::admin::setup::handle_rule_edit_modal(ctx, modal, &self.data).await
             }
             _ if id.starts_with("mt_reason:") => {
                 commands::blacklist::tag::handle_manage_reason_modal(ctx, modal, &self.data).await
@@ -607,9 +532,6 @@ impl EventHandler for Handler {
                     Err(e) => tracing::error!("Failed to register global commands: {}", e),
                 }
                 crate::events::spawn_subscriber(ctx.clone(), self.data.clone());
-                let ctx = ctx.clone();
-                let data = self.data.clone();
-                tokio::spawn(async move { crate::sync::startup_sync(ctx, data).await });
             }
             FullEvent::InteractionCreate { interaction, .. } => {
                 self.data
@@ -627,15 +549,19 @@ impl EventHandler for Handler {
                     tracing::error!("Guild join handler error: {}", e);
                 }
             }
-            FullEvent::GuildMemberUpdate {
-                new: Some(member), ..
-            } => {
-                if member.user.id != ctx.cache.current_user().id {
+            FullEvent::GuildMemberUpdate { event, .. } => {
+                if !event.user.bot() && event.user.id != ctx.cache.current_user().id {
                     let ctx = ctx.clone();
                     let data = self.data.clone();
-                    let member = member.clone();
+                    let guild_id = event.guild_id;
+                    let user_id = event.user.id;
                     tokio::spawn(async move {
-                        crate::sync::handle_member_update(&ctx, &data, &member).await;
+                        match guild_id.member(&ctx.http, user_id).await {
+                            Ok(member) => {
+                                crate::sync::handle_member_update(&ctx, &data, &member).await
+                            }
+                            Err(e) => tracing::debug!("Failed to fetch member for update: {e}"),
+                        }
                     });
                 }
             }

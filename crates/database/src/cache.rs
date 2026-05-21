@@ -208,6 +208,17 @@ impl<'a> CacheRepository<'a> {
         .map(|r| r.and_then(|r| r.0))
     }
 
+    pub async fn cache_username(&self, uuid: &str, username: &str) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO player_snapshots (uuid, username, is_baseline, data) VALUES ($1, $2, false, '{}'::jsonb)",
+        )
+        .bind(uuid)
+        .bind(username)
+        .execute(self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn get_all_snapshots_mapped<T>(
         &self,
         uuid: &str,
