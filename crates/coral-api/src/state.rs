@@ -5,6 +5,7 @@ use coral_redis::{EventPublisher, RateLimiter, RedisPool};
 use database::Database;
 
 use crate::discord::DiscordResolver;
+use crate::error::ApiError;
 
 pub struct StarfishConfig {
     pub core_tables_bytes: Vec<u8>,
@@ -19,7 +20,7 @@ pub struct StarfishConfig {
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Database>,
-    pub hypixel: Arc<HypixelClient>,
+    pub hypixel: Option<Arc<HypixelClient>>,
     pub mojang: Arc<MojangClient>,
     pub skin_provider: Option<Arc<dyn SkinProvider>>,
     pub internal_api_key: Option<String>,
@@ -33,7 +34,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(
         db: Database,
-        hypixel: HypixelClient,
+        hypixel: Option<HypixelClient>,
         mojang: MojangClient,
         skin_provider: Option<Arc<dyn SkinProvider>>,
         internal_api_key: Option<String>,
@@ -49,12 +50,18 @@ impl AppState {
                 redis.connection(),
             )),
             db: Arc::new(db),
-            hypixel: Arc::new(hypixel),
+            hypixel: hypixel.map(Arc::new),
             mojang: Arc::new(mojang),
             skin_provider,
             internal_api_key,
             redis,
             starfish: starfish.map(Arc::new),
         }
+    }
+
+    pub fn require_hypixel(&self) -> Result<&HypixelClient, ApiError> {
+        self.hypixel
+            .as_deref()
+            .ok_or_else(|| ApiError::ServiceUnavailable("Hypixel API not configured".into()))
     }
 }

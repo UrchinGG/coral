@@ -99,7 +99,10 @@ async fn fetch_by_name(
     state: &AppState,
     name: &str,
 ) -> Result<(Option<serde_json::Value>, Option<String>), ApiError> {
-    Ok((state.hypixel.get_guild_by_name(name).await?, None))
+    Ok((
+        state.require_hypixel()?.get_guild_by_name(name).await?,
+        None,
+    ))
 }
 
 async fn fetch_by_player(
@@ -111,7 +114,7 @@ async fn fetch_by_player(
     } else {
         resolve_uuid(state, identifier).await?
     };
-    let guild = state.hypixel.get_guild_by_player(&uuid).await?;
+    let guild = state.require_hypixel()?.get_guild_by_player(&uuid).await?;
     Ok((guild, Some(uuid)))
 }
 
@@ -119,14 +122,15 @@ async fn fetch_auto(
     state: &AppState,
     identifier: &str,
 ) -> Result<(Option<serde_json::Value>, Option<String>), ApiError> {
+    let hypixel = state.require_hypixel()?;
     if is_uuid(identifier) {
         let uuid = normalize_uuid(identifier);
-        let guild = state.hypixel.get_guild_by_player(&uuid).await?;
+        let guild = hypixel.get_guild_by_player(&uuid).await?;
         return Ok((guild, Some(uuid)));
     }
     if identifier.len() <= MAX_USERNAME_LENGTH {
         if let Ok(uuid) = resolve_uuid(state, identifier).await {
-            let guild = state.hypixel.get_guild_by_player(&uuid).await?;
+            let guild = hypixel.get_guild_by_player(&uuid).await?;
             return Ok((guild, Some(uuid)));
         }
     }

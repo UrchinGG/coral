@@ -63,10 +63,13 @@ async fn init_state() -> Result<AppState> {
         tracing::warn!("Migration skipped: {e}");
     }
     let redis = RedisPool::connect(&env::var("REDIS_URL").expect("REDIS_URL required")).await?;
-    let hypixel = HypixelClient::new(
-        env::var("HYPIXEL_API_KEY").expect("HYPIXEL_API_KEY required"),
-        redis.connection(),
-    )?;
+    let hypixel = env::var("HYPIXEL_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())
+        .map(|key| HypixelClient::new(key, redis.connection()));
+    if hypixel.is_none() {
+        tracing::warn!("HYPIXEL_API_KEY unset - Hypixel-backed endpoints will return 503");
+    }
     let mojang = MojangClient::new();
     let skin_provider = match LocalSkinProvider::new(redis.connection()) {
         Some(p) => {

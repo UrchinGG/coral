@@ -19,7 +19,4 @@ pub enum ClientError {
 
     #[error("Invalid UUID: {0}")]
     InvalidUuid(String),
-
-    #[error("No API keys configured")]
-    NoApiKeys,
 }

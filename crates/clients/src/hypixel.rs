@@ -28,16 +28,12 @@ struct HypixelResponse {
 }
 
 impl HypixelClient {
-    pub fn new(key: String, redis: ConnectionManager) -> Result<Self, ClientError> {
-        if key.is_empty() {
-            return Err(ClientError::NoApiKeys);
-        }
-
-        Ok(Self {
+    pub fn new(key: String, redis: ConnectionManager) -> Self {
+        Self {
             http: Client::new(),
             key,
             redis,
-        })
+        }
     }
 
     pub async fn get_player(&self, uuid: &str) -> Result<Option<Value>, ClientError> {

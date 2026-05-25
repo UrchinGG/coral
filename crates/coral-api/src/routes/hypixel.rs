@@ -41,7 +41,7 @@ async fn player(
         .or(query.name.as_deref())
         .ok_or_else(|| ApiError::BadRequest("query parameter 'uuid' or 'name' required".into()))?;
     let (uuid, username_hint) = resolve_identifier(&state, identifier).await?;
-    let data = state.hypixel.get_player(&uuid).await?;
+    let data = state.require_hypixel()?.get_player(&uuid).await?;
 
     if let Some(ref player) = data {
         let username = username_hint
@@ -70,6 +70,7 @@ async fn guild(
     State(state): State<AppState>,
     Query(query): Query<GuildQuery>,
 ) -> Result<Json<Value>, ApiError> {
+    let hypixel = state.require_hypixel()?;
     let data = match (query.player.as_deref(), query.name.as_deref()) {
         (Some(player), _) => {
             let uuid = if is_uuid(player) {
@@ -78,9 +79,9 @@ async fn guild(
                 let id = state.mojang.resolve(player).await?;
                 normalize_uuid(&id.uuid)
             };
-            state.hypixel.get_guild_by_player(&uuid).await?
+            hypixel.get_guild_by_player(&uuid).await?
         }
-        (_, Some(name)) => state.hypixel.get_guild_by_name(name).await?,
+        (_, Some(name)) => hypixel.get_guild_by_name(name).await?,
         _ => {
             return Err(ApiError::BadRequest(
                 "query parameter 'player' or 'name' required".into(),

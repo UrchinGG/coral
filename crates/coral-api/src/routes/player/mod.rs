@@ -140,8 +140,9 @@ pub async fn player_stats(
     let identifier = extract_identifier(&query)?;
     let (uuid, username_hint) = resolve_identifier(&state, identifier).await?;
     let repo = BlacklistRepository::new(state.db.pool());
+    let hypixel = state.require_hypixel()?;
     let (player_data, tags, profile) = tokio::join!(
-        state.hypixel.get_player(&uuid),
+        hypixel.get_player(&uuid),
         repo.get_tags(&uuid),
         state.mojang.get_profile(&uuid),
     );
