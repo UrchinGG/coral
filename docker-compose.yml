@@ -1,144 +1,100 @@
 services:
-  postgres:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: coral-postgres
-    container_name: coral-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-coral}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
-      POSTGRES_DB: ${POSTGRES_DB:-coral}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-    command:
-      - "postgres"
-      - "-c"
-      - "shared_buffers=256MB"
-      - "-c"
-      - "work_mem=8MB"
-      - "-c"
-      - "effective_cache_size=512MB"
-      - "-c"
-      - "maintenance_work_mem=128MB"
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U ${POSTGRES_USER:-coral} -d ${POSTGRES_DB:-coral}",
-        ]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - coral-network
-
-  redis:
-    image: redis:7-alpine
-    container_name: coral-redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - coral-network
-
   coral-api:
     build:
       context: .
-      dockerfile: Dockerfile
       target: coral-api
-    container_name: coral-api
+      secrets: [git_auth_token]
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+    networks: [default, coolify]
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-coral}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-coral}
-      REDIS_URL: redis://redis:6379
-      HYPIXEL_API_KEY: ${HYPIXEL_API_KEY:?HYPIXEL_API_KEY required}
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY required}
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      DISCORD_TOKEN: ${DISCORD_TOKEN:-}
+      HYPIXEL_API_KEY: ${HYPIXEL_API_KEY:-}
       PORT: ${API_PORT:-8000}
       RUST_LOG: ${RUST_LOG:-info}
-    ports:
-      - "${API_PORT:-8000}:${API_PORT:-8000}"
+      STARFISH_HMAC_SECRET: ${STARFISH_HMAC_SECRET:-}
+      STARFISH_ED25519_PRIVATE_KEY: ${STARFISH_ED25519_PRIVATE_KEY:-}
+      STARFISH_DISCORD_CLIENT_ID: ${STARFISH_DISCORD_CLIENT_ID:-}
+      STARFISH_DISCORD_CLIENT_SECRET: ${STARFISH_DISCORD_CLIENT_SECRET:-}
+      STARFISH_GITHUB_TOKEN: ${STARFISH_GITHUB_TOKEN:-}
+      STARFISH_GITHUB_REPO: ${STARFISH_GITHUB_REPO:-}
     healthcheck:
       test:
-        [
-          "CMD-SHELL",
-          "curl -sf http://localhost:${API_PORT:-8000}/health | grep -q healthy || exit 1",
-        ]
+        - CMD-SHELL
+        - curl -sf http://localhost:${API_PORT:-8000}/health | grep -q healthy
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
-    networks:
-      - coral-network
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.coral-api.rule=Host(`${API_DOMAIN:-api.localhost}`)
+      - traefik.http.routers.coral-api.entrypoints=http
+      - traefik.http.services.coral-api.loadbalancer.server.port=8000
+
+  coral-web:
+    build:
+      context: .
+      target: coral-web
+    restart: unless-stopped
+    networks: [default, coolify]
+    environment:
+      CORAL_API_URL: http://coral-api:${API_PORT:-8000}
+      CORAL_INTERNAL_KEY: ${INTERNAL_API_KEY}
+      SITE_URL: ${SITE_URL:-http://localhost:3000}
+      STARFISH_DISCORD_CLIENT_ID: ${STARFISH_DISCORD_CLIENT_ID:-}
+      STARFISH_DISCORD_CLIENT_SECRET: ${STARFISH_DISCORD_CLIENT_SECRET:-}
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.coral-web.rule=Host(`${WEB_DOMAIN:-coral.localhost}`)
+      - traefik.http.routers.coral-web.entrypoints=http
+      - traefik.http.services.coral-web.loadbalancer.server.port=3000
 
   coral-bot:
     build:
       context: .
-      dockerfile: Dockerfile
       target: coral-bot
-    container_name: coral-bot
+      secrets: [git_auth_token]
     restart: unless-stopped
+    networks: [default, coolify]
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
       coral-api:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-coral}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-coral}
-      REDIS_URL: redis://redis:6379
-      DISCORD_TOKEN: ${DISCORD_TOKEN:?DISCORD_TOKEN required}
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
       CORAL_API_URL: http://coral-api:${API_PORT:-8000}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
-      HYPIXEL_API_KEY: ${HYPIXEL_API_KEY:?HYPIXEL_API_KEY required}
+      HYPIXEL_API_KEY: ${HYPIXEL_API_KEY:-}
       VERIFICATION_ROLE_ID: ${VERIFICATION_ROLE_ID:-}
       OWNER_IDS: ${OWNER_IDS:-}
+      HOME_GUILD_ID: ${HOME_GUILD_ID:-}
       BLACKLIST_CHANNEL_ID: ${BLACKLIST_CHANNEL_ID:-}
       MOD_CHANNEL_ID: ${MOD_CHANNEL_ID:-}
       REVIEW_FORUM_ID: ${REVIEW_FORUM_ID:-}
       EVIDENCE_FORUM_ID: ${EVIDENCE_FORUM_ID:-}
       RUST_LOG: ${RUST_LOG:-info}
-    networks:
-      - coral-network
 
   coral-admin:
     build:
       context: .
-      dockerfile: Dockerfile
       target: coral-admin
-    container_name: coral-admin
+      secrets: [git_auth_token]
     restart: unless-stopped
-    profiles:
-      - admin
-    depends_on:
-      postgres:
-        condition: service_healthy
+    profiles: [admin]
+    networks: [default, coolify]
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-coral}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-coral}
+      DATABASE_URL: ${DATABASE_URL}
       ADMIN_PORT: ${ADMIN_PORT:-8080}
       RUST_LOG: ${RUST_LOG:-info}
-    ports:
-      - "${ADMIN_PORT:-8080}:8080"
-    networks:
-      - coral-network
-
-volumes:
-  postgres_data:
 
 networks:
-  coral-network:
-    driver: bridge
+  coolify:
+    external: true
+
+secrets:
+  git_auth_token:
+    environment: GIT_AUTH_TOKEN

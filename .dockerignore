@@ -1,0 +1,31 @@
+.git
+.github
+.gitignore
+.dockerignore
+
+# Rust
+target/
+**/target/
+
+# Node
+**/node_modules/
+**/.next/
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Docker compose (not needed inside images)
+docker-compose*.yml
+
+# Misc
+*.log
+*.tmp

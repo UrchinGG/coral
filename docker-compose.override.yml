@@ -1,0 +1,81 @@
+# Auto-loaded by `docker compose up` for local dev.
+# Coolify reads only docker-compose.yml, so this file is ignored in production.
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: coral
+      POSTGRES_PASSWORD: coral
+      POSTGRES_DB: coral
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U coral]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  coral-api:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://coral:coral@postgres:5432/coral
+      REDIS_URL: redis://redis:6379
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-dev-internal-key}
+    ports:
+      - "${API_PORT:-8000}:${API_PORT:-8000}"
+
+  coral-web:
+    environment:
+      CORAL_INTERNAL_KEY: ${INTERNAL_API_KEY:-dev-internal-key}
+    ports:
+      - "3000:3000"
+
+  coral-bot:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      coral-api:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://coral:coral@postgres:5432/coral
+      REDIS_URL: redis://redis:6379
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-dev-internal-key}
+
+  coral-admin:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://coral:coral@postgres:5432/coral
+    ports:
+      - "${ADMIN_PORT:-8080}:8080"
+
+volumes:
+  postgres_data:
+
+# Base declares `coolify` as an external network (it exists in production).
+# Locally it doesn't, so redeclare it as a regular Compose-managed network.
+networks:
+  coolify:
+    external: false
