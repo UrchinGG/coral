@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
  && rm -rf /var/lib/apt/lists/*
 
 ENV RUSTFLAGS="-C linker=clang -C link-arg=-fuse-ld=mold"
+ENV CARGO_BUILD_JOBS=2
 
 COPY --from=planner /app/recipe.json recipe.json
 
