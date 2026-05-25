@@ -3,8 +3,7 @@ use mctext::{MCText, NamedColor};
 
 use hypixel::{
     DivisionTrack, DuelsBreakdownEntry, DuelsDivision, DuelsStats, DuelsView, DuelsViewStats,
-    GuildInfo, StreakSource, WinstreakHistory, color_code, division_progress,
-    next_division,
+    GuildInfo, StreakSource, WinstreakHistory, color_code, division_progress, next_division,
 };
 
 use render::canvas::{
@@ -12,10 +11,9 @@ use render::canvas::{
     TextBlock, TextBox,
 };
 use render::cards::{
-    BAR_COLOR, TagIcon, color_name_to_named, draw_progress_bar, duels_colors as colors, format_number,
-    format_percent, format_ratio, format_timestamp, stat_line,
+    BAR_COLOR, TagIcon, color_name_to_named, draw_progress_bar, duels_colors as colors,
+    format_number, format_percent, format_ratio, format_timestamp, stat_line,
 };
-
 
 const BOX_CORNER_RADIUS: u32 = 18;
 const CANVAS_WIDTH: u32 = 800;
@@ -36,7 +34,6 @@ const LEVEL_PADDING: u32 = 20;
 const SKIN_PADDING: u32 = 12;
 const MAX_DISPLAYED_STREAKS: usize = 5;
 
-
 fn col_x(col: u32) -> u32 {
     match col {
         0 => 0,
@@ -46,7 +43,6 @@ fn col_x(col: u32) -> u32 {
     }
 }
 
-
 pub fn render_duels(
     stats: &DuelsStats,
     view: DuelsView,
@@ -54,9 +50,11 @@ pub fn render_duels(
     winstreaks: &WinstreakHistory,
     tags: &[TagIcon],
 ) -> RgbaImage {
-    let selected = stats
-        .view_stats(view)
-        .unwrap_or_else(|| stats.view_stats(stats.default_view()).expect("duels default view"));
+    let selected = stats.view_stats(view).unwrap_or_else(|| {
+        stats
+            .view_stats(stats.default_view())
+            .expect("duels default view")
+    });
     let overall = stats.view_stats(DuelsView::Overall);
     let is_overall = view == DuelsView::Overall;
 
@@ -68,23 +66,57 @@ pub fn render_duels(
     Canvas::new(CANVAS_WIDTH, CANVAS_HEIGHT)
         .background(CANVAS_BACKGROUND)
         .draw(
-            0, 0,
-            &HeaderSection::new(&stats.display_name, stats.rank_prefix.as_deref(), &stats.guild, tags),
+            0,
+            0,
+            &HeaderSection::new(
+                &stats.display_name,
+                stats.rank_prefix.as_deref(),
+                &stats.guild,
+                tags,
+            ),
         )
         .draw(
-            0, LEVEL_Y as i32,
-            &DivisionSection { division: selected.division, track: selected.track, wins: selected.wins, session_wins: None },
+            0,
+            LEVEL_Y as i32,
+            &DivisionSection {
+                division: selected.division,
+                track: selected.track,
+                wins: selected.wins,
+                session_wins: None,
+            },
         )
-        .draw(col_x(0) as i32, MAIN_ROW_Y as i32, &SkinSection::new(skin, stats.network_level, &selected.title))
-        .draw(col_x(1) as i32, MAIN_ROW_Y as i32, &StatsSection::new(&selected))
+        .draw(
+            col_x(0) as i32,
+            MAIN_ROW_Y as i32,
+            &SkinSection::new(skin, stats.network_level, &selected.title),
+        )
+        .draw(
+            col_x(1) as i32,
+            MAIN_ROW_Y as i32,
+            &StatsSection::new(&selected),
+        )
         .draw(col_x(1) as i32, SECOND_ROW_Y as i32, &breakdown)
-        .draw(col_x(2) as i32, SECOND_ROW_Y as i32, &DuelsWinstreaksBox { winstreaks, current_ws: selected.current_winstreak.value() })
-        .draw(col_x(0) as i32, BOTTOM_ROW_Y as i32, &status_box(stats.first_login))
-        .draw(col_x(1) as i32, BOTTOM_ROW_Y as i32, &DuelsGuildBox::new(&stats.guild))
+        .draw(
+            col_x(2) as i32,
+            SECOND_ROW_Y as i32,
+            &DuelsWinstreaksBox {
+                winstreaks,
+                current_ws: selected.current_winstreak.value(),
+            },
+        )
+        .draw(
+            col_x(0) as i32,
+            BOTTOM_ROW_Y as i32,
+            &status_box(stats.first_login),
+        )
+        .draw(
+            col_x(1) as i32,
+            BOTTOM_ROW_Y as i32,
+            &DuelsGuildBox::new(&stats.guild),
+        )
         .draw(col_x(2) as i32, BOTTOM_ROW_Y as i32, &extras_box(stats))
         .build()
 }
-
 
 pub(crate) struct HeaderSection<'a> {
     display_name: &'a str,
@@ -93,10 +125,19 @@ pub(crate) struct HeaderSection<'a> {
     tags: &'a [TagIcon],
 }
 
-
 impl<'a> HeaderSection<'a> {
-    pub fn new(display_name: &'a str, rank_prefix: Option<&'a str>, guild: &'a GuildInfo, tags: &'a [TagIcon]) -> Self {
-        Self { display_name, rank_prefix, guild, tags }
+    pub fn new(
+        display_name: &'a str,
+        rank_prefix: Option<&'a str>,
+        guild: &'a GuildInfo,
+        tags: &'a [TagIcon],
+    ) -> Self {
+        Self {
+            display_name,
+            rank_prefix,
+            guild,
+            tags,
+        }
     }
 
     fn display_name_text(&self) -> MCText {
@@ -109,7 +150,6 @@ impl<'a> HeaderSection<'a> {
         MCText::parse(&format!("{}{}{}", prefix, self.display_name, guild_tag))
     }
 }
-
 
 impl Shape for HeaderSection<'_> {
     fn draw(&self, ctx: &mut DrawContext) {
@@ -124,7 +164,16 @@ impl Shape for HeaderSection<'_> {
         let (cw, ch) = ctx.buffer.dimensions();
         let (name_w, _) = ctx.renderer.measure(&name_text, name_font);
 
-        ctx.renderer.draw(ctx.buffer.as_mut(), cw, ch, (ctx.x + 20) as f32, (ctx.y + 13) as f32, &name_text, name_font, true);
+        ctx.renderer.draw(
+            ctx.buffer.as_mut(),
+            cw,
+            ch,
+            (ctx.x + 20) as f32,
+            (ctx.y + 13) as f32,
+            &name_text,
+            name_font,
+            true,
+        );
 
         if !self.tags.is_empty() {
             let icon_size = (name_scale * 12.0) as u32;
@@ -140,9 +189,10 @@ impl Shape for HeaderSection<'_> {
         }
     }
 
-    fn size(&self) -> (u32, u32) { (CANVAS_WIDTH, HEADER_HEIGHT) }
+    fn size(&self) -> (u32, u32) {
+        (CANVAS_WIDTH, HEADER_HEIGHT)
+    }
 }
-
 
 pub(crate) struct DivisionSection {
     pub division: (DuelsDivision, u32),
@@ -151,28 +201,34 @@ pub(crate) struct DivisionSection {
     pub session_wins: Option<u64>,
 }
 
-
 impl DivisionSection {
     fn current_text(&self) -> MCText {
         let (div, level) = self.division;
         let color = division_color(div.color_name);
         let name = format_division_name(self.division);
         let mut span = MCText::new().span(&name).color(color);
-        if div.bold && level > 0 { span = span.bold(); }
+        if div.bold && level > 0 {
+            span = span.bold();
+        }
         span.build()
     }
 
     fn right_text(&self) -> MCText {
         if let Some(session_wins) = self.session_wins {
             let color = division_color(self.division.0.color_name);
-            MCText::new().span(&format!("+{} W", format_number(session_wins))).color(color).build()
+            MCText::new()
+                .span(&format!("+{} W", format_number(session_wins)))
+                .color(color)
+                .build()
         } else {
             let (div, level) = self.division;
             match next_division(div, level) {
                 Some((next_div, next_level)) => {
                     let color = division_color(next_div.color_name);
                     let mut span = MCText::new().span(&roman(next_level)).color(color);
-                    if next_div.bold { span = span.bold(); }
+                    if next_div.bold {
+                        span = span.bold();
+                    }
                     span.build()
                 }
                 None => self.current_text(),
@@ -184,14 +240,17 @@ impl DivisionSection {
         let progress = division_progress(self.wins, self.track);
         let filled = (progress * 25.0).round() as usize;
         MCText::new()
-            .span("[").color(NamedColor::DarkGray)
-            .then(&"\u{25a0}".repeat(filled)).color(NamedColor::Aqua)
-            .then(&"\u{25a0}".repeat(25 - filled)).color(NamedColor::Gray)
-            .then("]").color(NamedColor::DarkGray)
+            .span("[")
+            .color(NamedColor::DarkGray)
+            .then(&"\u{25a0}".repeat(filled))
+            .color(NamedColor::Aqua)
+            .then(&"\u{25a0}".repeat(25 - filled))
+            .color(NamedColor::Gray)
+            .then("]")
+            .color(NamedColor::DarkGray)
             .build()
     }
 }
-
 
 impl Shape for DivisionSection {
     fn draw(&self, ctx: &mut DrawContext) {
@@ -226,16 +285,44 @@ impl Shape for DivisionSection {
         let star_y = star_y as i32;
         let (cw, ch) = ctx.buffer.dimensions();
 
-        ctx.renderer.draw(ctx.buffer.as_mut(), cw, ch, ctx.x as f32 + start_x, (ctx.y + star_y) as f32, &current, font_size, true);
+        ctx.renderer.draw(
+            ctx.buffer.as_mut(),
+            cw,
+            ch,
+            ctx.x as f32 + start_x,
+            (ctx.y + star_y) as f32,
+            &current,
+            font_size,
+            true,
+        );
         let bar_x = start_x + current_w + spacing;
-        ctx.renderer.draw(ctx.buffer.as_mut(), cw, ch, ctx.x as f32 + bar_x, ctx.y as f32 + bar_y as f32, &progress_bar, bar_scale * 16.0, true);
+        ctx.renderer.draw(
+            ctx.buffer.as_mut(),
+            cw,
+            ch,
+            ctx.x as f32 + bar_x,
+            ctx.y as f32 + bar_y as f32,
+            &progress_bar,
+            bar_scale * 16.0,
+            true,
+        );
         let next_x = bar_x + scaled_bar_w + spacing;
-        ctx.renderer.draw(ctx.buffer.as_mut(), cw, ch, ctx.x as f32 + next_x, (ctx.y + star_y) as f32, &right, font_size, true);
+        ctx.renderer.draw(
+            ctx.buffer.as_mut(),
+            cw,
+            ch,
+            ctx.x as f32 + next_x,
+            (ctx.y + star_y) as f32,
+            &right,
+            font_size,
+            true,
+        );
     }
 
-    fn size(&self) -> (u32, u32) { (CANVAS_WIDTH, 53) }
+    fn size(&self) -> (u32, u32) {
+        (CANVAS_WIDTH, 53)
+    }
 }
-
 
 pub(crate) struct SkinSection<'a> {
     skin: Option<&'a DynamicImage>,
@@ -243,13 +330,15 @@ pub(crate) struct SkinSection<'a> {
     subtitle: &'a str,
 }
 
-
 impl<'a> SkinSection<'a> {
     pub fn new(skin: Option<&'a DynamicImage>, network_level: f64, subtitle: &'a str) -> Self {
-        Self { skin, network_level, subtitle }
+        Self {
+            skin,
+            network_level,
+            subtitle,
+        }
     }
 }
-
 
 impl Shape for SkinSection<'_> {
     fn draw(&self, ctx: &mut DrawContext) {
@@ -264,47 +353,67 @@ impl Shape for SkinSection<'_> {
         let mode_text_height = (mode_scale * 16.0) as u32;
 
         let level_text = MCText::new()
-            .span("Level ").color(NamedColor::Gray)
+            .span("Level ")
+            .color(NamedColor::Gray)
             .then(&{
                 let s = format!("{:.2}", self.network_level);
                 s.strip_suffix(".00").map(String::from).unwrap_or(s)
             })
             .color(NamedColor::Yellow)
             .build();
-        TextBlock::new().push(level_text).scale(level_scale).align_x(Align::Center).max_width(COL_WIDTH).draw(&mut ctx.at(0, SKIN_PADDING as i32));
+        TextBlock::new()
+            .push(level_text)
+            .scale(level_scale)
+            .align_x(Align::Center)
+            .max_width(COL_WIDTH)
+            .draw(&mut ctx.at(0, SKIN_PADDING as i32));
 
         let mode_y = SKIN_BOX_HEIGHT - SKIN_PADDING - mode_text_height;
-        TextBlock::new().push(MCText::new().span(&format!("({})", self.subtitle)).color(NamedColor::Gray).build()).scale(mode_scale).align_x(Align::Center).max_width(COL_WIDTH).draw(&mut ctx.at(0, mode_y as i32));
+        TextBlock::new()
+            .push(
+                MCText::new()
+                    .span(&format!("({})", self.subtitle))
+                    .color(NamedColor::Gray)
+                    .build(),
+            )
+            .scale(mode_scale)
+            .align_x(Align::Center)
+            .max_width(COL_WIDTH)
+            .draw(&mut ctx.at(0, mode_y as i32));
 
         if let Some(skin) = &self.skin {
             let level_bottom = SKIN_PADDING + level_text_height;
             let available_h = mode_y - level_bottom;
             let max_w = COL_WIDTH - 26;
             let (orig_w, orig_h) = (skin.width(), skin.height());
-            let scale = f64::min(max_w as f64 / orig_w as f64, available_h as f64 / orig_h as f64);
+            let scale = f64::min(
+                max_w as f64 / orig_w as f64,
+                available_h as f64 / orig_h as f64,
+            );
             let new_w = (orig_w as f64 * scale) as u32;
             let new_h = (orig_h as f64 * scale) as u32;
             let skin_x = (COL_WIDTH - new_w) / 2;
             let skin_y = level_bottom + (available_h - new_h) / 2 + 12;
-            Image::new(skin).size(new_w, new_h).draw(&mut ctx.at(skin_x as i32, skin_y as i32));
+            Image::new(skin)
+                .size(new_w, new_h)
+                .draw(&mut ctx.at(skin_x as i32, skin_y as i32));
         }
     }
 
-    fn size(&self) -> (u32, u32) { (COL_WIDTH, SKIN_BOX_HEIGHT) }
+    fn size(&self) -> (u32, u32) {
+        (COL_WIDTH, SKIN_BOX_HEIGHT)
+    }
 }
-
 
 pub(crate) struct StatsSection<'a> {
     stats: &'a DuelsViewStats,
 }
-
 
 impl<'a> StatsSection<'a> {
     pub fn new(stats: &'a DuelsViewStats) -> Self {
         Self { stats }
     }
 }
-
 
 impl Shape for StatsSection<'_> {
     fn draw(&self, ctx: &mut DrawContext) {
@@ -326,32 +435,74 @@ impl Shape for StatsSection<'_> {
         let arrow_pct = percent(self.stats.bow_hits, self.stats.bow_shots);
 
         let rows: [(&str, &str, &str, u64, Option<u64>, NamedColor, NamedColor); 4] = [
-            ("WLR:", "Wins:", &format_ratio(wlr), self.stats.wins, Some(self.stats.losses), colors::wlr(wlr), colors::wins(self.stats.wins)),
-            ("KDR:", "Kills:", &format_ratio(kdr), self.stats.kills, Some(self.stats.deaths), colors::kdr(kdr), colors::kills(self.stats.kills)),
-            ("Melee:", "Hits:", &melee_pct, self.stats.melee_hits, None, NamedColor::Aqua, NamedColor::Aqua),
-            ("Arrow:", "Shots:", &arrow_pct, self.stats.bow_hits, None, NamedColor::Aqua, NamedColor::Aqua),
+            (
+                "WLR:",
+                "Wins:",
+                &format_ratio(wlr),
+                self.stats.wins,
+                Some(self.stats.losses),
+                colors::wlr(wlr),
+                colors::wins(self.stats.wins),
+            ),
+            (
+                "KDR:",
+                "Kills:",
+                &format_ratio(kdr),
+                self.stats.kills,
+                Some(self.stats.deaths),
+                colors::kdr(kdr),
+                colors::kills(self.stats.kills),
+            ),
+            (
+                "Melee:",
+                "Hits:",
+                &melee_pct,
+                self.stats.melee_hits,
+                None,
+                NamedColor::Aqua,
+                NamedColor::Aqua,
+            ),
+            (
+                "Arrow:",
+                "Shots:",
+                &arrow_pct,
+                self.stats.bow_hits,
+                None,
+                NamedColor::Aqua,
+                NamedColor::Aqua,
+            ),
         ];
 
         let mut max_right_w: f32 = 0.0;
         let mut measurements = Vec::new();
 
-        for (ratio_label, pos_label, ratio_val, positive, negative, ratio_color, positive_color) in &rows {
+        for (ratio_label, pos_label, ratio_val, positive, negative, ratio_color, positive_color) in
+            &rows
+        {
             let ratio_text = MCText::new()
-                .span(*ratio_label).color(NamedColor::Gray)
-                .then(" ").then(*ratio_val).color(*ratio_color)
+                .span(*ratio_label)
+                .color(NamedColor::Gray)
+                .then(" ")
+                .then(*ratio_val)
+                .color(*ratio_color)
                 .build();
             let (_, main_h) = ctx.renderer.measure(&ratio_text, main_font);
 
             let pos_text = MCText::new()
-                .span(*pos_label).color(NamedColor::Gray)
-                .then(" ").then(&format_number(*positive)).color(*positive_color)
+                .span(*pos_label)
+                .color(NamedColor::Gray)
+                .then(" ")
+                .then(&format_number(*positive))
+                .color(*positive_color)
                 .build();
             let (pos_w, _) = ctx.renderer.measure(&pos_text, main_font);
 
             let (neg_text, neg_w, neg_h) = if let Some(neg) = negative {
                 let t = MCText::new()
-                    .span(" / ").color(NamedColor::DarkGray)
-                    .then(&format_number(*neg)).color(NamedColor::Gray)
+                    .span(" / ")
+                    .color(NamedColor::DarkGray)
+                    .then(&format_number(*neg))
+                    .color(NamedColor::Gray)
                     .build();
                 let (w, h) = ctx.renderer.measure(&t, neg_font);
                 (Some(t), w, h)
@@ -371,18 +522,28 @@ impl Shape for StatsSection<'_> {
             measurements.into_iter().enumerate()
         {
             let y = padding + i as u32 * line_height;
-            TextBlock::new().push(ratio_text).scale(main_scale).draw(&mut ctx.at(padding as i32, y as i32));
-            TextBlock::new().push(pos_text).scale(main_scale).draw(&mut ctx.at(col_pos as i32, y as i32));
+            TextBlock::new()
+                .push(ratio_text)
+                .scale(main_scale)
+                .draw(&mut ctx.at(padding as i32, y as i32));
+            TextBlock::new()
+                .push(pos_text)
+                .scale(main_scale)
+                .draw(&mut ctx.at(col_pos as i32, y as i32));
             if let Some(neg) = neg_text {
                 let neg_y = y as f32 + (main_h - neg_h) * 0.75;
-                TextBlock::new().push(neg).scale(neg_scale).draw(&mut ctx.at((col_pos + pos_w) as i32, neg_y as i32));
+                TextBlock::new()
+                    .push(neg)
+                    .scale(neg_scale)
+                    .draw(&mut ctx.at((col_pos + pos_w) as i32, neg_y as i32));
             }
         }
     }
 
-    fn size(&self) -> (u32, u32) { (STATS_BOX_WIDTH, STATS_BOX_HEIGHT) }
+    fn size(&self) -> (u32, u32) {
+        (STATS_BOX_WIDTH, STATS_BOX_HEIGHT)
+    }
 }
-
 
 pub(crate) struct BreakdownBox<'a> {
     entries: &'a [DuelsBreakdownEntry],
@@ -391,17 +552,29 @@ pub(crate) struct BreakdownBox<'a> {
     view_stats: Option<&'a DuelsViewStats>,
 }
 
-
 impl<'a> BreakdownBox<'a> {
     pub fn overall(entries: &'a [DuelsBreakdownEntry]) -> Self {
-        Self { entries, is_overall: true, overall_stats: None, view_stats: None }
+        Self {
+            entries,
+            is_overall: true,
+            overall_stats: None,
+            view_stats: None,
+        }
     }
 
-    pub fn mode_share(entries: &'a [DuelsBreakdownEntry], overall: &'a DuelsViewStats, view: &'a DuelsViewStats) -> Self {
-        Self { entries, is_overall: false, overall_stats: Some(overall), view_stats: Some(view) }
+    pub fn mode_share(
+        entries: &'a [DuelsBreakdownEntry],
+        overall: &'a DuelsViewStats,
+        view: &'a DuelsViewStats,
+    ) -> Self {
+        Self {
+            entries,
+            is_overall: false,
+            overall_stats: Some(overall),
+            view_stats: Some(view),
+        }
     }
 }
-
 
 impl Shape for BreakdownBox<'_> {
     fn draw(&self, ctx: &mut DrawContext) {
@@ -420,9 +593,10 @@ impl Shape for BreakdownBox<'_> {
         self.draw_top_played(ctx);
     }
 
-    fn size(&self) -> (u32, u32) { (COL_WIDTH, SECOND_ROW_HEIGHT) }
+    fn size(&self) -> (u32, u32) {
+        (COL_WIDTH, SECOND_ROW_HEIGHT)
+    }
 }
-
 
 impl BreakdownBox<'_> {
     fn draw_top_played(&self, ctx: &mut DrawContext) {
@@ -437,35 +611,58 @@ impl BreakdownBox<'_> {
 
         for (i, entry) in self.entries.iter().take(4).enumerate() {
             let games = entry.wins + entry.losses;
-            let pct = if total_games == 0 { 0.0 } else { games as f64 / total_games as f64 * 100.0 };
+            let pct = if total_games == 0 {
+                0.0
+            } else {
+                games as f64 / total_games as f64 * 100.0
+            };
             let bx = padding;
             let by = padding + i as u32 * (bar_height + gap);
             let filled_w = (pct / 100.0 * bar_width as f64).round() as u32;
             if filled_w > 0 {
-                draw_progress_bar(ctx, bx, by, filled_w, bar_height, 0, 1.0, BAR_COLOR, BAR_COLOR);
+                draw_progress_bar(
+                    ctx, bx, by, filled_w, bar_height, 0, 1.0, BAR_COLOR, BAR_COLOR,
+                );
             }
             let text = MCText::new()
-                .span(&format_percent(pct)).color(NamedColor::Green)
-                .then(&format!(" {}", entry.label)).color(NamedColor::Gray)
+                .span(&format_percent(pct))
+                .color(NamedColor::Green)
+                .then(&format!(" {}", entry.label))
+                .color(NamedColor::Gray)
                 .build();
             let (cw, ch) = ctx.buffer.dimensions();
             let (tw, th) = ctx.renderer.measure(&text, text_font);
             ctx.renderer.draw(
-                ctx.buffer.as_mut(), cw, ch,
+                ctx.buffer.as_mut(),
+                cw,
+                ch,
                 ctx.x as f32 + bx as f32 + (bar_width as f32 - tw) / 2.0,
                 ctx.y as f32 + by as f32 + (bar_height as f32 - th) / 2.0,
-                &text, text_font, true,
+                &text,
+                text_font,
+                true,
             );
         }
     }
 
-    fn draw_mode_share(&self, ctx: &mut DrawContext, overall: &DuelsViewStats, view: &DuelsViewStats) {
+    fn draw_mode_share(
+        &self,
+        ctx: &mut DrawContext,
+        overall: &DuelsViewStats,
+        view: &DuelsViewStats,
+    ) {
         let padding = 16u32;
         let bar_height = 28u32;
         let text_scale = 1.5f32;
         let text_font = text_scale * 16.0;
 
-        let pct = |a: u64, b: u64| if b == 0 { 0.0 } else { a as f64 / b as f64 * 100.0 };
+        let pct = |a: u64, b: u64| {
+            if b == 0 {
+                0.0
+            } else {
+                a as f64 / b as f64 * 100.0
+            }
+        };
 
         let rows: [(&str, f64); 4] = [
             ("Wins", pct(view.wins, overall.wins)),
@@ -483,29 +680,35 @@ impl BreakdownBox<'_> {
             let by = padding + i as u32 * (bar_height + gap);
             let filled_w = (pct_val / 100.0 * bar_width as f64).round() as u32;
             if filled_w > 0 {
-                draw_progress_bar(ctx, bx, by, filled_w, bar_height, 0, 1.0, BAR_COLOR, BAR_COLOR);
+                draw_progress_bar(
+                    ctx, bx, by, filled_w, bar_height, 0, 1.0, BAR_COLOR, BAR_COLOR,
+                );
             }
             let text = MCText::new()
-                .span(&format_percent(*pct_val)).color(NamedColor::Green)
-                .then(&format!(" of {label}")).color(NamedColor::Gray)
+                .span(&format_percent(*pct_val))
+                .color(NamedColor::Green)
+                .then(&format!(" of {label}"))
+                .color(NamedColor::Gray)
                 .build();
             let (tw, th) = ctx.renderer.measure(&text, text_font);
             ctx.renderer.draw(
-                ctx.buffer.as_mut(), cw, ch,
+                ctx.buffer.as_mut(),
+                cw,
+                ch,
                 ctx.x as f32 + bx as f32 + (bar_width as f32 - tw) / 2.0,
                 ctx.y as f32 + by as f32 + (bar_height as f32 - th) / 2.0,
-                &text, text_font, true,
+                &text,
+                text_font,
+                true,
             );
         }
     }
 }
 
-
 pub(crate) struct DuelsWinstreaksBox<'a> {
     pub winstreaks: &'a WinstreakHistory,
     pub current_ws: Option<u64>,
 }
-
 
 impl Shape for DuelsWinstreaksBox<'_> {
     fn draw(&self, ctx: &mut DrawContext) {
@@ -520,13 +723,26 @@ impl Shape for DuelsWinstreaksBox<'_> {
             .draw(ctx);
 
         let current_line = match self.current_ws {
-            Some(ws) => MCText::new().span("Winstreak: ").color(NamedColor::Gray).then(&format_number(ws)).color(colors::winstreak(ws)).build(),
-            None => MCText::new().span("Winstreak: ").color(NamedColor::Gray).then("?").color(NamedColor::Red).build(),
+            Some(ws) => MCText::new()
+                .span("Winstreak: ")
+                .color(NamedColor::Gray)
+                .then(&format_number(ws))
+                .color(colors::winstreak(ws))
+                .build(),
+            None => MCText::new()
+                .span("Winstreak: ")
+                .color(NamedColor::Gray)
+                .then("?")
+                .color(NamedColor::Red)
+                .build(),
         };
 
         let (_, line_h) = ctx.renderer.measure(&current_line, font);
         let mut y = padding as f32;
-        TextBlock::new().push(current_line).scale(scale).draw(&mut ctx.at(padding as i32, y as i32));
+        TextBlock::new()
+            .push(current_line)
+            .scale(scale)
+            .draw(&mut ctx.at(padding as i32, y as i32));
         y += line_h;
 
         let display_count = self.winstreaks.streaks.len().min(MAX_DISPLAYED_STREAKS);
@@ -546,68 +762,126 @@ impl Shape for DuelsWinstreaksBox<'_> {
                 StreakSource::Urchin => &urchin_icon,
                 StreakSource::Antisniper => &antisniper_icon,
             };
-            Image::new(icon).draw(&mut ctx.at(padding as i32, (y + (line_h - icon_size as f32) / 2.0) as i32));
+            Image::new(icon).draw(&mut ctx.at(
+                padding as i32,
+                (y + (line_h - icon_size as f32) / 2.0) as i32,
+            ));
 
             let text_x = padding + icon_size + icon_gap;
             let left = MCText::new()
-                .span(&rank).color(NamedColor::DarkGray)
-                .then(" ").then(&format!("{}{}", format_number(streak.value), suffix)).color(color)
+                .span(&rank)
+                .color(NamedColor::DarkGray)
+                .then(" ")
+                .then(&format!("{}{}", format_number(streak.value), suffix))
+                .color(color)
                 .build();
             let right = MCText::new()
-                .span("- ").color(NamedColor::DarkGray)
-                .then(&date).color(NamedColor::Gray)
+                .span("- ")
+                .color(NamedColor::DarkGray)
+                .then(&date)
+                .color(NamedColor::Gray)
                 .build();
 
-            TextBlock::new().push(left).scale(scale).draw(&mut ctx.at(text_x as i32, y as i32));
+            TextBlock::new()
+                .push(left)
+                .scale(scale)
+                .draw(&mut ctx.at(text_x as i32, y as i32));
             let (rw, _) = ctx.renderer.measure(&right, font);
-            TextBlock::new().push(right).scale(scale).draw(&mut ctx.at((padding as f32 + inner_w as f32 - rw) as i32, y as i32));
+            TextBlock::new()
+                .push(right)
+                .scale(scale)
+                .draw(&mut ctx.at((padding as f32 + inner_w as f32 - rw) as i32, y as i32));
             y += line_h;
         }
     }
 
-    fn size(&self) -> (u32, u32) { (COL_WIDTH, SECOND_ROW_HEIGHT) }
+    fn size(&self) -> (u32, u32) {
+        (COL_WIDTH, SECOND_ROW_HEIGHT)
+    }
 }
-
 
 fn status_box(first_login: Option<i64>) -> TextBox {
-    let status = MCText::new().span("Status: ").color(NamedColor::Gray).then("N/A").color(NamedColor::Gray).build();
-    let last_login = MCText::new().span("Last Login: ").color(NamedColor::Gray).then("N/A").color(NamedColor::Gray).build();
+    let status = MCText::new()
+        .span("Status: ")
+        .color(NamedColor::Gray)
+        .then("N/A")
+        .color(NamedColor::Gray)
+        .build();
+    let last_login = MCText::new()
+        .span("Last Login: ")
+        .color(NamedColor::Gray)
+        .then("N/A")
+        .color(NamedColor::Gray)
+        .build();
     let first_login = first_login
-        .map(|ts| MCText::new().span("First Login: ").color(NamedColor::Gray).then(&format_timestamp(ts)).color(NamedColor::White).build())
-        .unwrap_or_else(|| MCText::new().span("First Login: ").color(NamedColor::Gray).then("N/A").color(NamedColor::Gray).build());
+        .map(|ts| {
+            MCText::new()
+                .span("First Login: ")
+                .color(NamedColor::Gray)
+                .then(&format_timestamp(ts))
+                .color(NamedColor::White)
+                .build()
+        })
+        .unwrap_or_else(|| {
+            MCText::new()
+                .span("First Login: ")
+                .color(NamedColor::Gray)
+                .then("N/A")
+                .color(NamedColor::Gray)
+                .build()
+        });
 
     TextBox::new()
-        .width(COL_WIDTH).height(BOTTOM_BOX_HEIGHT).corner_radius(BOX_CORNER_RADIUS)
-        .padding(12, 12).scale(1.5).line_spacing(0.0)
-        .align_x(Align::Center).align_y(Align::Spread)
-        .push(status).push(last_login).push(first_login)
+        .width(COL_WIDTH)
+        .height(BOTTOM_BOX_HEIGHT)
+        .corner_radius(BOX_CORNER_RADIUS)
+        .padding(12, 12)
+        .scale(1.5)
+        .line_spacing(0.0)
+        .align_x(Align::Center)
+        .align_y(Align::Spread)
+        .push(status)
+        .push(last_login)
+        .push(first_login)
 }
 
-
 pub(crate) fn extras_box(stats: &DuelsStats) -> TextBox {
-    let ping = stats.ping_preference
+    let ping = stats
+        .ping_preference
         .map(|p| format!("≤{}ms", p))
         .unwrap_or_else(|| "-".to_string());
 
     TextBox::new()
-        .width(COL_WIDTH).height(BOTTOM_BOX_HEIGHT).corner_radius(BOX_CORNER_RADIUS)
-        .padding(12, 12).scale(1.5).line_spacing(0.0)
-        .align_x(Align::Center).align_y(Align::Spread)
+        .width(COL_WIDTH)
+        .height(BOTTOM_BOX_HEIGHT)
+        .corner_radius(BOX_CORNER_RADIUS)
+        .padding(12, 12)
+        .scale(1.5)
+        .line_spacing(0.0)
+        .align_x(Align::Center)
+        .align_y(Align::Spread)
         .push(stat_line("Ping Range: ", &ping, NamedColor::Green))
-        .push(stat_line("Damage: ", &format_number(stats.damage_dealt), NamedColor::Red))
-        .push(stat_line("Blocks: ", &format_number(stats.blocks_placed), NamedColor::DarkAqua))
+        .push(stat_line(
+            "Damage: ",
+            &format_number(stats.damage_dealt),
+            NamedColor::Red,
+        ))
+        .push(stat_line(
+            "Blocks: ",
+            &format_number(stats.blocks_placed),
+            NamedColor::DarkAqua,
+        ))
 }
-
 
 pub(crate) struct DuelsGuildBox<'a> {
     guild: &'a GuildInfo,
 }
 
-
 impl<'a> DuelsGuildBox<'a> {
-    pub fn new(guild: &'a GuildInfo) -> Self { Self { guild } }
+    pub fn new(guild: &'a GuildInfo) -> Self {
+        Self { guild }
+    }
 }
-
 
 impl Shape for DuelsGuildBox<'_> {
     fn draw(&self, ctx: &mut DrawContext) {
@@ -623,46 +897,82 @@ impl Shape for DuelsGuildBox<'_> {
 
         let name = self.guild.name.as_deref().unwrap_or("-");
         let rank = self.guild.rank.as_deref().unwrap_or("N/A");
-        let joined = self.guild.joined.map(format_timestamp).unwrap_or_else(|| "N/A".to_string());
-        let color = self.guild.tag_color.as_ref().and_then(|c| color_name_to_named(c)).unwrap_or(NamedColor::Gray);
+        let joined = self
+            .guild
+            .joined
+            .map(format_timestamp)
+            .unwrap_or_else(|| "N/A".to_string());
+        let color = self
+            .guild
+            .tag_color
+            .as_ref()
+            .and_then(|c| color_name_to_named(c))
+            .unwrap_or(NamedColor::Gray);
 
         let lines = [
             MCText::new().span(name).color(color).build(),
-            MCText::new().span("Rank: ").color(NamedColor::Gray).then(rank).color(color).build(),
-            MCText::new().span("Joined: ").color(NamedColor::Gray).then(&joined).color(NamedColor::White).build(),
+            MCText::new()
+                .span("Rank: ")
+                .color(NamedColor::Gray)
+                .then(rank)
+                .color(color)
+                .build(),
+            MCText::new()
+                .span("Joined: ")
+                .color(NamedColor::Gray)
+                .then(&joined)
+                .color(NamedColor::White)
+                .build(),
         ];
 
-        let measurements: Vec<(f32, f32)> = lines.iter().map(|l| ctx.renderer.measure(l, font)).collect();
+        let measurements: Vec<(f32, f32)> = lines
+            .iter()
+            .map(|l| ctx.renderer.measure(l, font))
+            .collect();
         let total_h: f32 = measurements.iter().map(|(_, h)| h).sum();
-        let spacing = (BOTTOM_BOX_HEIGHT as f32 - padding as f32 * 2.0 - total_h) / (lines.len() - 1).max(1) as f32;
+        let spacing = (BOTTOM_BOX_HEIGHT as f32 - padding as f32 * 2.0 - total_h)
+            / (lines.len() - 1).max(1) as f32;
 
         let mut y = padding as f32;
         for (line_text, (tw, lh)) in lines.into_iter().zip(measurements) {
             let effective_h = if tw > inner_w as f32 {
-                ctx.renderer.measure(&line_text, scale * (inner_w as f32 / tw) * 16.0).1
+                ctx.renderer
+                    .measure(&line_text, scale * (inner_w as f32 / tw) * 16.0)
+                    .1
             } else {
                 lh
             };
             let y_offset = (lh - effective_h) / 2.0;
-            TextBlock::new().push(line_text).scale(scale).max_width(inner_w).align_x(Align::Center)
+            TextBlock::new()
+                .push(line_text)
+                .scale(scale)
+                .max_width(inner_w)
+                .align_x(Align::Center)
                 .draw(&mut ctx.at(padding as i32, (y + y_offset) as i32));
             y += lh + spacing;
         }
     }
 
-    fn size(&self) -> (u32, u32) { (COL_WIDTH, BOTTOM_BOX_HEIGHT) }
+    fn size(&self) -> (u32, u32) {
+        (COL_WIDTH, BOTTOM_BOX_HEIGHT)
+    }
 }
-
 
 fn ratio(a: u64, b: u64) -> f64 {
-    if b == 0 { a as f64 } else { a as f64 / b as f64 }
+    if b == 0 {
+        a as f64
+    } else {
+        a as f64 / b as f64
+    }
 }
-
 
 fn percent(hits: u64, attempts: u64) -> String {
-    if attempts == 0 { "-".to_string() } else { format!("{:.1}%", hits as f64 / attempts as f64 * 100.0) }
+    if attempts == 0 {
+        "-".to_string()
+    } else {
+        format!("{:.1}%", hits as f64 / attempts as f64 * 100.0)
+    }
 }
-
 
 fn format_division_name((division, level): (DuelsDivision, u32)) -> String {
     if division.name == "None" || level == 0 {
@@ -674,16 +984,25 @@ fn format_division_name((division, level): (DuelsDivision, u32)) -> String {
     }
 }
 
-
 pub(crate) fn division_color(name: &str) -> NamedColor {
     color_name_to_named(name).unwrap_or(NamedColor::Gray)
 }
 
-
 pub(crate) fn roman(value: u32) -> String {
     let numerals = [
-        (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"), (90, "XC"),
-        (50, "L"), (40, "XL"), (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I"),
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
     ];
     let mut remaining = value;
     let mut out = String::new();
@@ -696,9 +1015,9 @@ pub(crate) fn roman(value: u32) -> String {
     out
 }
 
-
 pub fn preview(data: &crate::preview::PlayerData, args: &[String]) -> image::RgbaImage {
-    let view = args.first()
+    let view = args
+        .first()
         .and_then(|v| DuelsView::from_slug(v))
         .unwrap_or(DuelsView::Overall);
     let stats = hypixel::extract_duels_stats(&data.username, &data.hypixel, data.guild_info())

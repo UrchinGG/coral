@@ -5,18 +5,15 @@ use crate::RedisPool;
 const WINDOW_SECS: i64 = 300;
 const KEY_PREFIX: &str = "ratelimit:";
 
-
 pub enum RateLimitResult {
     Allowed { remaining: i64 },
     Exceeded,
 }
 
-
 #[derive(Clone)]
 pub struct RateLimiter {
     pool: RedisPool,
 }
-
 
 impl RateLimiter {
     pub fn new(pool: RedisPool) -> Self {
@@ -34,16 +31,29 @@ impl RateLimiter {
 
         redis::pipe()
             .atomic()
-            .cmd("ZREMRANGEBYSCORE").arg(&key).arg("-inf").arg(now - WINDOW_SECS).ignore()
-            .cmd("ZADD").arg(&key).arg(now).arg(format!("{now}:{}", uuid::Uuid::new_v4())).ignore()
-            .cmd("EXPIRE").arg(&key).arg(WINDOW_SECS + 10).ignore()
+            .cmd("ZREMRANGEBYSCORE")
+            .arg(&key)
+            .arg("-inf")
+            .arg(now - WINDOW_SECS)
+            .ignore()
+            .cmd("ZADD")
+            .arg(&key)
+            .arg(now)
+            .arg(format!("{now}:{}", uuid::Uuid::new_v4()))
+            .ignore()
+            .cmd("EXPIRE")
+            .arg(&key)
+            .arg(WINDOW_SECS + 10)
+            .ignore()
             .query_async::<()>(&mut conn)
             .await?;
 
         let count: i64 = conn.zcard(&key).await?;
         match count > limit {
             true => Ok(RateLimitResult::Exceeded),
-            false => Ok(RateLimitResult::Allowed { remaining: limit - count }),
+            false => Ok(RateLimitResult::Allowed {
+                remaining: limit - count,
+            }),
         }
     }
 
@@ -53,11 +63,15 @@ impl RateLimiter {
         access_level: i16,
     ) -> Result<RateLimitResult, redis::RedisError> {
         let limit = tag_limit_for_access(access_level);
-        if limit == 0 { return Ok(RateLimitResult::Allowed { remaining: i64::MAX }); }
-        self.check_and_record(&format!("tag:{discord_id}"), limit).await
+        if limit == 0 {
+            return Ok(RateLimitResult::Allowed {
+                remaining: i64::MAX,
+            });
+        }
+        self.check_and_record(&format!("tag:{discord_id}"), limit)
+            .await
     }
 }
-
 
 fn tag_limit_for_access(access_level: i16) -> i64 {
     match access_level {

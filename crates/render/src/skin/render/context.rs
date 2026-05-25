@@ -1,14 +1,14 @@
 use crate::skin::{Result, SkinError};
 
-
 pub struct RenderContext {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
 }
 
-
 impl RenderContext {
-    pub fn new() -> Result<Self> { pollster::block_on(Self::new_async()) }
+    pub fn new() -> Result<Self> {
+        pollster::block_on(Self::new_async())
+    }
 
     async fn new_async() -> Result<Self> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {

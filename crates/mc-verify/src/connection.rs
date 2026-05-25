@@ -5,10 +5,10 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tracing::debug;
 
-use crate::{auth, FormatFn};
 use crate::codes::CodeStore;
 use crate::encryption::{CipherState, ServerKey, minecraft_hex_digest};
 use crate::protocol::*;
+use crate::{FormatFn, auth};
 
 const STATUS_NEXT_STATE: i32 = 1;
 const LOGIN_NEXT_STATE: i32 = 2;
@@ -23,7 +23,6 @@ const NBT_COMPOUND: u8 = 0x0A;
 const NBT_STRING: u8 = 0x08;
 const NBT_END: u8 = 0x00;
 
-
 pub struct ServerState {
     pub key: ServerKey,
     pub http: reqwest::Client,
@@ -33,14 +32,12 @@ pub struct ServerState {
     pub format_disconnect: FormatFn,
 }
 
-
 pub async fn handle_connection(stream: TcpStream, state: Arc<ServerState>) {
     let addr = stream.peer_addr().ok();
     if let Err(e) = run_login_flow(stream, state).await {
         debug!("connection from {addr:?} ended: {e}");
     }
 }
-
 
 async fn run_login_flow(
     mut stream: TcpStream,
@@ -64,10 +61,18 @@ async fn run_login_flow(
     let server_hash = minecraft_hex_digest(&shared_secret, &state.key.der_public_key);
     let player = auth::verify_session(&state.http, &username, &server_hash).await?;
 
-    let code = state.codes.insert(player.uuid, player.username.clone()).await?;
-    send_encrypted_disconnect(&mut stream, &mut cipher, &(state.format_disconnect)(&code), protocol).await
+    let code = state
+        .codes
+        .insert(player.uuid, player.username.clone())
+        .await?;
+    send_encrypted_disconnect(
+        &mut stream,
+        &mut cipher,
+        &(state.format_disconnect)(&code),
+        protocol,
+    )
+    .await
 }
-
 
 async fn read_handshake(stream: &mut TcpStream) -> Result<(i32, i32), ConnectionError> {
     let (id, data) = read_packet(stream).await?;
@@ -83,21 +88,22 @@ async fn read_handshake(stream: &mut TcpStream) -> Result<(i32, i32), Connection
     Ok((next_state, protocol))
 }
 
-
 async fn handle_status(stream: &mut TcpStream, state: &ServerState) -> Result<(), ConnectionError> {
     let (id, _) = read_packet(stream).await?;
     if id != 0x00 {
         return Err(ConnectionError::UnexpectedPacket(id));
     }
     let mut payload = Vec::new();
-    write_string(&mut payload, &build_status_json(&state.motd, state.server_icon.as_deref()));
+    write_string(
+        &mut payload,
+        &build_status_json(&state.motd, state.server_icon.as_deref()),
+    );
     write_packet(stream, 0x00, &payload).await?;
     if let Ok((0x01, ping_data)) = read_packet(stream).await {
         write_packet(stream, 0x01, &ping_data).await?;
     }
     Ok(())
 }
-
 
 fn build_status_json(motd: &str, icon: Option<&str>) -> String {
     let mut resp = serde_json::json!({
@@ -112,8 +118,10 @@ fn build_status_json(motd: &str, icon: Option<&str>) -> String {
     resp.to_string()
 }
 
-
-async fn read_login_start(stream: &mut TcpStream, protocol: i32) -> Result<String, ConnectionError> {
+async fn read_login_start(
+    stream: &mut TcpStream,
+    protocol: i32,
+) -> Result<String, ConnectionError> {
     let (id, data) = read_packet(stream).await?;
     if id != 0x00 {
         return Err(ConnectionError::UnexpectedPacket(id));
@@ -130,7 +138,6 @@ async fn read_login_start(stream: &mut TcpStream, protocol: i32) -> Result<Strin
     }
     Ok(username)
 }
-
 
 async fn send_encryption_request(
     stream: &mut TcpStream,
@@ -151,7 +158,6 @@ async fn send_encryption_request(
     Ok(())
 }
 
-
 async fn read_encryption_response(
     stream: &mut TcpStream,
     key: &ServerKey,
@@ -171,9 +177,10 @@ async fn read_encryption_response(
     if decrypted_token.as_slice() != expected_token {
         return Err(ConnectionError::TokenMismatch);
     }
-    shared_secret.try_into().map_err(|_| ConnectionError::InvalidSecretLength)
+    shared_secret
+        .try_into()
+        .map_err(|_| ConnectionError::InvalidSecretLength)
 }
-
 
 async fn send_encrypted_disconnect(
     stream: &mut TcpStream,
@@ -185,7 +192,10 @@ async fn send_encrypted_disconnect(
     if protocol >= PROTOCOL_1_20_3 {
         write_nbt_text(&mut payload, message);
     } else {
-        write_string(&mut payload, &serde_json::json!({ "text": message }).to_string());
+        write_string(
+            &mut payload,
+            &serde_json::json!({ "text": message }).to_string(),
+        );
     }
     let mut packet = build_raw_packet(0x00, &payload);
     cipher.encrypt(&mut packet);
@@ -194,14 +204,12 @@ async fn send_encrypted_disconnect(
     Ok(())
 }
 
-
 fn read_byte_array(cursor: &mut Cursor<&[u8]>) -> std::io::Result<Vec<u8>> {
     let len = read_varint_sync(cursor)? as usize;
     let mut buf = vec![0u8; len];
     Read::read_exact(cursor, &mut buf)?;
     Ok(buf)
 }
-
 
 fn write_nbt_text(buf: &mut Vec<u8>, text: &str) {
     buf.push(NBT_COMPOUND);
@@ -214,7 +222,6 @@ fn write_nbt_text(buf: &mut Vec<u8>, text: &str) {
     buf.push(NBT_END);
 }
 
-
 fn build_raw_packet(packet_id: i32, payload: &[u8]) -> Vec<u8> {
     let id_len = varint_len(packet_id);
     let total_len = id_len + payload.len();
@@ -224,7 +231,6 @@ fn build_raw_packet(packet_id: i32, payload: &[u8]) -> Vec<u8> {
     buf.extend_from_slice(payload);
     buf
 }
-
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectionError {

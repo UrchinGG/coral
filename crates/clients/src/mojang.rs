@@ -188,10 +188,7 @@ impl MojangClient {
         Ok(identity)
     }
 
-    async fn fetch_identity_by_name(
-        &self,
-        name: &str,
-    ) -> Result<(String, String), ClientError> {
+    async fn fetch_identity_by_name(&self, name: &str) -> Result<(String, String), ClientError> {
         let url = format!("{}/users/profiles/minecraft/{}", MOJANG_API, name);
         let response = self
             .http

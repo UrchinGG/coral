@@ -2,17 +2,19 @@ use image::DynamicImage;
 
 use crate::canvas::{context::DrawContext, shape::Shape};
 
-
 pub struct Image<'a> {
     image: &'a DynamicImage,
     width: Option<u32>,
     height: Option<u32>,
 }
 
-
 impl<'a> Image<'a> {
     pub fn new(image: &'a DynamicImage) -> Self {
-        Self { image, width: None, height: None }
+        Self {
+            image,
+            width: None,
+            height: None,
+        }
     }
 
     pub fn size(mut self, width: u32, height: u32) -> Self {
@@ -21,7 +23,6 @@ impl<'a> Image<'a> {
         self
     }
 }
-
 
 impl Shape for Image<'_> {
     fn draw(&self, ctx: &mut DrawContext) {

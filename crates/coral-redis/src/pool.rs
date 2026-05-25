@@ -1,11 +1,9 @@
 use redis::{Client, aio::ConnectionManager};
 
-
 #[derive(Clone)]
 pub struct RedisPool {
     manager: ConnectionManager,
 }
-
 
 impl RedisPool {
     pub async fn connect(url: &str) -> Result<Self, redis::RedisError> {

@@ -1,15 +1,21 @@
 use image::{Rgba, RgbaImage};
 use wgpu::util::DeviceExt;
 
-use super::{camera::Camera, context::RenderContext, pipeline::{Mesh, RenderPipeline, Uniforms}};
-use crate::skin::{Result, SkinError, Skin, model::{BodyPart, Pose}, output::{OutputType, RenderOutput}};
-
+use super::{
+    camera::Camera,
+    context::RenderContext,
+    pipeline::{Mesh, RenderPipeline, Uniforms},
+};
+use crate::skin::{
+    Result, Skin, SkinError,
+    model::{BodyPart, Pose},
+    output::{OutputType, RenderOutput},
+};
 
 pub struct Renderer {
     ctx: RenderContext,
     pipeline: RenderPipeline,
 }
-
 
 impl Renderer {
     pub fn new() -> Result<Self> {
@@ -20,38 +26,55 @@ impl Renderer {
 
     pub fn render(&self, skin: &Skin, pose: &Pose, output: OutputType) -> Result<RenderOutput> {
         match output {
-            OutputType::FullBody { width, height } => self.render_3d(skin, pose, width, height, false),
+            OutputType::FullBody { width, height } => {
+                self.render_3d(skin, pose, width, height, false)
+            }
             OutputType::Head { width, height } => self.render_3d(skin, pose, width, height, true),
             OutputType::Face { size } => Ok(self.render_face(skin, size)),
         }
     }
 
     fn render_3d(
-        &self, skin: &Skin, pose: &Pose,
-        width: u32, height: u32, head_only: bool,
+        &self,
+        skin: &Skin,
+        pose: &Pose,
+        width: u32,
+        height: u32,
+        head_only: bool,
     ) -> Result<RenderOutput> {
         let parts: Vec<BodyPart> = if head_only {
             vec![BodyPart::Head, BodyPart::HeadLayer]
         } else {
-            BodyPart::BASE_PARTS.iter().chain(BodyPart::LAYER_PARTS.iter()).copied().collect()
+            BodyPart::BASE_PARTS
+                .iter()
+                .chain(BodyPart::LAYER_PARTS.iter())
+                .copied()
+                .collect()
         };
 
         let mesh = Mesh::build_from_skin(skin, pose, &parts);
         let (vertex_buffer, index_buffer, index_count) = mesh.create_buffers(&self.ctx);
 
-        let camera = if head_only { Camera::for_head() } else { Camera::for_full_body() };
+        let camera = if head_only {
+            Camera::for_head()
+        } else {
+            Camera::for_full_body()
+        };
         let mvp = camera.view_projection_matrix(width as f32 / height as f32);
         let light_direction = glam::Vec3::new(0.3, 0.8, 0.5).normalize();
 
-        let uniform_buffer = self.ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("uniform_buffer"),
-            contents: bytemuck::cast_slice(&[Uniforms {
-                mvp: mvp.to_cols_array_2d(),
-                light_direction: light_direction.to_array(),
-                ambient: 0.4,
-            }]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let uniform_buffer =
+            self.ctx
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("uniform_buffer"),
+                    contents: bytemuck::cast_slice(&[Uniforms {
+                        mvp: mvp.to_cols_array_2d(),
+                        light_direction: light_direction.to_array(),
+                        ambient: 0.4,
+                    }]),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                });
 
         let texture = self.upload_skin_texture(skin);
         let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -63,22 +86,39 @@ impl Renderer {
             ..Default::default()
         });
 
-        let bind_group = self.ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("skin_bind_group"),
-            layout: &self.pipeline.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: uniform_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&texture_view) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&sampler) },
-            ],
-        });
+        let bind_group = self
+            .ctx
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("skin_bind_group"),
+                layout: &self.pipeline.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&texture_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&sampler),
+                    },
+                ],
+            });
 
-        let extent = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
+        let extent = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
 
         let output_texture = self.ctx.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("output_texture"),
             size: extent,
-            mip_level_count: 1, sample_count: 1,
+            mip_level_count: 1,
+            sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
@@ -89,7 +129,8 @@ impl Renderer {
         let depth_texture = self.ctx.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("depth_texture"),
             size: extent,
-            mip_level_count: 1, sample_count: 1,
+            mip_level_count: 1,
+            sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Depth32Float,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -97,9 +138,12 @@ impl Renderer {
         });
         let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = self.ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("render_encoder"),
-        });
+        let mut encoder = self
+            .ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("render_encoder"),
+            });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -159,7 +203,9 @@ impl Renderer {
 
         let buffer_slice = output_buffer.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |result| { let _ = tx.send(result); });
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
         self.ctx.device.poll(wgpu::Maintain::Wait);
         rx.recv()
             .map_err(|_| SkinError::Render("GPU readback channel closed".into()))?
@@ -193,11 +239,16 @@ impl Renderer {
     }
 
     fn upload_skin_texture(&self, skin: &Skin) -> wgpu::Texture {
-        let extent = wgpu::Extent3d { width: 64, height: 64, depth_or_array_layers: 1 };
+        let extent = wgpu::Extent3d {
+            width: 64,
+            height: 64,
+            depth_or_array_layers: 1,
+        };
         let texture = self.ctx.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("skin_texture"),
             size: extent,
-            mip_level_count: 1, sample_count: 1,
+            mip_level_count: 1,
+            sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
@@ -211,13 +262,16 @@ impl Renderer {
                 aspect: wgpu::TextureAspect::All,
             },
             skin.texture(),
-            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(64 * 4), rows_per_image: Some(64) },
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(64 * 4),
+                rows_per_image: Some(64),
+            },
             extent,
         );
         texture
     }
 }
-
 
 fn blend_pixels(base: Rgba<u8>, overlay: Rgba<u8>) -> Rgba<u8> {
     let alpha = overlay.0[3] as f32 / 255.0;
@@ -226,7 +280,12 @@ fn blend_pixels(base: Rgba<u8>, overlay: Rgba<u8>) -> Rgba<u8> {
         a if a == 1.0 => overlay,
         _ => {
             let b = |b: u8, o: u8| ((b as f32 * (1.0 - alpha)) + (o as f32 * alpha)) as u8;
-            Rgba([b(base.0[0], overlay.0[0]), b(base.0[1], overlay.0[1]), b(base.0[2], overlay.0[2]), 255])
+            Rgba([
+                b(base.0[0], overlay.0[0]),
+                b(base.0[1], overlay.0[1]),
+                b(base.0[2], overlay.0[2]),
+                255,
+            ])
         }
     }
 }

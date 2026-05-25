@@ -7,7 +7,6 @@ use utoipa::ToSchema;
 
 use crate::state::AppState;
 
-
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct StoreCodeRequest {
     pub code: String,
@@ -21,13 +20,11 @@ pub struct RedeemCodeResponse {
     pub username: String,
 }
 
-
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/verify/codes", post(store_code))
         .route("/verify/codes/{code}", delete(redeem_code))
 }
-
 
 #[utoipa::path(
     post,
@@ -50,13 +47,19 @@ pub async fn store_code(
         Ok(u) => u,
         Err(_) => return StatusCode::BAD_REQUEST,
     };
-    match coral_redis::verify::store_code(&mut state.redis.connection(), &body.code, uuid, &body.username).await {
+    match coral_redis::verify::store_code(
+        &mut state.redis.connection(),
+        &body.code,
+        uuid,
+        &body.username,
+    )
+    .await
+    {
         Ok(true) => StatusCode::CREATED,
         Ok(false) => StatusCode::CONFLICT,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
-
 
 #[utoipa::path(
     delete,

@@ -1,31 +1,36 @@
 use anyhow::Result;
 use serenity::all::*;
 
-use crate::{framework::Data, utils::{separator, text}};
-
+use crate::{
+    framework::Data,
+    utils::{separator, text},
+};
 
 const CUBELIFY_GIF: &str = "https://cdn.discordapp.com/attachments/1269030478464159744/1332913802059972669/urchin-instructions.gif";
-
 
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("help").description("Setup guide and frequently asked questions")
 }
 
-
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
     let discord_id = command.user.id.get() as i64;
     let api_key = database::MemberRepository::new(data.db.pool())
-        .get_by_discord_id(discord_id).await?
+        .get_by_discord_id(discord_id)
+        .await?
         .and_then(|m| m.api_key);
     let components = build_help_view(api_key.as_deref(), false);
-    command.create_response(&ctx.http, CreateInteractionResponse::Message(
-        CreateInteractionResponseMessage::new()
-            .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
-            .components(components),
-    )).await?;
+    command
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
+                    .components(components),
+            ),
+        )
+        .await?;
     Ok(())
 }
-
 
 pub async fn handle_help_button(
     ctx: &Context,
@@ -34,15 +39,22 @@ pub async fn handle_help_button(
 ) -> Result<()> {
     let discord_id = component.user.id.get() as i64;
     let api_key = database::MemberRepository::new(data.db.pool())
-        .get_by_discord_id(discord_id).await?
+        .get_by_discord_id(discord_id)
+        .await?
         .and_then(|m| m.api_key);
     let components = build_help_view(api_key.as_deref(), true);
-    component.create_response(&ctx.http, CreateInteractionResponse::UpdateMessage(
-        CreateInteractionResponseMessage::new().flags(MessageFlags::IS_COMPONENTS_V2).components(components),
-    )).await?;
+    component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2)
+                    .components(components),
+            ),
+        )
+        .await?;
     Ok(())
 }
-
 
 pub async fn handle_help_back(
     ctx: &Context,
@@ -51,11 +63,12 @@ pub async fn handle_help_back(
 ) -> Result<()> {
     let discord_id = component.user.id.get() as i64;
     let repo = database::MemberRepository::new(data.db.pool());
-    let Some(member) = repo.get_by_discord_id(discord_id).await? else { return Ok(()); };
+    let Some(member) = repo.get_by_discord_id(discord_id).await? else {
+        return Ok(());
+    };
     let components = super::dashboard::build_dashboard_view(&member, data).await;
     crate::interact::update_message(ctx, component, components).await
 }
-
 
 fn build_help_view(api_key: Option<&str>, from_dashboard: bool) -> Vec<CreateComponent<'static>> {
     let mut parts: Vec<CreateContainerComponent> = vec![text("## Help")];
@@ -66,7 +79,7 @@ fn build_help_view(api_key: Option<&str>, from_dashboard: bool) -> Vec<CreateCom
          2. Open the **settings menu** in Cubelify\n\
          3. Enable **custom anti-sniper** and paste the URL below\n\
          4. Go to your **column settings**\n\
-         5. Add the **Custom Anti-Sniper Tags** column to your overlay"
+         5. Add the **Custom Anti-Sniper Tags** column to your overlay",
     ));
     match api_key {
         Some(key) => parts.push(text(format!(
@@ -78,14 +91,14 @@ fn build_help_view(api_key: Option<&str>, from_dashboard: bool) -> Vec<CreateCom
     }
 
     parts.push(CreateContainerComponent::MediaGallery(
-        CreateMediaGallery::new(vec![
-            CreateMediaGalleryItem::new(CreateUnfurledMediaItem::new(CUBELIFY_GIF)),
-        ]),
+        CreateMediaGallery::new(vec![CreateMediaGalleryItem::new(
+            CreateUnfurledMediaItem::new(CUBELIFY_GIF),
+        )]),
     ));
     parts.push(separator());
     parts.push(text(
         "### Tags\n\
-         These are the tags you'll see in your Cubelify overlay:"
+         These are the tags you'll see in your Cubelify overlay:",
     ));
 
     parts.push(text(

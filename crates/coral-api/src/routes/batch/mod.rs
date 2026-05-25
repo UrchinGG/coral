@@ -13,7 +13,6 @@ use crate::{error::ApiError, responses::TagResponse, state::AppState};
 
 const MAX_BATCH_SIZE: usize = 100;
 
-
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct BatchRequest {
     pub uuids: Vec<String>,
@@ -24,11 +23,9 @@ pub(crate) struct BatchResponse {
     pub players: HashMap<String, Vec<TagResponse>>,
 }
 
-
 pub fn router() -> Router<AppState> {
     Router::new().route("/players", post(batch_lookup))
 }
-
 
 #[utoipa::path(
     post,
@@ -49,10 +46,17 @@ pub async fn batch_lookup(
         return Err(ApiError::BadRequest("uuids array is empty".into()));
     }
     if req.uuids.len() > MAX_BATCH_SIZE {
-        return Err(ApiError::BadRequest(format!("batch size exceeds maximum of {MAX_BATCH_SIZE}")));
+        return Err(ApiError::BadRequest(format!(
+            "batch size exceeds maximum of {MAX_BATCH_SIZE}"
+        )));
     }
 
-    let uuids: Vec<String> = req.uuids.iter().filter(|u| is_uuid(u)).map(|u| normalize_uuid(u)).collect();
+    let uuids: Vec<String> = req
+        .uuids
+        .iter()
+        .filter(|u| is_uuid(u))
+        .map(|u| normalize_uuid(u))
+        .collect();
 
     let players = BlacklistRepository::new(state.db.pool())
         .get_players_batch(&uuids)

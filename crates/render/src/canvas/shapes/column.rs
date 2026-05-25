@@ -1,14 +1,17 @@
 use crate::canvas::{context::DrawContext, shape::Shape};
 
-
 pub struct Column {
     children: Vec<Box<dyn Shape>>,
     gap: u32,
 }
 
-
 impl Column {
-    pub fn new() -> Self { Self { children: Vec::new(), gap: 0 } }
+    pub fn new() -> Self {
+        Self {
+            children: Vec::new(),
+            gap: 0,
+        }
+    }
 
     pub fn gap(mut self, gap: u32) -> Self {
         self.gap = gap;
@@ -21,11 +24,11 @@ impl Column {
     }
 }
 
-
 impl Default for Column {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
-
 
 impl Shape for Column {
     fn draw(&self, ctx: &mut DrawContext) {
@@ -43,7 +46,9 @@ impl Shape for Column {
             let (w, h) = child.size();
             max_w = max_w.max(w);
             total_h += h;
-            if i > 0 { total_h += self.gap; }
+            if i > 0 {
+                total_h += self.gap;
+            }
         }
         (max_w, total_h)
     }

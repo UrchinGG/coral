@@ -2,7 +2,6 @@ use serde_json::Value;
 
 use super::player::{calculate_network_level, color_code, extract_rank_prefix};
 
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Mode {
     #[default]
@@ -15,7 +14,6 @@ pub enum Mode {
     FourTeamModes,
     FourVFour,
 }
-
 
 impl Mode {
     pub fn display_name(&self) -> &'static str {
@@ -33,8 +31,14 @@ impl Mode {
 
     pub fn all() -> &'static [Mode] {
         &[
-            Self::Overall, Self::Core, Self::Solos, Self::Doubles,
-            Self::Threes, Self::Fours, Self::FourTeamModes, Self::FourVFour,
+            Self::Overall,
+            Self::Core,
+            Self::Solos,
+            Self::Doubles,
+            Self::Threes,
+            Self::Fours,
+            Self::FourTeamModes,
+            Self::FourVFour,
         ]
     }
 
@@ -66,7 +70,6 @@ impl Mode {
     }
 }
 
-
 #[derive(Clone, Default)]
 pub struct GuildInfo {
     pub name: Option<String>,
@@ -77,7 +80,6 @@ pub struct GuildInfo {
     pub weekly_gexp: Option<u64>,
 }
 
-
 impl GuildInfo {
     pub fn tag_with_color(&self) -> Option<String> {
         let tag = self.tag.as_ref()?;
@@ -86,11 +88,13 @@ impl GuildInfo {
     }
 }
 
-
 pub fn ratio(numerator: u64, denominator: u64) -> f64 {
-    if denominator == 0 { numerator as f64 } else { numerator as f64 / denominator as f64 }
+    if denominator == 0 {
+        numerator as f64
+    } else {
+        numerator as f64 / denominator as f64
+    }
 }
-
 
 #[derive(Clone, Default)]
 pub struct ModeStats {
@@ -105,14 +109,20 @@ pub struct ModeStats {
     pub winstreak: Option<u64>,
 }
 
-
 impl ModeStats {
-    pub fn wlr(&self) -> f64 { ratio(self.wins, self.losses) }
-    pub fn kdr(&self) -> f64 { ratio(self.kills, self.deaths) }
-    pub fn fkdr(&self) -> f64 { ratio(self.final_kills, self.final_deaths) }
-    pub fn bblr(&self) -> f64 { ratio(self.beds_broken, self.beds_lost) }
+    pub fn wlr(&self) -> f64 {
+        ratio(self.wins, self.losses)
+    }
+    pub fn kdr(&self) -> f64 {
+        ratio(self.kills, self.deaths)
+    }
+    pub fn fkdr(&self) -> f64 {
+        ratio(self.final_kills, self.final_deaths)
+    }
+    pub fn bblr(&self) -> f64 {
+        ratio(self.beds_broken, self.beds_lost)
+    }
 }
-
 
 #[derive(Clone, Default)]
 pub struct SlumberInfo {
@@ -120,7 +130,6 @@ pub struct SlumberInfo {
     pub total_tickets_earned: u64,
     pub doublers: u64,
 }
-
 
 #[derive(Clone)]
 pub struct Stats {
@@ -143,7 +152,6 @@ pub struct Stats {
     pub fours: ModeStats,
     pub four_v_four: ModeStats,
 }
-
 
 impl Stats {
     pub fn get_mode_stats(&self, mode: Mode) -> ModeStats {
@@ -210,14 +218,20 @@ impl Stats {
     }
 }
 
-
 pub fn combined_mode_name(modes: &[Mode]) -> String {
     if modes.len() == 1 {
         return modes[0].display_name().to_string();
     }
     let has = |m: Mode| modes.contains(&m);
-    let exactly = |expected: &[Mode]| modes.len() == expected.len() && expected.iter().all(|m| has(*m));
-    if exactly(&[Mode::Solos, Mode::Doubles, Mode::Threes, Mode::Fours, Mode::FourVFour]) {
+    let exactly =
+        |expected: &[Mode]| modes.len() == expected.len() && expected.iter().all(|m| has(*m));
+    if exactly(&[
+        Mode::Solos,
+        Mode::Doubles,
+        Mode::Threes,
+        Mode::Fours,
+        Mode::FourVFour,
+    ]) {
         return "Overall".to_string();
     }
     if exactly(&[Mode::Solos, Mode::Doubles, Mode::Threes, Mode::Fours]) {
@@ -229,9 +243,12 @@ pub fn combined_mode_name(modes: &[Mode]) -> String {
     if exactly(&[Mode::Solos, Mode::Doubles]) {
         return "8 Team Modes".to_string();
     }
-    modes.iter().map(|m| m.short_name()).collect::<Vec<_>>().join("/")
+    modes
+        .iter()
+        .map(|m| m.short_name())
+        .collect::<Vec<_>>()
+        .join("/")
 }
-
 
 pub fn extract(username: &str, player: &Value, guild: Option<GuildInfo>) -> Option<Stats> {
     let bw = player.get("stats")?.get("Bedwars")?;
@@ -243,14 +260,27 @@ pub fn extract(username: &str, player: &Value, guild: Option<GuildInfo>) -> Opti
         .and_then(|v| v.as_u64())
         .unwrap_or_else(|| calculate_level(experience)) as u32;
 
-    let display_name = player.get("displayname").and_then(|v| v.as_str()).unwrap_or(username).to_string();
-    let network_exp = player.get("networkExp").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let display_name = player
+        .get("displayname")
+        .and_then(|v| v.as_str())
+        .unwrap_or(username)
+        .to_string();
+    let network_exp = player
+        .get("networkExp")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
 
-    let slumber = bw.get("slumber").map(|s| SlumberInfo {
-        tickets: s.get("tickets").and_then(|v| v.as_u64()).unwrap_or(0),
-        total_tickets_earned: s.get("total_tickets_earned").and_then(|v| v.as_u64()).unwrap_or(0),
-        doublers: s.get("doublers").and_then(|v| v.as_u64()).unwrap_or(0),
-    }).unwrap_or_default();
+    let slumber = bw
+        .get("slumber")
+        .map(|s| SlumberInfo {
+            tickets: s.get("tickets").and_then(|v| v.as_u64()).unwrap_or(0),
+            total_tickets_earned: s
+                .get("total_tickets_earned")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            doublers: s.get("doublers").and_then(|v| v.as_u64()).unwrap_or(0),
+        })
+        .unwrap_or_default();
 
     Some(Stats {
         username: username.to_string(),
@@ -258,10 +288,20 @@ pub fn extract(username: &str, player: &Value, guild: Option<GuildInfo>) -> Opti
         rank_prefix: extract_rank_prefix(player),
         experience,
         level,
-        games_played: bw.get("games_played_bedwars").and_then(|v| v.as_u64()).unwrap_or(0),
+        games_played: bw
+            .get("games_played_bedwars")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
         network_level: calculate_network_level(network_exp),
-        achievement_points: player.get("achievementPoints").and_then(|v| v.as_u64()).unwrap_or(0),
-        ranks_gifted: player.get("giftingMeta").and_then(|g| g.get("ranksGiven")).and_then(|v| v.as_u64()).unwrap_or(0),
+        achievement_points: player
+            .get("achievementPoints")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
+        ranks_gifted: player
+            .get("giftingMeta")
+            .and_then(|g| g.get("ranksGiven"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
         first_login: player.get("firstLogin").and_then(|v| v.as_i64()),
         guild: guild.unwrap_or_default(),
         slumber,
@@ -274,12 +314,17 @@ pub fn extract(username: &str, player: &Value, guild: Option<GuildInfo>) -> Opti
     })
 }
 
-
 fn extract_mode_stats(bw: &Value, prefix: &str) -> ModeStats {
     let stat = |suffix: &str| -> u64 {
-        bw.get(&format!("{prefix}{suffix}")).and_then(|v| v.as_u64()).unwrap_or(0)
+        bw.get(&format!("{prefix}{suffix}"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
     };
-    let ws_key = if prefix.is_empty() { "winstreak".to_string() } else { format!("{prefix}winstreak") };
+    let ws_key = if prefix.is_empty() {
+        "winstreak".to_string()
+    } else {
+        format!("{prefix}winstreak")
+    };
 
     ModeStats {
         wins: stat("wins_bedwars"),
@@ -294,14 +339,12 @@ fn extract_mode_stats(bw: &Value, prefix: &str) -> ModeStats {
     }
 }
 
-
 #[derive(Clone, Default)]
 pub struct WinstreakModeData {
     pub wins: u64,
     pub losses: u64,
     pub winstreak: Option<u64>,
 }
-
 
 #[derive(Clone, Default)]
 pub struct WinstreakSnapshot {
@@ -312,7 +355,6 @@ pub struct WinstreakSnapshot {
     pub fours: WinstreakModeData,
     pub four_v_four: WinstreakModeData,
 }
-
 
 pub fn extract_winstreak_snapshot(player: &Value) -> Option<WinstreakSnapshot> {
     let bw = player.get("stats")?.get("Bedwars")?;
@@ -325,14 +367,33 @@ pub fn extract_winstreak_snapshot(player: &Value) -> Option<WinstreakSnapshot> {
 
     Some(WinstreakSnapshot {
         overall: mode("wins_bedwars", "losses_bedwars", "winstreak"),
-        solos: mode("eight_one_wins_bedwars", "eight_one_losses_bedwars", "eight_one_winstreak"),
-        doubles: mode("eight_two_wins_bedwars", "eight_two_losses_bedwars", "eight_two_winstreak"),
-        threes: mode("four_three_wins_bedwars", "four_three_losses_bedwars", "four_three_winstreak"),
-        fours: mode("four_four_wins_bedwars", "four_four_losses_bedwars", "four_four_winstreak"),
-        four_v_four: mode("two_four_wins_bedwars", "two_four_losses_bedwars", "two_four_winstreak"),
+        solos: mode(
+            "eight_one_wins_bedwars",
+            "eight_one_losses_bedwars",
+            "eight_one_winstreak",
+        ),
+        doubles: mode(
+            "eight_two_wins_bedwars",
+            "eight_two_losses_bedwars",
+            "eight_two_winstreak",
+        ),
+        threes: mode(
+            "four_three_wins_bedwars",
+            "four_three_losses_bedwars",
+            "four_three_winstreak",
+        ),
+        fours: mode(
+            "four_four_wins_bedwars",
+            "four_four_losses_bedwars",
+            "four_four_winstreak",
+        ),
+        four_v_four: mode(
+            "two_four_wins_bedwars",
+            "two_four_losses_bedwars",
+            "two_four_winstreak",
+        ),
     })
 }
-
 
 pub fn calculate_level(experience: u64) -> u64 {
     let level = 100 * (experience / 487000);
@@ -346,7 +407,6 @@ pub fn calculate_level(experience: u64) -> u64 {
     }
 }
 
-
 pub fn experience_for_level(level: u64) -> u64 {
     let base = (level / 100) * 487000;
     match level % 100 {
@@ -357,7 +417,6 @@ pub fn experience_for_level(level: u64) -> u64 {
         l => base + 7000 + (l - 4) * 5000,
     }
 }
-
 
 pub fn level_progress(experience: u64) -> f64 {
     let exp = experience % 487000;
@@ -374,7 +433,6 @@ pub fn level_progress(experience: u64) -> f64 {
     raw.fract()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,7 +441,11 @@ mod tests {
     fn experience_for_level_roundtrip() {
         for level in [0, 1, 2, 3, 4, 50, 99, 100, 150, 200, 500, 1000] {
             let xp = experience_for_level(level);
-            assert_eq!(calculate_level(xp), level, "roundtrip failed for level {level}");
+            assert_eq!(
+                calculate_level(xp),
+                level,
+                "roundtrip failed for level {level}"
+            );
         }
     }
 }

@@ -1,7 +1,6 @@
 use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool};
 
-
 #[derive(Debug, Clone, FromRow)]
 pub struct MinecraftAccount {
     pub id: i64,
@@ -10,14 +9,14 @@ pub struct MinecraftAccount {
     pub added_at: DateTime<Utc>,
 }
 
-
 pub struct AccountRepository<'a> {
     pool: &'a PgPool,
 }
 
-
 impl<'a> AccountRepository<'a> {
-    pub fn new(pool: &'a PgPool) -> Self { Self { pool } }
+    pub fn new(pool: &'a PgPool) -> Self {
+        Self { pool }
+    }
 
     pub async fn add(&self, member_id: i64, uuid: &str) -> Result<MinecraftAccount, sqlx::Error> {
         sqlx::query_as(

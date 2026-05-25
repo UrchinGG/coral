@@ -5,12 +5,10 @@ use serde::Deserialize;
 
 const CACHE_TTL_SECS: u64 = 900;
 
-
 #[derive(Deserialize)]
 struct DiscordUser {
     username: String,
 }
-
 
 pub struct DiscordResolver {
     http: Client,
@@ -18,10 +16,13 @@ pub struct DiscordResolver {
     redis: ConnectionManager,
 }
 
-
 impl DiscordResolver {
     pub fn new(token: String, redis: ConnectionManager) -> Self {
-        Self { http: Client::new(), token, redis }
+        Self {
+            http: Client::new(),
+            token,
+            redis,
+        }
     }
 
     pub async fn resolve_username(&self, user_id: u64) -> Option<String> {
@@ -31,13 +32,20 @@ impl DiscordResolver {
             return Some(cached);
         }
 
-        let user = self.http
+        let user = self
+            .http
             .get(format!("https://discord.com/api/v10/users/{user_id}"))
             .header("Authorization", format!("Bot {}", self.token))
-            .send().await.ok()?
-            .json::<DiscordUser>().await.ok()?;
+            .send()
+            .await
+            .ok()?
+            .json::<DiscordUser>()
+            .await
+            .ok()?;
 
-        let _: Result<(), _> = self.redis.clone()
+        let _: Result<(), _> = self
+            .redis
+            .clone()
             .set_ex(&cache_key, &user.username, CACHE_TTL_SECS)
             .await;
 

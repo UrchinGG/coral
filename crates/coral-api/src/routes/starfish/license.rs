@@ -1,14 +1,23 @@
-use axum::{Json, Router, extract::State, http::HeaderMap, routing::{get, post}};
+use axum::{
+    Json, Router,
+    extract::State,
+    http::HeaderMap,
+    routing::{get, post},
+};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use database::{StarfishRepository, starfish::HwidComponents};
-use starfish_crypto::{build_attestation_payload, ed25519_sign, base64_encode, encrypt_core_data, hash_for_attestation};
+use starfish_crypto::{
+    base64_encode, build_attestation_payload, ed25519_sign, encrypt_core_data, hash_for_attestation,
+};
 
 use crate::{error::ApiError, state::AppState};
 
-use super::{auth::{UnlockKey, fetch_discord_user, SESSION_SLIDING_HOURS, SESSION_MAX_LIFETIME_DAYS}, rate_limit, require_starfish};
-
+use super::{
+    auth::{SESSION_MAX_LIFETIME_DAYS, SESSION_SLIDING_HOURS, UnlockKey, fetch_discord_user},
+    rate_limit, require_starfish,
+};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -35,7 +44,11 @@ pub struct ValidateResponse {
 }
 
 fn failed_validation(reason: &str) -> Json<ValidateResponse> {
-    Json(ValidateResponse { valid: false, unlock_key: None, reason: Some(reason.into()) })
+    Json(ValidateResponse {
+        valid: false,
+        unlock_key: None,
+        reason: Some(reason.into()),
+    })
 }
 
 async fn validate_session(
@@ -61,7 +74,9 @@ async fn validate_session(
         _ => return Ok(failed_validation("invalid_session")),
     }
 
-    let user = repo.get_user_by_id(session.user_id).await?
+    let user = repo
+        .get_user_by_id(session.user_id)
+        .await?
         .ok_or_else(|| ApiError::Internal("Session references missing user".into()))?;
 
     if user.license_status != "active" {
@@ -76,14 +91,27 @@ async fn validate_session(
         return Ok(failed_validation("invalid_session"));
     }
 
-    repo.update_heartbeat_sliding(&req.session_token, SESSION_SLIDING_HOURS, SESSION_MAX_LIFETIME_DAYS).await.ok();
+    repo.update_heartbeat_sliding(
+        &req.session_token,
+        SESSION_SLIDING_HOURS,
+        SESSION_MAX_LIFETIME_DAYS,
+    )
+    .await
+    .ok();
 
     let core_data = encrypt_core_data(&config.core_tables_bytes, &req.session_token, &req.hwid);
     let core_data_encoded = base64_encode(&core_data);
     let core_data_hash = hash_for_attestation(&core_data);
     let issued_at_ts = session.issued_at.timestamp() as u64;
     let expires_at_ts = session.expires_at.timestamp() as u64;
-    let attestation = build_attestation_payload(&req.session_token, user.discord_id, &req.hwid, issued_at_ts, expires_at_ts, &core_data_hash);
+    let attestation = build_attestation_payload(
+        &req.session_token,
+        user.discord_id,
+        &req.hwid,
+        issued_at_ts,
+        expires_at_ts,
+        &core_data_hash,
+    );
     let server_sig = ed25519_sign(&attestation, &config.signing_key);
 
     Ok(Json(ValidateResponse {
@@ -121,7 +149,11 @@ pub struct HeartbeatResponse {
 }
 
 fn fail_heartbeat(reason: &str) -> Json<HeartbeatResponse> {
-    Json(HeartbeatResponse { status: "invalid".into(), next_heartbeat_in: None, reason: Some(reason.into()) })
+    Json(HeartbeatResponse {
+        status: "invalid".into(),
+        next_heartbeat_in: None,
+        reason: Some(reason.into()),
+    })
 }
 
 async fn heartbeat(
@@ -155,14 +187,21 @@ async fn heartbeat(
         return Ok(fail_heartbeat("invalid"));
     }
 
-    let user = repo.get_user_by_id(session.user_id).await?
+    let user = repo
+        .get_user_by_id(session.user_id)
+        .await?
         .ok_or_else(|| ApiError::Internal("Session references missing user".into()))?;
 
     if user.license_status != "active" {
         return Ok(fail_heartbeat("license_revoked"));
     }
 
-    repo.update_heartbeat_sliding(&req.session_token, SESSION_SLIDING_HOURS, SESSION_MAX_LIFETIME_DAYS).await?;
+    repo.update_heartbeat_sliding(
+        &req.session_token,
+        SESSION_SLIDING_HOURS,
+        SESSION_MAX_LIFETIME_DAYS,
+    )
+    .await?;
 
     Ok(Json(HeartbeatResponse {
         status: "ok".into(),
@@ -182,17 +221,22 @@ async fn check_license(
 ) -> Result<Json<LicenseStatusResponse>, ApiError> {
     require_starfish(&state)?;
 
-    let token = headers.get("Authorization")
+    let token = headers
+        .get("Authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
         .ok_or_else(|| ApiError::Unauthorized("Invalid credentials".into()))?;
 
     let discord_user = fetch_discord_user(token).await?;
-    let discord_id: i64 = discord_user.id.parse()
+    let discord_id: i64 = discord_user
+        .id
+        .parse()
         .map_err(|_| ApiError::Internal("Invalid Discord ID".into()))?;
 
     let repo = StarfishRepository::new(state.db.pool());
-    let has_license = repo.get_user_by_discord_id(discord_id).await?
+    let has_license = repo
+        .get_user_by_discord_id(discord_id)
+        .await?
         .is_some_and(|u| u.license_status == "active");
 
     Ok(Json(LicenseStatusResponse { has_license }))

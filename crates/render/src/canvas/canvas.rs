@@ -2,16 +2,17 @@ use image::{Rgba, RgbaImage};
 
 use super::{color::TRANSPARENT, context::DrawContext, shape::Shape, text::TextRenderer};
 
-
 pub struct Canvas {
     buffer: RgbaImage,
     renderer: TextRenderer,
 }
 
-
 impl Canvas {
     pub fn new(width: u32, height: u32) -> Self {
-        Self { buffer: RgbaImage::from_pixel(width, height, TRANSPARENT), renderer: TextRenderer::new() }
+        Self {
+            buffer: RgbaImage::from_pixel(width, height, TRANSPARENT),
+            renderer: TextRenderer::new(),
+        }
     }
 
     pub fn background(mut self, color: Rgba<u8>) -> Self {

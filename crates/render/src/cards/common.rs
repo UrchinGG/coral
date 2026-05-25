@@ -2,13 +2,9 @@ use chrono::{DateTime, Utc};
 use image::Rgba;
 use mctext::{MCText, NamedColor};
 
-use crate::canvas::{
-    Align, BOX_BACKGROUND, DrawContext, RoundedRect, Shape, TextBlock, blend,
-};
-
+use crate::canvas::{Align, BOX_BACKGROUND, DrawContext, RoundedRect, Shape, TextBlock, blend};
 
 pub type TagIcon = (String, u32);
-
 
 #[derive(Clone)]
 pub enum SessionType {
@@ -18,7 +14,6 @@ pub enum SessionType {
     Monthly,
     Yearly,
 }
-
 
 impl SessionType {
     pub fn display_name(&self) -> &str {
@@ -32,7 +27,6 @@ impl SessionType {
     }
 }
 
-
 pub struct ModeGames {
     pub solos: u64,
     pub doubles: u64,
@@ -41,13 +35,11 @@ pub struct ModeGames {
     pub four_v_four: u64,
 }
 
-
 struct ModeEntry {
     label: &'static str,
     count: u64,
     color: NamedColor,
 }
-
 
 impl ModeGames {
     fn total(&self) -> u64 {
@@ -55,13 +47,22 @@ impl ModeGames {
     }
 
     fn entries(&self) -> Vec<ModeEntry> {
-        [("1s", self.solos), ("2s", self.doubles), ("3s", self.threes), ("4s", self.fours), ("4v4", self.four_v_four)]
-            .into_iter()
-            .map(|(label, count)| ModeEntry { label, count, color: NamedColor::Green })
-            .collect()
+        [
+            ("1s", self.solos),
+            ("2s", self.doubles),
+            ("3s", self.threes),
+            ("4s", self.fours),
+            ("4v4", self.four_v_four),
+        ]
+        .into_iter()
+        .map(|(label, count)| ModeEntry {
+            label,
+            count,
+            color: NamedColor::Green,
+        })
+        .collect()
     }
 }
-
 
 pub struct VerticalGamesBox<'a> {
     mode_games: &'a ModeGames,
@@ -69,13 +70,15 @@ pub struct VerticalGamesBox<'a> {
     height: u32,
 }
 
-
 impl<'a> VerticalGamesBox<'a> {
     pub fn new(mode_games: &'a ModeGames, width: u32, height: u32) -> Self {
-        Self { mode_games, width, height }
+        Self {
+            mode_games,
+            width,
+            height,
+        }
     }
 }
-
 
 impl Shape for VerticalGamesBox<'_> {
     fn draw(&self, ctx: &mut DrawContext) {
@@ -94,15 +97,22 @@ impl Shape for VerticalGamesBox<'_> {
         let entries = self.mode_games.entries();
 
         let title = MCText::new()
-            .span("Games: ").color(NamedColor::Gray)
-            .then(&format_number(total)).color(NamedColor::White)
+            .span("Games: ")
+            .color(NamedColor::Gray)
+            .then(&format_number(total))
+            .color(NamedColor::White)
             .build();
         let (_, title_h) = ctx.renderer.measure(&title, font);
         TextBlock::new()
-            .push(title).scale(scale).align_x(Align::Center).max_width(self.width)
+            .push(title)
+            .scale(scale)
+            .align_x(Align::Center)
+            .max_width(self.width)
             .draw(&mut ctx.at(0, padding as i32));
 
-        if entries.is_empty() { return; }
+        if entries.is_empty() {
+            return;
+        }
 
         let sample_label = MCText::new().span("4v4").color(NamedColor::Gray).build();
         let (_, label_h) = ctx.renderer.measure(&sample_label, label_font);
@@ -139,15 +149,22 @@ impl Shape for VerticalGamesBox<'_> {
 
             if total > 0 && entry.count > 0 {
                 let pct = (entry.count as f64 / total as f64 * 100.0).round() as u32;
-                let pct_text = MCText::new().span(&format!("{}%", pct)).color(NamedColor::Green).build();
+                let pct_text = MCText::new()
+                    .span(&format!("{}%", pct))
+                    .color(NamedColor::Green)
+                    .build();
                 let pct_font = 1.1f32 * 16.0;
                 let (pw, ph) = ctx.renderer.measure(&pct_text, pct_font);
                 if (ph as u32) + 4 <= bar_h && (pw as u32) + 2 <= bar_w {
                     ctx.renderer.draw(
-                        ctx.buffer.as_mut(), bw, bh,
+                        ctx.buffer.as_mut(),
+                        bw,
+                        bh,
                         origin.0 as f32 + x as f32 + (bar_w as f32 - pw) / 2.0,
                         (origin.1 + bar_y as i32 + ((bar_h as f32 - ph) / 2.0) as i32) as f32,
-                        &pct_text, pct_font, true,
+                        &pct_text,
+                        pct_font,
+                        true,
                     );
                 }
             }
@@ -155,17 +172,22 @@ impl Shape for VerticalGamesBox<'_> {
             let label = MCText::new().span(entry.label).color(entry.color).build();
             let (lw, _) = ctx.renderer.measure(&label, label_font);
             ctx.renderer.draw(
-                ctx.buffer.as_mut(), bw, bh,
+                ctx.buffer.as_mut(),
+                bw,
+                bh,
                 origin.0 as f32 + x as f32 + (bar_w as f32 - lw) / 2.0,
                 (origin.1 + (bar_bottom + 4) as i32) as f32,
-                &label, label_font, true,
+                &label,
+                label_font,
+                true,
             );
         }
     }
 
-    fn size(&self) -> (u32, u32) { (self.width, self.height) }
+    fn size(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
 }
-
 
 pub mod bedwars_colors {
     use mctext::NamedColor;
@@ -351,7 +373,6 @@ pub mod bedwars_colors {
     }
 }
 
-
 pub mod duels_colors {
     use mctext::NamedColor;
 
@@ -431,29 +452,27 @@ pub mod duels_colors {
     }
 }
 
-
 pub fn format_ratio(value: f64) -> String {
     let s = format!("{:.2}", value);
     s.strip_suffix(".00").map(String::from).unwrap_or(s)
 }
 
-
 pub fn format_number(n: u64) -> String {
     let s = n.to_string();
     let mut result = String::new();
     for (i, c) in s.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 { result.insert(0, ','); }
+        if i > 0 && i % 3 == 0 {
+            result.insert(0, ',');
+        }
         result.insert(0, c);
     }
     result
 }
 
-
 pub fn format_percent(value: f64) -> String {
     let s = format!("{:.1}", value);
     format!("{}%", s.strip_suffix(".0").unwrap_or(&s))
 }
-
 
 pub fn format_timestamp(ts: i64) -> String {
     let ts_millis = if ts > 10_000_000_000 { ts } else { ts * 1000 };
@@ -462,11 +481,14 @@ pub fn format_timestamp(ts: i64) -> String {
         .unwrap_or_else(|| "N/A".to_string())
 }
 
-
 pub fn stat_line(label: &str, value: &str, color: NamedColor) -> MCText {
-    MCText::new().span(label).color(NamedColor::Gray).then(value).color(color).build()
+    MCText::new()
+        .span(label)
+        .color(NamedColor::Gray)
+        .then(value)
+        .color(color)
+        .build()
 }
-
 
 pub fn color_name_to_named(name: &str) -> Option<NamedColor> {
     match name.to_uppercase().as_str() {
@@ -488,15 +510,18 @@ pub fn color_name_to_named(name: &str) -> Option<NamedColor> {
     }
 }
 
-
 pub const BAR_COLOR: Rgba<u8> = Rgba([50, 50, 55, 220]);
-
 
 pub fn draw_progress_bar(
     ctx: &mut DrawContext,
-    x: u32, y: u32, width: u32, height: u32,
-    radius: u32, fill_frac: f64,
-    bg: Rgba<u8>, fill: Rgba<u8>,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    radius: u32,
+    fill_frac: f64,
+    bg: Rgba<u8>,
+    fill: Rgba<u8>,
 ) {
     let (cw, ch) = ctx.buffer.dimensions();
     let r = radius.min(width / 2).min(height / 2);
@@ -505,8 +530,12 @@ pub fn draw_progress_bar(
         for px in 0..width {
             let abs_x = (ctx.x + x as i32 + px as i32) as u32;
             let abs_y = (ctx.y + y as i32 + py as i32) as u32;
-            if abs_x >= cw || abs_y >= ch { continue; }
-            if is_outside_rounded(px, py, width, height, r) { continue; }
+            if abs_x >= cw || abs_y >= ch {
+                continue;
+            }
+            if is_outside_rounded(px, py, width, height, r) {
+                continue;
+            }
             let color = if px < fill_w { fill } else { bg };
             let base = *ctx.buffer.get_pixel(abs_x, abs_y);
             ctx.buffer.put_pixel(abs_x, abs_y, blend(base, color));
@@ -514,9 +543,10 @@ pub fn draw_progress_bar(
     }
 }
 
-
 fn is_outside_rounded(px: u32, py: u32, w: u32, h: u32, r: u32) -> bool {
-    if r == 0 { return false; }
+    if r == 0 {
+        return false;
+    }
     if px < r && py < r {
         let (dx, dy) = (r - px, r - py);
         return dx * dx + dy * dy > r * r;

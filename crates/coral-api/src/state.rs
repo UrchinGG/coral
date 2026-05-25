@@ -6,7 +6,6 @@ use database::Database;
 
 use crate::discord::DiscordResolver;
 
-
 pub struct StarfishConfig {
     pub core_tables_bytes: Vec<u8>,
     pub hmac_secret: [u8; 32],
@@ -16,7 +15,6 @@ pub struct StarfishConfig {
     pub github_token: String,
     pub github_repo: String,
 }
-
 
 #[derive(Clone)]
 pub struct AppState {
@@ -31,7 +29,6 @@ pub struct AppState {
     pub discord: Arc<DiscordResolver>,
     pub starfish: Option<Arc<StarfishConfig>>,
 }
-
 
 impl AppState {
     pub fn new(

@@ -1,7 +1,7 @@
 pub mod bedwars;
 pub mod duels;
-pub mod prestiges;
 mod overall;
+pub mod prestiges;
 pub(crate) mod session;
 
 use std::collections::HashMap;
@@ -24,9 +24,12 @@ use render::SessionType;
 
 pub(super) const CACHE_TTL_SECS: u64 = 2 * 60;
 
-
-const PERIODS: [Period; 4] = [Period::Daily, Period::Weekly, Period::Monthly, Period::Yearly];
-
+const PERIODS: [Period; 4] = [
+    Period::Daily,
+    Period::Weekly,
+    Period::Monthly,
+    Period::Yearly,
+];
 
 pub trait GameStats: Sized + Send + 'static {
     type Stats: Clone + Send + 'static;
@@ -43,19 +46,52 @@ pub trait GameStats: Sized + Send + 'static {
     const CONFIRM_DELETE_PREFIX: &'static str;
     const RENAME_MODAL_PREFIX: &'static str;
 
-    fn extract_stats(username: &str, data: &serde_json::Value, guild: Option<GuildInfo>) -> Option<Self::Stats>;
+    fn extract_stats(
+        username: &str,
+        data: &serde_json::Value,
+        guild: Option<GuildInfo>,
+    ) -> Option<Self::Stats>;
     fn extract_winstreak_snapshot(v: &serde_json::Value) -> Option<Self::WinstreakSnapshot>;
     fn default_mode(stats: &Self::Stats) -> Self::ModeSelection;
-    fn create_mode_dropdown(custom_id: &str, cache_key: &str, mode: &Self::ModeSelection, stats: &Self::Stats) -> CreateSelectMenu<'static>;
-    fn parse_mode_interaction(component: &ComponentInteraction) -> Option<(String, Self::ModeSelection)>;
-    fn render_overall(stats: &Self::Stats, mode: &Self::ModeSelection, skin: Option<&DynamicImage>, snapshots: &[(DateTime<Utc>, Self::WinstreakSnapshot)], tags: &[TagIcon]) -> Result<Vec<u8>>;
-    fn render_session(current: &Self::Stats, previous: &Self::Stats, session_type: SessionType, started: DateTime<Utc>, mode: &Self::ModeSelection, skin: Option<&DynamicImage>, snapshots: &[(DateTime<Utc>, Self::WinstreakSnapshot)], tags: &[TagIcon]) -> Result<Vec<u8>>;
-    fn format_delta(current: &Self::Stats, previous: &Self::Stats, mode: &Self::ModeSelection) -> String;
-    async fn detect_auto_presets(cache_repo: &CacheRepository<'_>, uuid: &str, stats: &Self::Stats) -> Vec<AutoPreset>;
+    fn create_mode_dropdown(
+        custom_id: &str,
+        cache_key: &str,
+        mode: &Self::ModeSelection,
+        stats: &Self::Stats,
+    ) -> CreateSelectMenu<'static>;
+    fn parse_mode_interaction(
+        component: &ComponentInteraction,
+    ) -> Option<(String, Self::ModeSelection)>;
+    fn render_overall(
+        stats: &Self::Stats,
+        mode: &Self::ModeSelection,
+        skin: Option<&DynamicImage>,
+        snapshots: &[(DateTime<Utc>, Self::WinstreakSnapshot)],
+        tags: &[TagIcon],
+    ) -> Result<Vec<u8>>;
+    fn render_session(
+        current: &Self::Stats,
+        previous: &Self::Stats,
+        session_type: SessionType,
+        started: DateTime<Utc>,
+        mode: &Self::ModeSelection,
+        skin: Option<&DynamicImage>,
+        snapshots: &[(DateTime<Utc>, Self::WinstreakSnapshot)],
+        tags: &[TagIcon],
+    ) -> Result<Vec<u8>>;
+    fn format_delta(
+        current: &Self::Stats,
+        previous: &Self::Stats,
+        mode: &Self::ModeSelection,
+    ) -> String;
+    async fn detect_auto_presets(
+        cache_repo: &CacheRepository<'_>,
+        uuid: &str,
+        stats: &Self::Stats,
+    ) -> Vec<AutoPreset>;
     fn overall_cache(data: &Data) -> &Arc<Mutex<HashMap<String, OverallCache<Self>>>>;
     fn session_cache(data: &Data) -> &Arc<Mutex<HashMap<String, SessionCacheEntry<Self>>>>;
 }
-
 
 pub struct OverallCache<G: GameStats> {
     pub stats: G::Stats,
@@ -66,7 +102,6 @@ pub struct OverallCache<G: GameStats> {
     pub sender_id: u64,
     pub last_interaction: Instant,
 }
-
 
 pub struct SessionCacheEntry<G: GameStats> {
     pub uuid: String,
@@ -81,7 +116,6 @@ pub struct SessionCacheEntry<G: GameStats> {
     pub last_interaction: Instant,
 }
 
-
 pub struct SessionRenderData<G: GameStats> {
     pub current_stats: G::Stats,
     pub previous_stats: HashMap<String, (G::Stats, SessionType, DateTime<Utc>)>,
@@ -92,7 +126,6 @@ pub struct SessionRenderData<G: GameStats> {
     pub guild_info: Option<GuildInfo>,
 }
 
-
 #[derive(Clone)]
 pub struct AutoPreset {
     pub key: String,
@@ -101,11 +134,13 @@ pub struct AutoPreset {
     pub restricted: bool,
 }
 
-
 fn player_option() -> CreateCommandOption<'static> {
-    CreateCommandOption::new(CommandOptionType::String, "player", "Minecraft username or UUID")
+    CreateCommandOption::new(
+        CommandOptionType::String,
+        "player",
+        "Minecraft username or UUID",
+    )
 }
-
 
 fn period_session_type(period: Period) -> SessionType {
     match period {
@@ -116,7 +151,6 @@ fn period_session_type(period: Period) -> SessionType {
     }
 }
 
-
 pub(super) fn extract_select_value(component: &ComponentInteraction) -> Option<&str> {
     match &component.data.kind {
         ComponentInteractionDataKind::StringSelect { values } => values.first().map(|s| s.as_str()),
@@ -124,13 +158,11 @@ pub(super) fn extract_select_value(component: &ComponentInteraction) -> Option<&
     }
 }
 
-
 pub fn encode_png(image: &RgbaImage) -> Result<Vec<u8>> {
     let mut buf = Cursor::new(Vec::new());
     image.write_to(&mut buf, image::ImageFormat::Png)?;
     Ok(buf.into_inner())
 }
-
 
 pub fn extract_tag_icons(tags: &[TagInfo]) -> Vec<TagIcon> {
     tags.iter()
@@ -139,12 +171,10 @@ pub fn extract_tag_icons(tags: &[TagInfo]) -> Vec<TagIcon> {
         .collect()
 }
 
-
 pub(crate) fn looks_like_uuid(s: &str) -> bool {
     let s = s.replace('-', "");
     s.len() == 32 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
-
 
 pub(crate) fn to_guild_info(guild: &GuildResponse) -> GuildInfo {
     let player = guild.player.as_ref();
@@ -158,9 +188,7 @@ pub(crate) fn to_guild_info(guild: &GuildResponse) -> GuildInfo {
     }
 }
 
-
 pub use crate::interact::send_deferred_error;
-
 
 pub async fn disable_components(ctx: &Context, component: &ComponentInteraction) -> Result<()> {
     component
@@ -176,7 +204,6 @@ pub async fn disable_components(ctx: &Context, component: &ComponentInteraction)
     Ok(())
 }
 
-
 fn extract_gallery_components(components: &[Component]) -> Vec<CreateComponent<'static>> {
     components
         .iter()
@@ -190,13 +217,14 @@ fn extract_gallery_components(components: &[Component]) -> Vec<CreateComponent<'
                         CreateMediaGalleryItem::new(CreateUnfurledMediaItem::new(url.to_string()))
                     })
                     .collect();
-                Some(CreateComponent::MediaGallery(CreateMediaGallery::new(items)))
+                Some(CreateComponent::MediaGallery(CreateMediaGallery::new(
+                    items,
+                )))
             }
             _ => None,
         })
         .collect()
 }
-
 
 pub(super) async fn resolve_uuid(data: &Data, player: &str) -> Option<String> {
     if looks_like_uuid(player) {
@@ -210,7 +238,6 @@ pub(super) async fn resolve_uuid(data: &Data, player: &str) -> Option<String> {
     }
 }
 
-
 pub(super) fn spawn_expiry<T: Send + 'static>(
     http: Arc<Http>,
     token: String,
@@ -220,7 +247,6 @@ pub(super) fn spawn_expiry<T: Send + 'static>(
 ) {
     spawn_expiry_with_retain(http, token, cache, cache_key, get_last_interaction, vec![]);
 }
-
 
 pub(super) fn spawn_expiry_with_retain<T: Send + 'static>(
     http: Arc<Http>,
@@ -258,7 +284,6 @@ pub(super) fn spawn_expiry_with_retain<T: Send + 'static>(
     });
 }
 
-
 pub(super) async fn fetch_skin(
     data: &Data,
     uuid: &str,
@@ -271,13 +296,11 @@ pub(super) async fn fetch_skin(
     }
 }
 
-
 pub(super) enum StatsError {
     PlayerNotFound,
     NoStats(String),
     ApiError,
 }
-
 
 pub(super) fn map_api_error(e: crate::api::ApiError) -> StatsError {
     match e {
@@ -289,18 +312,18 @@ pub(super) fn map_api_error(e: crate::api::ApiError) -> StatsError {
     }
 }
 
-
-pub(super) fn evict_expired<T>(cache: &mut HashMap<String, T>, get_last_interaction: fn(&T) -> Instant) {
+pub(super) fn evict_expired<T>(
+    cache: &mut HashMap<String, T>,
+    get_last_interaction: fn(&T) -> Instant,
+) {
     cache.retain(|_, v| get_last_interaction(v).elapsed().as_secs() <= CACHE_TTL_SECS);
 }
-
 
 pub(super) fn image_gallery() -> CreateComponent<'static> {
     CreateComponent::MediaGallery(CreateMediaGallery::new(vec![CreateMediaGalleryItem::new(
         CreateUnfurledMediaItem::new("attachment://session.png"),
     )]))
 }
-
 
 pub(super) fn v2_update(
     components: Vec<CreateComponent<'static>>,
@@ -321,7 +344,6 @@ pub(super) fn v2_update(
     CreateInteractionResponse::UpdateMessage(msg)
 }
 
-
 pub(super) async fn update_original_components(
     ctx: &Context,
     component: &ComponentInteraction,
@@ -335,9 +357,11 @@ pub(super) async fn update_original_components(
         .flags(MessageFlags::IS_COMPONENTS_V2)
         .components(all);
     let msg = &component.message;
-    let _ = ctx.http.edit_message(msg.channel_id, msg.id, &edit, Vec::new()).await;
+    let _ = ctx
+        .http
+        .edit_message(msg.channel_id, msg.id, &edit, Vec::new())
+        .await;
 }
-
 
 pub(super) fn sanitize(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
@@ -350,27 +374,30 @@ pub(super) fn sanitize(name: &str) -> String {
     out
 }
 
-
 pub(super) fn format_duration(duration: ChronoDuration) -> String {
     let total_hours = duration.num_hours();
     if total_hours >= 24 {
         format!("{}d", duration.num_days())
     } else if total_hours >= 1 {
         let minutes = duration.num_minutes() % 60;
-        if minutes > 0 { format!("{}h {}m", total_hours, minutes) }
-        else { format!("{}h", total_hours) }
+        if minutes > 0 {
+            format!("{}h {}m", total_hours, minutes)
+        } else {
+            format!("{}h", total_hours)
+        }
     } else {
         format!("{}m", duration.num_minutes().max(1))
     }
 }
 
-
 pub(super) fn view_display_name(view: &str) -> String {
     view.strip_prefix("marker:").unwrap_or(view).to_string()
 }
 
-
-pub(super) fn extract_modal_field<'a>(modal: &'a ModalInteraction, field_name: &str) -> Option<&'a str> {
+pub(super) fn extract_modal_field<'a>(
+    modal: &'a ModalInteraction,
+    field_name: &str,
+) -> Option<&'a str> {
     modal.data.components.iter().find_map(|c| {
         if let Component::Label(label) = c {
             if let LabelComponent::InputText(input) = &label.component {
@@ -383,19 +410,23 @@ pub(super) fn extract_modal_field<'a>(modal: &'a ModalInteraction, field_name: &
     })
 }
 
-
-pub(super) async fn send_ephemeral_modal(ctx: &Context, modal: &ModalInteraction, content: &str) -> Result<()> {
+pub(super) async fn send_ephemeral_modal(
+    ctx: &Context,
+    modal: &ModalInteraction,
+    content: &str,
+) -> Result<()> {
     modal
         .create_response(
             &ctx.http,
             CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new().content(content).ephemeral(true),
+                CreateInteractionResponseMessage::new()
+                    .content(content)
+                    .ephemeral(true),
             ),
         )
         .await?;
     Ok(())
 }
-
 
 fn create_session_dropdown<G: GameStats>(
     cache_key: &str,
@@ -410,19 +441,22 @@ fn create_session_dropdown<G: GameStats>(
 
     for period in PERIODS {
         let key = period.key();
-        let desc = descriptions.get(key).map(String::as_str).unwrap_or("No Data");
+        let desc = descriptions
+            .get(key)
+            .map(String::as_str)
+            .unwrap_or("No Data");
 
         options.push(
-            CreateSelectMenuOption::new(
-                period.dropdown_label(now),
-                format!("{key}:{cache_key}"),
-            )
-            .default_selection(current == key)
-            .description(desc.to_string()),
+            CreateSelectMenuOption::new(period.dropdown_label(now), format!("{key}:{cache_key}"))
+                .default_selection(current == key)
+                .description(desc.to_string()),
         );
 
         if let Some((fp_key, fp_label)) = period.fixed_preset() {
-            let fp_desc = descriptions.get(fp_key).map(String::as_str).unwrap_or("No Data");
+            let fp_desc = descriptions
+                .get(fp_key)
+                .map(String::as_str)
+                .unwrap_or("No Data");
             options.push(
                 CreateSelectMenuOption::new(fp_label, format!("{fp_key}:{cache_key}"))
                     .default_selection(current == fp_key)
@@ -492,7 +526,9 @@ fn create_session_dropdown<G: GameStats>(
 
     CreateSelectMenu::new(
         G::SESSION_SWITCH_ID,
-        CreateSelectMenuKind::String { options: options.into() },
+        CreateSelectMenuKind::String {
+            options: options.into(),
+        },
     )
     .placeholder(placeholder)
 }

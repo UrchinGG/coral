@@ -1,4 +1,10 @@
-use axum::{Extension, Json, body::Body, extract::{Path, Query, State}, http::{StatusCode, header}, response::Response};
+use axum::{
+    Extension, Json,
+    body::Body,
+    extract::{Path, Query, State},
+    http::{StatusCode, header},
+    response::Response,
+};
 use chrono::Utc;
 
 use database::{PluginRegistryRepository, PluginSortMode};
@@ -7,14 +13,12 @@ use crate::{error::ApiError, state::AppState};
 
 use super::super::session_auth::AuthenticatedStarfishUser;
 use super::dto::{
-    BodyQuery, DisabledEntryDto, DisabledQuery, DisabledResponse,
-    PluginDetailDto, PluginListQuery, PluginListResponse, PluginSummaryDto, ReleaseInfoDto,
+    BodyQuery, DisabledEntryDto, DisabledQuery, DisabledResponse, PluginDetailDto, PluginListQuery,
+    PluginListResponse, PluginSummaryDto, ReleaseInfoDto,
 };
-
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 200;
-
 
 pub async fn list_plugins(
     State(state): State<AppState>,
@@ -25,29 +29,38 @@ pub async fn list_plugins(
     let offset = q.offset.unwrap_or(0).max(0);
 
     let repo = PluginRegistryRepository::new(state.db.pool());
-    let (total, summaries) = repo.list_plugins(
-        sort, q.tag.as_deref(), q.q.as_deref(), q.official, limit, offset,
-    ).await?;
+    let (total, summaries) = repo
+        .list_plugins(
+            sort,
+            q.tag.as_deref(),
+            q.q.as_deref(),
+            q.official,
+            limit,
+            offset,
+        )
+        .await?;
 
-    let plugins = summaries.into_iter().map(|s| PluginSummaryDto {
-        slug: s.slug,
-        display_name: s.display_name,
-        description: s.description,
-        author: s.author,
-        official: s.official,
-        tags: s.tags,
-        latest_version: s.latest_version,
-        updated_at: s.updated_at,
-        installs_30d: s.installs_30d,
-        installs_total: s.installs_total,
-        rating_mean: s.rating_mean,
-        rating_count: s.rating_count,
-        rating_bayesian: s.rating_bayesian,
-    }).collect();
+    let plugins = summaries
+        .into_iter()
+        .map(|s| PluginSummaryDto {
+            slug: s.slug,
+            display_name: s.display_name,
+            description: s.description,
+            author: s.author,
+            official: s.official,
+            tags: s.tags,
+            latest_version: s.latest_version,
+            updated_at: s.updated_at,
+            installs_30d: s.installs_30d,
+            installs_total: s.installs_total,
+            rating_mean: s.rating_mean,
+            rating_count: s.rating_count,
+            rating_bayesian: s.rating_bayesian,
+        })
+        .collect();
 
     Ok(Json(PluginListResponse { total, plugins }))
 }
-
 
 pub async fn get_plugin(
     State(state): State<AppState>,
@@ -56,22 +69,33 @@ pub async fn get_plugin(
 ) -> Result<Json<PluginDetailDto>, ApiError> {
     let repo = PluginRegistryRepository::new(state.db.pool());
 
-    let plugin = repo.get_plugin_by_slug(&slug).await?
+    let plugin = repo
+        .get_plugin_by_slug(&slug)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("plugin {slug} not found")))?;
 
     let releases = repo.list_releases(plugin.id).await?;
-    let latest = releases.iter().find(|r| !r.yanked)
+    let latest = releases
+        .iter()
+        .find(|r| !r.yanked)
         .ok_or_else(|| ApiError::NotFound("plugin has no available release".into()))?
         .clone();
 
     let (rating_mean, rating_count, rating_bayesian) = repo.plugin_rating_stats(plugin.id).await?;
     let (installs_30d, installs_total) = repo.plugin_install_counts(plugin.id).await?;
 
-    let user_rating = repo.get_user_rating(caller.user.id, plugin.id).await?.map(|r| r.stars);
+    let user_rating = repo
+        .get_user_rating(caller.user.id, plugin.id)
+        .await?
+        .map(|r| r.stars);
     let install = repo.get_install(caller.user.id, plugin.id).await?;
     let installed_version = match &install {
-        Some(i) => repo.list_releases(plugin.id).await?.iter()
-            .find(|r| r.id == i.release_id).map(|r| r.version.clone()),
+        Some(i) => repo
+            .list_releases(plugin.id)
+            .await?
+            .iter()
+            .find(|r| r.id == i.release_id)
+            .map(|r| r.version.clone()),
         None => None,
     };
 
@@ -111,7 +135,6 @@ pub async fn get_plugin(
     }))
 }
 
-
 pub async fn download_body(
     State(state): State<AppState>,
     Path(slug): Path<String>,
@@ -119,17 +142,25 @@ pub async fn download_body(
 ) -> Result<Response, ApiError> {
     let repo = PluginRegistryRepository::new(state.db.pool());
 
-    let plugin = repo.get_plugin_by_slug(&slug).await?
+    let plugin = repo
+        .get_plugin_by_slug(&slug)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("plugin {slug} not found")))?;
 
     let release = match q.version {
-        Some(ref v) => repo.get_release_by_version(plugin.id, v).await?
+        Some(ref v) => repo
+            .get_release_by_version(plugin.id, v)
+            .await?
             .ok_or_else(|| ApiError::NotFound(format!("{slug}@{v} not found")))?,
-        None => repo.get_latest_release(plugin.id).await?
+        None => repo
+            .get_latest_release(plugin.id)
+            .await?
             .ok_or_else(|| ApiError::NotFound(format!("{slug} has no available release")))?,
     };
 
-    let body_row = repo.get_release_body(release.id).await?
+    let body_row = repo
+        .get_release_body(release.id)
+        .await?
         .ok_or_else(|| ApiError::Internal("release row missing".into()))?;
 
     let filename = format!("{slug}-{}.zip", release.version);
@@ -138,7 +169,10 @@ pub async fn download_body(
         Some(bytes) => Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/zip")
-            .header(header::CONTENT_DISPOSITION, format!("attachment; filename=\"{filename}\""))
+            .header(
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{filename}\""),
+            )
             .header(header::CONTENT_LENGTH, bytes.len())
             .header("X-Content-SHA256", hex::encode(&body_row.asset_sha256))
             .body(Body::from(bytes))
@@ -153,25 +187,28 @@ pub async fn download_body(
     }
 }
 
-
 pub async fn list_disabled(
     State(state): State<AppState>,
     Query(q): Query<DisabledQuery>,
 ) -> Result<Json<DisabledResponse>, ApiError> {
     let repo = PluginRegistryRepository::new(state.db.pool());
-    let since = q.since.unwrap_or_else(|| chrono::DateTime::<Utc>::UNIX_EPOCH);
+    let since = q
+        .since
+        .unwrap_or_else(|| chrono::DateTime::<Utc>::UNIX_EPOCH);
     let entries = repo.list_disabled_since(since).await?;
 
     Ok(Json(DisabledResponse {
         as_of: Utc::now(),
-        disabled: entries.into_iter().map(|e| DisabledEntryDto {
-            slug: e.slug,
-            reason: e.reason.unwrap_or_else(|| "no reason provided".into()),
-            disabled_at: e.disabled_at,
-        }).collect(),
+        disabled: entries
+            .into_iter()
+            .map(|e| DisabledEntryDto {
+                slug: e.slug,
+                reason: e.reason.unwrap_or_else(|| "no reason provided".into()),
+                disabled_at: e.disabled_at,
+            })
+            .collect(),
     }))
 }
-
 
 pub(super) fn release_to_dto(r: &database::PluginRelease) -> ReleaseInfoDto {
     ReleaseInfoDto {
@@ -186,22 +223,22 @@ pub(super) fn release_to_dto(r: &database::PluginRelease) -> ReleaseInfoDto {
     }
 }
 
-
 fn parse_sort(s: Option<&str>) -> PluginSortMode {
     match s {
         Some("popular") => PluginSortMode::Popular,
-        Some("rating")  => PluginSortMode::Rating,
-        Some("recent")  => PluginSortMode::Recent,
-        Some("new")     => PluginSortMode::New,
+        Some("rating") => PluginSortMode::Rating,
+        Some("recent") => PluginSortMode::Recent,
+        Some("new") => PluginSortMode::New,
         _ => PluginSortMode::default(),
     }
 }
 
-
 async fn fetch_author(state: &AppState, owner_user_id: i64) -> String {
     database::StarfishRepository::new(state.db.pool())
-        .get_user_by_id(owner_user_id).await
-        .ok().flatten()
+        .get_user_by_id(owner_user_id)
+        .await
+        .ok()
+        .flatten()
         .and_then(|u| u.github_username)
         .unwrap_or_else(|| "unknown".into())
 }

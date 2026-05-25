@@ -1,6 +1,13 @@
 use std::collections::HashMap;
 
-use axum::{Json, Router, body::Body, extract::{Query, State}, http::{StatusCode, header}, response::Response, routing::get};
+use axum::{
+    Json, Router,
+    body::Body,
+    extract::{Query, State},
+    http::{StatusCode, header},
+    response::Response,
+    routing::get,
+};
 use serde::{Deserialize, Serialize};
 
 use database::StarfishRepository;
@@ -10,17 +17,13 @@ use crate::error::ApiError;
 use super::{auth::fetch_discord_user, require_starfish};
 use crate::state::{AppState, StarfishConfig};
 
-
 const GITHUB_API_URL: &str = "https://api.github.com";
-
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/download/info", get(get_release_info))
         .route("/download/latest", get(download_latest))
 }
-
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -77,25 +80,34 @@ struct GitHubAsset {
     url: String,
 }
 
-
-
-async fn get_release_info(
-    State(state): State<AppState>,
-) -> Result<Json<ReleaseInfo>, ApiError> {
+async fn get_release_info(State(state): State<AppState>) -> Result<Json<ReleaseInfo>, ApiError> {
     let config = require_starfish(&state)?;
     let release = fetch_latest_release(&config).await?;
 
     let mut platforms = HashMap::new();
-    for (platform, key) in [(Platform::Windows, "windows"), (Platform::Linux, "linux"), (Platform::Macos, "macos")] {
-        if let Some(asset) = release.assets.iter().find(|a| platform.matches_binary(&a.name)) {
-            let signature_filename = release.assets.iter()
+    for (platform, key) in [
+        (Platform::Windows, "windows"),
+        (Platform::Linux, "linux"),
+        (Platform::Macos, "macos"),
+    ] {
+        if let Some(asset) = release
+            .assets
+            .iter()
+            .find(|a| platform.matches_binary(&a.name))
+        {
+            let signature_filename = release
+                .assets
+                .iter()
                 .find(|a| platform.matches_signature(&asset.name, &a.name))
                 .map(|a| a.name.clone());
-            platforms.insert(key.to_string(), PlatformAsset {
-                filename: asset.name.clone(),
-                size: asset.size,
-                signature_filename,
-            });
+            platforms.insert(
+                key.to_string(),
+                PlatformAsset {
+                    filename: asset.name.clone(),
+                    size: asset.size,
+                    signature_filename,
+                },
+            );
         }
     }
 
@@ -107,8 +119,6 @@ async fn get_release_info(
         platforms,
     }))
 }
-
-
 
 #[derive(Deserialize)]
 pub struct DownloadQuery {
@@ -124,14 +134,17 @@ async fn download_latest(
 ) -> Result<Response, ApiError> {
     let config = require_starfish(&state)?;
 
-    let discord_token = headers.get("Authorization")
+    let discord_token = headers
+        .get("Authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
         .or(query.token.as_deref())
         .ok_or_else(|| ApiError::Unauthorized("Missing authorization".into()))?;
 
     let discord_user = fetch_discord_user(discord_token).await?;
-    let discord_id: i64 = discord_user.id.parse()
+    let discord_id: i64 = discord_user
+        .id
+        .parse()
         .map_err(|_| ApiError::Internal("Invalid Discord ID".into()))?;
 
     let repo = StarfishRepository::new(state.db.pool());
@@ -148,14 +161,20 @@ async fn download_latest(
     let requested_signature = query.asset.as_deref() == Some("signature");
 
     let asset = if requested_signature {
-        let binary = release.assets.iter()
+        let binary = release
+            .assets
+            .iter()
             .find(|a| platform.matches_binary(&a.name))
             .ok_or_else(|| ApiError::NotFound(format!("No {platform:?} asset in release")))?;
-        release.assets.iter()
+        release
+            .assets
+            .iter()
             .find(|a| platform.matches_signature(&binary.name, &a.name))
             .ok_or_else(|| ApiError::NotFound(format!("No {platform:?} signature in release")))?
     } else {
-        release.assets.iter()
+        release
+            .assets
+            .iter()
             .find(|a| platform.matches_binary(&a.name))
             .ok_or_else(|| ApiError::NotFound(format!("No {platform:?} asset in release")))?
     };
@@ -165,26 +184,32 @@ async fn download_latest(
         .bearer_auth(&config.github_token)
         .header("Accept", "application/octet-stream")
         .header("User-Agent", "coral-api")
-        .send().await
+        .send()
+        .await
         .map_err(|e| ApiError::ExternalApi(format!("GitHub API error: {e}")))?;
 
     if !response.status().is_success() && response.status() != reqwest::StatusCode::FOUND {
-        return Err(ApiError::ExternalApi("Failed to fetch release from GitHub".into()));
+        return Err(ApiError::ExternalApi(
+            "Failed to fetch release from GitHub".into(),
+        ));
     }
 
-    let bytes = response.bytes().await
+    let bytes = response
+        .bytes()
+        .await
         .map_err(|e| ApiError::ExternalApi(format!("Failed to download release: {e}")))?;
 
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/octet-stream")
-        .header(header::CONTENT_DISPOSITION, format!("attachment; filename=\"{}\"", asset.name))
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{}\"", asset.name),
+        )
         .header(header::CONTENT_LENGTH, bytes.len())
         .body(Body::from(bytes.to_vec()))
         .map_err(|e| ApiError::Internal(format!("Failed to build response: {e}")))?)
 }
-
-
 
 async fn fetch_latest_release(config: &StarfishConfig) -> Result<GitHubRelease, ApiError> {
     let url = format!("{GITHUB_API_URL}/repos/{}/releases", config.github_repo);
@@ -195,11 +220,15 @@ async fn fetch_latest_release(config: &StarfishConfig) -> Result<GitHubRelease, 
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "coral-api")
         .header("X-GitHub-Api-Version", "2022-11-28")
-        .send().await
+        .send()
+        .await
         .map_err(|e| ApiError::ExternalApi(format!("GitHub API error: {e}")))?
-        .json().await
+        .json()
+        .await
         .map_err(|e| ApiError::ExternalApi(format!("Failed to parse GitHub response: {e}")))?;
 
-    releases.into_iter().next()
+    releases
+        .into_iter()
+        .next()
         .ok_or_else(|| ApiError::NotFound("No releases found".into()))
 }

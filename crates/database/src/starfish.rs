@@ -1,8 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use sqlx::{FromRow, PgPool};
 use sha2::{Digest, Sha256};
-
+use sqlx::{FromRow, PgPool};
 
 #[derive(Debug, Clone, FromRow, Serialize)]
 pub struct StarfishUser {
@@ -16,7 +15,6 @@ pub struct StarfishUser {
     pub updated_at: DateTime<Utc>,
 }
 
-
 #[derive(Debug, Clone, FromRow, Serialize)]
 pub struct StarfishHwid {
     pub id: i64,
@@ -25,7 +23,6 @@ pub struct StarfishHwid {
     pub is_active: bool,
     pub registered_at: DateTime<Utc>,
 }
-
 
 #[derive(Debug, Clone, FromRow)]
 pub struct StarfishSession {
@@ -40,7 +37,6 @@ pub struct StarfishSession {
     pub signature: Vec<u8>,
 }
 
-
 #[derive(Debug, Clone, FromRow)]
 pub struct StarfishDeviceCode {
     pub id: i64,
@@ -51,7 +47,6 @@ pub struct StarfishDeviceCode {
     pub created_at: DateTime<Utc>,
 }
 
-
 #[derive(Debug, Clone, FromRow)]
 pub struct StarfishRefreshToken {
     pub id: i64,
@@ -61,7 +56,6 @@ pub struct StarfishRefreshToken {
     pub last_used_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
 }
-
 
 #[derive(Debug, Clone, FromRow)]
 pub struct StarfishHwidComponent {
@@ -75,7 +69,6 @@ pub struct StarfishHwidComponent {
     pub created_at: DateTime<Utc>,
 }
 
-
 #[derive(Debug, Clone, serde::Deserialize, Default)]
 pub struct HwidComponents {
     pub machine_guid: Option<String>,
@@ -88,15 +81,24 @@ pub struct HwidComponents {
 impl HwidComponents {
     pub fn match_count(&self, stored: &StarfishHwidComponent) -> usize {
         let mut count = 0;
-        if cmp_component(&self.machine_guid, &stored.machine_guid_hash) { count += 1; }
-        if cmp_component(&self.smbios_uuid, &stored.smbios_uuid_hash) { count += 1; }
-        if cmp_component(&self.disk_serial, &stored.disk_serial_hash) { count += 1; }
-        if cmp_component(&self.cpu_id, &stored.cpu_id_hash) { count += 1; }
-        if cmp_component(&self.baseboard_serial, &stored.baseboard_serial_hash) { count += 1; }
+        if cmp_component(&self.machine_guid, &stored.machine_guid_hash) {
+            count += 1;
+        }
+        if cmp_component(&self.smbios_uuid, &stored.smbios_uuid_hash) {
+            count += 1;
+        }
+        if cmp_component(&self.disk_serial, &stored.disk_serial_hash) {
+            count += 1;
+        }
+        if cmp_component(&self.cpu_id, &stored.cpu_id_hash) {
+            count += 1;
+        }
+        if cmp_component(&self.baseboard_serial, &stored.baseboard_serial_hash) {
+            count += 1;
+        }
         count
     }
 }
-
 
 fn hash_component(value: &str) -> String {
     let digest = Sha256::digest(value.as_bytes());
@@ -110,17 +112,19 @@ fn cmp_component(incoming: &Option<String>, stored_hash: &Option<String>) -> boo
     }
 }
 
-
 pub struct StarfishRepository<'a> {
     pool: &'a PgPool,
 }
 
-
 impl<'a> StarfishRepository<'a> {
-    pub fn new(pool: &'a PgPool) -> Self { Self { pool } }
+    pub fn new(pool: &'a PgPool) -> Self {
+        Self { pool }
+    }
 
-
-    pub async fn get_user_by_discord_id(&self, discord_id: i64) -> Result<Option<StarfishUser>, sqlx::Error> {
+    pub async fn get_user_by_discord_id(
+        &self,
+        discord_id: i64,
+    ) -> Result<Option<StarfishUser>, sqlx::Error> {
         sqlx::query_as("SELECT * FROM starfish_users WHERE discord_id = $1")
             .bind(discord_id)
             .fetch_optional(self.pool)
@@ -145,7 +149,11 @@ impl<'a> StarfishRepository<'a> {
         .await
     }
 
-    pub async fn set_license_status(&self, discord_id: i64, status: &str) -> Result<bool, sqlx::Error> {
+    pub async fn set_license_status(
+        &self,
+        discord_id: i64,
+        status: &str,
+    ) -> Result<bool, sqlx::Error> {
         sqlx::query("UPDATE starfish_users SET license_status = $2, updated_at = NOW() WHERE discord_id = $1")
             .bind(discord_id)
             .bind(status)
@@ -168,7 +176,12 @@ impl<'a> StarfishRepository<'a> {
             .await
     }
 
-    pub async fn link_github(&self, user_id: i64, github_user_id: i64, github_username: &str) -> Result<StarfishUser, sqlx::Error> {
+    pub async fn link_github(
+        &self,
+        user_id: i64,
+        github_user_id: i64,
+        github_username: &str,
+    ) -> Result<StarfishUser, sqlx::Error> {
         sqlx::query_as(
             "UPDATE starfish_users
                 SET github_user_id = $2, github_username = $3, github_linked_at = NOW(), updated_at = NOW()
@@ -182,8 +195,11 @@ impl<'a> StarfishRepository<'a> {
         .await
     }
 
-
-    pub async fn get_hwid(&self, user_id: i64, hwid_hash: &str) -> Result<Option<StarfishHwid>, sqlx::Error> {
+    pub async fn get_hwid(
+        &self,
+        user_id: i64,
+        hwid_hash: &str,
+    ) -> Result<Option<StarfishHwid>, sqlx::Error> {
         sqlx::query_as("SELECT * FROM starfish_hwids WHERE user_id = $1 AND hwid_hash = $2")
             .bind(user_id)
             .bind(hwid_hash)
@@ -205,7 +221,11 @@ impl<'a> StarfishRepository<'a> {
             .await
     }
 
-    pub async fn register_hwid(&self, user_id: i64, hwid_hash: &str) -> Result<StarfishHwid, sqlx::Error> {
+    pub async fn register_hwid(
+        &self,
+        user_id: i64,
+        hwid_hash: &str,
+    ) -> Result<StarfishHwid, sqlx::Error> {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query("UPDATE starfish_hwids SET is_active = false WHERE user_id = $1")
@@ -247,25 +267,37 @@ impl<'a> StarfishRepository<'a> {
         Ok(count)
     }
 
-    pub async fn record_hwid_change(&self, user_id: i64, old_hwid: Option<&str>, new_hwid: &str) -> Result<(), sqlx::Error> {
-        sqlx::query("INSERT INTO starfish_hwid_changes (user_id, old_hwid, new_hwid) VALUES ($1, $2, $3)")
-            .bind(user_id)
-            .bind(old_hwid)
-            .bind(new_hwid)
-            .execute(self.pool)
-            .await?;
+    pub async fn record_hwid_change(
+        &self,
+        user_id: i64,
+        old_hwid: Option<&str>,
+        new_hwid: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO starfish_hwid_changes (user_id, old_hwid, new_hwid) VALUES ($1, $2, $3)",
+        )
+        .bind(user_id)
+        .bind(old_hwid)
+        .bind(new_hwid)
+        .execute(self.pool)
+        .await?;
         Ok(())
     }
 
     pub async fn get_user_hwids(&self, user_id: i64) -> Result<Vec<StarfishHwid>, sqlx::Error> {
-        sqlx::query_as("SELECT * FROM starfish_hwids WHERE user_id = $1 ORDER BY registered_at DESC")
-            .bind(user_id)
-            .fetch_all(self.pool)
-            .await
+        sqlx::query_as(
+            "SELECT * FROM starfish_hwids WHERE user_id = $1 ORDER BY registered_at DESC",
+        )
+        .bind(user_id)
+        .fetch_all(self.pool)
+        .await
     }
 
-
-    pub async fn store_hwid_components(&self, hwid_id: i64, c: &HwidComponents) -> Result<(), sqlx::Error> {
+    pub async fn store_hwid_components(
+        &self,
+        hwid_id: i64,
+        c: &HwidComponents,
+    ) -> Result<(), sqlx::Error> {
         let machine_guid_hash = c.machine_guid.as_ref().map(|v| hash_component(v));
         let smbios_uuid_hash = c.smbios_uuid.as_ref().map(|v| hash_component(v));
         let disk_serial_hash = c.disk_serial.as_ref().map(|v| hash_component(v));
@@ -293,14 +325,22 @@ impl<'a> StarfishRepository<'a> {
         Ok(())
     }
 
-    pub async fn get_hwid_components(&self, hwid_id: i64) -> Result<Option<StarfishHwidComponent>, sqlx::Error> {
+    pub async fn get_hwid_components(
+        &self,
+        hwid_id: i64,
+    ) -> Result<Option<StarfishHwidComponent>, sqlx::Error> {
         sqlx::query_as("SELECT * FROM starfish_hwid_components WHERE hwid_id = $1")
             .bind(hwid_id)
             .fetch_optional(self.pool)
             .await
     }
 
-    pub async fn find_fuzzy_hwid(&self, user_id: i64, components: &HwidComponents, threshold: usize) -> Result<Option<StarfishHwid>, sqlx::Error> {
+    pub async fn find_fuzzy_hwid(
+        &self,
+        user_id: i64,
+        components: &HwidComponents,
+        threshold: usize,
+    ) -> Result<Option<StarfishHwid>, sqlx::Error> {
         let hwids = self.get_user_hwids(user_id).await?;
         for hwid in hwids {
             if let Some(stored) = self.get_hwid_components(hwid.id).await? {
@@ -312,8 +352,10 @@ impl<'a> StarfishRepository<'a> {
         Ok(None)
     }
 
-
-    pub async fn get_session_by_token(&self, token: &str) -> Result<Option<StarfishSession>, sqlx::Error> {
+    pub async fn get_session_by_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<StarfishSession>, sqlx::Error> {
         sqlx::query_as("SELECT * FROM starfish_sessions WHERE session_token = $1")
             .bind(token)
             .fetch_optional(self.pool)
@@ -343,7 +385,12 @@ impl<'a> StarfishRepository<'a> {
         .await
     }
 
-    pub async fn update_heartbeat_sliding(&self, token: &str, sliding_hours: i64, max_lifetime_days: i64) -> Result<(), sqlx::Error> {
+    pub async fn update_heartbeat_sliding(
+        &self,
+        token: &str,
+        sliding_hours: i64,
+        max_lifetime_days: i64,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(
             "UPDATE starfish_sessions SET
                 last_heartbeat_at = NOW(),
@@ -366,8 +413,12 @@ impl<'a> StarfishRepository<'a> {
         Ok(())
     }
 
-
-    pub async fn create_refresh_token(&self, user_id: i64, hwid_id: i64, token_hash: &str) -> Result<(), sqlx::Error> {
+    pub async fn create_refresh_token(
+        &self,
+        user_id: i64,
+        hwid_id: i64,
+        token_hash: &str,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query("INSERT INTO starfish_refresh_tokens (user_id, hwid_id, token_hash) VALUES ($1, $2, $3)")
             .bind(user_id)
             .bind(hwid_id)
@@ -377,14 +428,21 @@ impl<'a> StarfishRepository<'a> {
         Ok(())
     }
 
-    pub async fn get_refresh_token_by_hash(&self, token_hash: &str) -> Result<Option<StarfishRefreshToken>, sqlx::Error> {
+    pub async fn get_refresh_token_by_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<StarfishRefreshToken>, sqlx::Error> {
         sqlx::query_as("SELECT * FROM starfish_refresh_tokens WHERE token_hash = $1")
             .bind(token_hash)
             .fetch_optional(self.pool)
             .await
     }
 
-    pub async fn rotate_refresh_token(&self, old_hash: &str, new_hash: &str) -> Result<(), sqlx::Error> {
+    pub async fn rotate_refresh_token(
+        &self,
+        old_hash: &str,
+        new_hash: &str,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE starfish_refresh_tokens SET token_hash = $2, last_used_at = NOW() WHERE token_hash = $1")
             .bind(old_hash)
             .bind(new_hash)
@@ -400,7 +458,6 @@ impl<'a> StarfishRepository<'a> {
             .await?;
         Ok(())
     }
-
 
     pub async fn create_device_code(
         &self,
@@ -421,7 +478,10 @@ impl<'a> StarfishRepository<'a> {
         Ok(())
     }
 
-    pub async fn get_device_code(&self, device_code: &str) -> Result<Option<StarfishDeviceCode>, sqlx::Error> {
+    pub async fn get_device_code(
+        &self,
+        device_code: &str,
+    ) -> Result<Option<StarfishDeviceCode>, sqlx::Error> {
         sqlx::query_as("SELECT * FROM starfish_device_codes WHERE device_code = $1")
             .bind(device_code)
             .fetch_optional(self.pool)
@@ -443,9 +503,11 @@ impl<'a> StarfishRepository<'a> {
         sqlx::query("DELETE FROM starfish_sessions WHERE expires_at < NOW()")
             .execute(self.pool)
             .await?;
-        sqlx::query("DELETE FROM starfish_refresh_tokens WHERE last_used_at < NOW() - INTERVAL '90 days'")
-            .execute(self.pool)
-            .await?;
+        sqlx::query(
+            "DELETE FROM starfish_refresh_tokens WHERE last_used_at < NOW() - INTERVAL '90 days'",
+        )
+        .execute(self.pool)
+        .await?;
         Ok(())
     }
 
@@ -454,7 +516,6 @@ impl<'a> StarfishRepository<'a> {
         Ok(session.is_some_and(|s| s.expires_at > Utc::now()))
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -466,7 +527,9 @@ mod tests {
         let url = std::env::var("DATABASE_URL").ok()?;
         sqlx::postgres::PgPoolOptions::new()
             .max_connections(2)
-            .connect(&url).await.ok()
+            .connect(&url)
+            .await
+            .ok()
     }
 
     fn test_discord_id(seed: i64) -> i64 {
@@ -479,7 +542,9 @@ mod tests {
 
     #[tokio::test]
     async fn user_crud() {
-        let Some(pool) = test_pool().await else { return };
+        let Some(pool) = test_pool().await else {
+            return;
+        };
         let repo = StarfishRepository::new(&pool);
         let did = test_discord_id(1);
         cleanup(&repo, did).await;
@@ -504,21 +569,39 @@ mod tests {
 
     #[tokio::test]
     async fn hwid_registration_and_limits() {
-        let Some(pool) = test_pool().await else { return };
+        let Some(pool) = test_pool().await else {
+            return;
+        };
         let repo = StarfishRepository::new(&pool);
         let did = test_discord_id(2);
         cleanup(&repo, did).await;
 
         let user = repo.upsert_user(did).await.unwrap();
 
-        let hwid1 = repo.register_hwid(user.id, "aa".repeat(32).as_str()).await.unwrap();
+        let hwid1 = repo
+            .register_hwid(user.id, "aa".repeat(32).as_str())
+            .await
+            .unwrap();
         assert!(hwid1.is_active);
 
-        let hwid1_again = repo.get_hwid(user.id, "aa".repeat(32).as_str()).await.unwrap().unwrap();
+        let hwid1_again = repo
+            .get_hwid(user.id, "aa".repeat(32).as_str())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(hwid1_again.id, hwid1.id);
 
-        repo.record_hwid_change(user.id, Some("aa".repeat(32).as_str()), "bb".repeat(32).as_str()).await.unwrap();
-        let hwid2 = repo.register_hwid(user.id, "bb".repeat(32).as_str()).await.unwrap();
+        repo.record_hwid_change(
+            user.id,
+            Some("aa".repeat(32).as_str()),
+            "bb".repeat(32).as_str(),
+        )
+        .await
+        .unwrap();
+        let hwid2 = repo
+            .register_hwid(user.id, "bb".repeat(32).as_str())
+            .await
+            .unwrap();
         assert!(hwid2.is_active);
 
         let hwid1_check = repo.get_hwid_by_id(hwid1.id).await.unwrap().unwrap();
@@ -535,45 +618,78 @@ mod tests {
 
     #[tokio::test]
     async fn session_lifecycle() {
-        let Some(pool) = test_pool().await else { return };
+        let Some(pool) = test_pool().await else {
+            return;
+        };
         let repo = StarfishRepository::new(&pool);
         let did = test_discord_id(3);
         cleanup(&repo, did).await;
 
         let user = repo.upsert_user(did).await.unwrap();
-        let hwid = repo.register_hwid(user.id, "cc".repeat(32).as_str()).await.unwrap();
+        let hwid = repo
+            .register_hwid(user.id, "cc".repeat(32).as_str())
+            .await
+            .unwrap();
 
         let expires = Utc::now() + Duration::hours(2);
-        let session = repo.create_session(
-            user.id, hwid.id, "test_token_123",
-            b"core_data_bytes", expires, b"signature_bytes",
-        ).await.unwrap();
+        let session = repo
+            .create_session(
+                user.id,
+                hwid.id,
+                "test_token_123",
+                b"core_data_bytes",
+                expires,
+                b"signature_bytes",
+            )
+            .await
+            .unwrap();
 
         assert_eq!(session.session_token, "test_token_123");
         assert!(repo.is_session_valid("test_token_123").await.unwrap());
         assert!(!repo.is_session_valid("nonexistent").await.unwrap());
 
-        let old_expires = repo.get_session_by_token("test_token_123").await.unwrap().unwrap().expires_at;
-        repo.update_heartbeat_sliding("test_token_123", 2, 7).await.unwrap();
-        let new_session = repo.get_session_by_token("test_token_123").await.unwrap().unwrap();
+        let old_expires = repo
+            .get_session_by_token("test_token_123")
+            .await
+            .unwrap()
+            .unwrap()
+            .expires_at;
+        repo.update_heartbeat_sliding("test_token_123", 2, 7)
+            .await
+            .unwrap();
+        let new_session = repo
+            .get_session_by_token("test_token_123")
+            .await
+            .unwrap()
+            .unwrap();
         assert!(new_session.expires_at >= old_expires);
         assert!(new_session.last_heartbeat_at > session.last_heartbeat_at);
 
         repo.delete_user_sessions(user.id).await.unwrap();
-        assert!(repo.get_session_by_token("test_token_123").await.unwrap().is_none());
+        assert!(
+            repo.get_session_by_token("test_token_123")
+                .await
+                .unwrap()
+                .is_none()
+        );
 
         cleanup(&repo, did).await;
     }
 
     #[tokio::test]
     async fn session_absolute_cap() {
-        let Some(pool) = test_pool().await else { return };
+        let Some(pool) = test_pool().await else {
+            return;
+        };
         let repo = StarfishRepository::new(&pool);
         let did = test_discord_id(4);
         cleanup(&repo, did).await;
 
         let user = repo.upsert_user(did).await.unwrap();
-        let hwid = repo.register_hwid(user.id, "dd".repeat(32).as_str()).await.unwrap();
+        let hwid = repo
+            .register_hwid(user.id, "dd".repeat(32).as_str())
+            .await
+            .unwrap();
 
         let issued = Utc::now() - Duration::days(6);
         let expires = issued + Duration::hours(2);
@@ -585,8 +701,14 @@ mod tests {
         .bind(issued).bind(expires).bind(b"sig".as_slice())
         .execute(&pool).await.unwrap();
 
-        repo.update_heartbeat_sliding("cap_test", 2, 7).await.unwrap();
-        let session = repo.get_session_by_token("cap_test").await.unwrap().unwrap();
+        repo.update_heartbeat_sliding("cap_test", 2, 7)
+            .await
+            .unwrap();
+        let session = repo
+            .get_session_by_token("cap_test")
+            .await
+            .unwrap()
+            .unwrap();
         let max_allowed = issued + Duration::days(7);
         assert!(session.expires_at <= max_allowed + Duration::seconds(5));
         assert!(session.expires_at < Utc::now() + Duration::hours(2));
@@ -596,39 +718,70 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_token_lifecycle() {
-        let Some(pool) = test_pool().await else { return };
+        let Some(pool) = test_pool().await else {
+            return;
+        };
         let repo = StarfishRepository::new(&pool);
         let did = test_discord_id(5);
         cleanup(&repo, did).await;
 
         let user = repo.upsert_user(did).await.unwrap();
-        let hwid = repo.register_hwid(user.id, "ee".repeat(32).as_str()).await.unwrap();
+        let hwid = repo
+            .register_hwid(user.id, "ee".repeat(32).as_str())
+            .await
+            .unwrap();
 
-        repo.create_refresh_token(user.id, hwid.id, "hash_original").await.unwrap();
-        let found = repo.get_refresh_token_by_hash("hash_original").await.unwrap().unwrap();
+        repo.create_refresh_token(user.id, hwid.id, "hash_original")
+            .await
+            .unwrap();
+        let found = repo
+            .get_refresh_token_by_hash("hash_original")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.user_id, user.id);
 
-        repo.rotate_refresh_token("hash_original", "hash_rotated").await.unwrap();
-        assert!(repo.get_refresh_token_by_hash("hash_original").await.unwrap().is_none());
-        let rotated = repo.get_refresh_token_by_hash("hash_rotated").await.unwrap().unwrap();
+        repo.rotate_refresh_token("hash_original", "hash_rotated")
+            .await
+            .unwrap();
+        assert!(
+            repo.get_refresh_token_by_hash("hash_original")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let rotated = repo
+            .get_refresh_token_by_hash("hash_rotated")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(rotated.user_id, user.id);
         assert!(rotated.last_used_at >= found.last_used_at);
 
         repo.delete_user_refresh_tokens(user.id).await.unwrap();
-        assert!(repo.get_refresh_token_by_hash("hash_rotated").await.unwrap().is_none());
+        assert!(
+            repo.get_refresh_token_by_hash("hash_rotated")
+                .await
+                .unwrap()
+                .is_none()
+        );
 
         cleanup(&repo, did).await;
     }
 
     #[tokio::test]
     async fn device_code_lifecycle() {
-        let Some(pool) = test_pool().await else { return };
+        let Some(pool) = test_pool().await else {
+            return;
+        };
         let repo = StarfishRepository::new(&pool);
 
         let code = format!("test_device_{}", Utc::now().timestamp_millis());
         let expires = Utc::now() + Duration::minutes(10);
 
-        repo.create_device_code(&code, "USR123", "ff".repeat(32).as_str(), expires).await.unwrap();
+        repo.create_device_code(&code, "USR123", "ff".repeat(32).as_str(), expires)
+            .await
+            .unwrap();
         let found = repo.get_device_code(&code).await.unwrap().unwrap();
         assert_eq!(found.user_code, "USR123");
 
@@ -638,39 +791,67 @@ mod tests {
 
     #[tokio::test]
     async fn cascade_delete_cleans_everything() {
-        let Some(pool) = test_pool().await else { return };
+        let Some(pool) = test_pool().await else {
+            return;
+        };
         let repo = StarfishRepository::new(&pool);
         let did = test_discord_id(7);
         cleanup(&repo, did).await;
 
         let user = repo.upsert_user(did).await.unwrap();
-        let hwid = repo.register_hwid(user.id, "ff".repeat(32).as_str()).await.unwrap();
+        let hwid = repo
+            .register_hwid(user.id, "ff".repeat(32).as_str())
+            .await
+            .unwrap();
 
         let expires = Utc::now() + Duration::hours(2);
-        repo.create_session(user.id, hwid.id, "cascade_sess", b"km", expires, b"sig").await.unwrap();
-        repo.create_refresh_token(user.id, hwid.id, "cascade_hash").await.unwrap();
+        repo.create_session(user.id, hwid.id, "cascade_sess", b"km", expires, b"sig")
+            .await
+            .unwrap();
+        repo.create_refresh_token(user.id, hwid.id, "cascade_hash")
+            .await
+            .unwrap();
 
         repo.delete_user(did).await.unwrap();
 
         assert!(repo.get_hwid_by_id(hwid.id).await.unwrap().is_none());
-        assert!(repo.get_session_by_token("cascade_sess").await.unwrap().is_none());
-        assert!(repo.get_refresh_token_by_hash("cascade_hash").await.unwrap().is_none());
+        assert!(
+            repo.get_session_by_token("cascade_sess")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            repo.get_refresh_token_by_hash("cascade_hash")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
     async fn revocation_deletes_sessions_and_tokens() {
-        let Some(pool) = test_pool().await else { return };
+        let Some(pool) = test_pool().await else {
+            return;
+        };
         let repo = StarfishRepository::new(&pool);
         let did = test_discord_id(8);
         cleanup(&repo, did).await;
 
         let user = repo.upsert_user(did).await.unwrap();
         repo.set_license_status(did, "active").await.unwrap();
-        let hwid = repo.register_hwid(user.id, "ab".repeat(32).as_str()).await.unwrap();
+        let hwid = repo
+            .register_hwid(user.id, "ab".repeat(32).as_str())
+            .await
+            .unwrap();
 
         let expires = Utc::now() + Duration::hours(2);
-        repo.create_session(user.id, hwid.id, "revoke_sess", b"km", expires, b"sig").await.unwrap();
-        repo.create_refresh_token(user.id, hwid.id, "revoke_hash").await.unwrap();
+        repo.create_session(user.id, hwid.id, "revoke_sess", b"km", expires, b"sig")
+            .await
+            .unwrap();
+        repo.create_refresh_token(user.id, hwid.id, "revoke_hash")
+            .await
+            .unwrap();
 
         repo.set_license_status(did, "suspended").await.unwrap();
         repo.delete_user_sessions(user.id).await.unwrap();
@@ -678,8 +859,18 @@ mod tests {
 
         let updated = repo.get_user_by_discord_id(did).await.unwrap().unwrap();
         assert_eq!(updated.license_status, "suspended");
-        assert!(repo.get_session_by_token("revoke_sess").await.unwrap().is_none());
-        assert!(repo.get_refresh_token_by_hash("revoke_hash").await.unwrap().is_none());
+        assert!(
+            repo.get_session_by_token("revoke_sess")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            repo.get_refresh_token_by_hash("revoke_hash")
+                .await
+                .unwrap()
+                .is_none()
+        );
         assert!(repo.get_user_by_discord_id(did).await.unwrap().is_some());
 
         cleanup(&repo, did).await;

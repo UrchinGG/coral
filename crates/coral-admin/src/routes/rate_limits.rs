@@ -1,22 +1,19 @@
-use axum::{extract::*, routing::get, Json, Router};
+use axum::{Json, Router, extract::*, routing::get};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::FromRow;
 
 use crate::state::AppState;
 
-
 pub fn router() -> Router<AppState> {
     Router::new().route("/", get(list))
 }
-
 
 #[derive(Serialize)]
 struct ListResponse {
     total: i64,
     rate_limits: Vec<RateLimit>,
 }
-
 
 #[derive(Serialize, FromRow)]
 struct RateLimit {
@@ -26,12 +23,13 @@ struct RateLimit {
     created_at: DateTime<Utc>,
 }
 
-
 async fn list(State(state): State<AppState>) -> Json<ListResponse> {
     let pool = state.db.pool();
 
     let total = sqlx::query_scalar("SELECT COUNT(*) FROM rate_limits")
-        .fetch_one(pool).await.unwrap_or(0);
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
 
     let rate_limits = sqlx::query_as::<_, RateLimit>(
         r#"SELECT id, LEFT(api_key, 8) as api_key, array_length(requests, 1) as request_count, created_at

@@ -1,8 +1,9 @@
 use image::RgbaImage;
 use mctext::MCText;
 
-use render::canvas::{Align, BOX_BACKGROUND, CANVAS_BACKGROUND, Canvas, DrawContext, Shape, TextBox};
-
+use render::canvas::{
+    Align, BOX_BACKGROUND, CANVAS_BACKGROUND, Canvas, DrawContext, Shape, TextBox,
+};
 
 const IMAGE_WIDTH: u32 = 1200;
 const IMAGE_HEIGHT: u32 = 900;
@@ -12,13 +13,16 @@ const ROWS: u32 = 10;
 const BOX_PADDING: u32 = 12;
 const CORNER_RADIUS: u32 = 20;
 
-
 pub fn render_prestiges() -> RgbaImage {
     let header = TextBox::new()
-        .width(IMAGE_WIDTH).height(HEADER_HEIGHT)
-        .padding(25, 25).corner_radius(CORNER_RADIUS)
-        .background(BOX_BACKGROUND).scale(3.5)
-        .align_x(Align::Left).align_y(Align::Center)
+        .width(IMAGE_WIDTH)
+        .height(HEADER_HEIGHT)
+        .padding(25, 25)
+        .corner_radius(CORNER_RADIUS)
+        .background(BOX_BACKGROUND)
+        .scale(3.5)
+        .align_x(Align::Left)
+        .align_y(Align::Center)
         .push(MCText::parse("§6\u{272B} Bedwars Prestiges 100-5000"));
 
     Canvas::new(IMAGE_WIDTH, IMAGE_HEIGHT)
@@ -28,9 +32,7 @@ pub fn render_prestiges() -> RgbaImage {
         .build()
 }
 
-
 struct PrestigeGrid;
-
 
 impl Shape for PrestigeGrid {
     fn draw(&self, ctx: &mut DrawContext) {
@@ -43,9 +45,18 @@ impl Shape for PrestigeGrid {
             let row = i % ROWS;
             let prestige = (col * 1000) + ((row + 1) * 100);
 
-            let x = if col > 0 { col * (cell_width + BOX_PADDING) } else { 0 };
-            let y = HEADER_HEIGHT + BOX_PADDING
-                + if row > 0 { row * (cell_height + BOX_PADDING) } else { 0 };
+            let x = if col > 0 {
+                col * (cell_width + BOX_PADDING)
+            } else {
+                0
+            };
+            let y = HEADER_HEIGHT
+                + BOX_PADDING
+                + if row > 0 {
+                    row * (cell_height + BOX_PADDING)
+                } else {
+                    0
+                };
 
             let star = prestige_star(prestige);
             let colored = build_prestige_text(
@@ -54,18 +65,23 @@ impl Shape for PrestigeGrid {
             );
 
             TextBox::new()
-                .width(cell_width).height(cell_height)
-                .padding(8, 8).corner_radius(CORNER_RADIUS)
-                .background(BOX_BACKGROUND).scale(3.5)
-                .align_x(Align::Center).align_y(Align::Center)
+                .width(cell_width)
+                .height(cell_height)
+                .padding(8, 8)
+                .corner_radius(CORNER_RADIUS)
+                .background(BOX_BACKGROUND)
+                .scale(3.5)
+                .align_x(Align::Center)
+                .align_y(Align::Center)
                 .push(colored)
                 .draw(&mut ctx.at(x as i32, y as i32));
         }
     }
 
-    fn size(&self) -> (u32, u32) { (IMAGE_WIDTH, IMAGE_HEIGHT) }
+    fn size(&self) -> (u32, u32) {
+        (IMAGE_WIDTH, IMAGE_HEIGHT)
+    }
 }
-
 
 pub fn prestige_colors(level: u32) -> &'static [&'static str] {
     match level {
@@ -123,7 +139,6 @@ pub fn prestige_colors(level: u32) -> &'static [&'static str] {
     }
 }
 
-
 pub fn prestige_star(level: u32) -> &'static str {
     match level {
         0..=1099 => "\u{272b}",
@@ -132,7 +147,6 @@ pub fn prestige_star(level: u32) -> &'static str {
         _ => "\u{2725}",
     }
 }
-
 
 pub fn build_prestige_text(text: &str, colors: &[&str]) -> MCText {
     let mut encoded = String::new();

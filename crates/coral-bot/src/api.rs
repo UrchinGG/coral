@@ -1,12 +1,11 @@
 use std::time::Duration;
 
 use reqwest::{Client, Response, StatusCode};
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use thiserror::Error;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-
 
 #[derive(Error, Debug)]
 pub enum ApiError {
@@ -18,13 +17,11 @@ pub enum ApiError {
     Network(#[from] reqwest::Error),
 }
 
-
 pub struct CoralApiClient {
     http: Client,
     base_url: String,
     api_key: String,
 }
-
 
 #[derive(Deserialize)]
 pub struct PlayerStatsResponse {
@@ -38,12 +35,10 @@ pub struct PlayerStatsResponse {
     pub slim: bool,
 }
 
-
 #[derive(Deserialize)]
 pub struct TagInfo {
     pub tag_type: String,
 }
-
 
 #[derive(Deserialize)]
 #[allow(dead_code)]
@@ -58,7 +53,6 @@ pub struct GuildResponse {
     pub player: Option<GuildMemberInfo>,
 }
 
-
 #[derive(Deserialize)]
 pub struct GuildMemberInfo {
     pub rank: Option<String>,
@@ -66,13 +60,11 @@ pub struct GuildMemberInfo {
     pub weekly_gexp: Option<u64>,
 }
 
-
 #[derive(Deserialize)]
 pub struct ResolveResponse {
     pub uuid: String,
     pub username: String,
 }
-
 
 impl CoralApiClient {
     pub fn new(base_url: String, api_key: String) -> Self {
@@ -80,15 +72,34 @@ impl CoralApiClient {
             .timeout(REQUEST_TIMEOUT)
             .build()
             .expect("failed to create HTTP client");
-        Self { http, base_url, api_key }
+        Self {
+            http,
+            base_url,
+            api_key,
+        }
     }
 
-    pub async fn get_player_stats(&self, identifier: &str) -> Result<PlayerStatsResponse, ApiError> {
-        let param = if identifier.len() == 32 && identifier.chars().all(|c| c.is_ascii_hexdigit()) { "uuid" } else { "name" };
-        self.get(&format!("{}/v3/player/profile?{}={}", self.base_url, param, identifier)).await
+    pub async fn get_player_stats(
+        &self,
+        identifier: &str,
+    ) -> Result<PlayerStatsResponse, ApiError> {
+        let param = if identifier.len() == 32 && identifier.chars().all(|c| c.is_ascii_hexdigit()) {
+            "uuid"
+        } else {
+            "name"
+        };
+        self.get(&format!(
+            "{}/v3/player/profile?{}={}",
+            self.base_url, param, identifier
+        ))
+        .await
     }
 
-    pub async fn get_guild(&self, identifier: &str, by: Option<&str>) -> Result<Option<GuildResponse>, ApiError> {
+    pub async fn get_guild(
+        &self,
+        identifier: &str,
+        by: Option<&str>,
+    ) -> Result<Option<GuildResponse>, ApiError> {
         let url = match by {
             Some(by) => format!("{}/v3/guild/{}?by={}", self.base_url, identifier, by),
             None => format!("{}/v3/guild/{}", self.base_url, identifier),
@@ -97,7 +108,8 @@ impl CoralApiClient {
     }
 
     pub async fn resolve(&self, identifier: &str) -> Result<ResolveResponse, ApiError> {
-        self.get(&format!("{}/v3/resolve/{}", self.base_url, identifier)).await
+        self.get(&format!("{}/v3/resolve/{}", self.base_url, identifier))
+            .await
     }
 
     pub async fn redeem_verify_code(&self, code: &str) -> Result<ResolveResponse, ApiError> {
@@ -111,7 +123,12 @@ impl CoralApiClient {
     }
 
     async fn get<T: DeserializeOwned>(&self, url: &str) -> Result<T, ApiError> {
-        let response = self.http.get(url).header("X-API-Key", &self.api_key).send().await?;
+        let response = self
+            .http
+            .get(url)
+            .header("X-API-Key", &self.api_key)
+            .send()
+            .await?;
         Self::parse_response(response).await
     }
 

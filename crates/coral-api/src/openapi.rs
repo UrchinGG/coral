@@ -10,12 +10,11 @@ use crate::{
         guild::{GuildQuery, GuildResponse},
         resolve::ResolveResponse,
         session::*,
-        tags::{AddTagBody, RemoveTagBody, UpdateTagBody, LockRequest, UuidQuery},
+        tags::{AddTagBody, LockRequest, RemoveTagBody, UpdateTagBody, UuidQuery},
         verify::{RedeemCodeResponse, StoreCodeRequest},
         winstreaks::*,
     },
 };
-
 
 #[derive(OpenApi)]
 #[openapi(
@@ -86,12 +85,13 @@ use crate::{
 )]
 pub struct ApiDoc;
 
-
 struct SecurityAddon;
 
 impl Modify for SecurityAddon {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
-        let components = openapi.components.get_or_insert_with(utoipa::openapi::Components::new);
+        let components = openapi
+            .components
+            .get_or_insert_with(utoipa::openapi::Components::new);
         components.add_security_scheme(
             "api_key",
             SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("X-API-Key"))),

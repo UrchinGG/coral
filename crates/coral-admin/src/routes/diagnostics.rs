@@ -1,24 +1,21 @@
 use std::time::Instant;
 
-use axum::{extract::*, routing::get, Json, Router};
+use axum::{Json, Router, extract::*, routing::get};
 use database::reconstruct;
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::state::AppState;
 
-
 pub fn router() -> Router<AppState> {
     Router::new().route("/", get(diagnostics))
 }
-
 
 #[derive(Serialize)]
 struct DiagnosticsResponse {
     storage: StorageStats,
     players: Vec<PlayerCacheStats>,
 }
-
 
 #[derive(Serialize)]
 struct StorageStats {
@@ -31,7 +28,6 @@ struct StorageStats {
     storage_efficiency: f64,
 }
 
-
 #[derive(Serialize)]
 struct PlayerCacheStats {
     uuid: String,
@@ -43,20 +39,33 @@ struct PlayerCacheStats {
     delta_chain_length: i64,
 }
 
-
 async fn diagnostics(State(state): State<AppState>) -> Json<DiagnosticsResponse> {
     let pool = state.db.pool();
 
     let total_snapshots: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM player_snapshots")
-        .fetch_one(pool).await.unwrap_or(0);
-    let total_baselines: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM player_snapshots WHERE is_baseline = true")
-        .fetch_one(pool).await.unwrap_or(0);
-    let total_deltas: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM player_snapshots WHERE is_baseline = false")
-        .fetch_one(pool).await.unwrap_or(0);
-    let total_players: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT uuid) FROM player_snapshots")
-        .fetch_one(pool).await.unwrap_or(0);
-    let total_promotions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM player_snapshots WHERE source = 'promotion'")
-        .fetch_one(pool).await.unwrap_or(0);
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+    let total_baselines: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM player_snapshots WHERE is_baseline = true")
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
+    let total_deltas: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM player_snapshots WHERE is_baseline = false")
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
+    let total_players: i64 =
+        sqlx::query_scalar("SELECT COUNT(DISTINCT uuid) FROM player_snapshots")
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
+    let total_promotions: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM player_snapshots WHERE source = 'promotion'")
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
 
     let avg_deltas_per_baseline = if total_baselines > 0 {
         total_deltas as f64 / total_baselines as f64
@@ -119,7 +128,6 @@ async fn diagnostics(State(state): State<AppState>) -> Json<DiagnosticsResponse>
         players,
     })
 }
-
 
 async fn measure_reconstruction(pool: &sqlx::PgPool, uuid: &str) -> (Option<i64>, i64) {
     let baseline: Option<(Value, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(

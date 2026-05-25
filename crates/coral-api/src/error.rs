@@ -1,9 +1,8 @@
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde::Serialize;
 use utoipa::ToSchema;
-
 
 #[derive(Debug)]
 pub enum ApiError {
@@ -18,12 +17,10 @@ pub enum ApiError {
     Internal(String),
 }
 
-
 #[derive(Serialize, ToSchema)]
 pub(crate) struct ErrorResponse {
     pub error: String,
 }
-
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
@@ -48,11 +45,12 @@ impl IntoResponse for ApiError {
     }
 }
 
-
 impl From<clients::ClientError> for ApiError {
     fn from(err: clients::ClientError) -> Self {
         match err {
-            clients::ClientError::PlayerNotFound(p) => Self::NotFound(format!("Player not found: {p}")),
+            clients::ClientError::PlayerNotFound(p) => {
+                Self::NotFound(format!("Player not found: {p}"))
+            }
             clients::ClientError::RateLimited => Self::RateLimited,
             clients::ClientError::HypixelApi(msg) => Self::ExternalApi(msg),
             clients::ClientError::InvalidUuid(u) => Self::BadRequest(format!("Invalid UUID: {u}")),
@@ -60,7 +58,6 @@ impl From<clients::ClientError> for ApiError {
         }
     }
 }
-
 
 impl From<sqlx::Error> for ApiError {
     fn from(err: sqlx::Error) -> Self {

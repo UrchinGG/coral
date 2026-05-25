@@ -1,4 +1,4 @@
-use axum::{response::Html, routing::get, Router};
+use axum::{Router, response::Html, routing::get};
 
 use crate::state::AppState;
 
@@ -7,7 +7,6 @@ mod diagnostics;
 mod members;
 mod rate_limits;
 mod snapshots;
-
 
 pub fn api_router() -> Router<AppState> {
     Router::new()
@@ -18,7 +17,6 @@ pub fn api_router() -> Router<AppState> {
         .nest("/diagnostics", diagnostics::router())
 }
 
-
 pub fn ui_router() -> Router<AppState> {
     Router::new()
         .route("/", get(serve_ui))
@@ -26,17 +24,20 @@ pub fn ui_router() -> Router<AppState> {
         .route("/app.js", get(serve_js))
 }
 
-
 async fn serve_ui() -> Html<&'static str> {
     Html(include_str!("../ui/index.html"))
 }
 
-
 async fn serve_css() -> ([(&'static str, &'static str); 1], &'static str) {
-    ([("content-type", "text/css")], include_str!("../ui/style.css"))
+    (
+        [("content-type", "text/css")],
+        include_str!("../ui/style.css"),
+    )
 }
 
-
 async fn serve_js() -> ([(&'static str, &'static str); 1], &'static str) {
-    ([("content-type", "application/javascript")], include_str!("../ui/app.js"))
+    (
+        [("content-type", "application/javascript")],
+        include_str!("../ui/app.js"),
+    )
 }

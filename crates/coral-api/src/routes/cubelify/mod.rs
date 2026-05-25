@@ -13,7 +13,6 @@ use crate::cache::refresh_player_cache;
 use crate::responses::{CubelifyResponse, CubelifyScore, CubelifyTag};
 use crate::state::AppState;
 
-
 #[derive(Deserialize, ToSchema, utoipa::IntoParams)]
 pub(crate) struct CubelifyQuery {
     pub uuid: String,
@@ -22,11 +21,9 @@ pub(crate) struct CubelifyQuery {
     pub sources: Option<String>,
 }
 
-
 pub fn router(_state: AppState) -> Router<AppState> {
     Router::new().route("/cubelify", get(get_cubelify))
 }
-
 
 #[utoipa::path(
     get,
@@ -44,7 +41,6 @@ pub async fn get_cubelify(
     Json(process_cubelify(&state, &query).await.unwrap_or_else(|e| e))
 }
 
-
 async fn process_cubelify(
     state: &AppState,
     query: &CubelifyQuery,
@@ -57,7 +53,6 @@ async fn process_cubelify(
     Ok(build_response(state, &tags).await)
 }
 
-
 async fn validate_api_key(state: &AppState, api_key: &str) -> Result<Member, CubelifyResponse> {
     let member = MemberRepository::new(state.db.pool())
         .get_by_api_key(api_key)
@@ -66,24 +61,35 @@ async fn validate_api_key(state: &AppState, api_key: &str) -> Result<Member, Cub
         .ok_or_else(|| CubelifyResponse::error("Invalid Key", "mdi-key-remove"))?;
 
     if member.key_locked {
-        return Err(CubelifyResponse::error("Your key has been locked", "mdi-account-lock-outline"));
+        return Err(CubelifyResponse::error(
+            "Your key has been locked",
+            "mdi-account-lock-outline",
+        ));
     }
     Ok(member)
 }
-
 
 async fn check_rate_limit(
     state: &AppState,
     api_key: &str,
     member: &Member,
 ) -> Result<(), CubelifyResponse> {
-    match state.rate_limiter.check_and_record(api_key, crate::auth::PERSONAL_RATE_LIMIT).await {
+    match state
+        .rate_limiter
+        .check_and_record(api_key, crate::auth::PERSONAL_RATE_LIMIT)
+        .await
+    {
         Ok(RateLimitResult::Allowed { .. }) => Ok(()),
-        Ok(RateLimitResult::Exceeded) => Err(CubelifyResponse::error("Rate limit exceeded", "mdi-speedometer")),
-        Err(_) => Err(CubelifyResponse::error("Internal Error", "mdi-alert-circle")),
+        Ok(RateLimitResult::Exceeded) => Err(CubelifyResponse::error(
+            "Rate limit exceeded",
+            "mdi-speedometer",
+        )),
+        Err(_) => Err(CubelifyResponse::error(
+            "Internal Error",
+            "mdi-alert-circle",
+        )),
     }
 }
-
 
 async fn fetch_tags(state: &AppState, uuid: &str) -> Result<Vec<PlayerTagRow>, CubelifyResponse> {
     BlacklistRepository::new(state.db.pool())
@@ -91,7 +97,6 @@ async fn fetch_tags(state: &AppState, uuid: &str) -> Result<Vec<PlayerTagRow>, C
         .await
         .map_err(|_| CubelifyResponse::error("Internal Error", "mdi-alert-circle"))
 }
-
 
 async fn build_response(state: &AppState, tags: &[PlayerTagRow]) -> CubelifyResponse {
     let mut cubelify_tags = Vec::new();
@@ -110,11 +115,13 @@ async fn build_response(state: &AppState, tags: &[PlayerTagRow]) -> CubelifyResp
     }
 
     CubelifyResponse {
-        score: CubelifyScore { value: total_score, mode: "add" },
+        score: CubelifyScore {
+            value: total_score,
+            mode: "add",
+        },
         tags: cubelify_tags,
     }
 }
-
 
 async fn build_tooltip(state: &AppState, tag_name: &str, tag: &PlayerTagRow) -> String {
     let name = capitalize(tag_name);
@@ -123,7 +130,10 @@ async fn build_tooltip(state: &AppState, tag_name: &str, tag: &PlayerTagRow) -> 
     let mut tooltip = if tag.hide_username {
         format!("{name} (Added {time_ago})")
     } else {
-        let added_by = state.discord.resolve_username(tag.added_by as u64).await
+        let added_by = state
+            .discord
+            .resolve_username(tag.added_by as u64)
+            .await
             .unwrap_or_else(|| "Unknown".into());
         format!("{name} (Added by {added_by} {time_ago})")
     };
@@ -137,7 +147,6 @@ async fn build_tooltip(state: &AppState, tag_name: &str, tag: &PlayerTagRow) -> 
     }
     tooltip
 }
-
 
 fn relative_time(timestamp: chrono::DateTime<Utc>) -> String {
     let secs = (Utc::now() - timestamp).num_seconds();
@@ -154,10 +163,11 @@ fn relative_time(timestamp: chrono::DateTime<Utc>) -> String {
     format!("{val}{unit} ago")
 }
 
-
 fn relative_time_future(timestamp: chrono::DateTime<Utc>) -> String {
     let secs = (timestamp - Utc::now()).num_seconds();
-    if secs <= 0 { return "soon".into(); }
+    if secs <= 0 {
+        return "soon".into();
+    }
     let (val, unit) = match secs {
         0..3600 => (secs / 60, "min"),
         3600..86400 => (secs / 3600, "hr"),
@@ -166,7 +176,6 @@ fn relative_time_future(timestamp: chrono::DateTime<Utc>) -> String {
     };
     format!("in {val}{unit}")
 }
-
 
 fn capitalize(s: &str) -> String {
     let mut chars = s.chars();

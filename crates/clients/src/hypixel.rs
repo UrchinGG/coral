@@ -9,14 +9,12 @@ use crate::error::ClientError;
 const HYPIXEL_API_BASE: &str = "https://api.hypixel.net/v2";
 const CACHE_TTL_SECS: u64 = 45;
 
-
 #[derive(Clone)]
 pub struct HypixelClient {
     http: Client,
     key: String,
     redis: ConnectionManager,
 }
-
 
 #[derive(Debug, Deserialize)]
 struct HypixelResponse {
@@ -29,14 +27,17 @@ struct HypixelResponse {
     guild: Option<Value>,
 }
 
-
 impl HypixelClient {
     pub fn new(key: String, redis: ConnectionManager) -> Result<Self, ClientError> {
         if key.is_empty() {
             return Err(ClientError::NoApiKeys);
         }
 
-        Ok(Self { http: Client::new(), key, redis })
+        Ok(Self {
+            http: Client::new(),
+            key,
+            redis,
+        })
     }
 
     pub async fn get_player(&self, uuid: &str) -> Result<Option<Value>, ClientError> {

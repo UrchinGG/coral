@@ -1,6 +1,5 @@
 use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Period {
     Daily,
@@ -107,7 +106,6 @@ impl Period {
         reset_utc(prev)
     }
 }
-
 
 fn is_eastern_dst(date: NaiveDate) -> bool {
     let year = date.year();

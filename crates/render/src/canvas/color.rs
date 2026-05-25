@@ -6,12 +6,13 @@ pub const WHITE: Rgba<u8> = Rgba([255, 255, 255, 255]);
 pub const CANVAS_BACKGROUND: Rgba<u8> = Rgba([0, 0, 0, 0]);
 pub const BOX_BACKGROUND: Rgba<u8> = Rgba([20, 20, 20, 150]);
 
+pub fn rgba(r: u8, g: u8, b: u8, a: u8) -> Rgba<u8> {
+    Rgba([r, g, b, a])
+}
 
-pub fn rgba(r: u8, g: u8, b: u8, a: u8) -> Rgba<u8> { Rgba([r, g, b, a]) }
-
-
-pub fn rgb(r: u8, g: u8, b: u8) -> Rgba<u8> { Rgba([r, g, b, 255]) }
-
+pub fn rgb(r: u8, g: u8, b: u8) -> Rgba<u8> {
+    Rgba([r, g, b, 255])
+}
 
 pub fn blend(base: Rgba<u8>, overlay: Rgba<u8>) -> Rgba<u8> {
     let sa = overlay[3] as u32;

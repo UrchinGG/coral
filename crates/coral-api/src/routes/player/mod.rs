@@ -20,18 +20,15 @@ use crate::{
     state::AppState,
 };
 
-
 #[derive(Deserialize)]
 pub(crate) struct PlayerQuery {
     pub uuid: Option<String>,
     pub name: Option<String>,
 }
 
-
 pub fn public_router() -> Router<AppState> {
     Router::new().route("/player/tags", get(player_tags))
 }
-
 
 pub fn internal_router() -> Router<AppState> {
     Router::new()
@@ -39,8 +36,10 @@ pub fn internal_router() -> Router<AppState> {
         .route("/player/skin", get(player_skin))
 }
 
-
-pub async fn resolve_identifier(state: &AppState, identifier: &str) -> Result<(String, Option<String>), ApiError> {
+pub async fn resolve_identifier(
+    state: &AppState,
+    identifier: &str,
+) -> Result<(String, Option<String>), ApiError> {
     if is_uuid(identifier) {
         Ok((normalize_uuid(identifier), None))
     } else {
@@ -49,33 +48,37 @@ pub async fn resolve_identifier(state: &AppState, identifier: &str) -> Result<(S
     }
 }
 
-
 fn extract_identifier(query: &PlayerQuery) -> Result<&str, ApiError> {
-    query.uuid.as_deref()
+    query
+        .uuid
+        .as_deref()
         .or(query.name.as_deref())
         .ok_or_else(|| ApiError::BadRequest("query parameter 'uuid' or 'name' required".into()))
 }
 
-
 fn resolve_username(hint: Option<String>, player_data: &Option<Value>, uuid: &str) -> String {
     hint.unwrap_or_else(|| {
-        player_data.as_ref()
+        player_data
+            .as_ref()
             .and_then(|d| d["displayname"].as_str())
             .map(String::from)
             .unwrap_or_else(|| uuid.to_string())
     })
 }
 
-
 fn spawn_cache_update(state: &AppState, uuid: &str, data: &Value, username: &str) {
-    let (pool, uuid, data, username) = (state.db.pool().clone(), uuid.to_string(), data.clone(), username.to_string());
+    let (pool, uuid, data, username) = (
+        state.db.pool().clone(),
+        uuid.to_string(),
+        data.clone(),
+        username.to_string(),
+    );
     tokio::spawn(async move {
         let _ = CacheRepository::new(&pool)
             .store_snapshot(&uuid, &data, None, Some(SNAPSHOT_SOURCE), Some(&username))
             .await;
     });
 }
-
 
 #[utoipa::path(
     get,
@@ -99,13 +102,14 @@ pub async fn player_tags(
 ) -> Result<Json<PlayerTagsResponse>, ApiError> {
     let identifier = extract_identifier(&query)?;
     let (uuid, _) = resolve_identifier(&state, identifier).await?;
-    let tags = BlacklistRepository::new(state.db.pool()).get_tags(&uuid).await?;
+    let tags = BlacklistRepository::new(state.db.pool())
+        .get_tags(&uuid)
+        .await?;
     Ok(Json(PlayerTagsResponse {
         uuid,
         tags: tags.iter().map(TagResponse::from_db).collect(),
     }))
 }
-
 
 #[utoipa::path(
     get,
@@ -130,7 +134,9 @@ pub async fn player_stats(
     dev_auth: Option<Extension<DeveloperKeyAuth>>,
     Query(query): Query<PlayerQuery>,
 ) -> Result<Json<PlayerStatsResponse>, ApiError> {
-    if let Some(Extension(ref dev)) = dev_auth { dev.require(permissions::PLAYER_DATA)?; }
+    if let Some(Extension(ref dev)) = dev_auth {
+        dev.require(permissions::PLAYER_DATA)?;
+    }
     let identifier = extract_identifier(&query)?;
     let (uuid, username_hint) = resolve_identifier(&state, identifier).await?;
     let repo = BlacklistRepository::new(state.db.pool());
@@ -160,7 +166,6 @@ pub async fn player_stats(
     }))
 }
 
-
 #[utoipa::path(
     get,
     path = "/v3/player/skin",
@@ -183,16 +188,27 @@ pub async fn player_skin(
     dev_auth: Option<Extension<DeveloperKeyAuth>>,
     Query(query): Query<PlayerQuery>,
 ) -> Result<Response, ApiError> {
-    if let Some(Extension(ref dev)) = dev_auth { dev.require(permissions::PLAYER_DATA)?; }
-    let provider = state.skin_provider.as_ref()
+    if let Some(Extension(ref dev)) = dev_auth {
+        dev.require(permissions::PLAYER_DATA)?;
+    }
+    let provider = state
+        .skin_provider
+        .as_ref()
         .ok_or_else(|| ApiError::Internal("skin rendering unavailable".into()))?;
     let identifier = extract_identifier(&query)?;
     let (uuid, _) = resolve_identifier(&state, identifier).await?;
-    let skin = provider.fetch(&uuid).await
+    let skin = provider
+        .fetch(&uuid)
+        .await
         .ok_or_else(|| ApiError::NotFound("skin not found".into()))?;
 
     let mut buf = Cursor::new(Vec::new());
-    skin.data.write_to(&mut buf, image::ImageFormat::Png)
+    skin.data
+        .write_to(&mut buf, image::ImageFormat::Png)
         .map_err(|e| ApiError::Internal(format!("failed to encode png: {e}")))?;
-    Ok(([(header::CONTENT_TYPE, "image/png")], Body::from(buf.into_inner())).into_response())
+    Ok((
+        [(header::CONTENT_TYPE, "image/png")],
+        Body::from(buf.into_inner()),
+    )
+        .into_response())
 }

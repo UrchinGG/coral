@@ -1,7 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Guild {
     pub id: String,
@@ -13,7 +12,6 @@ pub struct Guild {
     pub experience: u64,
     pub level: u32,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GuildMember {

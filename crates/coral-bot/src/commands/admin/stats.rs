@@ -8,11 +8,9 @@ use crate::{
     utils::{format_number, separator, text},
 };
 
-
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("stats").description("View database statistics")
 }
-
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
     command.defer(&ctx.http).await?;
@@ -33,17 +31,30 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     );
 
     let (members, requests, players, tags) = (
-        members.unwrap_or(0), requests.unwrap_or(0),
-        players.unwrap_or(0), tags.unwrap_or(0),
+        members.unwrap_or(0),
+        requests.unwrap_or(0),
+        players.unwrap_or(0),
+        tags.unwrap_or(0),
     );
     let (snapshots, tracked) = (snapshots.unwrap_or(0), tracked.unwrap_or(0));
     let tag_breakdown = tag_breakdown.unwrap_or_default();
 
-    let tag_lines: Vec<String> = tag_breakdown.iter().map(|(tag_type, count)| {
-        let emote = blacklist::lookup(tag_type).map(|d| d.emote).unwrap_or("");
-        format!("{emote} **{}** {}", format_number(*count as u64), tag_type.replace('_', " "))
-    }).collect();
-    let tag_display = if tag_lines.is_empty() { "No tags yet".into() } else { tag_lines.join("\n") };
+    let tag_lines: Vec<String> = tag_breakdown
+        .iter()
+        .map(|(tag_type, count)| {
+            let emote = blacklist::lookup(tag_type).map(|d| d.emote).unwrap_or("");
+            format!(
+                "{emote} **{}** {}",
+                format_number(*count as u64),
+                tag_type.replace('_', " ")
+            )
+        })
+        .collect();
+    let tag_display = if tag_lines.is_empty() {
+        "No tags yet".into()
+    } else {
+        tag_lines.join("\n")
+    };
 
     let mut parts: Vec<CreateContainerComponent> = vec![text("## Database Statistics")];
     parts.push(separator());
@@ -68,9 +79,15 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         format_number(tracked as u64),
     )));
 
-    command.edit_response(&ctx.http, EditInteractionResponse::new()
-        .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
-        .components(vec![CreateComponent::Container(CreateContainer::new(parts))]),
-    ).await?;
+    command
+        .edit_response(
+            &ctx.http,
+            EditInteractionResponse::new()
+                .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
+                .components(vec![CreateComponent::Container(CreateContainer::new(
+                    parts,
+                ))]),
+        )
+        .await?;
     Ok(())
 }

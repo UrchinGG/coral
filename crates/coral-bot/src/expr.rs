@@ -4,7 +4,6 @@ use serde_json::Value;
 const MAX_DEPTH: usize = 16;
 const MAX_OUTPUT_LEN: usize = 256;
 
-
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
     Number(f64),
@@ -33,7 +32,6 @@ enum Token {
     Colon,
 }
 
-
 fn tokenize(input: &str) -> Result<Vec<Token>> {
     let mut tokens = Vec::new();
     let chars: Vec<char> = input.chars().collect();
@@ -42,38 +40,94 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
     while i < chars.len() {
         match chars[i] {
             c if c.is_whitespace() => i += 1,
-            '.' => { tokens.push(Token::Dot); i += 1 }
-            '+' => { tokens.push(Token::Plus); i += 1 }
-            '-' => { tokens.push(Token::Minus); i += 1 }
-            '*' => { tokens.push(Token::Star); i += 1 }
-            '/' => { tokens.push(Token::Slash); i += 1 }
-            '%' => { tokens.push(Token::Percent); i += 1 }
-            '(' => { tokens.push(Token::LParen); i += 1 }
-            ')' => { tokens.push(Token::RParen); i += 1 }
-            ',' => { tokens.push(Token::Comma); i += 1 }
-            ':' => { tokens.push(Token::Colon); i += 1 }
-            '>' if i + 1 < chars.len() && chars[i + 1] == '=' => { tokens.push(Token::Ge); i += 2 }
-            '<' if i + 1 < chars.len() && chars[i + 1] == '=' => { tokens.push(Token::Le); i += 2 }
-            '=' if i + 1 < chars.len() && chars[i + 1] == '=' => { tokens.push(Token::Eq); i += 2 }
-            '!' if i + 1 < chars.len() && chars[i + 1] == '=' => { tokens.push(Token::Ne); i += 2 }
-            '>' => { tokens.push(Token::Gt); i += 1 }
-            '<' => { tokens.push(Token::Lt); i += 1 }
+            '.' => {
+                tokens.push(Token::Dot);
+                i += 1
+            }
+            '+' => {
+                tokens.push(Token::Plus);
+                i += 1
+            }
+            '-' => {
+                tokens.push(Token::Minus);
+                i += 1
+            }
+            '*' => {
+                tokens.push(Token::Star);
+                i += 1
+            }
+            '/' => {
+                tokens.push(Token::Slash);
+                i += 1
+            }
+            '%' => {
+                tokens.push(Token::Percent);
+                i += 1
+            }
+            '(' => {
+                tokens.push(Token::LParen);
+                i += 1
+            }
+            ')' => {
+                tokens.push(Token::RParen);
+                i += 1
+            }
+            ',' => {
+                tokens.push(Token::Comma);
+                i += 1
+            }
+            ':' => {
+                tokens.push(Token::Colon);
+                i += 1
+            }
+            '>' if i + 1 < chars.len() && chars[i + 1] == '=' => {
+                tokens.push(Token::Ge);
+                i += 2
+            }
+            '<' if i + 1 < chars.len() && chars[i + 1] == '=' => {
+                tokens.push(Token::Le);
+                i += 2
+            }
+            '=' if i + 1 < chars.len() && chars[i + 1] == '=' => {
+                tokens.push(Token::Eq);
+                i += 2
+            }
+            '!' if i + 1 < chars.len() && chars[i + 1] == '=' => {
+                tokens.push(Token::Ne);
+                i += 2
+            }
+            '>' => {
+                tokens.push(Token::Gt);
+                i += 1
+            }
+            '<' => {
+                tokens.push(Token::Lt);
+                i += 1
+            }
             '"' => {
                 i += 1;
                 let start = i;
-                while i < chars.len() && chars[i] != '"' { i += 1 }
+                while i < chars.len() && chars[i] != '"' {
+                    i += 1
+                }
                 tokens.push(Token::String(chars[start..i].iter().collect()));
-                if i < chars.len() { i += 1 }
+                if i < chars.len() {
+                    i += 1
+                }
             }
             c if c.is_ascii_digit() => {
                 let start = i;
-                while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') { i += 1 }
+                while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                    i += 1
+                }
                 let s: String = chars[start..i].iter().collect();
                 tokens.push(Token::Number(s.parse::<f64>()?));
             }
             c if c.is_ascii_alphanumeric() || c == '_' => {
                 let start = i;
-                while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') { i += 1 }
+                while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                    i += 1
+                }
                 let word: String = chars[start..i].iter().collect();
                 tokens.push(match word.as_str() {
                     "and" => Token::And,
@@ -91,7 +145,6 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
     Ok(tokens)
 }
 
-
 #[derive(Debug, Clone)]
 enum Expr {
     Number(f64),
@@ -105,14 +158,22 @@ enum Expr {
     },
 }
 
-
 #[derive(Debug, Clone)]
 enum BinOp {
-    Add, Sub, Mul, Div, Mod,
-    Gt, Lt, Ge, Le, Eq, Ne,
-    And, Or,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Gt,
+    Lt,
+    Ge,
+    Le,
+    Eq,
+    Ne,
+    And,
+    Or,
 }
-
 
 struct Parser {
     tokens: Vec<Token>,
@@ -120,13 +181,18 @@ struct Parser {
     depth: usize,
 }
 
-
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0, depth: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            depth: 0,
+        }
     }
 
-    fn peek(&self) -> Option<&Token> { self.tokens.get(self.pos) }
+    fn peek(&self) -> Option<&Token> {
+        self.tokens.get(self.pos)
+    }
 
     fn advance(&mut self) -> Option<Token> {
         let tok = self.tokens.get(self.pos)?.clone();
@@ -143,11 +209,15 @@ impl Parser {
 
     fn enter(&mut self) -> Result<()> {
         self.depth += 1;
-        if self.depth > MAX_DEPTH { bail!("expression too deeply nested") }
+        if self.depth > MAX_DEPTH {
+            bail!("expression too deeply nested")
+        }
         Ok(())
     }
 
-    fn leave(&mut self) { self.depth -= 1 }
+    fn leave(&mut self) {
+        self.depth -= 1
+    }
 
     fn parse(mut self) -> Result<Expr> {
         let expr = self.parse_or()?;
@@ -173,7 +243,11 @@ impl Parser {
         let mut left = self.parse_comparison()?;
         while matches!(self.peek(), Some(Token::And)) {
             self.advance();
-            left = Expr::BinOp(Box::new(left), BinOp::And, Box::new(self.parse_comparison()?));
+            left = Expr::BinOp(
+                Box::new(left),
+                BinOp::And,
+                Box::new(self.parse_comparison()?),
+            );
         }
         self.leave();
         Ok(left)
@@ -189,7 +263,10 @@ impl Parser {
             Some(Token::Le) => BinOp::Le,
             Some(Token::Eq) => BinOp::Eq,
             Some(Token::Ne) => BinOp::Ne,
-            _ => { self.leave(); return Ok(left) }
+            _ => {
+                self.leave();
+                return Ok(left);
+            }
         };
         self.advance();
         let right = self.parse_additive()?;
@@ -301,13 +378,19 @@ impl Parser {
                 self.expect(&Token::Colon)?;
                 let fallback = self.parse_or()?;
                 self.leave();
-                return Ok(Expr::Cond { branches, fallback: Box::new(fallback) });
+                return Ok(Expr::Cond {
+                    branches,
+                    fallback: Box::new(fallback),
+                });
             }
         }
     }
 
     fn peek_is_comparison_op(&self) -> bool {
-        matches!(self.peek(), Some(Token::Lt | Token::Gt | Token::Le | Token::Ge | Token::Eq | Token::Ne))
+        matches!(
+            self.peek(),
+            Some(Token::Lt | Token::Gt | Token::Le | Token::Ge | Token::Eq | Token::Ne)
+        )
     }
 
     fn parse_comparison_op(&mut self) -> Result<BinOp> {
@@ -323,7 +406,6 @@ impl Parser {
     }
 }
 
-
 #[derive(Debug, Clone)]
 pub enum EvalResult {
     Number(f64),
@@ -331,7 +413,6 @@ pub enum EvalResult {
     Bool(bool),
     Null,
 }
-
 
 impl EvalResult {
     fn as_number(&self) -> f64 {
@@ -364,7 +445,6 @@ impl EvalResult {
     }
 }
 
-
 impl std::fmt::Display for EvalResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -377,7 +457,6 @@ impl std::fmt::Display for EvalResult {
     }
 }
 
-
 fn parse_format_spec(fmt: &str) -> Option<usize> {
     let fmt = fmt.trim();
     if fmt.starts_with('.') && fmt.ends_with('f') {
@@ -386,7 +465,6 @@ fn parse_format_spec(fmt: &str) -> Option<usize> {
         None
     }
 }
-
 
 fn resolve_field(ctx: &Value, path: &[String]) -> EvalResult {
     let mut current = ctx;
@@ -399,7 +477,6 @@ fn resolve_field(ctx: &Value, path: &[String]) -> EvalResult {
     value_to_result(current)
 }
 
-
 fn value_to_result(v: &Value) -> EvalResult {
     match v {
         Value::Number(n) => EvalResult::Number(n.as_f64().unwrap_or(0.0)),
@@ -409,7 +486,6 @@ fn value_to_result(v: &Value) -> EvalResult {
         _ => EvalResult::Text(v.to_string()),
     }
 }
-
 
 fn eval(expr: &Expr, ctx: &Value) -> EvalResult {
     match expr {
@@ -463,13 +539,11 @@ fn eval(expr: &Expr, ctx: &Value) -> EvalResult {
     }
 }
 
-
 pub struct RenderedNickname {
     pub before: String,
     pub truncatable: Option<String>,
     pub after: String,
 }
-
 
 impl RenderedNickname {
     pub fn to_truncated(&self, max_len: usize) -> String {
@@ -487,18 +561,25 @@ impl RenderedNickname {
             return truncate_str(&format!("{}{}", self.before, self.after), max_len);
         }
 
-        format!("{}{}{}", self.before, truncate_str(truncatable, budget), self.after)
+        format!(
+            "{}{}{}",
+            self.before,
+            truncate_str(truncatable, budget),
+            self.after
+        )
     }
 }
 
-
 fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len { return s.to_string() }
+    if s.len() <= max_len {
+        return s.to_string();
+    }
     let mut end = max_len;
-    while !s.is_char_boundary(end) { end -= 1 }
+    while !s.is_char_boundary(end) {
+        end -= 1
+    }
     s[..end].trim_end().to_string()
 }
-
 
 pub fn render_template(template: &str, ctx: &Value) -> RenderedNickname {
     let mut output = String::new();
@@ -563,18 +644,15 @@ pub fn render_template(template: &str, ctx: &Value) -> RenderedNickname {
     }
 }
 
-
 pub fn eval_condition(condition: &str, ctx: &Value) -> Result<bool> {
     let tokens = tokenize(condition)?;
     Ok(eval(&Parser::new(tokens).parse()?, ctx).as_bool())
 }
 
-
 pub fn validate_condition(condition: &str) -> Result<()> {
     Parser::new(tokenize(condition)?).parse()?;
     Ok(())
 }
-
 
 pub fn validate_template(template: &str) -> Result<()> {
     let chars: Vec<char> = template.chars().collect();
@@ -585,7 +663,10 @@ pub fn validate_template(template: &str) -> Result<()> {
             let (inner, end) = extract_brace_content(&chars, i + 1);
             i = end;
             let trimmed = inner.trim();
-            let expr_input = trimmed.strip_prefix("..").map(|r| r.trim()).unwrap_or(trimmed);
+            let expr_input = trimmed
+                .strip_prefix("..")
+                .map(|r| r.trim())
+                .unwrap_or(trimmed);
             let (expr_str, _) = split_format_spec(expr_input);
             Parser::new(tokenize(expr_str)?).parse()?;
         } else {
@@ -596,7 +677,6 @@ pub fn validate_template(template: &str) -> Result<()> {
     Ok(())
 }
 
-
 fn extract_brace_content(chars: &[char], start: usize) -> (String, usize) {
     let mut i = start;
     let mut depth = 1;
@@ -606,12 +686,13 @@ fn extract_brace_content(chars: &[char], start: usize) -> (String, usize) {
             '}' => depth -= 1,
             _ => {}
         }
-        if depth > 0 { i += 1 }
+        if depth > 0 {
+            i += 1
+        }
     }
     let inner: String = chars[start..i].iter().collect();
     (inner, if i < chars.len() { i + 1 } else { i })
 }
-
 
 fn split_format_spec(inner: &str) -> (&str, Option<String>) {
     match inner.rfind(':') {

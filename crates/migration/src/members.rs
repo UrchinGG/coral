@@ -54,7 +54,10 @@ impl MongoMember {
     fn to_payload(&self) -> Option<serde_json::Value> {
         let discord_id = self.discord_id_i64()?;
 
-        let ip_history: Vec<serde_json::Value> = self.ip_history.as_deref().unwrap_or(&[])
+        let ip_history: Vec<serde_json::Value> = self
+            .ip_history
+            .as_deref()
+            .unwrap_or(&[])
             .iter()
             .filter_map(|ip| {
                 Some(json!({
@@ -100,14 +103,19 @@ pub async fn migrate(mongo_db: &Database, client: &CoralClient) -> Result<usize>
         match member.to_payload() {
             Some(payload) => batch.push(payload),
             None => {
-                warn!("Skipping member with invalid discord_id: {:?}", member.discord_id);
+                warn!(
+                    "Skipping member with invalid discord_id: {:?}",
+                    member.discord_id
+                );
                 errors += 1;
                 continue;
             }
         }
 
         if batch.len() >= BATCH_SIZE {
-            let result = client.post(&json!({"type": "members", "data": batch})).await?;
+            let result = client
+                .post(&json!({"type": "members", "data": batch}))
+                .await?;
             let errs = result["errors"].as_u64().unwrap_or(0);
             count += batch.len() - errs as usize;
             errors += errs as usize;
@@ -117,7 +125,9 @@ pub async fn migrate(mongo_db: &Database, client: &CoralClient) -> Result<usize>
     }
 
     if !batch.is_empty() {
-        let result = client.post(&json!({"type": "members", "data": batch})).await?;
+        let result = client
+            .post(&json!({"type": "members", "data": batch}))
+            .await?;
         let errs = result["errors"].as_u64().unwrap_or(0);
         count += batch.len() - errs as usize;
         errors += errs as usize;

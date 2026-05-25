@@ -6,18 +6,16 @@ use database::BlacklistRepository;
 use serenity::all::*;
 
 use super::channel::COLOR_DANGER;
-use super::tag::get_rank;
 use super::reviews;
+use super::tag::get_rank;
 use crate::framework::{AccessRank, Data};
 use crate::utils::{format_uuid_dashed, separator, text};
 use coral_redis::BlacklistEvent;
 
 const QUALIFYING_TAGS: &[&str] = &["closet_cheater", "blatant_cheater", "confirmed_cheater"];
-const ALLOWED_MEDIA_EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "webp", "mp4", "webm", "mov",
-];
+const ALLOWED_MEDIA_EXTENSIONS: &[&str] =
+    &["png", "jpg", "jpeg", "gif", "webp", "mp4", "webm", "mov"];
 const MAX_EVIDENCE_MEDIA: u8 = 10;
-
 
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("confirm")
@@ -28,7 +26,6 @@ pub fn register() -> CreateCommand<'static> {
         )
 }
 
-
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
     command.defer_ephemeral(&ctx.http).await?;
 
@@ -36,11 +33,18 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     let rank = get_rank(data, discord_id).await?;
     if rank < AccessRank::Member {
         return crate::interact::send_deferred_error(
-            ctx, command, "Error", "Only members and above can use this command",
-        ).await;
+            ctx,
+            command,
+            "Error",
+            "Only members and above can use this command",
+        )
+        .await;
     }
 
-    let player_name = command.data.options().iter()
+    let player_name = command
+        .data
+        .options()
+        .iter()
         .find_map(|o| match (&*o.name, &o.value) {
             ("player", ResolvedValue::String(s)) => Some(*s),
             _ => None,
@@ -49,7 +53,10 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
 
     let player_info = match data.api.resolve(player_name).await {
         Ok(info) => info,
-        Err(_) => return crate::interact::send_deferred_error(ctx, command, "Error", "Player not found").await,
+        Err(_) => {
+            return crate::interact::send_deferred_error(ctx, command, "Error", "Player not found")
+                .await;
+        }
     };
 
     let repo = BlacklistRepository::new(data.db.pool());
@@ -57,31 +64,47 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
 
     if tags.iter().any(|t| t.tag_type == "confirmed_cheater") {
         return crate::interact::send_deferred_error(
-            ctx, command, "Error", "Player is already confirmed",
-        ).await;
+            ctx,
+            command,
+            "Error",
+            "Player is already confirmed",
+        )
+        .await;
     }
 
-    let Some(tag) = tags.iter().find(|t| t.tag_type == "closet_cheater" || t.tag_type == "blatant_cheater") else {
+    let Some(tag) = tags
+        .iter()
+        .find(|t| t.tag_type == "closet_cheater" || t.tag_type == "blatant_cheater")
+    else {
         return crate::interact::send_deferred_error(
-            ctx, command, "Error",
+            ctx,
+            command,
+            "Error",
             "Player must have a closet cheater or blatant cheater tag",
-        ).await;
+        )
+        .await;
     };
 
     if let Some(player) = repo.get_player(&player_info.uuid).await? {
         if let Some(thread_url) = &player.evidence_thread {
-            let emote = lookup_tag("confirmed_cheater").map(|d| d.emote).unwrap_or("");
-            command.edit_response(
-                &ctx.http,
-                EditInteractionResponse::new()
-                    .flags(MessageFlags::IS_COMPONENTS_V2)
-                    .components(vec![CreateComponent::Container(CreateContainer::new(
-                        vec![CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
-                            "## {} Evidence Already Exists\nPlayer: `{}`\nThread: {}",
-                            emote, player_info.username, thread_url
-                        )))],
-                    ))]),
-            ).await?;
+            let emote = lookup_tag("confirmed_cheater")
+                .map(|d| d.emote)
+                .unwrap_or("");
+            command
+                .edit_response(
+                    &ctx.http,
+                    EditInteractionResponse::new()
+                        .flags(MessageFlags::IS_COMPONENTS_V2)
+                        .components(vec![CreateComponent::Container(CreateContainer::new(
+                            vec![CreateContainerComponent::TextDisplay(
+                                CreateTextDisplay::new(format!(
+                                    "## {} Evidence Already Exists\nPlayer: `{}`\nThread: {}",
+                                    emote, player_info.username, thread_url
+                                )),
+                            )],
+                        ))]),
+                )
+                .await?;
             return Ok(());
         }
     }
@@ -93,7 +116,6 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     run_staff_confirm(ctx, command, data, &player_info, &tag.tag_type).await
 }
 
-
 async fn run_member_confirm(
     ctx: &Context,
     command: &CommandInteraction,
@@ -103,14 +125,22 @@ async fn run_member_confirm(
     tag: &database::PlayerTagRow,
 ) -> Result<()> {
     let thread_id = reviews::create_submission(
-        ctx, data, discord_id,
-        &player_info.username, &player_info.uuid,
-        &tag.tag_type, &tag.reason, false,
-    ).await?;
+        ctx,
+        data,
+        discord_id,
+        &player_info.username,
+        &player_info.uuid,
+        &tag.tag_type,
+        &tag.reason,
+        false,
+    )
+    .await?;
 
     reviews::spawn_submission_timeout(ctx.clone(), thread_id);
 
-    let emote = lookup_tag("confirmed_cheater").map(|d| d.emote).unwrap_or("");
+    let emote = lookup_tag("confirmed_cheater")
+        .map(|d| d.emote)
+        .unwrap_or("");
     command.edit_response(
         &ctx.http,
         EditInteractionResponse::new()
@@ -125,7 +155,6 @@ async fn run_member_confirm(
     Ok(())
 }
 
-
 async fn run_staff_confirm(
     ctx: &Context,
     command: &CommandInteraction,
@@ -135,13 +164,26 @@ async fn run_staff_confirm(
 ) -> Result<()> {
     let Some(forum_id) = data.evidence_forum_id else {
         return crate::interact::send_deferred_error(
-            ctx, command, "Error", "Evidence forum channel not configured",
-        ).await;
+            ctx,
+            command,
+            "Error",
+            "Evidence forum channel not configured",
+        )
+        .await;
     };
 
-    let thread_title = format!("{} | {}", player_info.username, format_uuid_dashed(&player_info.uuid));
+    let thread_title = format!(
+        "{} | {}",
+        player_info.username,
+        format_uuid_dashed(&player_info.uuid)
+    );
     let message_content = build_evidence_message(
-        &player_info.username, &player_info.uuid, original_type, &[], None, &HashMap::new(),
+        &player_info.username,
+        &player_info.uuid,
+        original_type,
+        &[],
+        None,
+        &HashMap::new(),
     );
 
     let thread = forum_id
@@ -162,29 +204,36 @@ async fn run_staff_confirm(
         thread.id.get(),
     );
     let repo = BlacklistRepository::new(data.db.pool());
-    repo.set_evidence_thread(&player_info.uuid, &thread_url).await?;
+    repo.set_evidence_thread(&player_info.uuid, &thread_url)
+        .await?;
 
-    let emote = lookup_tag("confirmed_cheater").map(|d| d.emote).unwrap_or("");
-    command.edit_response(
-        &ctx.http,
-        EditInteractionResponse::new()
-            .flags(MessageFlags::IS_COMPONENTS_V2)
-            .components(vec![CreateComponent::Container(CreateContainer::new(
-                vec![CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
-                    "## {} Evidence Post Created\nPlayer: `{}`\nThread: <#{}>",
-                    emote, player_info.username, thread.id.get()
-                )))],
-            ))]),
-    ).await?;
+    let emote = lookup_tag("confirmed_cheater")
+        .map(|d| d.emote)
+        .unwrap_or("");
+    command
+        .edit_response(
+            &ctx.http,
+            EditInteractionResponse::new()
+                .flags(MessageFlags::IS_COMPONENTS_V2)
+                .components(vec![CreateComponent::Container(CreateContainer::new(
+                    vec![CreateContainerComponent::TextDisplay(
+                        CreateTextDisplay::new(format!(
+                            "## {} Evidence Post Created\nPlayer: `{}`\nThread: <#{}>",
+                            emote,
+                            player_info.username,
+                            thread.id.get()
+                        )),
+                    )],
+                ))]),
+        )
+        .await?;
     Ok(())
 }
-
 
 #[derive(Debug, Clone)]
 struct EvidenceItem {
     filename: String,
 }
-
 
 struct EvidenceState {
     username: String,
@@ -193,7 +242,6 @@ struct EvidenceState {
     evidence: Vec<EvidenceItem>,
     review_url: Option<String>,
 }
-
 
 fn gallery_url_map(message: &Message) -> HashMap<String, String> {
     let Some(container) = message.components.iter().find_map(|c| match c {
@@ -225,13 +273,17 @@ fn gallery_url_map(message: &Message) -> HashMap<String, String> {
     map
 }
 
-
 fn attachment_id_from_cdn_url(url: &str) -> Option<AttachmentId> {
     let path = url.split("/attachments/").nth(1)?;
     let id_str = path.split('/').nth(1)?;
-    id_str.split('?').next().unwrap_or(id_str).parse::<u64>().ok().map(AttachmentId::new)
+    id_str
+        .split('?')
+        .next()
+        .unwrap_or(id_str)
+        .parse::<u64>()
+        .ok()
+        .map(AttachmentId::new)
 }
-
 
 fn url_extension(url: &str) -> &str {
     url.rsplit('/')
@@ -245,7 +297,6 @@ fn url_extension(url: &str) -> &str {
         .unwrap_or("png")
 }
 
-
 fn build_evidence_message(
     username: &str,
     uuid: &str,
@@ -254,8 +305,12 @@ fn build_evidence_message(
     review_thread_url: Option<&str>,
     gallery_urls: &HashMap<String, String>,
 ) -> Vec<CreateComponent<'static>> {
-    let emote = lookup_tag("confirmed_cheater").map(|d| d.emote).unwrap_or("");
-    let original_display = lookup_tag(original_type).map(|d| d.display_name).unwrap_or(original_type);
+    let emote = lookup_tag("confirmed_cheater")
+        .map(|d| d.emote)
+        .unwrap_or("");
+    let original_display = lookup_tag(original_type)
+        .map(|d| d.display_name)
+        .unwrap_or(original_type);
     let dashed_uuid = format_uuid_dashed(uuid);
 
     let mut header = format!(
@@ -281,7 +336,9 @@ fn build_evidence_message(
                 CreateMediaGalleryItem::new(CreateUnfurledMediaItem::new(url))
             })
             .collect();
-        parts.push(CreateContainerComponent::MediaGallery(CreateMediaGallery::new(gallery_items)));
+        parts.push(CreateContainerComponent::MediaGallery(
+            CreateMediaGallery::new(gallery_items),
+        ));
     }
 
     parts.push(separator());
@@ -292,33 +349,44 @@ fn build_evidence_message(
             .enumerate()
             .map(|(i, e)| CreateSelectMenuOption::new(e.filename.clone(), i.to_string()))
             .collect();
-        parts.push(CreateContainerComponent::ActionRow(CreateActionRow::SelectMenu(
-            CreateSelectMenu::new(
-                "evidence_remove",
-                CreateSelectMenuKind::String { options: options.into() },
-            )
-            .placeholder("Remove evidence..."),
-        )));
+        parts.push(CreateContainerComponent::ActionRow(
+            CreateActionRow::SelectMenu(
+                CreateSelectMenu::new(
+                    "evidence_remove",
+                    CreateSelectMenuKind::String {
+                        options: options.into(),
+                    },
+                )
+                .placeholder("Remove evidence..."),
+            ),
+        ));
     }
 
-    parts.push(CreateContainerComponent::ActionRow(CreateActionRow::Buttons(
-        vec![
-            CreateButton::new("evidence_add_media").label("Add Media").style(ButtonStyle::Secondary),
-            CreateButton::new("evidence_archive").label("Archive").style(ButtonStyle::Danger),
-        ]
-        .into(),
-    )));
+    parts.push(CreateContainerComponent::ActionRow(
+        CreateActionRow::Buttons(
+            vec![
+                CreateButton::new("evidence_add_media")
+                    .label("Add Media")
+                    .style(ButtonStyle::Secondary),
+                CreateButton::new("evidence_archive")
+                    .label("Archive")
+                    .style(ButtonStyle::Danger),
+            ]
+            .into(),
+        ),
+    ));
 
     vec![CreateComponent::Container(CreateContainer::new(parts))]
 }
-
 
 fn build_archived_evidence_message(
     state: &EvidenceState,
     reverted_display: &str,
     gallery_urls: &HashMap<String, String>,
 ) -> Vec<CreateComponent<'static>> {
-    let emote = lookup_tag("confirmed_cheater").map(|d| d.emote).unwrap_or("");
+    let emote = lookup_tag("confirmed_cheater")
+        .map(|d| d.emote)
+        .unwrap_or("");
     let dashed_uuid = format_uuid_dashed(&state.uuid);
 
     let mut header = format!(
@@ -345,14 +413,17 @@ fn build_archived_evidence_message(
                 CreateMediaGalleryItem::new(CreateUnfurledMediaItem::new(url))
             })
             .collect();
-        parts.push(CreateContainerComponent::MediaGallery(CreateMediaGallery::new(gallery_items)));
+        parts.push(CreateContainerComponent::MediaGallery(
+            CreateMediaGallery::new(gallery_items),
+        ));
     }
 
     parts.push(separator());
 
-    vec![CreateComponent::Container(CreateContainer::new(parts).accent_color(COLOR_DANGER))]
+    vec![CreateComponent::Container(
+        CreateContainer::new(parts).accent_color(COLOR_DANGER),
+    )]
 }
-
 
 fn parse_state_from_message(message: &Message) -> Option<EvidenceState> {
     let container = message.components.iter().find_map(|c| match c {
@@ -372,7 +443,10 @@ fn parse_state_from_message(message: &Message) -> Option<EvidenceState> {
                 let content = td.content.as_deref().unwrap_or("");
                 for line in content.lines() {
                     if line.starts_with("UUID: `") {
-                        uuid = line.trim_start_matches("UUID: `").trim_end_matches('`').replace('-', "");
+                        uuid = line
+                            .trim_start_matches("UUID: `")
+                            .trim_end_matches('`')
+                            .replace('-', "");
                     }
                     if let Some(name_part) = line.strip_prefix("## ") {
                         if let Some(after_dash) = name_part.split(" — `").nth(1) {
@@ -392,13 +466,18 @@ fn parse_state_from_message(message: &Message) -> Option<EvidenceState> {
             }
             ContainerComponent::MediaGallery(gallery) => {
                 for item in &*gallery.items {
-                    let url = item.media.proxy_url.as_ref()
+                    let url = item
+                        .media
+                        .proxy_url
+                        .as_ref()
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| item.media.url.to_string());
                     if !url.is_empty() {
                         let filename = url.rsplit('/').next().unwrap_or("evidence.png");
                         let filename = filename.split('?').next().unwrap_or(filename);
-                        evidence.push(EvidenceItem { filename: filename.to_string() });
+                        evidence.push(EvidenceItem {
+                            filename: filename.to_string(),
+                        });
                     }
                 }
             }
@@ -410,15 +489,16 @@ fn parse_state_from_message(message: &Message) -> Option<EvidenceState> {
         return None;
     }
 
-    Some(EvidenceState { username, uuid, original_type, evidence, review_url })
+    Some(EvidenceState {
+        username,
+        uuid,
+        original_type,
+        evidence,
+        review_url,
+    })
 }
 
-
-async fn try_convert_to_confirmed(
-    data: &Data,
-    state: &EvidenceState,
-    actor_id: u64,
-) -> Result<()> {
+async fn try_convert_to_confirmed(data: &Data, state: &EvidenceState, actor_id: u64) -> Result<()> {
     if state.original_type.is_empty() || state.original_type == "confirmed_cheater" {
         return Ok(());
     }
@@ -445,7 +525,6 @@ async fn try_convert_to_confirmed(
     Ok(())
 }
 
-
 pub async fn handle_add_media(
     ctx: &Context,
     component: &ComponentInteraction,
@@ -454,14 +533,17 @@ pub async fn handle_add_media(
     let upload = CreateFileUpload::new("evidence")
         .max_values(MAX_EVIDENCE_MEDIA)
         .required(true);
-    let modal = CreateModal::new("evidence_media_modal", "Upload Evidence")
-        .components(vec![CreateModalComponent::Label(
-            CreateLabel::file_upload("Evidence screenshots or clips", upload),
-        )]);
-    component.create_response(&ctx.http, CreateInteractionResponse::Modal(modal)).await?;
+    let modal = CreateModal::new("evidence_media_modal", "Upload Evidence").components(vec![
+        CreateModalComponent::Label(CreateLabel::file_upload(
+            "Evidence screenshots or clips",
+            upload,
+        )),
+    ]);
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Modal(modal))
+        .await?;
     Ok(())
 }
-
 
 pub async fn handle_media_modal(
     ctx: &Context,
@@ -489,20 +571,35 @@ pub async fn handle_media_modal(
         return Ok(());
     }
 
-    modal.edit_response(&ctx.http, EditInteractionResponse::new().content("Downloading files...")).await?;
+    modal
+        .edit_response(
+            &ctx.http,
+            EditInteractionResponse::new().content("Downloading files..."),
+        )
+        .await?;
 
     let channel_id = modal.channel_id;
     let builder_msg_id = MessageId::new(channel_id.get());
-    let Ok(builder_msg) = ctx.http.get_message(channel_id.into(), builder_msg_id).await else {
+    let Ok(builder_msg) = ctx
+        .http
+        .get_message(channel_id.into(), builder_msg_id)
+        .await
+    else {
         modal
-            .edit_response(&ctx.http, EditInteractionResponse::new().content("Could not find the evidence message"))
+            .edit_response(
+                &ctx.http,
+                EditInteractionResponse::new().content("Could not find the evidence message"),
+            )
             .await?;
         return Ok(());
     };
 
     let Some(mut state) = parse_state_from_message(&builder_msg) else {
         modal
-            .edit_response(&ctx.http, EditInteractionResponse::new().content("Could not parse evidence state"))
+            .edit_response(
+                &ctx.http,
+                EditInteractionResponse::new().content("Could not parse evidence state"),
+            )
             .await?;
         return Ok(());
     };
@@ -512,7 +609,9 @@ pub async fn handle_media_modal(
     let mut rejected = 0usize;
 
     for (i, att_id) in attachment_ids.iter().enumerate() {
-        let Some(attachment) = modal.data.resolved.attachments.get(att_id) else { continue };
+        let Some(attachment) = modal.data.resolved.attachments.get(att_id) else {
+            continue;
+        };
         let ext = url_extension(&attachment.filename).to_ascii_lowercase();
         if !ALLOWED_MEDIA_EXTENSIONS.contains(&ext.as_str()) {
             rejected += 1;
@@ -535,8 +634,9 @@ pub async fn handle_media_modal(
         modal
             .edit_response(
                 &ctx.http,
-                EditInteractionResponse::new()
-                    .content("Only images and videos are accepted (png, jpg, gif, webp, mp4, webm, mov)"),
+                EditInteractionResponse::new().content(
+                    "Only images and videos are accepted (png, jpg, gif, webp, mp4, webm, mov)",
+                ),
             )
             .await?;
         return Ok(());
@@ -544,8 +644,12 @@ pub async fn handle_media_modal(
 
     let urls = gallery_url_map(&builder_msg);
     let components = build_evidence_message(
-        &state.username, &state.uuid, &state.original_type,
-        &state.evidence, state.review_url.as_deref(), &urls,
+        &state.username,
+        &state.uuid,
+        &state.original_type,
+        &state.evidence,
+        state.review_url.as_deref(),
+        &urls,
     );
 
     let mut attachments = EditAttachments::new();
@@ -558,7 +662,12 @@ pub async fn handle_media_modal(
         attachments = attachments.add(f);
     }
 
-    modal.edit_response(&ctx.http, EditInteractionResponse::new().content("Uploading evidence...")).await?;
+    modal
+        .edit_response(
+            &ctx.http,
+            EditInteractionResponse::new().content("Uploading evidence..."),
+        )
+        .await?;
 
     let edit = EditMessage::new()
         .content("")
@@ -566,7 +675,11 @@ pub async fn handle_media_modal(
         .components(components)
         .attachments(attachments);
 
-    match ctx.http.edit_message(channel_id.into(), builder_msg.id, &edit, files).await {
+    match ctx
+        .http
+        .edit_message(channel_id.into(), builder_msg.id, &edit, files)
+        .await
+    {
         Ok(_) => {
             if existing_count == 0 {
                 try_convert_to_confirmed(data, &state, modal.user.id.get()).await?;
@@ -579,12 +692,13 @@ pub async fn handle_media_modal(
             } else {
                 "Failed to upload evidence. Please try again."
             };
-            modal.edit_response(&ctx.http, EditInteractionResponse::new().content(msg)).await?;
+            modal
+                .edit_response(&ctx.http, EditInteractionResponse::new().content(msg))
+                .await?;
         }
     }
     Ok(())
 }
-
 
 pub async fn handle_remove(
     ctx: &Context,
@@ -595,8 +709,12 @@ pub async fn handle_remove(
     let rank = get_rank(data, discord_id).await?;
     if rank < AccessRank::Helper {
         return crate::interact::send_component_error(
-            ctx, component, "Error", "Only helpers and above can remove evidence",
-        ).await;
+            ctx,
+            component,
+            "Error",
+            "Only helpers and above can remove evidence",
+        )
+        .await;
     }
 
     let idx: usize = match &component.data.kind {
@@ -608,20 +726,32 @@ pub async fn handle_remove(
 
     let channel_id = component.channel_id;
     let builder_msg_id = MessageId::new(channel_id.get());
-    let Ok(builder_msg) = ctx.http.get_message(channel_id.into(), builder_msg_id).await else {
+    let Ok(builder_msg) = ctx
+        .http
+        .get_message(channel_id.into(), builder_msg_id)
+        .await
+    else {
         return Ok(());
     };
 
     let Some(mut state) = parse_state_from_message(&builder_msg) else {
         return crate::interact::send_component_error(
-            ctx, component, "Error", "Could not parse evidence state",
-        ).await;
+            ctx,
+            component,
+            "Error",
+            "Could not parse evidence state",
+        )
+        .await;
     };
 
     if idx >= state.evidence.len() {
         return crate::interact::send_component_error(
-            ctx, component, "Error", "Invalid evidence index",
-        ).await;
+            ctx,
+            component,
+            "Error",
+            "Invalid evidence index",
+        )
+        .await;
     }
 
     let removed_filename = state.evidence.remove(idx).filename;
@@ -629,8 +759,12 @@ pub async fn handle_remove(
     urls.remove(&removed_filename);
 
     let components = build_evidence_message(
-        &state.username, &state.uuid, &state.original_type,
-        &state.evidence, state.review_url.as_deref(), &urls,
+        &state.username,
+        &state.uuid,
+        &state.original_type,
+        &state.evidence,
+        state.review_url.as_deref(),
+        &urls,
     );
 
     let mut attachments = EditAttachments::new();
@@ -646,13 +780,19 @@ pub async fn handle_remove(
         .components(components)
         .attachments(attachments);
 
-    component.create_response(&ctx.http, CreateInteractionResponse::Acknowledge).await?;
-    ctx.http.edit_message(channel_id.into(), builder_msg_id, &edit, Vec::new()).await?;
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await?;
+    ctx.http
+        .edit_message(channel_id.into(), builder_msg_id, &edit, Vec::new())
+        .await?;
     Ok(())
 }
 
-
-async fn revert_from_confirmed(repo: &BlacklistRepository<'_>, state: &EvidenceState) -> Result<()> {
+async fn revert_from_confirmed(
+    repo: &BlacklistRepository<'_>,
+    state: &EvidenceState,
+) -> Result<()> {
     if state.original_type.is_empty() || state.original_type == "confirmed_cheater" {
         return Ok(());
     }
@@ -661,15 +801,19 @@ async fn revert_from_confirmed(repo: &BlacklistRepository<'_>, state: &EvidenceS
     }
     let tags = repo.get_tags(&state.uuid).await?;
     if let Some(confirmed_tag) = tags.iter().find(|t| t.tag_type == "confirmed_cheater") {
-        repo.revert_tag_from_confirmed(confirmed_tag.id, &state.original_type).await?;
+        repo.revert_tag_from_confirmed(confirmed_tag.id, &state.original_type)
+            .await?;
     }
     Ok(())
 }
 
-
 pub async fn archive_evidence_by_url(ctx: &Context, data: &Data, thread_url: &str) -> Result<()> {
-    let Some(id_str) = thread_url.rsplit('/').next() else { return Ok(()) };
-    let Ok(id) = id_str.parse::<u64>() else { return Ok(()) };
+    let Some(id_str) = thread_url.rsplit('/').next() else {
+        return Ok(());
+    };
+    let Ok(id) = id_str.parse::<u64>() else {
+        return Ok(());
+    };
 
     let thread_id = ThreadId::new(id);
     let channel_id: GenericChannelId = thread_id.into();
@@ -693,13 +837,21 @@ pub async fn archive_evidence_by_url(ctx: &Context, data: &Data, thread_url: &st
     let urls = gallery_url_map(&builder_msg);
     let edit = EditMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(build_archived_evidence_message(&state, reverted_display, &urls));
+        .components(build_archived_evidence_message(
+            &state,
+            reverted_display,
+            &urls,
+        ));
 
-    let _ = ctx.http.edit_message(channel_id, builder_msg_id, &edit, Vec::new()).await;
-    let _ = thread_id.edit(&ctx.http, EditThread::new().archived(true).locked(true)).await;
+    let _ = ctx
+        .http
+        .edit_message(channel_id, builder_msg_id, &edit, Vec::new())
+        .await;
+    let _ = thread_id
+        .edit(&ctx.http, EditThread::new().archived(true).locked(true))
+        .await;
     Ok(())
 }
-
 
 pub async fn handle_archive(
     ctx: &Context,
@@ -710,14 +862,22 @@ pub async fn handle_archive(
     let rank = get_rank(data, discord_id).await?;
     if rank < AccessRank::Helper {
         return crate::interact::send_component_error(
-            ctx, component, "Error", "Only helpers and above can archive evidence",
-        ).await;
+            ctx,
+            component,
+            "Error",
+            "Only helpers and above can archive evidence",
+        )
+        .await;
     }
 
     let Some(state) = parse_state_from_message(&*component.message) else {
         return crate::interact::send_component_error(
-            ctx, component, "Error", "Could not parse evidence state",
-        ).await;
+            ctx,
+            component,
+            "Error",
+            "Could not parse evidence state",
+        )
+        .await;
     };
 
     let repo = BlacklistRepository::new(data.db.pool());
@@ -735,19 +895,27 @@ pub async fn handle_archive(
             CreateInteractionResponse::UpdateMessage(
                 CreateInteractionResponseMessage::new()
                     .flags(MessageFlags::IS_COMPONENTS_V2)
-                    .components(build_archived_evidence_message(&state, reverted_display, &urls)),
+                    .components(build_archived_evidence_message(
+                        &state,
+                        reverted_display,
+                        &urls,
+                    )),
             ),
         )
         .await?;
 
     let thread_id = ThreadId::new(component.channel_id.get());
-    let _ = thread_id.edit(&ctx.http, EditThread::new().archived(true).locked(true)).await;
+    let _ = thread_id
+        .edit(&ctx.http, EditThread::new().archived(true).locked(true))
+        .await;
     Ok(())
 }
 
-
 fn collect_attachment_urls(message: &Message) -> Vec<(String, String)> {
-    let direct = message.attachments.iter().map(|a| (a.url.to_string(), a.filename.to_string()));
+    let direct = message
+        .attachments
+        .iter()
+        .map(|a| (a.url.to_string(), a.filename.to_string()));
     let forwarded = message
         .message_snapshots
         .iter()
@@ -755,7 +923,6 @@ fn collect_attachment_urls(message: &Message) -> Vec<(String, String)> {
         .map(|a| (a.url.to_string(), a.filename.to_string()));
     direct.chain(forwarded).collect()
 }
-
 
 pub async fn handle_attachment_message(
     ctx: &Context,
@@ -767,7 +934,9 @@ pub async fn handle_attachment_message(
         return Ok(());
     }
 
-    let Some(evidence_forum_id) = data.evidence_forum_id else { return Ok(()) };
+    let Some(evidence_forum_id) = data.evidence_forum_id else {
+        return Ok(());
+    };
 
     let channel_id = message.channel_id;
     let channel = ctx.http.get_channel(channel_id.into()).await?;
@@ -783,8 +952,15 @@ pub async fn handle_attachment_message(
     }
 
     let builder_msg_id = MessageId::new(channel_id.get());
-    let Ok(builder_msg) = ctx.http.get_message(channel_id.into(), builder_msg_id).await else {
-        tracing::warn!("Evidence: could not fetch builder message for thread {}", channel_id);
+    let Ok(builder_msg) = ctx
+        .http
+        .get_message(channel_id.into(), builder_msg_id)
+        .await
+    else {
+        tracing::warn!(
+            "Evidence: could not fetch builder message for thread {}",
+            channel_id
+        );
         return Ok(());
     };
 
@@ -807,8 +983,12 @@ pub async fn handle_attachment_message(
 
     let urls = gallery_url_map(&builder_msg);
     let components = build_evidence_message(
-        &state.username, &state.uuid, &state.original_type,
-        &state.evidence, state.review_url.as_deref(), &urls,
+        &state.username,
+        &state.uuid,
+        &state.original_type,
+        &state.evidence,
+        state.review_url.as_deref(),
+        &urls,
     );
 
     let mut attachments = EditAttachments::new();
@@ -826,7 +1006,9 @@ pub async fn handle_attachment_message(
         .components(components)
         .attachments(attachments);
 
-    ctx.http.edit_message(channel_id.into(), builder_msg.id, &edit, files).await?;
+    ctx.http
+        .edit_message(channel_id.into(), builder_msg.id, &edit, files)
+        .await?;
 
     if existing_count == 0 {
         try_convert_to_confirmed(data, &state, message.author.id.get()).await?;
@@ -835,7 +1017,6 @@ pub async fn handle_attachment_message(
     let _ = message.delete(&ctx.http, None).await;
     Ok(())
 }
-
 
 pub async fn create_evidence_from_review(
     ctx: &Context,
@@ -877,8 +1058,14 @@ pub async fn create_evidence_from_review(
 
     let thread_title = format!("{} | {}", username, format_uuid_dashed(uuid));
     let no_urls = HashMap::new();
-    let initial_components =
-        build_evidence_message(username, uuid, original_type, &[], review_thread_url, &no_urls);
+    let initial_components = build_evidence_message(
+        username,
+        uuid,
+        original_type,
+        &[],
+        review_thread_url,
+        &no_urls,
+    );
 
     let thread = forum_id
         .create_forum_post(
@@ -905,14 +1092,25 @@ pub async fn create_evidence_from_review(
             .content("")
             .flags(MessageFlags::IS_COMPONENTS_V2)
             .components(build_evidence_message(
-                username, uuid, original_type, &evidence, review_thread_url, &no_urls,
+                username,
+                uuid,
+                original_type,
+                &evidence,
+                review_thread_url,
+                &no_urls,
             ))
             .attachments(att);
 
-        ctx.http.edit_message(channel_id, builder_msg_id, &edit, files).await?;
+        ctx.http
+            .edit_message(channel_id, builder_msg_id, &edit, files)
+            .await?;
     }
 
-    let thread_url = format!("https://discord.com/channels/{}/{}", guild_id, thread.id.get());
+    let thread_url = format!(
+        "https://discord.com/channels/{}/{}",
+        guild_id,
+        thread.id.get()
+    );
     repo.set_evidence_thread(uuid, &thread_url).await?;
 
     if !already_confirmed {

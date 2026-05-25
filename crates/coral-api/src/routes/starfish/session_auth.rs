@@ -9,14 +9,12 @@ use crate::{error::ApiError, state::AppState};
 
 use super::auth::{SESSION_MAX_LIFETIME_DAYS, SESSION_SLIDING_HOURS, validate_hwid};
 
-
 #[derive(Clone)]
 pub struct AuthenticatedStarfishUser {
     pub user: StarfishUser,
     pub session_token: String,
     pub hwid: String,
 }
-
 
 pub async fn require_starfish_session(
     State(state): State<AppState>,
@@ -33,14 +31,18 @@ pub async fn require_starfish_session(
 
     let repo = StarfishRepository::new(state.db.pool());
 
-    let session = repo.get_session_by_token(&token).await?
+    let session = repo
+        .get_session_by_token(&token)
+        .await?
         .ok_or_else(|| ApiError::Unauthorized("invalid_session".into()))?;
 
     if Utc::now() > session.expires_at {
         return Err(ApiError::Unauthorized("invalid_session".into()));
     }
 
-    let hwid_record = repo.get_hwid_by_id(session.hwid_id).await?
+    let hwid_record = repo
+        .get_hwid_by_id(session.hwid_id)
+        .await?
         .ok_or_else(|| ApiError::Unauthorized("invalid_session".into()))?;
 
     if hwid_record.hwid_hash != hwid {
@@ -52,25 +54,32 @@ pub async fn require_starfish_session(
         return Err(ApiError::Unauthorized("invalid_session".into()));
     }
 
-    let user = repo.get_user_by_id(session.user_id).await?
+    let user = repo
+        .get_user_by_id(session.user_id)
+        .await?
         .ok_or_else(|| ApiError::Internal("session references missing user".into()))?;
 
     if user.license_status != "active" {
         return Err(ApiError::Forbidden("license_inactive".into()));
     }
 
-    repo.update_heartbeat_sliding(&token, SESSION_SLIDING_HOURS, SESSION_MAX_LIFETIME_DAYS).await.ok();
+    repo.update_heartbeat_sliding(&token, SESSION_SLIDING_HOURS, SESSION_MAX_LIFETIME_DAYS)
+        .await
+        .ok();
 
     request.extensions_mut().insert(AuthenticatedStarfishUser {
-        user, session_token: token, hwid,
+        user,
+        session_token: token,
+        hwid,
     });
 
     Ok(next.run(request).await)
 }
 
-
 fn header(request: &Request, name: &str) -> Result<String, ApiError> {
-    request.headers().get(name)
+    request
+        .headers()
+        .get(name)
         .and_then(|v| v.to_str().ok())
         .map(String::from)
         .ok_or_else(|| ApiError::Unauthorized(format!("missing {name}")))

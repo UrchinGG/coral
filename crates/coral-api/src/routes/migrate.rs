@@ -9,13 +9,11 @@ use crate::state::AppState;
 
 const MAX_BODY_SIZE: usize = 50 * 1024 * 1024;
 
-
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/migrate", post(migrate))
         .layer(DefaultBodyLimit::max(MAX_BODY_SIZE))
 }
-
 
 #[derive(Deserialize)]
 #[serde(tag = "type")]
@@ -89,7 +87,6 @@ struct Result {
     errors: usize,
 }
 
-
 async fn migrate(
     State(state): State<AppState>,
     Json(payload): Json<Payload>,
@@ -107,44 +104,64 @@ async fn migrate(
     }
 }
 
-
 async fn wipe_members(pool: &sqlx::PgPool) -> std::result::Result<Json<Result>, ApiError> {
     let alts = sqlx::query("DELETE FROM minecraft_accounts")
-        .execute(pool).await?.rows_affected();
+        .execute(pool)
+        .await?
+        .rows_affected();
     let members = sqlx::query("DELETE FROM members")
-        .execute(pool).await?.rows_affected();
+        .execute(pool)
+        .await?
+        .rows_affected();
 
     let total = (members + alts) as usize;
     info!("Wiped members: {members} members, {alts} alts");
-    Ok(Json(Result { migrated: total, errors: 0 }))
+    Ok(Json(Result {
+        migrated: total,
+        errors: 0,
+    }))
 }
-
 
 async fn wipe_cache(pool: &sqlx::PgPool) -> std::result::Result<Json<Result>, ApiError> {
     let snapshots = sqlx::query("DELETE FROM player_snapshots")
-        .execute(pool).await?.rows_affected();
+        .execute(pool)
+        .await?
+        .rows_affected();
     let sessions = sqlx::query("DELETE FROM session_markers")
-        .execute(pool).await?.rows_affected();
+        .execute(pool)
+        .await?
+        .rows_affected();
 
     let total = (snapshots + sessions) as usize;
     info!("Wiped cache: {snapshots} snapshots, {sessions} session markers");
-    Ok(Json(Result { migrated: total, errors: 0 }))
+    Ok(Json(Result {
+        migrated: total,
+        errors: 0,
+    }))
 }
-
 
 async fn wipe_blacklist(pool: &sqlx::PgPool) -> std::result::Result<Json<Result>, ApiError> {
     let tags = sqlx::query("DELETE FROM player_tags")
-        .execute(pool).await?.rows_affected();
+        .execute(pool)
+        .await?
+        .rows_affected();
     let players = sqlx::query("DELETE FROM blacklist_players")
-        .execute(pool).await?.rows_affected();
+        .execute(pool)
+        .await?
+        .rows_affected();
 
     let total = (players + tags) as usize;
     info!("Wiped blacklist: {players} players, {tags} tags");
-    Ok(Json(Result { migrated: total, errors: 0 }))
+    Ok(Json(Result {
+        migrated: total,
+        errors: 0,
+    }))
 }
 
-
-async fn migrate_members(pool: &sqlx::PgPool, data: &[MemberPayload]) -> std::result::Result<Json<Result>, ApiError> {
+async fn migrate_members(
+    pool: &sqlx::PgPool,
+    data: &[MemberPayload],
+) -> std::result::Result<Json<Result>, ApiError> {
     let mut migrated = 0;
     let mut errors = 0;
 
@@ -161,8 +178,10 @@ async fn migrate_members(pool: &sqlx::PgPool, data: &[MemberPayload]) -> std::re
     Ok(Json(Result { migrated, errors }))
 }
 
-
-async fn migrate_blacklist(pool: &sqlx::PgPool, data: &[BlacklistPayload]) -> std::result::Result<Json<Result>, ApiError> {
+async fn migrate_blacklist(
+    pool: &sqlx::PgPool,
+    data: &[BlacklistPayload],
+) -> std::result::Result<Json<Result>, ApiError> {
     let mut migrated = 0;
     let mut errors = 0;
 
@@ -179,8 +198,10 @@ async fn migrate_blacklist(pool: &sqlx::PgPool, data: &[BlacklistPayload]) -> st
     Ok(Json(Result { migrated, errors }))
 }
 
-
-async fn migrate_snapshots(pool: &sqlx::PgPool, data: &[SnapshotPayload]) -> std::result::Result<Json<Result>, ApiError> {
+async fn migrate_snapshots(
+    pool: &sqlx::PgPool,
+    data: &[SnapshotPayload],
+) -> std::result::Result<Json<Result>, ApiError> {
     let mut migrated = 0;
     let mut errors = 0;
 
@@ -198,9 +219,13 @@ async fn migrate_snapshots(pool: &sqlx::PgPool, data: &[SnapshotPayload]) -> std
     Ok(Json(Result { migrated, errors }))
 }
 
-
-async fn insert_member(pool: &sqlx::PgPool, m: &MemberPayload) -> std::result::Result<(), sqlx::Error> {
-    let join_date = m.join_date.as_ref()
+async fn insert_member(
+    pool: &sqlx::PgPool,
+    m: &MemberPayload,
+) -> std::result::Result<(), sqlx::Error> {
+    let join_date = m
+        .join_date
+        .as_ref()
         .and_then(|s| {
             chrono::DateTime::parse_from_rfc3339(s)
                 .inspect_err(|e| warn!("Bad join_date '{}' for member {}: {e}", s, m.discord_id))
@@ -236,9 +261,13 @@ async fn insert_member(pool: &sqlx::PgPool, m: &MemberPayload) -> std::result::R
     Ok(())
 }
 
-
-async fn insert_blacklist_player(pool: &sqlx::PgPool, p: &BlacklistPayload) -> std::result::Result<(), sqlx::Error> {
-    let locked_at = p.locked_at.as_ref()
+async fn insert_blacklist_player(
+    pool: &sqlx::PgPool,
+    p: &BlacklistPayload,
+) -> std::result::Result<(), sqlx::Error> {
+    let locked_at = p
+        .locked_at
+        .as_ref()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&chrono::Utc));
 
@@ -258,10 +287,14 @@ async fn insert_blacklist_player(pool: &sqlx::PgPool, p: &BlacklistPayload) -> s
     .fetch_one(pool).await?;
 
     sqlx::query("DELETE FROM player_tags WHERE player_id = $1")
-        .bind(player_id).execute(pool).await?;
+        .bind(player_id)
+        .execute(pool)
+        .await?;
 
     for tag in &p.tags {
-        let added_on = tag.added_on.as_ref()
+        let added_on = tag
+            .added_on
+            .as_ref()
             .and_then(|s| {
                 chrono::DateTime::parse_from_rfc3339(s)
                     .inspect_err(|e| warn!("Bad added_on '{}' for player {}: {e}", s, p.uuid))
@@ -280,8 +313,10 @@ async fn insert_blacklist_player(pool: &sqlx::PgPool, p: &BlacklistPayload) -> s
     Ok(())
 }
 
-
-async fn insert_snapshot_batch(pool: &sqlx::PgPool, batch: &[SnapshotPayload]) -> std::result::Result<usize, sqlx::Error> {
+async fn insert_snapshot_batch(
+    pool: &sqlx::PgPool,
+    batch: &[SnapshotPayload],
+) -> std::result::Result<usize, sqlx::Error> {
     if batch.is_empty() {
         return Ok(0);
     }
@@ -292,11 +327,17 @@ async fn insert_snapshot_batch(pool: &sqlx::PgPool, batch: &[SnapshotPayload]) -
     );
 
     for (i, _) in batch.iter().enumerate() {
-        if i > 0 { query.push(','); }
+        if i > 0 {
+            query.push(',');
+        }
         let base = i * params_per_row;
         query.push_str(&format!(
             "(${}, ${}, 'migration', ${}, ${}, ${})",
-            base + 1, base + 2, base + 3, base + 4, base + 5
+            base + 1,
+            base + 2,
+            base + 3,
+            base + 4,
+            base + 5
         ));
     }
 
@@ -304,7 +345,9 @@ async fn insert_snapshot_batch(pool: &sqlx::PgPool, batch: &[SnapshotPayload]) -
 
     let mut bound = sqlx::query(&query);
     for snap in batch {
-        let ts = snap.timestamp.parse::<chrono::DateTime<chrono::Utc>>()
+        let ts = snap
+            .timestamp
+            .parse::<chrono::DateTime<chrono::Utc>>()
             .unwrap_or_else(|_| chrono::Utc::now());
         bound = bound
             .bind(&snap.uuid)
@@ -318,23 +361,31 @@ async fn insert_snapshot_batch(pool: &sqlx::PgPool, batch: &[SnapshotPayload]) -
     Ok(batch.len())
 }
 
-
-async fn replace_snapshots(pool: &sqlx::PgPool, data: &[SnapshotPayload]) -> std::result::Result<Json<Result>, ApiError> {
+async fn replace_snapshots(
+    pool: &sqlx::PgPool,
+    data: &[SnapshotPayload],
+) -> std::result::Result<Json<Result>, ApiError> {
     let mut uuids: Vec<String> = data.iter().map(|s| s.uuid.clone()).collect();
     uuids.sort();
     uuids.dedup();
 
     let mut deleted = 0u64;
     for uuid in &uuids {
-        deleted += sqlx::query("DELETE FROM player_snapshots WHERE uuid = $1 AND source != 'migration'")
-            .bind(uuid)
-            .execute(pool)
-            .await
-            .map_err(|e| ApiError::Internal(format!("failed to delete snapshots for {uuid}: {e}")))?
-            .rows_affected();
+        deleted +=
+            sqlx::query("DELETE FROM player_snapshots WHERE uuid = $1 AND source != 'migration'")
+                .bind(uuid)
+                .execute(pool)
+                .await
+                .map_err(|e| {
+                    ApiError::Internal(format!("failed to delete snapshots for {uuid}: {e}"))
+                })?
+                .rows_affected();
     }
 
-    info!("Deleted {deleted} non-migration snapshots for {} players", uuids.len());
+    info!(
+        "Deleted {deleted} non-migration snapshots for {} players",
+        uuids.len()
+    );
 
     let mut total = 0;
     let mut errors = 0;
@@ -349,5 +400,8 @@ async fn replace_snapshots(pool: &sqlx::PgPool, data: &[SnapshotPayload]) -> std
     }
 
     info!("Inserted {total} migration snapshots ({errors} errors)");
-    Ok(Json(Result { migrated: total, errors }))
+    Ok(Json(Result {
+        migrated: total,
+        errors,
+    }))
 }

@@ -8,7 +8,6 @@ pub enum AccessRank {
     Owner = 5,
 }
 
-
 impl AccessRank {
     pub fn from_level(level: i16) -> Self {
         match level {
@@ -21,7 +20,9 @@ impl AccessRank {
         }
     }
 
-    pub fn to_level(self) -> i16 { self as i16 }
+    pub fn to_level(self) -> i16 {
+        self as i16
+    }
 
     pub fn label(self) -> &'static str {
         match self {

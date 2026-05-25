@@ -10,19 +10,25 @@ use database::CacheRepository;
 use hypixel::parsing::winstreaks;
 use hypixel::{Mode, extract_winstreak_snapshot};
 
-use crate::{error::ApiError, routes::{player, session}, state::AppState};
-
+use crate::{
+    error::ApiError,
+    routes::{player, session},
+    state::AppState,
+};
 
 const MODES: [Mode; 7] = [
-    Mode::Overall, Mode::Solos, Mode::Doubles,
-    Mode::Threes, Mode::Fours, Mode::FourVFour, Mode::Core,
+    Mode::Overall,
+    Mode::Solos,
+    Mode::Doubles,
+    Mode::Threes,
+    Mode::Fours,
+    Mode::FourVFour,
+    Mode::Core,
 ];
-
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/player/winstreaks", get(player_winstreaks))
 }
-
 
 #[derive(Serialize, ToSchema)]
 pub struct WinstreakResponse {
@@ -31,7 +37,6 @@ pub struct WinstreakResponse {
     pub modes: HashMap<String, Vec<StreakEntry>>,
 }
 
-
 #[derive(Serialize, ToSchema)]
 pub struct StreakEntry {
     pub value: u64,
@@ -39,7 +44,6 @@ pub struct StreakEntry {
     pub timestamp: i64,
     pub readable: String,
 }
-
 
 fn mode_key(mode: Mode) -> &'static str {
     match mode {
@@ -53,7 +57,6 @@ fn mode_key(mode: Mode) -> &'static str {
         _ => "other",
     }
 }
-
 
 #[utoipa::path(
     get,
@@ -76,16 +79,23 @@ pub async fn player_winstreaks(
         .get_all_snapshots_mapped(&uuid, extract_winstreak_snapshot)
         .await?;
 
-    let modes = MODES.iter().map(|&mode| {
-        let history = winstreaks::calculate(&snapshots, &[mode]);
-        let streaks = history.streaks.into_iter().map(|s| StreakEntry {
-            value: s.value,
-            approximate: s.approximate,
-            timestamp: s.timestamp.timestamp_millis(),
-            readable: s.timestamp.format("%b %d, %Y %H:%M UTC").to_string(),
-        }).collect();
-        (mode_key(mode).to_string(), streaks)
-    }).collect();
+    let modes = MODES
+        .iter()
+        .map(|&mode| {
+            let history = winstreaks::calculate(&snapshots, &[mode]);
+            let streaks = history
+                .streaks
+                .into_iter()
+                .map(|s| StreakEntry {
+                    value: s.value,
+                    approximate: s.approximate,
+                    timestamp: s.timestamp.timestamp_millis(),
+                    readable: s.timestamp.format("%b %d, %Y %H:%M UTC").to_string(),
+                })
+                .collect();
+            (mode_key(mode).to_string(), streaks)
+        })
+        .collect();
 
     Ok(Json(WinstreakResponse { uuid, modes }))
 }

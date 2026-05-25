@@ -6,7 +6,6 @@ const VARINT_SEGMENT: u8 = 0x7F;
 const VARINT_CONTINUE: u8 = 0x80;
 const MAX_PACKET_SIZE: usize = 2 * 1024 * 1024;
 
-
 pub async fn read_varint<R: AsyncRead + Unpin>(reader: &mut R) -> std::io::Result<i32> {
     let mut value: i32 = 0;
     let mut pos: u32 = 0;
@@ -18,11 +17,13 @@ pub async fn read_varint<R: AsyncRead + Unpin>(reader: &mut R) -> std::io::Resul
         }
         pos += 7;
         if pos >= 32 {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "VarInt too large"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "VarInt too large",
+            ));
         }
     }
 }
-
 
 pub fn read_varint_sync(cursor: &mut Cursor<&[u8]>) -> std::io::Result<i32> {
     let mut value: i32 = 0;
@@ -36,11 +37,13 @@ pub fn read_varint_sync(cursor: &mut Cursor<&[u8]>) -> std::io::Result<i32> {
         }
         pos += 7;
         if pos >= 32 {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "VarInt too large"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "VarInt too large",
+            ));
         }
     }
 }
-
 
 pub fn write_varint(buf: &mut Vec<u8>, value: i32) {
     let mut val = value as u32;
@@ -57,7 +60,6 @@ pub fn write_varint(buf: &mut Vec<u8>, value: i32) {
     }
 }
 
-
 pub fn varint_len(value: i32) -> usize {
     let mut val = value as u32;
     let mut len = 0;
@@ -71,7 +73,6 @@ pub fn varint_len(value: i32) -> usize {
     len
 }
 
-
 pub fn read_string(cursor: &mut Cursor<&[u8]>) -> std::io::Result<String> {
     let len = read_varint_sync(cursor)? as usize;
     let mut buf = vec![0u8; len];
@@ -79,12 +80,10 @@ pub fn read_string(cursor: &mut Cursor<&[u8]>) -> std::io::Result<String> {
     String::from_utf8(buf).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
-
 pub fn write_string(buf: &mut Vec<u8>, s: &str) {
     write_varint(buf, s.len() as i32);
     buf.extend_from_slice(s.as_bytes());
 }
-
 
 pub fn read_uuid(cursor: &mut Cursor<&[u8]>) -> std::io::Result<u128> {
     let mut bytes = [0u8; 16];
@@ -92,11 +91,13 @@ pub fn read_uuid(cursor: &mut Cursor<&[u8]>) -> std::io::Result<u128> {
     Ok(u128::from_be_bytes(bytes))
 }
 
-
 pub async fn read_packet<R: AsyncRead + Unpin>(reader: &mut R) -> std::io::Result<(i32, Vec<u8>)> {
     let length = read_varint(reader).await? as usize;
     if length > MAX_PACKET_SIZE {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "packet too large"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "packet too large",
+        ));
     }
     let mut data = vec![0u8; length];
     reader.read_exact(&mut data).await?;
@@ -105,7 +106,6 @@ pub async fn read_packet<R: AsyncRead + Unpin>(reader: &mut R) -> std::io::Resul
     let pos = cursor.position() as usize;
     Ok((packet_id, data[pos..].to_vec()))
 }
-
 
 pub async fn write_packet<W: AsyncWrite + Unpin>(
     writer: &mut W,

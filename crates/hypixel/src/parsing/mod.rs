@@ -5,7 +5,9 @@ pub mod duels_winstreaks;
 pub mod player;
 pub mod winstreaks;
 
-pub use bedwars::{GuildInfo, Mode, ModeStats, Stats, calculate_level, extract, level_progress, ratio};
+pub use bedwars::{
+    GuildInfo, Mode, ModeStats, Stats, calculate_level, extract, level_progress, ratio,
+};
 pub use delta::{SessionPlayerStats, SessionStats};
 pub use duels::{
     DUELS_CATEGORIES, DUELS_MODES, DivisionTrack, DuelsBreakdownEntry, DuelsCategoryMeta,

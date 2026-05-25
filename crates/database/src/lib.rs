@@ -23,9 +23,9 @@ pub use guild_config::{GuildConfig, GuildConfigRepository, GuildRoleRule};
 pub use members::{Member, MemberRepository};
 pub use periods::Period;
 pub use plugin_registry::{
-    DisabledEntry, InstalledWithLatest, NewPlugin, NewRelease, Plugin, PluginInstall,
-    PluginRating, PluginRegistryRepository, PluginRelease, PluginSortConfig, PluginSortMode,
-    PluginSummary, ReleaseBody,
+    DisabledEntry, InstalledWithLatest, NewPlugin, NewRelease, Plugin, PluginInstall, PluginRating,
+    PluginRegistryRepository, PluginRelease, PluginSortConfig, PluginSortMode, PluginSummary,
+    ReleaseBody,
 };
 pub use pool::Database;
 pub use sessions::{SessionMarker, SessionRepository};

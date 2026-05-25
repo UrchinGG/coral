@@ -4,12 +4,10 @@ use uuid::Uuid;
 const KEY_PREFIX: &str = "verify:";
 const CODE_TTL_SECS: u64 = 120;
 
-
 pub struct VerifiedPlayer {
     pub uuid: Uuid,
     pub username: String,
 }
-
 
 pub async fn store_code(
     conn: &mut ConnectionManager,
@@ -20,12 +18,12 @@ pub async fn store_code(
     redis::cmd("SET")
         .arg(format!("{KEY_PREFIX}{code}"))
         .arg(format!("{}:{username}", uuid.simple()))
-        .arg("EX").arg(CODE_TTL_SECS)
+        .arg("EX")
+        .arg(CODE_TTL_SECS)
         .arg("NX")
         .query_async(conn)
         .await
 }
-
 
 pub async fn redeem_code(conn: &mut ConnectionManager, code: &str) -> Option<VerifiedPlayer> {
     let val: Option<String> = conn.get_del(format!("{KEY_PREFIX}{code}")).await.ok()?;

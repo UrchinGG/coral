@@ -1,8 +1,11 @@
 use image::Rgba;
 
 use super::is_outside_rounded_rect;
-use crate::canvas::{color::{BOX_BACKGROUND, blend}, context::DrawContext, shape::Shape};
-
+use crate::canvas::{
+    color::{BOX_BACKGROUND, blend},
+    context::DrawContext,
+    shape::Shape,
+};
 
 pub struct RoundedRect {
     width: u32,
@@ -12,7 +15,6 @@ pub struct RoundedRect {
     padding: (u32, u32),
     child: Option<Box<dyn Shape>>,
 }
-
 
 impl RoundedRect {
     pub fn new(width: u32, height: u32) -> Self {
@@ -46,7 +48,6 @@ impl RoundedRect {
         self
     }
 }
-
 
 impl Shape for RoundedRect {
     fn draw(&self, ctx: &mut DrawContext) {

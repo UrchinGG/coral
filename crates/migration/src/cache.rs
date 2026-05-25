@@ -87,7 +87,9 @@ async fn flush_batch(client: &CoralClient, batch: &[PendingSnapshot]) -> Result<
     let mut total = 0;
     for chunk in batch.chunks(SNAPSHOT_BATCH_SIZE) {
         let payloads: Vec<Value> = chunk.iter().map(|s| s.to_payload()).collect();
-        let result = client.post(&json!({"type": "snapshots", "data": payloads})).await?;
+        let result = client
+            .post(&json!({"type": "snapshots", "data": payloads}))
+            .await?;
         total += result["migrated"].as_u64().unwrap_or(0) as usize;
     }
 
@@ -207,16 +209,34 @@ fn reverse_mode(raw_bw: &mut Map<String, Value>, modes: &Value, mode_name: &str,
         map.insert(format!("{prefix}{suffix}"), value.clone());
     };
 
-    if let Some(v) = mode.get("games_played") { set(raw_bw, "games_played_bedwars", v); }
-    if let Some(v) = mode.get("wins") { set(raw_bw, "wins_bedwars", v); }
-    if let Some(v) = mode.get("losses") { set(raw_bw, "losses_bedwars", v); }
-    if let Some(v) = mode.get("final_kills") { set(raw_bw, "final_kills_bedwars", v); }
-    if let Some(v) = mode.get("final_deaths") { set(raw_bw, "final_deaths_bedwars", v); }
-    if let Some(v) = mode.get("beds_broken") { set(raw_bw, "beds_broken_bedwars", v); }
-    if let Some(v) = mode.get("beds_lost") { set(raw_bw, "beds_lost_bedwars", v); }
+    if let Some(v) = mode.get("games_played") {
+        set(raw_bw, "games_played_bedwars", v);
+    }
+    if let Some(v) = mode.get("wins") {
+        set(raw_bw, "wins_bedwars", v);
+    }
+    if let Some(v) = mode.get("losses") {
+        set(raw_bw, "losses_bedwars", v);
+    }
+    if let Some(v) = mode.get("final_kills") {
+        set(raw_bw, "final_kills_bedwars", v);
+    }
+    if let Some(v) = mode.get("final_deaths") {
+        set(raw_bw, "final_deaths_bedwars", v);
+    }
+    if let Some(v) = mode.get("beds_broken") {
+        set(raw_bw, "beds_broken_bedwars", v);
+    }
+    if let Some(v) = mode.get("beds_lost") {
+        set(raw_bw, "beds_lost_bedwars", v);
+    }
 
     if let Some(v) = mode.get("winstreak") {
-        let key = if prefix.is_empty() { "winstreak".into() } else { format!("{prefix}winstreak") };
+        let key = if prefix.is_empty() {
+            "winstreak".into()
+        } else {
+            format!("{prefix}winstreak")
+        };
         if v.as_str() == Some("?") {
             raw_bw.insert(key, Value::Null);
         } else {
@@ -225,29 +245,65 @@ fn reverse_mode(raw_bw: &mut Map<String, Value>, modes: &Value, mode_name: &str,
     }
 
     if let Some(kills) = mode.get("kills") {
-        if let Some(v) = kills.get("kills") { set(raw_bw, "kills_bedwars", v); }
-        if let Some(v) = kills.get("projectile_kills") { set(raw_bw, "projectile_kills_bedwars", v); }
-        if let Some(v) = kills.get("void_kills") { set(raw_bw, "void_kills_bedwars", v); }
-        if let Some(v) = kills.get("fall_kills") { set(raw_bw, "fall_kills_bedwars", v); }
-        if let Some(v) = kills.get("explosion_kills") { set(raw_bw, "entity_explosion_kills_bedwars", v); }
-        if let Some(v) = kills.get("magic_kills") { set(raw_bw, "magic_kills_bedwars", v); }
-        if let Some(v) = kills.get("fire_tick_kills") { set(raw_bw, "fire_tick_kills_bedwars", v); }
+        if let Some(v) = kills.get("kills") {
+            set(raw_bw, "kills_bedwars", v);
+        }
+        if let Some(v) = kills.get("projectile_kills") {
+            set(raw_bw, "projectile_kills_bedwars", v);
+        }
+        if let Some(v) = kills.get("void_kills") {
+            set(raw_bw, "void_kills_bedwars", v);
+        }
+        if let Some(v) = kills.get("fall_kills") {
+            set(raw_bw, "fall_kills_bedwars", v);
+        }
+        if let Some(v) = kills.get("explosion_kills") {
+            set(raw_bw, "entity_explosion_kills_bedwars", v);
+        }
+        if let Some(v) = kills.get("magic_kills") {
+            set(raw_bw, "magic_kills_bedwars", v);
+        }
+        if let Some(v) = kills.get("fire_tick_kills") {
+            set(raw_bw, "fire_tick_kills_bedwars", v);
+        }
     }
 
     if let Some(deaths) = mode.get("deaths") {
-        if let Some(v) = deaths.get("deaths") { set(raw_bw, "deaths_bedwars", v); }
-        if let Some(v) = deaths.get("void_deaths") { set(raw_bw, "void_deaths_bedwars", v); }
-        if let Some(v) = deaths.get("fall_deaths") { set(raw_bw, "fall_deaths_bedwars", v); }
-        if let Some(v) = deaths.get("explosion_deaths") { set(raw_bw, "entity_explosion_deaths_bedwars", v); }
-        if let Some(v) = deaths.get("magic_deaths") { set(raw_bw, "magic_deaths_bedwars", v); }
-        if let Some(v) = deaths.get("fire_tick_deaths") { set(raw_bw, "fire_tick_deaths_bedwars", v); }
-        if let Some(v) = deaths.get("projectile_deaths") { set(raw_bw, "projectile_deaths_bedwars", v); }
+        if let Some(v) = deaths.get("deaths") {
+            set(raw_bw, "deaths_bedwars", v);
+        }
+        if let Some(v) = deaths.get("void_deaths") {
+            set(raw_bw, "void_deaths_bedwars", v);
+        }
+        if let Some(v) = deaths.get("fall_deaths") {
+            set(raw_bw, "fall_deaths_bedwars", v);
+        }
+        if let Some(v) = deaths.get("explosion_deaths") {
+            set(raw_bw, "entity_explosion_deaths_bedwars", v);
+        }
+        if let Some(v) = deaths.get("magic_deaths") {
+            set(raw_bw, "magic_deaths_bedwars", v);
+        }
+        if let Some(v) = deaths.get("fire_tick_deaths") {
+            set(raw_bw, "fire_tick_deaths_bedwars", v);
+        }
+        if let Some(v) = deaths.get("projectile_deaths") {
+            set(raw_bw, "projectile_deaths_bedwars", v);
+        }
     }
 
     if let Some(resources) = mode.get("resources") {
-        if let Some(v) = resources.get("emeralds_collected") { set(raw_bw, "emerald_resources_collected_bedwars", v); }
-        if let Some(v) = resources.get("gold_collected") { set(raw_bw, "gold_resources_collected_bedwars", v); }
-        if let Some(v) = resources.get("diamonds_collected") { set(raw_bw, "diamond_resources_collected_bedwars", v); }
-        if let Some(v) = resources.get("iron_collected") { set(raw_bw, "iron_resources_collected_bedwars", v); }
+        if let Some(v) = resources.get("emeralds_collected") {
+            set(raw_bw, "emerald_resources_collected_bedwars", v);
+        }
+        if let Some(v) = resources.get("gold_collected") {
+            set(raw_bw, "gold_resources_collected_bedwars", v);
+        }
+        if let Some(v) = resources.get("diamonds_collected") {
+            set(raw_bw, "diamond_resources_collected_bedwars", v);
+        }
+        if let Some(v) = resources.get("iron_collected") {
+            set(raw_bw, "iron_resources_collected_bedwars", v);
+        }
     }
 }

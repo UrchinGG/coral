@@ -19,7 +19,6 @@ pub use image::{DynamicImage, Rgba, RgbaImage};
 
 static FONT_SYSTEM: OnceLock<FontSystem> = OnceLock::new();
 
-
 pub fn init() {
     let fs = FONT_SYSTEM.get_or_init(FontSystem::modern);
     for variant in [
@@ -32,7 +31,8 @@ pub fn init() {
     }
 }
 
-
 pub(crate) fn font_system() -> &'static FontSystem {
-    FONT_SYSTEM.get().expect("render::canvas::init() must be called before rendering")
+    FONT_SYSTEM
+        .get()
+        .expect("render::canvas::init() must be called before rendering")
 }

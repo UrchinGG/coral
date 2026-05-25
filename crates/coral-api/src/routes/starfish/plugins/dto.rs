@@ -1,13 +1,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Debug, Serialize)]
 pub struct PluginListResponse {
     pub total: i64,
     pub plugins: Vec<PluginSummaryDto>,
 }
-
 
 #[derive(Debug, Serialize)]
 pub struct PluginSummaryDto {
@@ -25,7 +23,6 @@ pub struct PluginSummaryDto {
     pub rating_count: i64,
     pub rating_bayesian: f32,
 }
-
 
 #[derive(Debug, Serialize)]
 pub struct PluginDetailDto {
@@ -52,7 +49,6 @@ pub struct PluginDetailDto {
     pub installed_version: Option<String>,
 }
 
-
 #[derive(Debug, Clone, Serialize)]
 pub struct ReleaseInfoDto {
     pub version: String,
@@ -65,7 +61,6 @@ pub struct ReleaseInfoDto {
     pub created_at: DateTime<Utc>,
 }
 
-
 #[derive(Debug, Deserialize)]
 pub struct PluginListQuery {
     pub sort: Option<String>,
@@ -76,12 +71,10 @@ pub struct PluginListQuery {
     pub official: Option<bool>,
 }
 
-
 #[derive(Debug, Deserialize)]
 pub struct DisabledQuery {
     pub since: Option<DateTime<Utc>>,
 }
-
 
 #[derive(Debug, Serialize)]
 pub struct DisabledResponse {
@@ -89,14 +82,12 @@ pub struct DisabledResponse {
     pub disabled: Vec<DisabledEntryDto>,
 }
 
-
 #[derive(Debug, Serialize)]
 pub struct DisabledEntryDto {
     pub slug: String,
     pub reason: String,
     pub disabled_at: DateTime<Utc>,
 }
-
 
 #[derive(Debug, Deserialize)]
 pub struct PublishRequest {
@@ -106,7 +97,6 @@ pub struct PublishRequest {
     pub github_access_token: String,
 }
 
-
 #[derive(Debug, Serialize)]
 pub struct PublishResponse {
     pub slug: String,
@@ -115,12 +105,10 @@ pub struct PublishResponse {
     pub published_at: DateTime<Utc>,
 }
 
-
 #[derive(Debug, Deserialize)]
 pub struct BodyQuery {
     pub version: Option<String>,
 }
-
 
 #[derive(Debug, Serialize)]
 pub struct InstallResponse {
@@ -132,19 +120,16 @@ pub struct InstallResponse {
     pub body_url: String,
 }
 
-
 #[derive(Debug, Deserialize)]
 pub struct RateRequest {
     pub stars: i16,
     pub review: Option<String>,
 }
 
-
 #[derive(Debug, Serialize)]
 pub struct InstalledResponse {
     pub installs: Vec<InstalledEntryDto>,
 }
-
 
 #[derive(Debug, Serialize)]
 pub struct InstalledEntryDto {

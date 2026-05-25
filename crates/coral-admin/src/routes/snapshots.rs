@@ -1,17 +1,15 @@
-use axum::{extract::*, routing::get, Json, Router};
+use axum::{Json, Router, extract::*, routing::get};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 use crate::state::AppState;
 
-
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list))
         .route("/{id}", get(detail))
 }
-
 
 #[derive(Deserialize)]
 struct ListParams {
@@ -21,13 +19,11 @@ struct ListParams {
     offset: Option<i64>,
 }
 
-
 #[derive(Serialize)]
 struct ListResponse {
     total: i64,
     snapshots: Vec<SnapshotSummary>,
 }
-
 
 #[derive(Serialize, FromRow)]
 struct SnapshotSummary {
@@ -38,7 +34,6 @@ struct SnapshotSummary {
     source: Option<String>,
     is_baseline: bool,
 }
-
 
 #[derive(Serialize, FromRow)]
 struct SnapshotDetail {
@@ -53,7 +48,6 @@ struct SnapshotDetail {
     created_at: DateTime<Utc>,
 }
 
-
 async fn list(
     State(state): State<AppState>,
     Query(params): Query<ListParams>,
@@ -65,7 +59,10 @@ async fn list(
     let (total, snapshots) = match (&params.uuid, &params.username) {
         (Some(uuid), _) => {
             let total = sqlx::query_scalar("SELECT COUNT(*) FROM player_snapshots WHERE uuid = $1")
-                .bind(uuid).fetch_one(pool).await.unwrap_or(0);
+                .bind(uuid)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
             let snapshots = sqlx::query_as::<_, SnapshotSummary>(
                 r#"SELECT id, uuid, username, timestamp, source, is_baseline
                    FROM player_snapshots WHERE uuid = $1
@@ -81,8 +78,12 @@ async fn list(
         }
         (None, Some(username)) => {
             let pattern = format!("%{username}%");
-            let total = sqlx::query_scalar("SELECT COUNT(*) FROM player_snapshots WHERE username ILIKE $1")
-                .bind(&pattern).fetch_one(pool).await.unwrap_or(0);
+            let total =
+                sqlx::query_scalar("SELECT COUNT(*) FROM player_snapshots WHERE username ILIKE $1")
+                    .bind(&pattern)
+                    .fetch_one(pool)
+                    .await
+                    .unwrap_or(0);
             let snapshots = sqlx::query_as::<_, SnapshotSummary>(
                 r#"SELECT id, uuid, username, timestamp, source, is_baseline
                    FROM player_snapshots WHERE username ILIKE $1
@@ -98,7 +99,9 @@ async fn list(
         }
         (None, None) => {
             let total = sqlx::query_scalar("SELECT COUNT(*) FROM player_snapshots")
-                .fetch_one(pool).await.unwrap_or(0);
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
             let snapshots = sqlx::query_as::<_, SnapshotSummary>(
                 r#"SELECT id, uuid, username, timestamp, source, is_baseline
                    FROM player_snapshots
@@ -116,8 +119,10 @@ async fn list(
     Json(ListResponse { total, snapshots })
 }
 
-
-async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> Json<Option<SnapshotDetail>> {
+async fn detail(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Json<Option<SnapshotDetail>> {
     Json(
         sqlx::query_as::<_, SnapshotDetail>(
             r#"SELECT id, uuid, username, timestamp, discord_id, source, is_baseline, data, created_at

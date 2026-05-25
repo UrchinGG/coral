@@ -14,7 +14,6 @@ use super::overall::{
     extras_box,
 };
 
-
 const CANVAS_WIDTH: u32 = 800;
 const CANVAS_HEIGHT: u32 = 600;
 const COL_WIDTH: u32 = 256;
@@ -26,7 +25,6 @@ const BOTTOM_ROW_Y: u32 = 500;
 const BOTTOM_BOX_HEIGHT: u32 = 100;
 const BOX_CORNER_RADIUS: u32 = 18;
 
-
 fn col_x(col: u32) -> u32 {
     match col {
         0 => 0,
@@ -35,7 +33,6 @@ fn col_x(col: u32) -> u32 {
         _ => 0,
     }
 }
-
 
 pub fn render_duels_session(
     current: &DuelsStats,
@@ -48,12 +45,16 @@ pub fn render_duels_session(
     winstreaks: &WinstreakHistory,
     tags: &[TagIcon],
 ) -> RgbaImage {
-    let current_view = current
-        .view_stats(view)
-        .unwrap_or_else(|| current.view_stats(current.default_view()).expect("duels current"));
-    let previous_view = previous
-        .view_stats(view)
-        .unwrap_or_else(|| previous.view_stats(previous.default_view()).expect("duels previous"));
+    let current_view = current.view_stats(view).unwrap_or_else(|| {
+        current
+            .view_stats(current.default_view())
+            .expect("duels current")
+    });
+    let previous_view = previous.view_stats(view).unwrap_or_else(|| {
+        previous
+            .view_stats(previous.default_view())
+            .expect("duels previous")
+    });
     let delta = DuelsDelta::from_views(&current_view, &previous_view);
 
     let overall = current.view_stats(DuelsView::Overall);
@@ -69,11 +70,18 @@ pub fn render_duels_session(
     Canvas::new(CANVAS_WIDTH, CANVAS_HEIGHT)
         .background(CANVAS_BACKGROUND)
         .draw(
-            0, 0,
-            &HeaderSection::new(&current.display_name, current.rank_prefix.as_deref(), &current.guild, tags),
+            0,
+            0,
+            &HeaderSection::new(
+                &current.display_name,
+                current.rank_prefix.as_deref(),
+                &current.guild,
+                tags,
+            ),
         )
         .draw(
-            0, LEVEL_Y as i32,
+            0,
+            LEVEL_Y as i32,
             &DivisionSection {
                 division: current_view.division,
                 track: current_view.track,
@@ -82,28 +90,47 @@ pub fn render_duels_session(
             },
         )
         .draw(
-            col_x(0) as i32, MAIN_ROW_Y as i32,
-            &SkinSection::new(skin, current.network_level, &format!("{} Session", current_view.title)),
+            col_x(0) as i32,
+            MAIN_ROW_Y as i32,
+            &SkinSection::new(
+                skin,
+                current.network_level,
+                &format!("{} Session", current_view.title),
+            ),
         )
-        .draw(col_x(1) as i32, MAIN_ROW_Y as i32, &StatsSection::new(&delta.summary))
+        .draw(
+            col_x(1) as i32,
+            MAIN_ROW_Y as i32,
+            &StatsSection::new(&delta.summary),
+        )
         .draw(col_x(1) as i32, SECOND_ROW_Y as i32, &session_breakdown)
         .draw(
-            col_x(2) as i32, SECOND_ROW_Y as i32,
-            &super::overall::DuelsWinstreaksBox { winstreaks, current_ws: current_view.current_winstreak.value() },
+            col_x(2) as i32,
+            SECOND_ROW_Y as i32,
+            &super::overall::DuelsWinstreaksBox {
+                winstreaks,
+                current_ws: current_view.current_winstreak.value(),
+            },
         )
-        .draw(col_x(0) as i32, BOTTOM_ROW_Y as i32, &duels_session_box(&session_type, started, ended))
-        .draw(col_x(1) as i32, BOTTOM_ROW_Y as i32, &DuelsGuildBox::new(&current.guild))
+        .draw(
+            col_x(0) as i32,
+            BOTTOM_ROW_Y as i32,
+            &duels_session_box(&session_type, started, ended),
+        )
+        .draw(
+            col_x(1) as i32,
+            BOTTOM_ROW_Y as i32,
+            &DuelsGuildBox::new(&current.guild),
+        )
         .draw(col_x(2) as i32, BOTTOM_ROW_Y as i32, &extras_box(current))
         .build()
 }
-
 
 #[derive(Clone)]
 pub struct DuelsDelta {
     pub summary: DuelsViewStats,
     pub breakdown: Vec<DuelsBreakdownEntry>,
 }
-
 
 impl DuelsDelta {
     pub fn from_views(current: &DuelsViewStats, previous: &DuelsViewStats) -> Self {
@@ -123,7 +150,8 @@ impl DuelsDelta {
                 let previous_kills = previous_entry.map(|value| value.kills).unwrap_or(0);
                 let previous_deaths = previous_entry.map(|value| value.deaths).unwrap_or(0);
                 let previous_melee_hits = previous_entry.map(|value| value.melee_hits).unwrap_or(0);
-                let previous_melee_swings = previous_entry.map(|value| value.melee_swings).unwrap_or(0);
+                let previous_melee_swings =
+                    previous_entry.map(|value| value.melee_swings).unwrap_or(0);
                 let previous_bow_hits = previous_entry.map(|value| value.bow_hits).unwrap_or(0);
                 let previous_bow_shots = previous_entry.map(|value| value.bow_shots).unwrap_or(0);
                 let previous_goals = previous_entry.map(|value| value.goals).unwrap_or(0);
@@ -144,7 +172,9 @@ impl DuelsDelta {
                     best_winstreak: entry.best_winstreak,
                 }
             })
-            .filter(|entry| entry.wins > 0 || entry.losses > 0 || entry.kills > 0 || entry.deaths > 0)
+            .filter(|entry| {
+                entry.wins > 0 || entry.losses > 0 || entry.kills > 0 || entry.deaths > 0
+            })
             .collect();
 
         let summary = DuelsViewStats {
@@ -172,7 +202,6 @@ impl DuelsDelta {
     }
 }
 
-
 fn duels_session_box(
     session_type: &SessionType,
     started: DateTime<Utc>,
@@ -195,21 +224,57 @@ fn duels_session_box(
     let start_str = started.format("%m/%d/%y %H:%M").to_string();
 
     TextBox::new()
-        .width(COL_WIDTH).height(BOTTOM_BOX_HEIGHT).corner_radius(BOX_CORNER_RADIUS)
-        .padding(12, 12).scale(1.5).line_spacing(0.0)
-        .align_x(Align::Center).align_y(Align::Spread)
-        .push(MCText::new().span("Session: ").color(NamedColor::Gray).then(session_type.display_name()).color(NamedColor::White).build())
-        .push(MCText::new().span("Start: ").color(NamedColor::Gray).then(&start_str).color(NamedColor::White).build())
-        .push(MCText::new().span("Duration: ").color(NamedColor::Gray).then(&duration_str).color(NamedColor::Green).build())
+        .width(COL_WIDTH)
+        .height(BOTTOM_BOX_HEIGHT)
+        .corner_radius(BOX_CORNER_RADIUS)
+        .padding(12, 12)
+        .scale(1.5)
+        .line_spacing(0.0)
+        .align_x(Align::Center)
+        .align_y(Align::Spread)
+        .push(
+            MCText::new()
+                .span("Session: ")
+                .color(NamedColor::Gray)
+                .then(session_type.display_name())
+                .color(NamedColor::White)
+                .build(),
+        )
+        .push(
+            MCText::new()
+                .span("Start: ")
+                .color(NamedColor::Gray)
+                .then(&start_str)
+                .color(NamedColor::White)
+                .build(),
+        )
+        .push(
+            MCText::new()
+                .span("Duration: ")
+                .color(NamedColor::Gray)
+                .then(&duration_str)
+                .color(NamedColor::Green)
+                .build(),
+        )
 }
 
-
 pub fn preview(data: &crate::preview::PlayerData, args: &[String]) -> RgbaImage {
-    let view = args.first()
+    let view = args
+        .first()
         .and_then(|v| DuelsView::from_slug(v))
         .unwrap_or(DuelsView::Overall);
     let stats = hypixel::extract_duels_stats(&data.username, &data.hypixel, data.guild_info())
         .expect("No Duels stats");
     let ws = WinstreakHistory { streaks: vec![] };
-    render_duels_session(&stats, &stats, SessionType::Daily, chrono::Utc::now(), None, view, data.skin.as_ref(), &ws, &[])
+    render_duels_session(
+        &stats,
+        &stats,
+        SessionType::Daily,
+        chrono::Utc::now(),
+        None,
+        view,
+        data.skin.as_ref(),
+        &ws,
+        &[],
+    )
 }

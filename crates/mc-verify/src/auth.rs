@@ -3,13 +3,11 @@ use uuid::Uuid;
 
 const SESSION_URL: &str = "https://sessionserver.mojang.com/session/minecraft/hasJoined";
 
-
 #[derive(Debug, Deserialize)]
 struct AuthResponse {
     id: String,
     name: String,
 }
-
 
 #[derive(Debug, thiserror::Error)]
 pub enum AuthError {
@@ -21,12 +19,10 @@ pub enum AuthError {
     InvalidUuid(String),
 }
 
-
 pub struct AuthedPlayer {
     pub uuid: Uuid,
     pub username: String,
 }
-
 
 pub async fn verify_session(
     http: &reqwest::Client,
@@ -42,10 +38,13 @@ pub async fn verify_session(
         return Err(AuthError::Rejected);
     }
     let auth: AuthResponse = resp.json().await?;
-    let uuid = parse_undashed_uuid(&auth.id).ok_or_else(|| AuthError::InvalidUuid(auth.id.clone()))?;
-    Ok(AuthedPlayer { uuid, username: auth.name })
+    let uuid =
+        parse_undashed_uuid(&auth.id).ok_or_else(|| AuthError::InvalidUuid(auth.id.clone()))?;
+    Ok(AuthedPlayer {
+        uuid,
+        username: auth.name,
+    })
 }
-
 
 fn parse_undashed_uuid(s: &str) -> Option<Uuid> {
     if s.len() != 32 {
@@ -53,7 +52,11 @@ fn parse_undashed_uuid(s: &str) -> Option<Uuid> {
     }
     Uuid::parse_str(&format!(
         "{}-{}-{}-{}-{}",
-        &s[..8], &s[8..12], &s[12..16], &s[16..20], &s[20..]
+        &s[..8],
+        &s[8..12],
+        &s[12..16],
+        &s[16..20],
+        &s[20..]
     ))
     .ok()
 }

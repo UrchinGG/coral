@@ -3,7 +3,6 @@ use serde_json::Value;
 use super::bedwars::GuildInfo;
 use super::player::{calculate_network_level, extract_rank_prefix};
 
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DivisionTrack {
     Default,
@@ -11,13 +10,11 @@ pub enum DivisionTrack {
     Overall,
 }
 
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DuelsView {
     Overall,
     Category(&'static str),
 }
-
 
 impl DuelsView {
     pub fn slug(self) -> &'static str {
@@ -36,20 +33,17 @@ impl DuelsView {
     }
 }
 
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DuelsWinstreak {
     Unknown,
     Value(u64),
 }
 
-
 impl Default for DuelsWinstreak {
     fn default() -> Self {
         Self::Unknown
     }
 }
-
 
 impl DuelsWinstreak {
     pub fn value(self) -> Option<u64> {
@@ -60,7 +54,6 @@ impl DuelsWinstreak {
     }
 }
 
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DuelsCategoryMeta {
     pub division_id: &'static str,
@@ -68,7 +61,6 @@ pub struct DuelsCategoryMeta {
     pub display_name: &'static str,
     pub requirement: DivisionTrack,
 }
-
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DuelsModeMeta {
@@ -80,7 +72,6 @@ pub struct DuelsModeMeta {
     pub requirement: DivisionTrack,
 }
 
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DuelsDivision {
     pub req: u64,
@@ -90,7 +81,6 @@ pub struct DuelsDivision {
     pub color_name: &'static str,
     pub bold: bool,
 }
-
 
 const DIVISION_REQUIREMENTS: [DuelsDivision; 12] = [
     DuelsDivision {
@@ -191,7 +181,6 @@ const DIVISION_REQUIREMENTS: [DuelsDivision; 12] = [
     },
 ];
 
-
 pub const DUELS_CATEGORIES: [DuelsCategoryMeta; 16] = [
     DuelsCategoryMeta {
         division_id: "uhc",
@@ -290,7 +279,6 @@ pub const DUELS_CATEGORIES: [DuelsCategoryMeta; 16] = [
         requirement: DivisionTrack::Default,
     },
 ];
-
 
 pub const DUELS_MODES: [DuelsModeMeta; 32] = [
     DuelsModeMeta {
@@ -551,7 +539,6 @@ pub const DUELS_MODES: [DuelsModeMeta; 32] = [
     },
 ];
 
-
 #[derive(Clone, Default)]
 pub struct DuelsModeStats {
     pub wins: u64,
@@ -568,7 +555,6 @@ pub struct DuelsModeStats {
     pub current_winstreak: DuelsWinstreak,
     pub best_winstreak: DuelsWinstreak,
 }
-
 
 impl DuelsModeStats {
     pub fn effective_kills(&self) -> u64 {
@@ -597,7 +583,6 @@ impl DuelsModeStats {
     }
 }
 
-
 #[derive(Clone, Default)]
 pub struct DuelsOverview {
     pub wins: u64,
@@ -611,7 +596,6 @@ pub struct DuelsOverview {
     pub current_winstreak: DuelsWinstreak,
     pub best_winstreak: DuelsWinstreak,
 }
-
 
 #[derive(Clone)]
 pub struct DuelsCategoryStats {
@@ -630,13 +614,11 @@ pub struct DuelsCategoryStats {
     pub modes: Vec<(DuelsModeMeta, DuelsModeStats)>,
 }
 
-
 impl DuelsCategoryStats {
     pub fn has_activity(&self) -> bool {
         self.wins > 0 || self.losses > 0 || self.kills > 0 || self.deaths > 0
     }
 }
-
 
 #[derive(Clone)]
 pub struct DuelsBreakdownEntry {
@@ -654,7 +636,6 @@ pub struct DuelsBreakdownEntry {
     pub current_winstreak: DuelsWinstreak,
     pub best_winstreak: DuelsWinstreak,
 }
-
 
 #[derive(Clone)]
 pub struct DuelsViewStats {
@@ -678,7 +659,6 @@ pub struct DuelsViewStats {
     pub track: DivisionTrack,
 }
 
-
 #[derive(Clone)]
 pub struct DuelsStats {
     pub username: String,
@@ -695,7 +675,6 @@ pub struct DuelsStats {
     pub damage_dealt: u64,
     pub blocks_placed: u64,
 }
-
 
 impl DuelsStats {
     pub fn active_views(&self) -> Vec<DuelsView> {
@@ -819,14 +798,12 @@ impl DuelsStats {
     }
 }
 
-
 pub fn duels_category_meta(division_id: &str) -> Option<DuelsCategoryMeta> {
     DUELS_CATEGORIES
         .iter()
         .copied()
         .find(|meta| meta.division_id == division_id)
 }
-
 
 pub fn division_for_wins(wins: u64, track: DivisionTrack) -> (DuelsDivision, u32) {
     let adjusted = match track {
@@ -857,7 +834,6 @@ pub fn division_for_wins(wins: u64, track: DivisionTrack) -> (DuelsDivision, u32
 
     (division, raw_level.min(division.max as u64) as u32)
 }
-
 
 pub fn division_progress(wins: u64, track: DivisionTrack) -> f64 {
     let adjusted = match track {
@@ -897,10 +873,10 @@ pub fn division_progress(wins: u64, track: DivisionTrack) -> f64 {
         return 1.0;
     }
 
-    ((adjusted as f64 - current_threshold as f64) / (next_threshold as f64 - current_threshold as f64))
+    ((adjusted as f64 - current_threshold as f64)
+        / (next_threshold as f64 - current_threshold as f64))
         .clamp(0.0, 1.0)
 }
-
 
 pub fn next_division(division: DuelsDivision, level: u32) -> Option<(DuelsDivision, u32)> {
     if division.name == "None" || level == 0 {
@@ -922,7 +898,6 @@ pub fn next_division(division: DuelsDivision, level: u32) -> Option<(DuelsDivisi
     }
 }
 
-
 pub fn win_progress(wins: u64, track: DivisionTrack) -> (u64, u64) {
     let adjusted = match track {
         DivisionTrack::Default => wins,
@@ -935,7 +910,10 @@ pub fn win_progress(wins: u64, track: DivisionTrack) -> (u64, u64) {
         return (adjusted, 50);
     }
 
-    let div_index = DIVISION_REQUIREMENTS.iter().position(|d| d.name == division.name).unwrap_or(0);
+    let div_index = DIVISION_REQUIREMENTS
+        .iter()
+        .position(|d| d.name == division.name)
+        .unwrap_or(0);
 
     if div_index == DIVISION_REQUIREMENTS.len() - 1 && level >= division.max {
         return (adjusted, adjusted);
@@ -949,7 +927,6 @@ pub fn win_progress(wins: u64, track: DivisionTrack) -> (u64, u64) {
 
     (adjusted, next_threshold)
 }
-
 
 pub fn extract_duels_stats(
     username: &str,
@@ -1014,7 +991,10 @@ pub fn extract_duels_stats(
                 .map(|(_, mode)| mode.effective_deaths())
                 .sum();
             let melee_hits = category_modes.iter().map(|(_, mode)| mode.melee_hits).sum();
-            let melee_swings = category_modes.iter().map(|(_, mode)| mode.melee_swings).sum();
+            let melee_swings = category_modes
+                .iter()
+                .map(|(_, mode)| mode.melee_swings)
+                .sum();
             let bow_hits = category_modes.iter().map(|(_, mode)| mode.bow_hits).sum();
             let bow_shots = category_modes.iter().map(|(_, mode)| mode.bow_shots).sum();
             let goals = category_modes.iter().map(|(_, mode)| mode.goals).sum();
@@ -1085,11 +1065,9 @@ pub fn extract_duels_stats(
     })
 }
 
-
 fn stat(json: &Value, key: &str) -> u64 {
     json.get(key).and_then(|value| value.as_u64()).unwrap_or(0)
 }
-
 
 fn winstreak_value(json: &Value, key: &str) -> DuelsWinstreak {
     match json.get(key).and_then(|value| value.as_u64()) {
@@ -1097,7 +1075,6 @@ fn winstreak_value(json: &Value, key: &str) -> DuelsWinstreak {
         None => DuelsWinstreak::Unknown,
     }
 }
-
 
 fn overall_winstreak(json: &Value, kind: &str) -> DuelsWinstreak {
     let keys: &[&str] = match kind {
@@ -1115,7 +1092,6 @@ fn overall_winstreak(json: &Value, kind: &str) -> DuelsWinstreak {
         .map(DuelsWinstreak::Value)
         .unwrap_or(DuelsWinstreak::Unknown)
 }
-
 
 #[cfg(test)]
 mod tests {

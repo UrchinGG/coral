@@ -7,18 +7,15 @@ use utoipa::ToSchema;
 use crate::error::ApiError;
 use crate::state::AppState;
 
-
 #[derive(Serialize, ToSchema)]
 pub struct ResolveResponse {
     pub uuid: String,
     pub username: String,
 }
 
-
 pub fn router() -> Router<AppState> {
     Router::new().route("/resolve/{identifier}", get(resolve_player))
 }
-
 
 #[utoipa::path(
     get,
@@ -41,5 +38,8 @@ pub async fn resolve_player(
     Path(identifier): Path<String>,
 ) -> Result<Json<ResolveResponse>, ApiError> {
     let id = state.mojang.resolve(&identifier).await?;
-    Ok(Json(ResolveResponse { uuid: id.uuid, username: id.username }))
+    Ok(Json(ResolveResponse {
+        uuid: id.uuid,
+        username: id.username,
+    }))
 }

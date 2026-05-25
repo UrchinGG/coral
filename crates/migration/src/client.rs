@@ -17,7 +17,9 @@ impl CoralClient {
     }
 
     pub async fn post(&self, payload: &Value) -> Result<Value> {
-        let resp = self.http.post(&self.url)
+        let resp = self
+            .http
+            .post(&self.url)
             .header("X-API-Key", &self.api_key)
             .json(payload)
             .timeout(std::time::Duration::from_secs(120))

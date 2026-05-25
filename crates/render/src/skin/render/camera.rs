@@ -1,6 +1,5 @@
 use glam::{Mat4, Vec3};
 
-
 pub struct Camera {
     pub position: Vec3,
     pub target: Vec3,
@@ -9,7 +8,6 @@ pub struct Camera {
     pub near: f32,
     pub far: f32,
 }
-
 
 impl Camera {
     pub fn for_full_body() -> Self {

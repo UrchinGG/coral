@@ -9,11 +9,9 @@ use crate::{
     utils::{format_number, generate_api_key, resolve_username, separator, text},
 };
 
-
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("dashboard").description("View your account dashboard and settings")
 }
-
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
     let discord_id = command.user.id.get() as i64;
@@ -22,7 +20,8 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         Some(m) => m,
         None => {
             repo.create(discord_id).await?;
-            repo.get_by_discord_id(discord_id).await?
+            repo.get_by_discord_id(discord_id)
+                .await?
                 .ok_or_else(|| anyhow::anyhow!("failed to retrieve member after creation"))?
         }
     };
@@ -33,14 +32,18 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     }
     let components = build_dashboard_view(&member, data).await;
 
-    command.create_response(&ctx.http, CreateInteractionResponse::Message(
-        CreateInteractionResponseMessage::new()
-            .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
-            .components(components),
-    )).await?;
+    command
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
+                    .components(components),
+            ),
+        )
+        .await?;
     Ok(())
 }
-
 
 pub async fn handle_regenerate_key(
     ctx: &Context,
@@ -52,15 +55,23 @@ pub async fn handle_regenerate_key(
         separator(),
         text("Are you sure? Your previous key will stop working."),
         CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
-            CreateButton::new("confirm_regenerate_key").label("Confirm").style(ButtonStyle::Danger),
+            CreateButton::new("confirm_regenerate_key")
+                .label("Confirm")
+                .style(ButtonStyle::Danger),
         ])),
     ]))];
-    component.create_response(&ctx.http, CreateInteractionResponse::UpdateMessage(
-        CreateInteractionResponseMessage::new().flags(MessageFlags::IS_COMPONENTS_V2).components(view),
-    )).await?;
+    component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2)
+                    .components(view),
+            ),
+        )
+        .await?;
     Ok(())
 }
-
 
 pub async fn handle_confirm_regenerate_key(
     ctx: &Context,
@@ -75,7 +86,8 @@ pub async fn handle_confirm_regenerate_key(
     };
 
     if member.key_locked {
-        return interact::send_component_error(ctx, component, "Error", "Your API key is locked.").await;
+        return interact::send_component_error(ctx, component, "Error", "Your API key is locked.")
+            .await;
     }
     let new_key = generate_api_key();
     repo.set_api_key(discord_id, &new_key).await?;
@@ -84,7 +96,6 @@ pub async fn handle_confirm_regenerate_key(
     let components = build_dashboard_view(&member, data).await;
     interact::update_message(ctx, component, components).await
 }
-
 
 pub async fn handle_regenerate_dev_key(
     ctx: &Context,
@@ -96,15 +107,23 @@ pub async fn handle_regenerate_dev_key(
         separator(),
         text("Are you sure? Your previous developer key will stop working."),
         CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
-            CreateButton::new("confirm_regenerate_dev_key").label("Confirm").style(ButtonStyle::Danger),
+            CreateButton::new("confirm_regenerate_dev_key")
+                .label("Confirm")
+                .style(ButtonStyle::Danger),
         ])),
     ]))];
-    component.create_response(&ctx.http, CreateInteractionResponse::UpdateMessage(
-        CreateInteractionResponseMessage::new().flags(MessageFlags::IS_COMPONENTS_V2).components(view),
-    )).await?;
+    component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2)
+                    .components(view),
+            ),
+        )
+        .await?;
     Ok(())
 }
-
 
 pub async fn handle_confirm_regenerate_dev_key(
     ctx: &Context,
@@ -120,17 +139,28 @@ pub async fn handle_confirm_regenerate_dev_key(
     };
 
     let Some(dev_key) = dev_repo.get_by_member_id(member.id).await? else {
-        return interact::send_component_error(ctx, component, "Error", "You don't have a developer key.").await;
+        return interact::send_component_error(
+            ctx,
+            component,
+            "Error",
+            "You don't have a developer key.",
+        )
+        .await;
     };
     if dev_key.locked {
-        return interact::send_component_error(ctx, component, "Error", "Your developer key is locked.").await;
+        return interact::send_component_error(
+            ctx,
+            component,
+            "Error",
+            "Your developer key is locked.",
+        )
+        .await;
     }
     dev_repo.set_api_key(member.id, &generate_api_key()).await?;
 
     let components = build_dashboard_view(&member, data).await;
     interact::update_message(ctx, component, components).await
 }
-
 
 pub(crate) async fn build_dashboard_view(
     member: &database::Member,
@@ -207,7 +237,10 @@ pub(crate) async fn build_dashboard_view(
             let dev_key_text = if dk.locked {
                 "### Developer Key\nLocked".into()
             } else {
-                format!("### Developer Key (click to reveal)\n||```{}```||", dk.api_key)
+                format!(
+                    "### Developer Key (click to reveal)\n||```{}```||",
+                    dk.api_key
+                )
             };
             parts.push(CreateContainerComponent::Section(CreateSection::new(
                 vec![section_text(&dev_key_text)],
@@ -218,11 +251,16 @@ pub(crate) async fn build_dashboard_view(
                         .disabled(dk.locked),
                 ),
             )));
-            let perm_labels: Vec<&str> = database::permissions::ALL.iter()
+            let perm_labels: Vec<&str> = database::permissions::ALL
+                .iter()
                 .filter(|&&p| dk.permissions & p != 0)
                 .map(|&p| database::permissions::label(p))
                 .collect();
-            let perm_display = if perm_labels.is_empty() { "None".into() } else { perm_labels.join(", ") };
+            let perm_display = if perm_labels.is_empty() {
+                "None".into()
+            } else {
+                perm_labels.join(", ")
+            };
             parts.push(text(format!(
                 "-# {} requests · {} req/5min · {perm_display}",
                 format_number(dk.request_count as u64),
@@ -233,7 +271,7 @@ pub(crate) async fn build_dashboard_view(
             parts.push(text(
                 "### Developer Key\n\
                  Need access to extended data or private endpoints?\n\
-                 Open a ticket to request a developer key with custom permissions."
+                 Open a ticket to request a developer key with custom permissions.",
             ));
         }
     }

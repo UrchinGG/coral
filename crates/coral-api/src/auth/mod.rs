@@ -19,21 +19,24 @@ pub struct DeveloperKeyAuth {
     pub permissions: i64,
 }
 
-
 impl DeveloperKeyAuth {
-    pub fn has(&self, perm: i64) -> bool { self.permissions & perm != 0 }
+    pub fn has(&self, perm: i64) -> bool {
+        self.permissions & perm != 0
+    }
 
     pub fn require(&self, perm: i64) -> Result<(), ApiError> {
-        if self.has(perm) { Ok(()) } else { Err(ApiError::Forbidden("insufficient permissions".into())) }
+        if self.has(perm) {
+            Ok(())
+        } else {
+            Err(ApiError::Forbidden("insufficient permissions".into()))
+        }
     }
 }
-
 
 enum AuthResult {
     Personal(Member),
     Developer(Member, i64),
 }
-
 
 pub async fn require_internal_or_admin(
     State(state): State<AppState>,
@@ -56,12 +59,13 @@ pub async fn require_internal_or_admin(
         }
         AuthResult::Developer(member, permissions) => {
             request.extensions_mut().insert(AuthenticatedMember(member));
-            request.extensions_mut().insert(DeveloperKeyAuth { permissions });
+            request
+                .extensions_mut()
+                .insert(DeveloperKeyAuth { permissions });
         }
     }
     Ok(next.run(request).await)
 }
-
 
 pub async fn require_moderator(
     State(state): State<AppState>,
@@ -76,7 +80,6 @@ pub async fn require_moderator(
     request.extensions_mut().insert(AuthenticatedMember(member));
     Ok(next.run(request).await)
 }
-
 
 pub async fn allow_internal_or_auth(
     State(state): State<AppState>,
@@ -96,30 +99,38 @@ pub async fn allow_internal_or_auth(
         }
         AuthResult::Developer(member, permissions) => {
             request.extensions_mut().insert(AuthenticatedMember(member));
-            request.extensions_mut().insert(DeveloperKeyAuth { permissions });
+            request
+                .extensions_mut()
+                .insert(DeveloperKeyAuth { permissions });
         }
     }
     Ok(next.run(request).await)
 }
 
-
 async fn authenticate_key(state: &AppState, api_key: &str) -> Result<AuthResult, StatusCode> {
     if let Some(member) = MemberRepository::new(state.db.pool())
-        .get_by_api_key(api_key).await
+        .get_by_api_key(api_key)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
-        if member.key_locked { return Err(StatusCode::FORBIDDEN); }
+        if member.key_locked {
+            return Err(StatusCode::FORBIDDEN);
+        }
         check_rate_limit(state, api_key, PERSONAL_RATE_LIMIT).await?;
         return Ok(AuthResult::Personal(member));
     }
 
     if let Some(dev_key) = DeveloperKeyRepository::new(state.db.pool())
-        .get_by_api_key(api_key).await
+        .get_by_api_key(api_key)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
-        if dev_key.locked { return Err(StatusCode::FORBIDDEN); }
+        if dev_key.locked {
+            return Err(StatusCode::FORBIDDEN);
+        }
         let member = MemberRepository::new(state.db.pool())
-            .get_by_id(dev_key.member_id).await
+            .get_by_id(dev_key.member_id)
+            .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
         check_rate_limit(state, api_key, dev_key.rate_limit as i64).await?;
@@ -129,18 +140,19 @@ async fn authenticate_key(state: &AppState, api_key: &str) -> Result<AuthResult,
     Err(StatusCode::UNAUTHORIZED)
 }
 
-
 async fn authenticate_personal_key(state: &AppState, api_key: &str) -> Result<Member, StatusCode> {
     let member = MemberRepository::new(state.db.pool())
-        .get_by_api_key(api_key).await
+        .get_by_api_key(api_key)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    if member.key_locked { return Err(StatusCode::FORBIDDEN); }
+    if member.key_locked {
+        return Err(StatusCode::FORBIDDEN);
+    }
     check_rate_limit(state, api_key, PERSONAL_RATE_LIMIT).await?;
     Ok(member)
 }
-
 
 async fn check_rate_limit(state: &AppState, api_key: &str, limit: i64) -> Result<(), StatusCode> {
     match state.rate_limiter.check_and_record(api_key, limit).await {
@@ -150,14 +162,14 @@ async fn check_rate_limit(state: &AppState, api_key: &str, limit: i64) -> Result
     }
 }
 
-
 pub const PERSONAL_RATE_LIMIT: i64 = 600;
 
-
 fn is_internal_key(state: &AppState, api_key: &str) -> bool {
-    state.internal_api_key.as_ref().is_some_and(|k| k == api_key)
+    state
+        .internal_api_key
+        .as_ref()
+        .is_some_and(|k| k == api_key)
 }
-
 
 fn extract_api_key(request: &Request) -> Option<String> {
     if let Some(header) = request.headers().get("X-API-Key") {

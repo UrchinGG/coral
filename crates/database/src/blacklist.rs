@@ -1,7 +1,6 @@
 use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool};
 
-
 #[derive(Debug, Clone, FromRow)]
 pub struct BlacklistPlayer {
     pub id: i64,
@@ -12,7 +11,6 @@ pub struct BlacklistPlayer {
     pub locked_at: Option<DateTime<Utc>>,
     pub evidence_thread: Option<String>,
 }
-
 
 #[derive(Debug, Clone, FromRow)]
 pub struct PlayerTagRow {
@@ -29,21 +27,20 @@ pub struct PlayerTagRow {
     pub expires_at: Option<DateTime<Utc>>,
 }
 
-
 const COLS: &str = "\
     pt.id, pt.player_id, pt.tag_type, pt.reason, pt.added_by, pt.added_on, \
     pt.hide_username, pt.reviewed_by, pt.removed_by, pt.removed_on, pt.expires_at";
 
 const ACTIVE: &str = "pt.removed_on IS NULL AND (pt.expires_at IS NULL OR pt.expires_at > NOW())";
 
-
 pub struct BlacklistRepository<'a> {
     pool: &'a PgPool,
 }
 
-
 impl<'a> BlacklistRepository<'a> {
-    pub fn new(pool: &'a PgPool) -> Self { Self { pool } }
+    pub fn new(pool: &'a PgPool) -> Self {
+        Self { pool }
+    }
 
     pub async fn get_player(&self, uuid: &str) -> Result<Option<BlacklistPlayer>, sqlx::Error> {
         sqlx::query_as(
@@ -82,7 +79,11 @@ impl<'a> BlacklistRepository<'a> {
         .await
     }
 
-    pub async fn get_tag_by_type(&self, uuid: &str, tag_type: &str) -> Result<Option<PlayerTagRow>, sqlx::Error> {
+    pub async fn get_tag_by_type(
+        &self,
+        uuid: &str,
+        tag_type: &str,
+    ) -> Result<Option<PlayerTagRow>, sqlx::Error> {
         sqlx::query_as(&format!(
             "SELECT {COLS}
              FROM player_tags pt
@@ -95,7 +96,10 @@ impl<'a> BlacklistRepository<'a> {
         .await
     }
 
-    pub async fn get_uuid_by_player_id(&self, player_id: i64) -> Result<Option<String>, sqlx::Error> {
+    pub async fn get_uuid_by_player_id(
+        &self,
+        player_id: i64,
+    ) -> Result<Option<String>, sqlx::Error> {
         sqlx::query_as::<_, (String,)>("SELECT uuid FROM blacklist_players WHERE id = $1")
             .bind(player_id)
             .fetch_optional(self.pool)
@@ -115,7 +119,10 @@ impl<'a> BlacklistRepository<'a> {
         .await
     }
 
-    pub async fn get_tag_by_id_any(&self, tag_id: i64) -> Result<Option<PlayerTagRow>, sqlx::Error> {
+    pub async fn get_tag_by_id_any(
+        &self,
+        tag_id: i64,
+    ) -> Result<Option<PlayerTagRow>, sqlx::Error> {
         sqlx::query_as(
             "SELECT id, player_id, tag_type, reason, added_by, added_on,
                     hide_username, reviewed_by, removed_by, removed_on, expires_at
@@ -148,7 +155,16 @@ impl<'a> BlacklistRepository<'a> {
         hide_username: bool,
         reviewed_by: Option<&[i64]>,
     ) -> Result<i64, sqlx::Error> {
-        self.add_tag_with_expiry(uuid, tag_type, reason, added_by, hide_username, reviewed_by, None).await
+        self.add_tag_with_expiry(
+            uuid,
+            tag_type,
+            reason,
+            added_by,
+            hide_username,
+            reviewed_by,
+            None,
+        )
+        .await
     }
 
     pub async fn add_tag_with_expiry(
@@ -191,7 +207,12 @@ impl<'a> BlacklistRepository<'a> {
         .map(|r| r.rows_affected() > 0)
     }
 
-    pub async fn remove_tag_by_type(&self, uuid: &str, tag_type: &str, removed_by: i64) -> Result<bool, sqlx::Error> {
+    pub async fn remove_tag_by_type(
+        &self,
+        uuid: &str,
+        tag_type: &str,
+        removed_by: i64,
+    ) -> Result<bool, sqlx::Error> {
         sqlx::query(
             "UPDATE player_tags SET removed_by = $3, removed_on = NOW()
              FROM blacklist_players bp
@@ -283,7 +304,12 @@ impl<'a> BlacklistRepository<'a> {
         .map(|r| r.rows_affected() > 0)
     }
 
-    pub async fn lock_player(&self, uuid: &str, reason: &str, locked_by: i64) -> Result<bool, sqlx::Error> {
+    pub async fn lock_player(
+        &self,
+        uuid: &str,
+        reason: &str,
+        locked_by: i64,
+    ) -> Result<bool, sqlx::Error> {
         let player = self.get_or_create_player(uuid).await?;
         sqlx::query(
             "UPDATE blacklist_players
@@ -310,7 +336,10 @@ impl<'a> BlacklistRepository<'a> {
         .map(|r| r.rows_affected() > 0)
     }
 
-    pub async fn get_players_batch(&self, uuids: &[String]) -> Result<Vec<(String, Vec<PlayerTagRow>)>, sqlx::Error> {
+    pub async fn get_players_batch(
+        &self,
+        uuids: &[String],
+    ) -> Result<Vec<(String, Vec<PlayerTagRow>)>, sqlx::Error> {
         let tags: Vec<PlayerTagRow> = sqlx::query_as(&format!(
             "SELECT {COLS}
              FROM player_tags pt
@@ -333,7 +362,11 @@ impl<'a> BlacklistRepository<'a> {
         Ok(players
             .into_iter()
             .map(|p| {
-                let player_tags = tags.iter().filter(|t| t.player_id == p.id).cloned().collect();
+                let player_tags = tags
+                    .iter()
+                    .filter(|t| t.player_id == p.id)
+                    .cloned()
+                    .collect();
                 (p.uuid, player_tags)
             })
             .collect())
@@ -341,7 +374,8 @@ impl<'a> BlacklistRepository<'a> {
 
     pub async fn count_players(&self) -> Result<i64, sqlx::Error> {
         let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blacklist_players")
-            .fetch_one(self.pool).await?;
+            .fetch_one(self.pool)
+            .await?;
         Ok(count)
     }
 
@@ -356,15 +390,18 @@ impl<'a> BlacklistRepository<'a> {
         sqlx::query_as(
             "SELECT tag_type, COUNT(*) as count FROM player_tags
              WHERE removed_on IS NULL AND (expires_at IS NULL OR expires_at > NOW())
-             GROUP BY tag_type ORDER BY count DESC"
-        ).fetch_all(self.pool).await
+             GROUP BY tag_type ORDER BY count DESC",
+        )
+        .fetch_all(self.pool)
+        .await
     }
 
     pub async fn count_tags_by_user(&self, discord_id: i64) -> Result<i64, sqlx::Error> {
-        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM player_tags WHERE added_by = $1")
-            .bind(discord_id)
-            .fetch_one(self.pool)
-            .await?;
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM player_tags WHERE added_by = $1")
+                .bind(discord_id)
+                .fetch_one(self.pool)
+                .await?;
         Ok(count)
     }
 
@@ -378,7 +415,11 @@ impl<'a> BlacklistRepository<'a> {
         .map(|r| r.rows_affected())
     }
 
-    pub async fn set_evidence_thread(&self, uuid: &str, thread_url: &str) -> Result<bool, sqlx::Error> {
+    pub async fn set_evidence_thread(
+        &self,
+        uuid: &str,
+        thread_url: &str,
+    ) -> Result<bool, sqlx::Error> {
         sqlx::query("UPDATE blacklist_players SET evidence_thread = $2 WHERE uuid = $1")
             .bind(uuid)
             .bind(thread_url)
@@ -403,7 +444,11 @@ impl<'a> BlacklistRepository<'a> {
             .map(|r| r.rows_affected() > 0)
     }
 
-    pub async fn revert_tag_from_confirmed(&self, tag_id: i64, original_type: &str) -> Result<bool, sqlx::Error> {
+    pub async fn revert_tag_from_confirmed(
+        &self,
+        tag_id: i64,
+        original_type: &str,
+    ) -> Result<bool, sqlx::Error> {
         sqlx::query("UPDATE player_tags SET tag_type = $2 WHERE id = $1 AND removed_on IS NULL")
             .bind(tag_id)
             .bind(original_type)

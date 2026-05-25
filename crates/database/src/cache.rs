@@ -7,12 +7,10 @@ use sqlx::{FromRow, PgPool};
 
 const RECONSTRUCTION_THRESHOLD: Duration = Duration::from_millis(2);
 
-
 pub enum SnapshotResult {
     Stored(i64),
     NoChange,
 }
-
 
 #[derive(Debug, FromRow)]
 #[allow(dead_code)]
@@ -23,14 +21,14 @@ struct SnapshotRow {
     timestamp: DateTime<Utc>,
 }
 
-
 pub struct CacheRepository<'a> {
     pool: &'a PgPool,
 }
 
-
 impl<'a> CacheRepository<'a> {
-    pub fn new(pool: &'a PgPool) -> Self { Self { pool } }
+    pub fn new(pool: &'a PgPool) -> Self {
+        Self { pool }
+    }
 
     pub async fn count_snapshots(&self) -> Result<i64, sqlx::Error> {
         let (count,): (i64,) = sqlx::query_as(
@@ -144,7 +142,10 @@ impl<'a> CacheRepository<'a> {
         .map(|rows| rows.into_iter().map(|r| r.0).collect())
     }
 
-    pub async fn get_latest_timestamp(&self, uuid: &str) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
+    pub async fn get_latest_timestamp(
+        &self,
+        uuid: &str,
+    ) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
         sqlx::query_as::<_, (DateTime<Utc>,)>(
             "SELECT timestamp FROM player_snapshots WHERE uuid = $1
              ORDER BY timestamp DESC LIMIT 1",
@@ -155,7 +156,10 @@ impl<'a> CacheRepository<'a> {
         .map(|r| r.map(|r| r.0))
     }
 
-    pub async fn get_latest_non_migration_timestamp(&self, uuid: &str) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
+    pub async fn get_latest_non_migration_timestamp(
+        &self,
+        uuid: &str,
+    ) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
         sqlx::query_as::<_, (DateTime<Utc>,)>(
             "SELECT timestamp FROM player_snapshots WHERE uuid = $1 AND source != 'migration'
              ORDER BY timestamp DESC LIMIT 1",
@@ -177,7 +181,10 @@ impl<'a> CacheRepository<'a> {
         .map(|r| r.map(|r| r.0))
     }
 
-    pub async fn find_by_discord_username(&self, discord_username: &str) -> Result<Vec<(String, String)>, sqlx::Error> {
+    pub async fn find_by_discord_username(
+        &self,
+        discord_username: &str,
+    ) -> Result<Vec<(String, String)>, sqlx::Error> {
         sqlx::query_as(
             "SELECT DISTINCT ON (uuid) uuid, username FROM player_snapshots
              WHERE is_baseline = true AND username IS NOT NULL
@@ -237,7 +244,8 @@ impl<'a> CacheRepository<'a> {
             return Ok(Vec::new());
         }
 
-        let mut indexed: Vec<(usize, DateTime<Utc>)> = timestamps.iter().copied().enumerate().collect();
+        let mut indexed: Vec<(usize, DateTime<Utc>)> =
+            timestamps.iter().copied().enumerate().collect();
         indexed.sort_by_key(|(_, ts)| *ts);
         let latest = indexed[indexed.len() - 1].1;
 
@@ -272,7 +280,9 @@ impl<'a> CacheRepository<'a> {
 
         for &(orig_idx, target_ts) in &indexed {
             while let Some(row) = rows.peek() {
-                if row.timestamp > target_ts { break }
+                if row.timestamp > target_ts {
+                    break;
+                }
                 let row = rows.next().unwrap();
                 current_ts = row.timestamp;
                 if row.is_baseline {
@@ -317,9 +327,15 @@ impl<'a> CacheRepository<'a> {
         full_data: &Value,
         username: Option<&str>,
     ) -> Result<(), sqlx::Error> {
-        let Some(baseline) = self.get_latest_baseline(uuid).await? else { return Ok(()) };
-        let deltas = self.get_deltas_in_range(uuid, &baseline, Utc::now()).await?;
-        if deltas.is_empty() { return Ok(()) }
+        let Some(baseline) = self.get_latest_baseline(uuid).await? else {
+            return Ok(());
+        };
+        let deltas = self
+            .get_deltas_in_range(uuid, &baseline, Utc::now())
+            .await?;
+        if deltas.is_empty() {
+            return Ok(());
+        }
 
         let start = Instant::now();
         let _ = reconstruct(&baseline.data, &deltas);
@@ -361,26 +377,35 @@ impl<'a> CacheRepository<'a> {
         .await
     }
 
-    async fn reconstruct_current(&self, uuid: &str, baseline: &SnapshotRow) -> Result<Value, sqlx::Error> {
+    async fn reconstruct_current(
+        &self,
+        uuid: &str,
+        baseline: &SnapshotRow,
+    ) -> Result<Value, sqlx::Error> {
         let deltas = self.get_deltas_in_range(uuid, baseline, Utc::now()).await?;
         Ok(reconstruct(&baseline.data, &deltas))
     }
 }
 
-
 pub fn calculate_delta(old: &Value, new: &Value) -> Option<Value> {
     match (old, new) {
         (Value::Object(old_map), Value::Object(new_map)) => {
             let delta = calculate_object_delta(old_map, new_map);
-            if delta.is_empty() { None } else { Some(Value::Object(delta)) }
+            if delta.is_empty() {
+                None
+            } else {
+                Some(Value::Object(delta))
+            }
         }
         _ if old == new => None,
         _ => Some(new.clone()),
     }
 }
 
-
-fn calculate_object_delta(old: &Map<String, Value>, new: &Map<String, Value>) -> Map<String, Value> {
+fn calculate_object_delta(
+    old: &Map<String, Value>,
+    new: &Map<String, Value>,
+) -> Map<String, Value> {
     let mut delta = Map::new();
     for (key, new_value) in new {
         match old.get(key) {
@@ -389,12 +414,13 @@ fn calculate_object_delta(old: &Map<String, Value>, new: &Map<String, Value>) ->
                     delta.insert(key.clone(), field_delta);
                 }
             }
-            None => { delta.insert(key.clone(), new_value.clone()); }
+            None => {
+                delta.insert(key.clone(), new_value.clone());
+            }
         }
     }
     delta
 }
-
 
 pub fn deep_merge_mut(base: &mut Value, delta: &Value) {
     match (base, delta) {
@@ -402,14 +428,15 @@ pub fn deep_merge_mut(base: &mut Value, delta: &Value) {
             for (key, delta_value) in delta_map {
                 match base_map.get_mut(key) {
                     Some(base_value) => deep_merge_mut(base_value, delta_value),
-                    None => { base_map.insert(key.clone(), delta_value.clone()); }
+                    None => {
+                        base_map.insert(key.clone(), delta_value.clone());
+                    }
                 }
             }
         }
         (base, delta) => *base = delta.clone(),
     }
 }
-
 
 pub fn reconstruct(baseline: &Value, deltas: &[Value]) -> Value {
     let mut result = baseline.clone();
@@ -418,7 +445,6 @@ pub fn reconstruct(baseline: &Value, deltas: &[Value]) -> Value {
     }
     result
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -7,12 +7,11 @@ use tracing::debug;
 
 use database::{CacheRepository, MemberRepository};
 
-use crate::framework::Data;
 use super::{
     CACHE_TTL_SECS, GameStats, OverallCache, StatsError, disable_components, evict_expired,
     extract_tag_icons, fetch_skin, map_api_error, resolve_uuid, send_deferred_error, spawn_expiry,
 };
-
+use crate::framework::Data;
 
 enum CacheResult<'a> {
     Ok(Vec<u8>, CreateActionRow<'a>),
@@ -20,11 +19,17 @@ enum CacheResult<'a> {
     Ephemeral(Vec<u8>),
 }
 
-
-pub(super) async fn run<G: GameStats>(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
+pub(super) async fn run<G: GameStats>(
+    ctx: &Context,
+    command: &CommandInteraction,
+    data: &Data,
+) -> Result<()> {
     let t = Instant::now();
 
-    let player_input = command.data.options.first()
+    let player_input = command
+        .data
+        .options
+        .first()
         .and_then(|o| o.value.as_str())
         .map(|s| s.to_string());
     let sender_id = command.user.id.get();
@@ -43,7 +48,13 @@ pub(super) async fn run<G: GameStats>(ctx: &Context, command: &CommandInteractio
                 Some(uuid) => uuid,
                 None => {
                     command.defer(&ctx.http).await?;
-                    return send_deferred_error(ctx, command, "Not Linked", "Link your account or provide a player name").await;
+                    return send_deferred_error(
+                        ctx,
+                        command,
+                        "Not Linked",
+                        "Link your account or provide a player name",
+                    )
+                    .await;
                 }
             }
         }
@@ -63,7 +74,10 @@ pub(super) async fn run<G: GameStats>(ctx: &Context, command: &CommandInteractio
             debug!(at = ?t.elapsed(), "render done");
 
             let mode_row = CreateActionRow::SelectMenu(G::create_mode_dropdown(
-                G::OVERALL_MODE_ID, &cache_key, &cache.mode, &cache.stats,
+                G::OVERALL_MODE_ID,
+                &cache_key,
+                &cache.mode,
+                &cache.stats,
             ));
             let expiry_key = cache_key.clone();
 
@@ -92,26 +106,45 @@ pub(super) async fn run<G: GameStats>(ctx: &Context, command: &CommandInteractio
             debug!(player = %player, at = ?t.elapsed(), "send done");
         }
         Err(StatsError::PlayerNotFound) => {
-            send_deferred_error(ctx, command, "Player Not Found", &format!("Could not find player: {player}")).await?;
+            send_deferred_error(
+                ctx,
+                command,
+                "Player Not Found",
+                &format!("Could not find player: {player}"),
+            )
+            .await?;
         }
         Err(StatsError::NoStats(username)) => {
-            send_deferred_error(ctx, command, &format!("{username}'s {game} Stats", game = G::GAME_NAME), &format!("This player has no {} stats", G::GAME_NAME)).await?;
+            send_deferred_error(
+                ctx,
+                command,
+                &format!("{username}'s {game} Stats", game = G::GAME_NAME),
+                &format!("This player has no {} stats", G::GAME_NAME),
+            )
+            .await?;
         }
         Err(StatsError::ApiError) => {
-            send_deferred_error(ctx, command, "Error", "Something went wrong. Please try again later.").await?;
+            send_deferred_error(
+                ctx,
+                command,
+                "Error",
+                "Something went wrong. Please try again later.",
+            )
+            .await?;
         }
     }
 
     Ok(())
 }
 
-
 pub(super) async fn handle_mode_switch<G: GameStats>(
     ctx: &Context,
     component: &ComponentInteraction,
     data: &Data,
 ) -> Result<()> {
-    let Some((cache_key, mode)) = G::parse_mode_interaction(component) else { return Ok(()) };
+    let Some((cache_key, mode)) = G::parse_mode_interaction(component) else {
+        return Ok(());
+    };
 
     match resolve_mode_switch::<G>(data, &cache_key, mode.clone(), component.user.id.get()) {
         CacheResult::Ok(png, mode_row) => {
@@ -146,8 +179,12 @@ pub(super) async fn handle_mode_switch<G: GameStats>(
     Ok(())
 }
 
-
-fn resolve_mode_switch<G: GameStats>(data: &Data, cache_key: &str, mode: G::ModeSelection, user_id: u64) -> CacheResult<'static> {
+fn resolve_mode_switch<G: GameStats>(
+    data: &Data,
+    cache_key: &str,
+    mode: G::ModeSelection,
+    user_id: u64,
+) -> CacheResult<'static> {
     let mut store = G::overall_cache(data).lock().unwrap();
 
     let Some(entry) = store.get_mut(cache_key) else {
@@ -164,7 +201,10 @@ fn resolve_mode_switch<G: GameStats>(data: &Data, cache_key: &str, mode: G::Mode
     entry.mode = mode;
     entry.last_interaction = Instant::now();
     let mode_row = CreateActionRow::SelectMenu(G::create_mode_dropdown(
-        G::OVERALL_MODE_ID, cache_key, &entry.mode, &entry.stats,
+        G::OVERALL_MODE_ID,
+        cache_key,
+        &entry.mode,
+        &entry.stats,
     ));
 
     match render_and_encode::<G>(entry) {
@@ -173,8 +213,10 @@ fn resolve_mode_switch<G: GameStats>(data: &Data, cache_key: &str, mode: G::Mode
     }
 }
 
-
-fn render_ephemeral<G: GameStats>(entry: &mut OverallCache<G>, mode: &G::ModeSelection) -> CacheResult<'static> {
+fn render_ephemeral<G: GameStats>(
+    entry: &mut OverallCache<G>,
+    mode: &G::ModeSelection,
+) -> CacheResult<'static> {
     let original = std::mem::replace(&mut entry.mode, mode.clone());
     let result = render_and_encode::<G>(entry);
     entry.mode = original;
@@ -184,13 +226,20 @@ fn render_ephemeral<G: GameStats>(entry: &mut OverallCache<G>, mode: &G::ModeSel
     }
 }
 
-
 fn render_and_encode<G: GameStats>(cache: &OverallCache<G>) -> Result<Vec<u8>> {
-    G::render_overall(&cache.stats, &cache.mode, cache.skin.as_ref(), &cache.snapshots, &cache.tag_icons)
+    G::render_overall(
+        &cache.stats,
+        &cache.mode,
+        cache.skin.as_ref(),
+        &cache.snapshots,
+        &cache.tag_icons,
+    )
 }
 
-
-async fn fetch_player_data<G: GameStats>(data: &Data, player: &str) -> Result<OverallCache<G>, StatsError> {
+async fn fetch_player_data<G: GameStats>(
+    data: &Data,
+    player: &str,
+) -> Result<OverallCache<G>, StatsError> {
     let t = Instant::now();
     let cached_uuid = resolve_uuid(data, player).await;
     debug!(at = ?t.elapsed(), cached = cached_uuid.is_some(), "resolve");
@@ -219,7 +268,11 @@ async fn fetch_player_data<G: GameStats>(data: &Data, player: &str) -> Result<Ov
             }
         }
         None => {
-            let resp = data.api.get_player_stats(player).await.map_err(map_api_error)?;
+            let resp = data
+                .api
+                .get_player_stats(player)
+                .await
+                .map_err(map_api_error)?;
             let cache_repo = CacheRepository::new(data.db.pool());
             let (guild, skin, history) = tokio::join!(
                 data.api.get_guild(&resp.uuid, Some("player")),
@@ -233,7 +286,10 @@ async fn fetch_player_data<G: GameStats>(data: &Data, player: &str) -> Result<Ov
 
     let hypixel_data = resp.hypixel.ok_or(StatsError::PlayerNotFound)?;
     let username = resp.username.clone();
-    let guild_info = guild_result.ok().flatten().map(|g| super::to_guild_info(&g));
+    let guild_info = guild_result
+        .ok()
+        .flatten()
+        .map(|g| super::to_guild_info(&g));
     let stats = G::extract_stats(&username, &hypixel_data, guild_info)
         .ok_or_else(|| StatsError::NoStats(username.clone()))?;
     let snapshots = history_result.ok().unwrap_or_default();
@@ -251,7 +307,6 @@ async fn fetch_player_data<G: GameStats>(data: &Data, player: &str) -> Result<Ov
         last_interaction: Instant::now(),
     })
 }
-
 
 fn evict<G: GameStats>(cache: &mut HashMap<String, OverallCache<G>>) {
     evict_expired(cache, |e| e.last_interaction);

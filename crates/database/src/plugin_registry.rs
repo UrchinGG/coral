@@ -2,7 +2,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 
-
 #[derive(Debug, Clone, FromRow, Serialize)]
 pub struct Plugin {
     pub id: i64,
@@ -26,7 +25,6 @@ pub struct Plugin {
     pub updated_at: DateTime<Utc>,
 }
 
-
 #[derive(Debug, Clone, FromRow, Serialize)]
 pub struct PluginRelease {
     pub id: i64,
@@ -44,14 +42,12 @@ pub struct PluginRelease {
     pub created_at: DateTime<Utc>,
 }
 
-
 #[derive(Debug, Clone, FromRow)]
 pub struct ReleaseBody {
     pub body_cache: Option<Vec<u8>>,
     pub asset_url: String,
     pub asset_sha256: Vec<u8>,
 }
-
 
 #[derive(Debug, Clone, FromRow)]
 pub struct PluginInstall {
@@ -62,7 +58,6 @@ pub struct PluginInstall {
     pub last_updated_at: DateTime<Utc>,
 }
 
-
 #[derive(Debug, Clone, FromRow, Serialize)]
 pub struct PluginRating {
     pub user_id: i64,
@@ -71,7 +66,6 @@ pub struct PluginRating {
     pub review: Option<String>,
     pub updated_at: DateTime<Utc>,
 }
-
 
 #[derive(Debug, Clone, FromRow)]
 pub struct PluginSortConfig {
@@ -84,7 +78,6 @@ pub struct PluginSortConfig {
     pub updated_at: DateTime<Utc>,
 }
 
-
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PluginSortMode {
@@ -94,11 +87,11 @@ pub enum PluginSortMode {
     New,
 }
 
-
 impl Default for PluginSortMode {
-    fn default() -> Self { Self::Popular }
+    fn default() -> Self {
+        Self::Popular
+    }
 }
-
 
 #[derive(Debug, Clone, FromRow, Serialize)]
 pub struct PluginSummary {
@@ -117,14 +110,12 @@ pub struct PluginSummary {
     pub rating_bayesian: f32,
 }
 
-
 #[derive(Debug, Clone, FromRow, Serialize)]
 pub struct DisabledEntry {
     pub slug: String,
     pub reason: Option<String>,
     pub disabled_at: DateTime<Utc>,
 }
-
 
 #[derive(Debug, Clone, FromRow)]
 pub struct InstalledWithLatest {
@@ -140,11 +131,9 @@ pub struct InstalledWithLatest {
     pub latest_created_at: DateTime<Utc>,
 }
 
-
 pub struct PluginRegistryRepository<'a> {
     pool: &'a PgPool,
 }
-
 
 pub struct NewPlugin<'a> {
     pub slug: &'a str,
@@ -157,7 +146,6 @@ pub struct NewPlugin<'a> {
     pub license: &'a str,
     pub homepage: Option<&'a str>,
 }
-
 
 pub struct NewRelease<'a> {
     pub plugin_id: i64,
@@ -172,10 +160,10 @@ pub struct NewRelease<'a> {
     pub changelog: Option<&'a str>,
 }
 
-
 impl<'a> PluginRegistryRepository<'a> {
-    pub fn new(pool: &'a PgPool) -> Self { Self { pool } }
-
+    pub fn new(pool: &'a PgPool) -> Self {
+        Self { pool }
+    }
 
     pub async fn get_plugin_by_slug(&self, slug: &str) -> Result<Option<Plugin>, sqlx::Error> {
         sqlx::query_as("SELECT * FROM plugins WHERE slug = $1")
@@ -184,7 +172,10 @@ impl<'a> PluginRegistryRepository<'a> {
             .await
     }
 
-    pub async fn get_plugin_by_github_repo_id(&self, github_repo_id: i64) -> Result<Option<Plugin>, sqlx::Error> {
+    pub async fn get_plugin_by_github_repo_id(
+        &self,
+        github_repo_id: i64,
+    ) -> Result<Option<Plugin>, sqlx::Error> {
         sqlx::query_as("SELECT * FROM plugins WHERE github_repo_id = $1")
             .bind(github_repo_id)
             .fetch_optional(self.pool)
@@ -237,7 +228,11 @@ impl<'a> PluginRegistryRepository<'a> {
         .await
     }
 
-    pub async fn set_page_override(&self, plugin_id: i64, page: Option<&str>) -> Result<Plugin, sqlx::Error> {
+    pub async fn set_page_override(
+        &self,
+        plugin_id: i64,
+        page: Option<&str>,
+    ) -> Result<Plugin, sqlx::Error> {
         sqlx::query_as(
             "UPDATE plugins SET page_override = $2, updated_at = NOW()
              WHERE id = $1 RETURNING *",
@@ -248,7 +243,11 @@ impl<'a> PluginRegistryRepository<'a> {
         .await
     }
 
-    pub async fn set_official(&self, plugin_id: i64, official: bool) -> Result<Plugin, sqlx::Error> {
+    pub async fn set_official(
+        &self,
+        plugin_id: i64,
+        official: bool,
+    ) -> Result<Plugin, sqlx::Error> {
         sqlx::query_as(
             "UPDATE plugins SET official = $2, updated_at = NOW()
              WHERE id = $1 RETURNING *",
@@ -259,7 +258,11 @@ impl<'a> PluginRegistryRepository<'a> {
         .await
     }
 
-    pub async fn set_unlisted(&self, plugin_id: i64, unlisted: bool) -> Result<Plugin, sqlx::Error> {
+    pub async fn set_unlisted(
+        &self,
+        plugin_id: i64,
+        unlisted: bool,
+    ) -> Result<Plugin, sqlx::Error> {
         sqlx::query_as(
             "UPDATE plugins SET
                 unlisted = $2,
@@ -293,7 +296,11 @@ impl<'a> PluginRegistryRepository<'a> {
             .map(|r| r.rows_affected() > 0)
     }
 
-    pub async fn release_install_count(&self, plugin_id: i64, version: &str) -> Result<i64, sqlx::Error> {
+    pub async fn release_install_count(
+        &self,
+        plugin_id: i64,
+        version: &str,
+    ) -> Result<i64, sqlx::Error> {
         let row: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM plugin_installs i
                JOIN plugin_releases r ON r.id = i.release_id
@@ -316,12 +323,10 @@ impl<'a> PluginRegistryRepository<'a> {
     }
 
     pub async fn list_my_plugins(&self, owner_user_id: i64) -> Result<Vec<Plugin>, sqlx::Error> {
-        sqlx::query_as(
-            "SELECT * FROM plugins WHERE owner_user_id = $1 ORDER BY created_at DESC",
-        )
-        .bind(owner_user_id)
-        .fetch_all(self.pool)
-        .await
+        sqlx::query_as("SELECT * FROM plugins WHERE owner_user_id = $1 ORDER BY created_at DESC")
+            .bind(owner_user_id)
+            .fetch_all(self.pool)
+            .await
     }
 
     pub async fn set_plugin_disabled(&self, slug: &str, reason: &str) -> Result<bool, sqlx::Error> {
@@ -336,7 +341,10 @@ impl<'a> PluginRegistryRepository<'a> {
         .map(|r| r.rows_affected() > 0)
     }
 
-    pub async fn list_disabled_since(&self, since: DateTime<Utc>) -> Result<Vec<DisabledEntry>, sqlx::Error> {
+    pub async fn list_disabled_since(
+        &self,
+        since: DateTime<Utc>,
+    ) -> Result<Vec<DisabledEntry>, sqlx::Error> {
         sqlx::query_as(
             "SELECT slug, disabled_reason AS reason, disabled_at
              FROM plugins
@@ -347,7 +355,6 @@ impl<'a> PluginRegistryRepository<'a> {
         .fetch_all(self.pool)
         .await
     }
-
 
     pub async fn create_release(&self, r: NewRelease<'_>) -> Result<PluginRelease, sqlx::Error> {
         sqlx::query_as(
@@ -372,7 +379,11 @@ impl<'a> PluginRegistryRepository<'a> {
         .await
     }
 
-    pub async fn get_release_by_version(&self, plugin_id: i64, version: &str) -> Result<Option<PluginRelease>, sqlx::Error> {
+    pub async fn get_release_by_version(
+        &self,
+        plugin_id: i64,
+        version: &str,
+    ) -> Result<Option<PluginRelease>, sqlx::Error> {
         sqlx::query_as(
             "SELECT id, plugin_id, version, git_sha, asset_url, asset_sha256, asset_size,
                     manifest_json, changelog, yanked, yanked_at, yanked_reason, created_at
@@ -384,7 +395,10 @@ impl<'a> PluginRegistryRepository<'a> {
         .await
     }
 
-    pub async fn get_latest_release(&self, plugin_id: i64) -> Result<Option<PluginRelease>, sqlx::Error> {
+    pub async fn get_latest_release(
+        &self,
+        plugin_id: i64,
+    ) -> Result<Option<PluginRelease>, sqlx::Error> {
         sqlx::query_as(
             "SELECT id, plugin_id, version, git_sha, asset_url, asset_sha256, asset_size,
                     manifest_json, changelog, yanked, yanked_at, yanked_reason, created_at
@@ -410,7 +424,10 @@ impl<'a> PluginRegistryRepository<'a> {
         .await
     }
 
-    pub async fn get_release_body(&self, release_id: i64) -> Result<Option<ReleaseBody>, sqlx::Error> {
+    pub async fn get_release_body(
+        &self,
+        release_id: i64,
+    ) -> Result<Option<ReleaseBody>, sqlx::Error> {
         sqlx::query_as(
             "SELECT body_cache, asset_url, asset_sha256 FROM plugin_releases WHERE id = $1",
         )
@@ -419,7 +436,11 @@ impl<'a> PluginRegistryRepository<'a> {
         .await
     }
 
-    pub async fn clear_old_body_caches(&self, plugin_id: i64, keep_release_id: i64) -> Result<(), sqlx::Error> {
+    pub async fn clear_old_body_caches(
+        &self,
+        plugin_id: i64,
+        keep_release_id: i64,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(
             "UPDATE plugin_releases SET body_cache = NULL
              WHERE plugin_id = $1 AND id != $2 AND body_cache IS NOT NULL",
@@ -432,16 +453,20 @@ impl<'a> PluginRegistryRepository<'a> {
     }
 
     pub async fn get_release_readme(&self, release_id: i64) -> Result<Option<String>, sqlx::Error> {
-        let row: Option<(Option<String>,)> = sqlx::query_as(
-            "SELECT readme_cache FROM plugin_releases WHERE id = $1",
-        )
-        .bind(release_id)
-        .fetch_optional(self.pool)
-        .await?;
+        let row: Option<(Option<String>,)> =
+            sqlx::query_as("SELECT readme_cache FROM plugin_releases WHERE id = $1")
+                .bind(release_id)
+                .fetch_optional(self.pool)
+                .await?;
         Ok(row.and_then(|(r,)| r))
     }
 
-    pub async fn yank_release(&self, plugin_id: i64, version: &str, reason: &str) -> Result<bool, sqlx::Error> {
+    pub async fn yank_release(
+        &self,
+        plugin_id: i64,
+        version: &str,
+        reason: &str,
+    ) -> Result<bool, sqlx::Error> {
         sqlx::query(
             "UPDATE plugin_releases SET yanked = true, yanked_at = NOW(), yanked_reason = $3
              WHERE plugin_id = $1 AND version = $2",
@@ -454,8 +479,12 @@ impl<'a> PluginRegistryRepository<'a> {
         .map(|r| r.rows_affected() > 0)
     }
 
-
-    pub async fn upsert_install(&self, user_id: i64, plugin_id: i64, release_id: i64) -> Result<PluginInstall, sqlx::Error> {
+    pub async fn upsert_install(
+        &self,
+        user_id: i64,
+        plugin_id: i64,
+        release_id: i64,
+    ) -> Result<PluginInstall, sqlx::Error> {
         sqlx::query_as(
             "INSERT INTO plugin_installs (user_id, plugin_id, release_id)
              VALUES ($1, $2, $3)
@@ -471,7 +500,11 @@ impl<'a> PluginRegistryRepository<'a> {
         .await
     }
 
-    pub async fn get_install(&self, user_id: i64, plugin_id: i64) -> Result<Option<PluginInstall>, sqlx::Error> {
+    pub async fn get_install(
+        &self,
+        user_id: i64,
+        plugin_id: i64,
+    ) -> Result<Option<PluginInstall>, sqlx::Error> {
         sqlx::query_as("SELECT * FROM plugin_installs WHERE user_id = $1 AND plugin_id = $2")
             .bind(user_id)
             .bind(plugin_id)
@@ -488,7 +521,10 @@ impl<'a> PluginRegistryRepository<'a> {
             .map(|r| r.rows_affected() > 0)
     }
 
-    pub async fn list_user_installs(&self, user_id: i64) -> Result<Vec<InstalledWithLatest>, sqlx::Error> {
+    pub async fn list_user_installs(
+        &self,
+        user_id: i64,
+    ) -> Result<Vec<InstalledWithLatest>, sqlx::Error> {
         sqlx::query_as(
             "SELECT
                 p.slug,
@@ -517,8 +553,13 @@ impl<'a> PluginRegistryRepository<'a> {
         .await
     }
 
-
-    pub async fn upsert_rating(&self, user_id: i64, plugin_id: i64, stars: i16, review: Option<&str>) -> Result<PluginRating, sqlx::Error> {
+    pub async fn upsert_rating(
+        &self,
+        user_id: i64,
+        plugin_id: i64,
+        stars: i16,
+        review: Option<&str>,
+    ) -> Result<PluginRating, sqlx::Error> {
         sqlx::query_as(
             "INSERT INTO plugin_ratings (user_id, plugin_id, stars, review)
              VALUES ($1, $2, $3, $4)
@@ -536,7 +577,11 @@ impl<'a> PluginRegistryRepository<'a> {
         .await
     }
 
-    pub async fn get_user_rating(&self, user_id: i64, plugin_id: i64) -> Result<Option<PluginRating>, sqlx::Error> {
+    pub async fn get_user_rating(
+        &self,
+        user_id: i64,
+        plugin_id: i64,
+    ) -> Result<Option<PluginRating>, sqlx::Error> {
         sqlx::query_as("SELECT * FROM plugin_ratings WHERE user_id = $1 AND plugin_id = $2")
             .bind(user_id)
             .bind(plugin_id)
@@ -544,7 +589,11 @@ impl<'a> PluginRegistryRepository<'a> {
             .await
     }
 
-    pub async fn list_plugin_ratings(&self, plugin_id: i64, limit: i64) -> Result<Vec<PluginRating>, sqlx::Error> {
+    pub async fn list_plugin_ratings(
+        &self,
+        plugin_id: i64,
+        limit: i64,
+    ) -> Result<Vec<PluginRating>, sqlx::Error> {
         sqlx::query_as(
             "SELECT * FROM plugin_ratings WHERE plugin_id = $1 AND review IS NOT NULL
              ORDER BY updated_at DESC LIMIT $2",
@@ -555,13 +604,11 @@ impl<'a> PluginRegistryRepository<'a> {
         .await
     }
 
-
     pub async fn get_sort_config(&self) -> Result<PluginSortConfig, sqlx::Error> {
         sqlx::query_as("SELECT * FROM plugin_sort_config WHERE id = 1")
             .fetch_one(self.pool)
             .await
     }
-
 
     pub async fn list_plugins(
         &self,
@@ -587,9 +634,9 @@ impl<'a> PluginRegistryRepository<'a> {
 
         let order_sql = match sort {
             PluginSortMode::Popular => "score DESC",
-            PluginSortMode::Rating  => "rating_bayesian DESC, rating_count DESC",
-            PluginSortMode::Recent  => "last_released_at DESC NULLS LAST",
-            PluginSortMode::New     => "created_at DESC",
+            PluginSortMode::Rating => "rating_bayesian DESC, rating_count DESC",
+            PluginSortMode::Recent => "last_released_at DESC NULLS LAST",
+            PluginSortMode::New => "created_at DESC",
         };
 
         let sql = format!(
@@ -661,8 +708,10 @@ impl<'a> PluginRegistryRepository<'a> {
         Ok((total, plugins))
     }
 
-
-    pub async fn plugin_rating_stats(&self, plugin_id: i64) -> Result<(Option<f32>, i64, f32), sqlx::Error> {
+    pub async fn plugin_rating_stats(
+        &self,
+        plugin_id: i64,
+    ) -> Result<(Option<f32>, i64, f32), sqlx::Error> {
         let row: (Option<f32>, i64, f32) = sqlx::query_as(
             "SELECT
                 (SELECT AVG(stars)::real FROM plugin_ratings WHERE plugin_id = $1),

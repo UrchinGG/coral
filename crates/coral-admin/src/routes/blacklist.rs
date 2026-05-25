@@ -1,17 +1,15 @@
-use axum::{extract::*, routing::get, Json, Router};
+use axum::{Json, Router, extract::*, routing::get};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 use crate::state::AppState;
 
-
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list))
         .route("/{uuid}", get(detail))
 }
-
 
 #[derive(Deserialize)]
 struct ListParams {
@@ -21,13 +19,11 @@ struct ListParams {
     tag_type: Option<String>,
 }
 
-
 #[derive(Serialize)]
 struct ListResponse {
     total: i64,
     players: Vec<PlayerWithTags>,
 }
-
 
 #[derive(Serialize)]
 struct PlayerWithTags {
@@ -40,7 +36,6 @@ struct PlayerWithTags {
     tags: Vec<Tag>,
 }
 
-
 #[derive(Serialize, FromRow, Clone)]
 struct PlayerRow {
     id: i64,
@@ -50,7 +45,6 @@ struct PlayerRow {
     locked_by: Option<i64>,
     locked_at: Option<DateTime<Utc>>,
 }
-
 
 #[derive(Serialize, FromRow, Clone)]
 struct Tag {
@@ -64,7 +58,6 @@ struct Tag {
     removed_by: Option<i64>,
     removed_on: Option<DateTime<Utc>>,
 }
-
 
 async fn list(
     State(state): State<AppState>,
@@ -120,23 +113,63 @@ async fn list(
 
     let (total, players): (i64, Vec<PlayerRow>) = match search_pattern {
         Some((ref pattern, ref tag_type)) if !pattern.is_empty() && !tag_type.is_empty() => {
-            let total = sqlx::query_scalar(count_sql).bind(pattern).bind(tag_type).fetch_one(pool).await.unwrap_or(0);
-            let players = sqlx::query_as(list_sql).bind(pattern).bind(tag_type).bind(limit).bind(offset).fetch_all(pool).await.unwrap_or_default();
+            let total = sqlx::query_scalar(count_sql)
+                .bind(pattern)
+                .bind(tag_type)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
+            let players = sqlx::query_as(list_sql)
+                .bind(pattern)
+                .bind(tag_type)
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default();
             (total, players)
         }
         Some((ref pattern, _)) if !pattern.is_empty() => {
-            let total = sqlx::query_scalar(count_sql).bind(pattern).fetch_one(pool).await.unwrap_or(0);
-            let players = sqlx::query_as(list_sql).bind(pattern).bind(limit).bind(offset).fetch_all(pool).await.unwrap_or_default();
+            let total = sqlx::query_scalar(count_sql)
+                .bind(pattern)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
+            let players = sqlx::query_as(list_sql)
+                .bind(pattern)
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default();
             (total, players)
         }
         Some((_, ref tag_type)) if !tag_type.is_empty() => {
-            let total = sqlx::query_scalar(count_sql).bind(tag_type).fetch_one(pool).await.unwrap_or(0);
-            let players = sqlx::query_as(list_sql).bind(tag_type).bind(limit).bind(offset).fetch_all(pool).await.unwrap_or_default();
+            let total = sqlx::query_scalar(count_sql)
+                .bind(tag_type)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
+            let players = sqlx::query_as(list_sql)
+                .bind(tag_type)
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default();
             (total, players)
         }
         _ => {
-            let total = sqlx::query_scalar(count_sql).fetch_one(pool).await.unwrap_or(0);
-            let players = sqlx::query_as(list_sql).bind(limit).bind(offset).fetch_all(pool).await.unwrap_or_default();
+            let total = sqlx::query_scalar(count_sql)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
+            let players = sqlx::query_as(list_sql)
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default();
             (total, players)
         }
     };
@@ -159,7 +192,11 @@ async fn list(
     let players = players
         .into_iter()
         .map(|p| {
-            let tags = all_tags.iter().filter(|t| t.player_id == p.id).cloned().collect();
+            let tags = all_tags
+                .iter()
+                .filter(|t| t.player_id == p.id)
+                .cloned()
+                .collect();
             PlayerWithTags {
                 id: p.id,
                 uuid: p.uuid,
@@ -175,14 +212,12 @@ async fn list(
     Json(ListResponse { total, players })
 }
 
-
 #[derive(Serialize)]
 struct DetailResponse {
     player: PlayerRow,
     tags: Vec<Tag>,
     tag_history: Vec<Tag>,
 }
-
 
 async fn detail(
     State(state): State<AppState>,
@@ -223,5 +258,9 @@ async fn detail(
     .await
     .unwrap_or_default();
 
-    Json(Some(DetailResponse { player, tags, tag_history }))
+    Json(Some(DetailResponse {
+        player,
+        tags,
+        tag_history,
+    }))
 }

@@ -6,17 +6,19 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use hypixel::parsing::winstreaks;
-use hypixel::{BedwarsPlayerStats, GuildInfo, Mode, WinstreakSnapshot, experience_for_level, extract_bedwars_stats};
+use hypixel::{
+    BedwarsPlayerStats, GuildInfo, Mode, WinstreakSnapshot, experience_for_level,
+    extract_bedwars_stats,
+};
 use image::DynamicImage;
 use serenity::all::*;
 
 use database::CacheRepository;
 use render::{SessionType, TagIcon};
 
+use super::{AutoPreset, GameStats, OverallCache, SessionCacheEntry, encode_png, overall, session};
 use crate::framework::Data;
 use cards::{render_bedwars, render_session};
-use super::{AutoPreset, GameStats, OverallCache, SessionCacheEntry, encode_png, overall, session};
-
 
 const MODE_CHOICES: &[(Mode, &str)] = &[
     (Mode::Solos, "solos"),
@@ -27,9 +29,12 @@ const MODE_CHOICES: &[(Mode, &str)] = &[
 ];
 
 const ALL_MODES: &[Mode] = &[
-    Mode::Solos, Mode::Doubles, Mode::Threes, Mode::Fours, Mode::FourVFour,
+    Mode::Solos,
+    Mode::Doubles,
+    Mode::Threes,
+    Mode::Fours,
+    Mode::FourVFour,
 ];
-
 
 fn create_mode_dropdown(
     custom_id: &str,
@@ -49,18 +54,18 @@ fn create_mode_dropdown(
 
     CreateSelectMenu::new(
         custom_id.to_string(),
-        CreateSelectMenuKind::String { options: options.into() },
+        CreateSelectMenuKind::String {
+            options: options.into(),
+        },
     )
     .min_values(1)
     .max_values(MODE_CHOICES.len() as u8)
 }
 
-
 fn parse_mode_value(value: &str) -> Option<(&str, Mode)> {
     let (mode_str, cache_key) = value.split_once(':')?;
     Some((cache_key, Mode::from_str(mode_str)?))
 }
-
 
 fn extract_select_modes(component: &ComponentInteraction) -> Option<(&str, Vec<Mode>)> {
     let values = match &component.data.kind {
@@ -77,9 +82,7 @@ fn extract_select_modes(component: &ComponentInteraction) -> Option<(&str, Vec<M
     Some((cache_key?, modes))
 }
 
-
 pub struct Bedwars;
-
 
 impl GameStats for Bedwars {
     type Stats = BedwarsPlayerStats;
@@ -96,7 +99,11 @@ impl GameStats for Bedwars {
     const CONFIRM_DELETE_PREFIX: &'static str = "session_confirm_delete:";
     const RENAME_MODAL_PREFIX: &'static str = "session_rename_modal:";
 
-    fn extract_stats(username: &str, data: &serde_json::Value, guild: Option<GuildInfo>) -> Option<BedwarsPlayerStats> {
+    fn extract_stats(
+        username: &str,
+        data: &serde_json::Value,
+        guild: Option<GuildInfo>,
+    ) -> Option<BedwarsPlayerStats> {
         extract_bedwars_stats(username, data, guild)
     }
 
@@ -108,7 +115,12 @@ impl GameStats for Bedwars {
         ALL_MODES.to_vec()
     }
 
-    fn create_mode_dropdown(custom_id: &str, cache_key: &str, mode: &Vec<Mode>, stats: &BedwarsPlayerStats) -> CreateSelectMenu<'static> {
+    fn create_mode_dropdown(
+        custom_id: &str,
+        cache_key: &str,
+        mode: &Vec<Mode>,
+        stats: &BedwarsPlayerStats,
+    ) -> CreateSelectMenu<'static> {
         create_mode_dropdown(custom_id, cache_key, mode, stats)
     }
 
@@ -117,27 +129,69 @@ impl GameStats for Bedwars {
         Some((cache_key.to_string(), modes))
     }
 
-    fn render_overall(stats: &BedwarsPlayerStats, mode: &Vec<Mode>, skin: Option<&DynamicImage>, snapshots: &[(DateTime<Utc>, WinstreakSnapshot)], tags: &[TagIcon]) -> Result<Vec<u8>> {
+    fn render_overall(
+        stats: &BedwarsPlayerStats,
+        mode: &Vec<Mode>,
+        skin: Option<&DynamicImage>,
+        snapshots: &[(DateTime<Utc>, WinstreakSnapshot)],
+        tags: &[TagIcon],
+    ) -> Result<Vec<u8>> {
         let ws = winstreaks::calculate(snapshots, mode);
         encode_png(&render_bedwars(stats, mode, skin, &ws, tags))
     }
 
-    fn render_session(current: &BedwarsPlayerStats, previous: &BedwarsPlayerStats, session_type: SessionType, started: DateTime<Utc>, mode: &Vec<Mode>, skin: Option<&DynamicImage>, _snapshots: &[(DateTime<Utc>, WinstreakSnapshot)], tags: &[TagIcon]) -> Result<Vec<u8>> {
-        encode_png(&render_session(current, previous, session_type, started, None, mode, skin, tags))
+    fn render_session(
+        current: &BedwarsPlayerStats,
+        previous: &BedwarsPlayerStats,
+        session_type: SessionType,
+        started: DateTime<Utc>,
+        mode: &Vec<Mode>,
+        skin: Option<&DynamicImage>,
+        _snapshots: &[(DateTime<Utc>, WinstreakSnapshot)],
+        tags: &[TagIcon],
+    ) -> Result<Vec<u8>> {
+        encode_png(&render_session(
+            current,
+            previous,
+            session_type,
+            started,
+            None,
+            mode,
+            skin,
+            tags,
+        ))
     }
 
-    fn format_delta(current: &BedwarsPlayerStats, previous: &BedwarsPlayerStats, modes: &Vec<Mode>) -> String {
+    fn format_delta(
+        current: &BedwarsPlayerStats,
+        previous: &BedwarsPlayerStats,
+        modes: &Vec<Mode>,
+    ) -> String {
         let star_diff = current.level as i64 - previous.level as i64;
         let cur = current.get_combined_mode_stats(modes);
         let prev = previous.get_combined_mode_stats(modes);
         let fk = cur.final_kills as i64 - prev.final_kills as i64;
         let fd = cur.final_deaths as i64 - prev.final_deaths as i64;
-        let fkdr = if fd == 0 { fk as f64 } else { fk as f64 / fd as f64 };
+        let fkdr = if fd == 0 {
+            fk as f64
+        } else {
+            fk as f64 / fd as f64
+        };
         format!("+{}\u{272B}, +{} finals, {:.2} fkdr", star_diff, fk, fkdr)
     }
 
-    async fn detect_auto_presets(cache_repo: &CacheRepository<'_>, uuid: &str, stats: &BedwarsPlayerStats) -> Vec<AutoPreset> {
-        detect_auto_presets_bedwars(cache_repo, uuid, stats.level as u64, stats.overall.winstreak.is_none()).await
+    async fn detect_auto_presets(
+        cache_repo: &CacheRepository<'_>,
+        uuid: &str,
+        stats: &BedwarsPlayerStats,
+    ) -> Vec<AutoPreset> {
+        detect_auto_presets_bedwars(
+            cache_repo,
+            uuid,
+            stats.level as u64,
+            stats.overall.winstreak.is_none(),
+        )
+        .await
     }
 
     fn overall_cache(data: &Data) -> &Arc<Mutex<HashMap<String, OverallCache<Self>>>> {
@@ -149,7 +203,6 @@ impl GameStats for Bedwars {
     }
 }
 
-
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("bedwars")
         .description("View a player's Bedwars stats")
@@ -160,57 +213,79 @@ pub fn register() -> CreateCommand<'static> {
         ))
 }
 
-
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
     overall::run::<Bedwars>(ctx, command, data).await
 }
 
-
-pub async fn handle_mode_switch(ctx: &Context, component: &ComponentInteraction, data: &Data) -> Result<()> {
+pub async fn handle_mode_switch(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
     overall::handle_mode_switch::<Bedwars>(ctx, component, data).await
 }
 
-
-pub async fn session_run(ctx: &Context, command: &CommandInteraction, data: &Data, preferred: Option<&str>) -> Result<()> {
+pub async fn session_run(
+    ctx: &Context,
+    command: &CommandInteraction,
+    data: &Data,
+    preferred: Option<&str>,
+) -> Result<()> {
     session::run_with_preferred_view::<Bedwars>(ctx, command, data, preferred).await
 }
 
-
-pub async fn handle_session_switch(ctx: &Context, component: &ComponentInteraction, data: &Data) -> Result<()> {
+pub async fn handle_session_switch(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
     session::handle_switch::<Bedwars>(ctx, component, data).await
 }
 
-
-pub async fn handle_session_mode_switch(ctx: &Context, component: &ComponentInteraction, data: &Data) -> Result<()> {
+pub async fn handle_session_mode_switch(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
     session::handle_mode_switch::<Bedwars>(ctx, component, data).await
 }
 
-
-pub async fn handle_mgmt_rename_button(ctx: &Context, component: &ComponentInteraction, data: &Data) -> Result<()> {
+pub async fn handle_mgmt_rename_button(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
     session::handle_mgmt_rename_button::<Bedwars>(ctx, component, data).await
 }
 
-
-pub async fn handle_rename_modal(ctx: &Context, modal: &ModalInteraction, data: &Data) -> Result<()> {
+pub async fn handle_rename_modal(
+    ctx: &Context,
+    modal: &ModalInteraction,
+    data: &Data,
+) -> Result<()> {
     session::handle_rename_modal::<Bedwars>(ctx, modal, data).await
 }
 
-
-pub async fn handle_mgmt_delete_button(ctx: &Context, component: &ComponentInteraction, data: &Data) -> Result<()> {
+pub async fn handle_mgmt_delete_button(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
     session::handle_mgmt_delete_button::<Bedwars>(ctx, component, data).await
 }
 
-
-pub async fn handle_confirm_delete_button(ctx: &Context, component: &ComponentInteraction, data: &Data) -> Result<()> {
+pub async fn handle_confirm_delete_button(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
     session::handle_confirm_delete_button::<Bedwars>(ctx, component, data).await
 }
-
 
 struct SnapshotFields {
     experience: u64,
     losses: u64,
 }
-
 
 async fn detect_auto_presets_bedwars(
     cache_repo: &CacheRepository<'_>,
@@ -223,7 +298,10 @@ async fn detect_auto_presets_bedwars(
             let bw = v.get("stats")?.get("Bedwars")?;
             Some(SnapshotFields {
                 experience: bw.get("Experience").and_then(|e| e.as_u64()).unwrap_or(0),
-                losses: bw.get("losses_bedwars").and_then(|e| e.as_u64()).unwrap_or(0),
+                losses: bw
+                    .get("losses_bedwars")
+                    .and_then(|e| e.as_u64())
+                    .unwrap_or(0),
             })
         })
         .await

@@ -1,16 +1,15 @@
 use mctext::{
-    LayoutEngine, LayoutOptions, MCText, SoftwareRenderer,
-    TextRenderer as McTextRenderer,
+    LayoutEngine, LayoutOptions, MCText, SoftwareRenderer, TextRenderer as McTextRenderer,
 };
 
 use super::font_system;
 
-
 pub struct TextRenderer;
 
-
 impl TextRenderer {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     pub fn measure(&self, text: &MCText, size: f32) -> (f32, f32) {
         LayoutEngine::new(font_system()).measure(text, size)
@@ -36,7 +35,8 @@ impl TextRenderer {
     }
 }
 
-
 impl Default for TextRenderer {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

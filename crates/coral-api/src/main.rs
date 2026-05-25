@@ -3,11 +3,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Result;
+use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::Router;
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
@@ -28,7 +28,6 @@ mod state;
 
 use state::{AppState, StarfishConfig};
 
-
 #[tokio::main]
 async fn main() -> Result<()> {
     init_logging();
@@ -38,7 +37,6 @@ async fn main() -> Result<()> {
     }
     serve(build_router(state)).await
 }
-
 
 fn spawn_starfish_cleanup(db: std::sync::Arc<database::Database>) {
     tokio::spawn(async move {
@@ -52,14 +50,12 @@ fn spawn_starfish_cleanup(db: std::sync::Arc<database::Database>) {
     });
 }
 
-
 fn init_logging() {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 }
-
 
 async fn init_state() -> Result<AppState> {
     let db = Database::connect(&env::var("DATABASE_URL").expect("DATABASE_URL required")).await?;
@@ -96,13 +92,19 @@ async fn init_state() -> Result<AppState> {
     ))
 }
 
-
 fn parse_starfish_config() -> Option<StarfishConfig> {
-    let hmac_secret: [u8; 32] = hex::decode(env::var("STARFISH_HMAC_SECRET").ok()?).ok()?.try_into().ok()?;
+    let hmac_secret: [u8; 32] = hex::decode(env::var("STARFISH_HMAC_SECRET").ok()?)
+        .ok()?
+        .try_into()
+        .ok()?;
 
     let signing_key_bytes: [u8; 32] = hex::decode(
-        env::var("STARFISH_ED25519_PRIVATE_KEY").expect("STARFISH_ED25519_PRIVATE_KEY required when Starfish is enabled")
-    ).expect("STARFISH_ED25519_PRIVATE_KEY must be valid hex").try_into().expect("STARFISH_ED25519_PRIVATE_KEY must be 32 bytes");
+        env::var("STARFISH_ED25519_PRIVATE_KEY")
+            .expect("STARFISH_ED25519_PRIVATE_KEY required when Starfish is enabled"),
+    )
+    .expect("STARFISH_ED25519_PRIVATE_KEY must be valid hex")
+    .try_into()
+    .expect("STARFISH_ED25519_PRIVATE_KEY must be 32 bytes");
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&signing_key_bytes);
 
     let core_tables_bytes = match env::var("STARFISH_CORE_TABLES") {
@@ -117,15 +119,21 @@ fn parse_starfish_config() -> Option<StarfishConfig> {
         core_tables_bytes,
         hmac_secret,
         signing_key,
-        discord_client_id: env::var("STARFISH_DISCORD_CLIENT_ID").expect("STARFISH_DISCORD_CLIENT_ID required when Starfish is enabled"),
-        discord_client_secret: env::var("STARFISH_DISCORD_CLIENT_SECRET").expect("STARFISH_DISCORD_CLIENT_SECRET required when Starfish is enabled"),
-        github_token: env::var("STARFISH_GITHUB_TOKEN").expect("STARFISH_GITHUB_TOKEN required when Starfish is enabled"),
-        github_repo: env::var("STARFISH_GITHUB_REPO").expect("STARFISH_GITHUB_REPO required when Starfish is enabled"),
+        discord_client_id: env::var("STARFISH_DISCORD_CLIENT_ID")
+            .expect("STARFISH_DISCORD_CLIENT_ID required when Starfish is enabled"),
+        discord_client_secret: env::var("STARFISH_DISCORD_CLIENT_SECRET")
+            .expect("STARFISH_DISCORD_CLIENT_SECRET required when Starfish is enabled"),
+        github_token: env::var("STARFISH_GITHUB_TOKEN")
+            .expect("STARFISH_GITHUB_TOKEN required when Starfish is enabled"),
+        github_repo: env::var("STARFISH_GITHUB_REPO")
+            .expect("STARFISH_GITHUB_REPO required when Starfish is enabled"),
     };
-    tracing::info!("Starfish licensing enabled ({} bytes core tables)", config.core_tables_bytes.len());
+    tracing::info!(
+        "Starfish licensing enabled ({} bytes core tables)",
+        config.core_tables_bytes.len()
+    );
     Some(config)
 }
-
 
 fn build_router(state: AppState) -> Router {
     Router::new()
@@ -135,7 +143,6 @@ fn build_router(state: AppState) -> Router {
         .nest("/api/v1/starfish", routes::starfish::router(state.clone()))
         .with_state(state)
 }
-
 
 #[utoipa::path(
     get,
@@ -147,12 +154,19 @@ fn build_router(state: AppState) -> Router {
     tag = "Internal",
 )]
 pub async fn health_check(State(state): State<AppState>) -> Response {
-    let db_ok = sqlx::query("SELECT 1").execute(state.db.pool()).await.is_ok();
+    let db_ok = sqlx::query("SELECT 1")
+        .execute(state.db.pool())
+        .await
+        .is_ok();
     let redis_ok = redis::cmd("PING")
         .query_async::<String>(&mut state.redis.connection())
         .await
         .is_ok();
-    let status = if db_ok && redis_ok { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
+    let status = if db_ok && redis_ok {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
     let body = serde_json::json!({
         "status": if db_ok && redis_ok { "healthy" } else { "degraded" },
         "postgres": db_ok,
@@ -160,7 +174,6 @@ pub async fn health_check(State(state): State<AppState>) -> Response {
     });
     (status, axum::Json(body)).into_response()
 }
-
 
 async fn serve(app: Router) -> Result<()> {
     let port: u16 = env::var("PORT")

@@ -7,7 +7,6 @@ const CODE_MIN: u16 = 1000;
 const CODE_MAX: u16 = 9999;
 const MAX_ATTEMPTS: usize = 100;
 
-
 #[derive(Clone)]
 pub struct CodeStore {
     http: Client,
@@ -15,10 +14,13 @@ pub struct CodeStore {
     api_key: String,
 }
 
-
 impl CodeStore {
     pub fn new(http: Client, api_url: String, api_key: String) -> Self {
-        Self { http, api_url, api_key }
+        Self {
+            http,
+            api_url,
+            api_key,
+        }
     }
 
     pub async fn insert(&self, uuid: Uuid, username: String) -> Result<String> {
@@ -44,7 +46,8 @@ impl CodeStore {
     }
 }
 
-
 fn generate_code() -> String {
-    rand::thread_rng().gen_range(CODE_MIN..=CODE_MAX).to_string()
+    rand::thread_rng()
+        .gen_range(CODE_MIN..=CODE_MAX)
+        .to_string()
 }

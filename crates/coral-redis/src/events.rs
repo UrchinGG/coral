@@ -6,7 +6,6 @@ use crate::RedisPool;
 
 const CHANNEL: &str = "blacklist:events";
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum BlacklistEvent {
@@ -46,12 +45,10 @@ pub enum BlacklistEvent {
     },
 }
 
-
 #[derive(Clone)]
 pub struct EventPublisher {
     pool: RedisPool,
 }
-
 
 impl EventPublisher {
     pub fn new(pool: RedisPool) -> Self {
@@ -64,15 +61,18 @@ impl EventPublisher {
         }) else {
             return;
         };
-        if let Err(e) = self.pool.connection().publish::<_, _, ()>(CHANNEL, &payload).await {
+        if let Err(e) = self
+            .pool
+            .connection()
+            .publish::<_, _, ()>(CHANNEL, &payload)
+            .await
+        {
             tracing::error!("Failed to publish blacklist event: {e}");
         }
     }
 }
 
-
 pub struct EventSubscriber;
-
 
 impl EventSubscriber {
     pub async fn run<F, Fut>(redis_url: &str, handler: F) -> Result<(), redis::RedisError>

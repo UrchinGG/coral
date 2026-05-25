@@ -12,12 +12,10 @@ use crate::{auth::DeveloperKeyAuth, error::ApiError, state::AppState};
 const MAX_USERNAME_LENGTH: usize = 16;
 const EXP_PER_LEVEL_AFTER_15: u64 = 3_000_000;
 
-
 #[derive(Deserialize, ToSchema, utoipa::IntoParams)]
 pub(crate) struct GuildQuery {
     pub by: Option<String>,
 }
-
 
 #[derive(Serialize, ToSchema)]
 pub struct GuildResponse {
@@ -38,7 +36,6 @@ pub struct GuildResponse {
     pub player: Option<GuildMemberInfo>,
 }
 
-
 #[derive(Serialize, ToSchema)]
 pub struct GuildMemberInfo {
     pub uuid: String,
@@ -52,11 +49,9 @@ pub struct GuildMemberInfo {
     pub weekly_gexp: Option<u64>,
 }
 
-
 pub fn router() -> Router<AppState> {
     Router::new().route("/guild/{identifier}", get(get_guild))
 }
-
 
 #[utoipa::path(
     get,
@@ -82,16 +77,23 @@ pub async fn get_guild(
     Path(identifier): Path<String>,
     Query(query): Query<GuildQuery>,
 ) -> Result<Json<Option<GuildResponse>>, ApiError> {
-    if let Some(Extension(ref dev)) = dev_auth { dev.require(permissions::GUILD)?; }
+    if let Some(Extension(ref dev)) = dev_auth {
+        dev.require(permissions::GUILD)?;
+    }
     let (guild, player_uuid) = match query.by.as_deref() {
         Some("name") => fetch_by_name(&state, &identifier).await?,
         Some("player") => fetch_by_player(&state, &identifier).await?,
-        Some(other) => return Err(ApiError::BadRequest(format!("invalid 'by' parameter: {other}"))),
+        Some(other) => {
+            return Err(ApiError::BadRequest(format!(
+                "invalid 'by' parameter: {other}"
+            )));
+        }
         None => fetch_auto(&state, &identifier).await?,
     };
-    Ok(Json(guild.map(|g| build_response(&g, player_uuid.as_deref()))))
+    Ok(Json(
+        guild.map(|g| build_response(&g, player_uuid.as_deref())),
+    ))
 }
-
 
 async fn fetch_by_name(
     state: &AppState,
@@ -100,16 +102,18 @@ async fn fetch_by_name(
     Ok((state.hypixel.get_guild_by_name(name).await?, None))
 }
 
-
 async fn fetch_by_player(
     state: &AppState,
     identifier: &str,
 ) -> Result<(Option<serde_json::Value>, Option<String>), ApiError> {
-    let uuid = if is_uuid(identifier) { normalize_uuid(identifier) } else { resolve_uuid(state, identifier).await? };
+    let uuid = if is_uuid(identifier) {
+        normalize_uuid(identifier)
+    } else {
+        resolve_uuid(state, identifier).await?
+    };
     let guild = state.hypixel.get_guild_by_player(&uuid).await?;
     Ok((guild, Some(uuid)))
 }
-
 
 async fn fetch_auto(
     state: &AppState,
@@ -129,18 +133,17 @@ async fn fetch_auto(
     fetch_by_name(state, identifier).await
 }
 
-
 async fn resolve_uuid(state: &AppState, identifier: &str) -> Result<String, ApiError> {
-    Ok(normalize_uuid(&state.mojang.resolve(identifier).await?.uuid))
+    Ok(normalize_uuid(
+        &state.mojang.resolve(identifier).await?.uuid,
+    ))
 }
-
 
 fn millis_readable(millis: i64) -> String {
     chrono::DateTime::from_timestamp_millis(millis)
         .map(|dt| dt.format("%b %d, %Y %H:%M UTC").to_string())
         .unwrap_or_default()
 }
-
 
 fn build_response(guild: &serde_json::Value, player_uuid: Option<&str>) -> GuildResponse {
     let members = guild["members"].as_array();
@@ -160,10 +163,14 @@ fn build_response(guild: &serde_json::Value, player_uuid: Option<&str>) -> Guild
     }
 }
 
-
 fn find_member(members: Option<&Vec<serde_json::Value>>, target: &str) -> Option<GuildMemberInfo> {
-    let joined = members?.iter()
-        .find(|m| m["uuid"].as_str().is_some_and(|u| normalize_uuid(u) == target))
+    let joined = members?
+        .iter()
+        .find(|m| {
+            m["uuid"]
+                .as_str()
+                .is_some_and(|u| normalize_uuid(u) == target)
+        })
         .map(|m| m)?;
     let joined_ts = joined["joined"].as_i64();
     Some(GuildMemberInfo {
@@ -171,12 +178,11 @@ fn find_member(members: Option<&Vec<serde_json::Value>>, target: &str) -> Option
         rank: joined["rank"].as_str().map(String::from),
         joined: joined_ts,
         joined_readable: joined_ts.map(millis_readable),
-        weekly_gexp: joined["expHistory"].as_object().map(|exp| exp.values().filter_map(|v| v.as_u64()).sum()),
+        weekly_gexp: joined["expHistory"]
+            .as_object()
+            .map(|exp| exp.values().filter_map(|v| v.as_u64()).sum()),
     })
 }
-
-
-
 
 fn calculate_level(exp: u64) -> u32 {
     const THRESHOLDS: [u64; 15] = [
@@ -186,7 +192,9 @@ fn calculate_level(exp: u64) -> u32 {
     let mut level = 0u32;
     let mut remaining = exp;
     for threshold in THRESHOLDS {
-        if remaining < threshold { return level; }
+        if remaining < threshold {
+            return level;
+        }
         remaining -= threshold;
         level += 1;
     }

@@ -10,13 +10,15 @@ use crate::state::AppState;
 mod routes;
 mod state;
 
-
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
-    tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).init();
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
 
-    let db = database::Database::connect(&env::var("DATABASE_URL").expect("DATABASE_URL required")).await?;
+    let db = database::Database::connect(&env::var("DATABASE_URL").expect("DATABASE_URL required"))
+        .await?;
     let app = Router::new()
         .nest("/api", routes::api_router())
         .merge(routes::ui_router())

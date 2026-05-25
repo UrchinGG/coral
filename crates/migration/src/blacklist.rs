@@ -44,10 +44,11 @@ fn parse_i64(val: &serde_json::Value) -> Option<i64> {
 }
 
 fn normalize_timestamp(s: &str) -> String {
-    if s.contains('+') || s.ends_with('Z') { return s.to_string(); }
+    if s.contains('+') || s.ends_with('Z') {
+        return s.to_string();
+    }
     format!("{s}+00:00")
 }
-
 
 fn map_tag(tag: &MongoTag) -> Option<serde_json::Value> {
     let reason = tag.reason.as_deref().unwrap_or("");
@@ -82,7 +83,10 @@ fn map_tag(tag: &MongoTag) -> Option<serde_json::Value> {
 
 impl MongoBlacklistPlayer {
     fn to_payload(&self) -> Option<serde_json::Value> {
-        let tags: Vec<serde_json::Value> = self.tags.as_deref().unwrap_or(&[])
+        let tags: Vec<serde_json::Value> = self
+            .tags
+            .as_deref()
+            .unwrap_or(&[])
             .iter()
             .filter_map(map_tag)
             .collect();
@@ -139,7 +143,9 @@ pub async fn migrate(mongo_db: &Database, client: &CoralClient) -> Result<usize>
         }
 
         if batch.len() >= BATCH_SIZE {
-            let result = client.post(&json!({"type": "blacklist", "data": batch})).await?;
+            let result = client
+                .post(&json!({"type": "blacklist", "data": batch}))
+                .await?;
             let errs = result["errors"].as_u64().unwrap_or(0);
             count += batch.len() - errs as usize;
             errors += errs as usize;
@@ -149,7 +155,9 @@ pub async fn migrate(mongo_db: &Database, client: &CoralClient) -> Result<usize>
     }
 
     if !batch.is_empty() {
-        let result = client.post(&json!({"type": "blacklist", "data": batch})).await?;
+        let result = client
+            .post(&json!({"type": "blacklist", "data": batch}))
+            .await?;
         let errs = result["errors"].as_u64().unwrap_or(0);
         count += batch.len() - errs as usize;
         errors += errs as usize;

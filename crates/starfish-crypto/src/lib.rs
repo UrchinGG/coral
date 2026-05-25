@@ -5,7 +5,6 @@ use sha2::{Digest, Sha256};
 
 type HmacSha256 = Hmac<Sha256>;
 
-
 pub fn sign_unlock_key(
     discord_id: i64,
     hwid: &str,
@@ -21,12 +20,10 @@ pub fn sign_unlock_key(
     mac.finalize().into_bytes().into()
 }
 
-
 pub fn generate_session_token() -> String {
     let bytes: [u8; 32] = rand::random();
     hex::encode(bytes)
 }
-
 
 pub fn generate_refresh_token() -> String {
     use rand::RngCore;
@@ -35,12 +32,10 @@ pub fn generate_refresh_token() -> String {
     hex::encode(bytes)
 }
 
-
 pub fn hash_refresh_token(token: &str) -> String {
     let digest = Sha256::digest(token.as_bytes());
     hex::encode(digest)
 }
-
 
 pub fn derive_core_data_key(session_token: &str, hwid: &str) -> [u8; 32] {
     let mut hasher = Sha256::new();
@@ -49,7 +44,6 @@ pub fn derive_core_data_key(session_token: &str, hwid: &str) -> [u8; 32] {
     hasher.update(b"STARFISH_CORE_V2");
     hasher.finalize().into()
 }
-
 
 pub fn encrypt_core_data(tables_bytes: &[u8], session_token: &str, hwid: &str) -> Vec<u8> {
     let key = derive_core_data_key(session_token, hwid);
@@ -63,13 +57,10 @@ pub fn encrypt_core_data(tables_bytes: &[u8], session_token: &str, hwid: &str) -
     encrypt_aes256_cbc(&plaintext, &key)
 }
 
-
-
 pub fn ed25519_sign(payload: &[u8], signing_key: &ed25519_dalek::SigningKey) -> [u8; 64] {
     use ed25519_dalek::Signer;
     signing_key.sign(payload).to_bytes()
 }
-
 
 pub fn build_attestation_payload(
     session_token: &str,
@@ -89,22 +80,21 @@ pub fn build_attestation_payload(
     payload
 }
 
-
 pub fn hash_for_attestation(data: &[u8]) -> [u8; 32] {
     Sha256::digest(data).into()
 }
-
 
 pub fn base64_encode(data: &[u8]) -> String {
     base64::Engine::encode(&base64::engine::general_purpose::STANDARD, data)
 }
 
-
 pub fn decrypt_aes256_cbc(ciphertext: &[u8], key: &[u8; 32]) -> Option<Vec<u8>> {
     use cbc::cipher::BlockDecryptMut;
     type Aes256CbcDec = cbc::Decryptor<Aes256>;
 
-    if ciphertext.len() < 32 || ciphertext.len() % 16 != 0 { return None; }
+    if ciphertext.len() < 32 || ciphertext.len() % 16 != 0 {
+        return None;
+    }
 
     let (iv, encrypted) = ciphertext.split_at(16);
     let mut buf = encrypted.to_vec();
@@ -115,12 +105,15 @@ pub fn decrypt_aes256_cbc(ciphertext: &[u8], key: &[u8; 32]) -> Option<Vec<u8>> 
     }
 
     let padding_len = *buf.last()? as usize;
-    if padding_len == 0 || padding_len > 16 { return None; }
-    if buf.len() < padding_len { return None; }
+    if padding_len == 0 || padding_len > 16 {
+        return None;
+    }
+    if buf.len() < padding_len {
+        return None;
+    }
     buf.truncate(buf.len() - padding_len);
     Some(buf)
 }
-
 
 fn encrypt_aes256_cbc(data: &[u8], key: &[u8; 32]) -> Vec<u8> {
     type Aes256CbcEnc = cbc::Encryptor<Aes256>;
@@ -139,7 +132,6 @@ fn encrypt_aes256_cbc(data: &[u8], key: &[u8; 32]) -> Vec<u8> {
     result.extend_from_slice(&padded);
     result
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -261,7 +253,9 @@ mod tests {
         use base64::Engine;
         let data = vec![0x01, 0x02, 0x03, 0xFF];
         let encoded = base64_encode(&data);
-        let decoded = base64::engine::general_purpose::STANDARD.decode(&encoded).unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&encoded)
+            .unwrap();
         assert_eq!(decoded, data);
     }
 

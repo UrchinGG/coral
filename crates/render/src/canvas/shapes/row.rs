@@ -1,14 +1,17 @@
 use crate::canvas::{context::DrawContext, shape::Shape};
 
-
 pub struct Row {
     children: Vec<Box<dyn Shape>>,
     gap: u32,
 }
 
-
 impl Row {
-    pub fn new() -> Self { Self { children: Vec::new(), gap: 0 } }
+    pub fn new() -> Self {
+        Self {
+            children: Vec::new(),
+            gap: 0,
+        }
+    }
 
     pub fn gap(mut self, gap: u32) -> Self {
         self.gap = gap;
@@ -21,11 +24,11 @@ impl Row {
     }
 }
 
-
 impl Default for Row {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
-
 
 impl Shape for Row {
     fn draw(&self, ctx: &mut DrawContext) {
@@ -42,7 +45,9 @@ impl Shape for Row {
         for (i, child) in self.children.iter().enumerate() {
             let (w, h) = child.size();
             total_w += w;
-            if i > 0 { total_w += self.gap; }
+            if i > 0 {
+                total_w += self.gap;
+            }
             max_h = max_h.max(h);
         }
         (total_w, max_h)

@@ -6,14 +6,12 @@ use database::{AccountRepository, MemberRepository};
 
 use crate::framework::Data;
 
-
 pub enum LinkCheck {
     Verified { uuid: String },
     NotVerified,
     PlayerNotFound,
     HypixelNotFound,
 }
-
 
 pub async fn check_link(data: &Data, player: &str, discord_username: &str) -> LinkCheck {
     let stats = match data.api.get_player_stats(player).await {
@@ -30,15 +28,17 @@ pub async fn check_link(data: &Data, player: &str, discord_username: &str) -> Li
     }
 }
 
-
 pub async fn link_primary(ctx: &Context, data: &Data, discord_id: u64, uuid: &str) -> Result<()> {
     let repo = MemberRepository::new(data.db.pool());
     repo.create(discord_id as i64).await?;
     repo.set_uuid(discord_id as i64, uuid).await?;
-    tokio::spawn(crate::sync::sync_user(ctx.clone(), data.clone(), UserId::new(discord_id)));
+    tokio::spawn(crate::sync::sync_user(
+        ctx.clone(),
+        data.clone(),
+        UserId::new(discord_id),
+    ));
     Ok(())
 }
-
 
 pub async fn link_alt(
     ctx: &Context,
@@ -54,10 +54,11 @@ pub async fn link_alt(
         return link_primary(ctx, data, discord_id, uuid).await;
     }
 
-    AccountRepository::new(data.db.pool()).add(member_id, uuid).await?;
+    AccountRepository::new(data.db.pool())
+        .add(member_id, uuid)
+        .await?;
     Ok(())
 }
-
 
 pub fn is_discord_linked(player: &Value, discord_username: &str) -> bool {
     player

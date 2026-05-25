@@ -3,9 +3,16 @@ use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 
 use database::{StarfishRepository, starfish::HwidComponents};
-use starfish_crypto::{build_attestation_payload, ed25519_sign, base64_encode, encrypt_core_data, generate_refresh_token, generate_session_token, hash_for_attestation, hash_refresh_token, sign_unlock_key};
+use starfish_crypto::{
+    base64_encode, build_attestation_payload, ed25519_sign, encrypt_core_data,
+    generate_refresh_token, generate_session_token, hash_for_attestation, hash_refresh_token,
+    sign_unlock_key,
+};
 
-use crate::{error::ApiError, state::{AppState, StarfishConfig}};
+use crate::{
+    error::ApiError,
+    state::{AppState, StarfishConfig},
+};
 
 use super::{rate_limit, require_starfish};
 const DISCORD_DEVICE_AUTH_URL: &str = "https://discord.com/api/v10/oauth2/device/authorize";
@@ -15,7 +22,6 @@ const DISCORD_USER_URL: &str = "https://discord.com/api/v10/users/@me";
 const HWID_LEN: usize = 64;
 pub const SESSION_SLIDING_HOURS: i64 = 2;
 pub const SESSION_MAX_LIFETIME_DAYS: i64 = 7;
-
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -71,27 +77,44 @@ async fn request_device_code(
 
     let response = reqwest::Client::new()
         .post(DISCORD_DEVICE_AUTH_URL)
-        .basic_auth(&config.discord_client_id, Some(&config.discord_client_secret))
+        .basic_auth(
+            &config.discord_client_id,
+            Some(&config.discord_client_secret),
+        )
         .form(&[("scope", "identify")])
-        .send().await
+        .send()
+        .await
         .map_err(|e| ApiError::ExternalApi(format!("Discord API error: {e}")))?;
 
     if !response.status().is_success() {
         let body = response.text().await.unwrap_or_default();
         tracing::error!("Discord device code error: {body}");
-        return Err(ApiError::ExternalApi("Failed to get device code from Discord".into()));
+        return Err(ApiError::ExternalApi(
+            "Failed to get device code from Discord".into(),
+        ));
     }
 
-    let discord: DiscordDeviceCodeResponse = response.json().await
+    let discord: DiscordDeviceCodeResponse = response
+        .json()
+        .await
         .map_err(|e| ApiError::ExternalApi(format!("Failed to parse Discord response: {e}")))?;
 
     let expires_at = Utc::now() + Duration::seconds(discord.expires_in as i64);
     let repo = StarfishRepository::new(state.db.pool());
-    repo.create_device_code(&discord.device_code, &discord.user_code, &req.hwid, expires_at).await?;
+    repo.create_device_code(
+        &discord.device_code,
+        &discord.user_code,
+        &req.hwid,
+        expires_at,
+    )
+    .await?;
 
-    let verification_uri_complete = discord.verification_uri_complete.unwrap_or_else(
-        || format!("{}?user_code={}", discord.verification_uri, discord.user_code),
-    );
+    let verification_uri_complete = discord.verification_uri_complete.unwrap_or_else(|| {
+        format!(
+            "{}?user_code={}",
+            discord.verification_uri, discord.user_code
+        )
+    });
 
     Ok(Json(DeviceCodeResponse {
         device_code: discord.device_code,
@@ -130,7 +153,10 @@ async fn get_oauth_url(
         urlencoding::encode(&redirect_uri),
     );
 
-    Ok(Json(OAuthUrlResponse { url, state: oauth_state }))
+    Ok(Json(OAuthUrlResponse {
+        url,
+        state: oauth_state,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -191,14 +217,22 @@ async fn poll_for_token(
     let stored = repo.get_device_code(&req.device_code).await?;
     let stored = match stored {
         Some(s) => s,
-        None => return Ok(Json(PollResponse::Error { error: "authorization_pending".into() })),
+        None => {
+            return Ok(Json(PollResponse::Error {
+                error: "authorization_pending".into(),
+            }));
+        }
     };
 
     if stored.client_hwid != req.hwid {
-        return Ok(Json(PollResponse::Error { error: "authorization_pending".into() }));
+        return Ok(Json(PollResponse::Error {
+            error: "authorization_pending".into(),
+        }));
     }
     if Utc::now() > stored.expires_at {
-        return Ok(Json(PollResponse::Error { error: "authorization_pending".into() }));
+        return Ok(Json(PollResponse::Error {
+            error: "authorization_pending".into(),
+        }));
     }
 
     let response = reqwest::Client::new()
@@ -209,7 +243,8 @@ async fn poll_for_token(
             ("client_id", &config.discord_client_id),
             ("client_secret", &config.discord_client_secret),
         ])
-        .send().await
+        .send()
+        .await
         .map_err(|e| ApiError::ExternalApi(format!("Discord API error: {e}")))?;
 
     let body = response.text().await.unwrap_or_default();
@@ -217,8 +252,12 @@ async fn poll_for_token(
     if let Ok(err) = serde_json::from_str::<DiscordErrorResponse>(&body) {
         return match err.error.as_str() {
             "authorization_pending" | "slow_down" => Ok(Json(PollResponse::Pending)),
-            "access_denied" => Ok(Json(PollResponse::Error { error: "access_denied".into() })),
-            "expired_token" => Ok(Json(PollResponse::Error { error: "expired".into() })),
+            "access_denied" => Ok(Json(PollResponse::Error {
+                error: "access_denied".into(),
+            })),
+            "expired_token" => Ok(Json(PollResponse::Error {
+                error: "expired".into(),
+            })),
             _ => Ok(Json(PollResponse::Error { error: err.error })),
         };
     }
@@ -227,10 +266,13 @@ async fn poll_for_token(
         .map_err(|e| ApiError::Internal(format!("Failed to parse token: {e}")))?;
 
     let discord_user = fetch_discord_user(&token.access_token).await?;
-    let discord_id: i64 = discord_user.id.parse()
+    let discord_id: i64 = discord_user
+        .id
+        .parse()
         .map_err(|_| ApiError::Internal("Invalid Discord ID".into()))?;
 
-    let unlock_key = create_session(&config, &repo, discord_id, &req.hwid, &req.hwid_components).await?;
+    let unlock_key =
+        create_session(&config, &repo, discord_id, &req.hwid, &req.hwid_components).await?;
 
     repo.delete_device_code(&req.device_code).await.ok();
 
@@ -264,24 +306,32 @@ async fn oauth_callback(
             ("client_id", &config.discord_client_id),
             ("client_secret", &config.discord_client_secret),
         ])
-        .send().await
+        .send()
+        .await
         .map_err(|e| ApiError::ExternalApi(format!("Discord API error: {e}")))?;
 
     if !response.status().is_success() {
         let body = response.text().await.unwrap_or_default();
         tracing::error!("Discord token exchange error: {body}");
-        return Ok(Json(PollResponse::Error { error: "token_exchange_failed".into() }));
+        return Ok(Json(PollResponse::Error {
+            error: "token_exchange_failed".into(),
+        }));
     }
 
-    let token: DiscordTokenResponse = response.json().await
+    let token: DiscordTokenResponse = response
+        .json()
+        .await
         .map_err(|e| ApiError::Internal(format!("Failed to parse token: {e}")))?;
 
     let discord_user = fetch_discord_user(&token.access_token).await?;
-    let discord_id: i64 = discord_user.id.parse()
+    let discord_id: i64 = discord_user
+        .id
+        .parse()
         .map_err(|_| ApiError::Internal("Invalid Discord ID".into()))?;
 
     let repo = StarfishRepository::new(state.db.pool());
-    let unlock_key = create_session(&config, &repo, discord_id, &req.hwid, &req.hwid_components).await?;
+    let unlock_key =
+        create_session(&config, &repo, discord_id, &req.hwid, &req.hwid_components).await?;
 
     Ok(Json(PollResponse::Complete { unlock_key }))
 }
@@ -290,14 +340,17 @@ pub async fn fetch_discord_user(access_token: &str) -> Result<DiscordUser, ApiEr
     let response = reqwest::Client::new()
         .get(DISCORD_USER_URL)
         .bearer_auth(access_token)
-        .send().await
+        .send()
+        .await
         .map_err(|e| ApiError::ExternalApi(format!("Discord API error: {e}")))?;
 
     if !response.status().is_success() {
         return Err(ApiError::Unauthorized("Invalid Discord token".into()));
     }
 
-    response.json().await
+    response
+        .json()
+        .await
         .map_err(|e| ApiError::ExternalApi(format!("Failed to parse Discord response: {e}")))
 }
 
@@ -325,25 +378,39 @@ pub async fn create_session(
     let expires_at = issued_at + Duration::hours(SESSION_SLIDING_HOURS);
 
     let signature = sign_unlock_key(
-        discord_id, hwid,
+        discord_id,
+        hwid,
         issued_at.timestamp() as u64,
         expires_at.timestamp() as u64,
         &config.hmac_secret,
     );
 
     repo.create_session(
-        user.id, hwid_record.id, &session_token,
-        &core_data, expires_at, &signature,
-    ).await?;
+        user.id,
+        hwid_record.id,
+        &session_token,
+        &core_data,
+        expires_at,
+        &signature,
+    )
+    .await?;
 
     let refresh_token = generate_refresh_token();
-    repo.create_refresh_token(user.id, hwid_record.id, &hash_refresh_token(&refresh_token)).await?;
+    repo.create_refresh_token(user.id, hwid_record.id, &hash_refresh_token(&refresh_token))
+        .await?;
 
     let core_data_encoded = base64_encode(&core_data);
     let core_data_hash = hash_for_attestation(&core_data);
     let issued_at_ts = issued_at.timestamp() as u64;
     let expires_at_ts = expires_at.timestamp() as u64;
-    let attestation = build_attestation_payload(&session_token, discord_id, hwid, issued_at_ts, expires_at_ts, &core_data_hash);
+    let attestation = build_attestation_payload(
+        &session_token,
+        discord_id,
+        hwid,
+        issued_at_ts,
+        expires_at_ts,
+        &core_data_hash,
+    );
     let server_sig = ed25519_sign(&attestation, &config.signing_key);
 
     Ok(UnlockKey {
@@ -376,21 +443,29 @@ async fn refresh_session(
     let repo = StarfishRepository::new(state.db.pool());
 
     let token_hash = hash_refresh_token(&req.refresh_token);
-    let stored = repo.get_refresh_token_by_hash(&token_hash).await?
+    let stored = repo
+        .get_refresh_token_by_hash(&token_hash)
+        .await?
         .ok_or_else(|| ApiError::Unauthorized("invalid_refresh_token".into()))?;
 
-    let hwid_record = repo.get_hwid_by_id(stored.hwid_id).await?
+    let hwid_record = repo
+        .get_hwid_by_id(stored.hwid_id)
+        .await?
         .ok_or_else(|| ApiError::Internal("Refresh token references missing HWID".into()))?;
 
     if hwid_record.hwid_hash != req.hwid {
-        let fuzzy_ok = repo.get_hwid_components(hwid_record.id).await?
+        let fuzzy_ok = repo
+            .get_hwid_components(hwid_record.id)
+            .await?
             .is_some_and(|stored_c| req.hwid_components.match_count(&stored_c) >= 3);
         if !fuzzy_ok {
             return Err(ApiError::Unauthorized("hwid_mismatch".into()));
         }
     }
 
-    let user = repo.get_user_by_id(stored.user_id).await?
+    let user = repo
+        .get_user_by_id(stored.user_id)
+        .await?
         .ok_or_else(|| ApiError::Internal("Refresh token references missing user".into()))?;
 
     if user.license_status != "active" {
@@ -406,25 +481,39 @@ async fn refresh_session(
     let expires_at = issued_at + Duration::hours(SESSION_SLIDING_HOURS);
 
     let signature = sign_unlock_key(
-        user.discord_id, &req.hwid,
+        user.discord_id,
+        &req.hwid,
         issued_at.timestamp() as u64,
         expires_at.timestamp() as u64,
         &config.hmac_secret,
     );
 
     repo.create_session(
-        user.id, hwid_record.id, &session_token,
-        &core_data, expires_at, &signature,
-    ).await?;
+        user.id,
+        hwid_record.id,
+        &session_token,
+        &core_data,
+        expires_at,
+        &signature,
+    )
+    .await?;
 
     let new_refresh = generate_refresh_token();
-    repo.rotate_refresh_token(&token_hash, &hash_refresh_token(&new_refresh)).await?;
+    repo.rotate_refresh_token(&token_hash, &hash_refresh_token(&new_refresh))
+        .await?;
 
     let core_data_encoded = base64_encode(&core_data);
     let core_data_hash = hash_for_attestation(&core_data);
     let issued_at_ts = issued_at.timestamp() as u64;
     let expires_at_ts = expires_at.timestamp() as u64;
-    let attestation = build_attestation_payload(&session_token, user.discord_id, &req.hwid, issued_at_ts, expires_at_ts, &core_data_hash);
+    let attestation = build_attestation_payload(
+        &session_token,
+        user.discord_id,
+        &req.hwid,
+        issued_at_ts,
+        expires_at_ts,
+        &core_data_hash,
+    );
     let server_sig = ed25519_sign(&attestation, &config.signing_key);
 
     Ok(Json(PollResponse::Complete {
@@ -455,12 +544,15 @@ async fn handle_hwid_registration(
 
     if let Some(fuzzy_match) = repo.find_fuzzy_hwid(user_id, components, 3).await? {
         repo.activate_hwid(user_id, fuzzy_match.id).await?;
-        repo.store_hwid_components(fuzzy_match.id, components).await?;
+        repo.store_hwid_components(fuzzy_match.id, components)
+            .await?;
         return Ok(fuzzy_match);
     }
 
     if repo.hwid_changes_since(user_id, 30).await? >= 2 {
-        return Err(ApiError::BadRequest("HWID change limit reached (2 per month)".into()));
+        return Err(ApiError::BadRequest(
+            "HWID change limit reached (2 per month)".into(),
+        ));
     }
 
     let old = repo.get_active_hwid(user_id).await?;

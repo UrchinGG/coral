@@ -3,12 +3,13 @@ use std::env;
 use mc_verify::VerifyServer;
 use tracing_subscriber::EnvFilter;
 
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .init();
 
     let api_url = env::var("CORAL_API_URL").expect("CORAL_API_URL required");

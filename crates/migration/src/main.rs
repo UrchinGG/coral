@@ -15,8 +15,8 @@ async fn main() -> Result<()> {
     let skip_cache = args.iter().any(|a| a == "--skip-cache");
     let wipe = args.iter().any(|a| a == "--wipe");
 
-    let coral_url = std::env::var("CORAL_API_URL")
-        .unwrap_or_else(|_| "https://api.urchin.gg/v3".into());
+    let coral_url =
+        std::env::var("CORAL_API_URL").unwrap_or_else(|_| "https://api.urchin.gg/v3".into());
     let api_key = std::env::var("CORAL_API_KEY")?;
     let mongodb_uri = std::env::var("MONGODB_URI")?;
 

@@ -52,22 +52,34 @@ impl LocalSkinProvider {
     }
 
     async fn download_skin(&self, skin_url: &str) -> Option<Skin> {
-        let bytes = self.http
+        let bytes = self
+            .http
             .get(skin_url)
             .header("User-Agent", USER_AGENT)
-            .send().await.ok()?
-            .error_for_status().ok()?
-            .bytes().await.ok()?;
+            .send()
+            .await
+            .ok()?
+            .error_for_status()
+            .ok()?
+            .bytes()
+            .await
+            .ok()?;
         Skin::from_bytes(&bytes).ok()
     }
 
-    async fn download_and_render(&self, uuid: &str, skin_url: &str, slim_override: Option<bool>) -> Option<SkinImage> {
+    async fn download_and_render(
+        &self,
+        uuid: &str,
+        skin_url: &str,
+        slim_override: Option<bool>,
+    ) -> Option<SkinImage> {
         let mut skin = self.download_skin(skin_url).await?;
         if let Some(slim) = slim_override {
             skin.set_slim(slim);
         }
 
-        let output = self.renderer
+        let output = self
+            .renderer
             .render(&skin, &Pose::standing(), OutputType::full_body(400, 600))
             .ok()?;
 
@@ -83,7 +95,9 @@ impl LocalSkinProvider {
     async fn cache_get(&self, uuid: &str) -> Option<SkinImage> {
         let key = format!("cache:skin:{uuid}");
         let data: Vec<u8> = self.redis.clone().get(&key).await.ok()?;
-        if data.len() < 9 { return None; }
+        if data.len() < 9 {
+            return None;
+        }
 
         let slim = data[0] != 0;
         let width = u32::from_le_bytes(data[1..5].try_into().ok()?);
@@ -91,7 +105,10 @@ impl LocalSkinProvider {
         let pixels = data[9..].to_vec();
 
         let image = RgbaImage::from_raw(width, height, pixels)?;
-        Some(SkinImage { data: DynamicImage::ImageRgba8(image), slim })
+        Some(SkinImage {
+            data: DynamicImage::ImageRgba8(image),
+            slim,
+        })
     }
 
     async fn cache_set(&self, uuid: &str, skin: &SkinImage) {
@@ -109,7 +126,6 @@ impl LocalSkinProvider {
     }
 }
 
-
 #[async_trait]
 impl SkinProvider for LocalSkinProvider {
     async fn fetch(&self, uuid: &str) -> Option<SkinImage> {
@@ -119,7 +135,8 @@ impl SkinProvider for LocalSkinProvider {
 
         let profile = self.mojang.get_profile(uuid).await.ok()?;
         let skin_url = profile.skin_url?;
-        self.download_and_render(uuid, &skin_url, Some(profile.slim)).await
+        self.download_and_render(uuid, &skin_url, Some(profile.slim))
+            .await
     }
 
     async fn fetch_with_url(&self, uuid: &str, skin_url: &str, slim: bool) -> Option<SkinImage> {
@@ -136,7 +153,8 @@ impl SkinProvider for LocalSkinProvider {
         let mut skin = self.download_skin(&skin_url).await?;
         skin.set_slim(profile.slim);
 
-        let output = self.renderer
+        let output = self
+            .renderer
             .render(&skin, &Pose::standing(), OutputType::face(size))
             .ok()?;
 

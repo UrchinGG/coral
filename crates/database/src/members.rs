@@ -2,7 +2,6 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{FromRow, PgPool};
 
-
 #[derive(Debug, Clone, FromRow)]
 pub struct Member {
     pub id: i64,
@@ -20,14 +19,14 @@ pub struct Member {
     pub config: Value,
 }
 
-
 pub struct MemberRepository<'a> {
     pool: &'a PgPool,
 }
 
-
 impl<'a> MemberRepository<'a> {
-    pub fn new(pool: &'a PgPool) -> Self { Self { pool } }
+    pub fn new(pool: &'a PgPool) -> Self {
+        Self { pool }
+    }
 
     pub async fn get_by_id(&self, id: i64) -> Result<Option<Member>, sqlx::Error> {
         sqlx::query_as(
@@ -51,7 +50,10 @@ impl<'a> MemberRepository<'a> {
         .await
     }
 
-    pub async fn get_linked_by_discord_ids(&self, discord_ids: &[i64]) -> Result<Vec<Member>, sqlx::Error> {
+    pub async fn get_linked_by_discord_ids(
+        &self,
+        discord_ids: &[i64],
+    ) -> Result<Vec<Member>, sqlx::Error> {
         sqlx::query_as(
             "SELECT id, discord_id, uuid, api_key, join_date, request_count,
                     access_level, key_locked, tagging_disabled, accepted_tags, rejected_tags, accurate_verdicts, config
@@ -152,7 +154,11 @@ impl<'a> MemberRepository<'a> {
         Ok(())
     }
 
-    pub async fn update_config(&self, discord_id: i64, config: &Value) -> Result<bool, sqlx::Error> {
+    pub async fn update_config(
+        &self,
+        discord_id: i64,
+        config: &Value,
+    ) -> Result<bool, sqlx::Error> {
         sqlx::query("UPDATE members SET config = $2 WHERE discord_id = $1")
             .bind(discord_id)
             .bind(config)
@@ -161,7 +167,11 @@ impl<'a> MemberRepository<'a> {
             .map(|r| r.rows_affected() > 0)
     }
 
-    pub async fn set_tagging_disabled(&self, discord_id: i64, disabled: bool) -> Result<bool, sqlx::Error> {
+    pub async fn set_tagging_disabled(
+        &self,
+        discord_id: i64,
+        disabled: bool,
+    ) -> Result<bool, sqlx::Error> {
         sqlx::query("UPDATE members SET tagging_disabled = $2 WHERE discord_id = $1")
             .bind(discord_id)
             .bind(disabled)
@@ -186,8 +196,13 @@ impl<'a> MemberRepository<'a> {
         Ok(())
     }
 
-    pub async fn increment_accurate_verdicts(&self, discord_ids: &[i64]) -> Result<(), sqlx::Error> {
-        if discord_ids.is_empty() { return Ok(()) }
+    pub async fn increment_accurate_verdicts(
+        &self,
+        discord_ids: &[i64],
+    ) -> Result<(), sqlx::Error> {
+        if discord_ids.is_empty() {
+            return Ok(());
+        }
         sqlx::query("UPDATE members SET accurate_verdicts = accurate_verdicts + 1 WHERE discord_id = ANY($1)")
             .bind(discord_ids)
             .execute(self.pool)
@@ -195,7 +210,12 @@ impl<'a> MemberRepository<'a> {
         Ok(())
     }
 
-    pub async fn add_strike(&self, discord_id: i64, reason: &str, struck_by: u64) -> Result<bool, sqlx::Error> {
+    pub async fn add_strike(
+        &self,
+        discord_id: i64,
+        reason: &str,
+        struck_by: u64,
+    ) -> Result<bool, sqlx::Error> {
         let strike = serde_json::json!({
             "reason": reason,
             "struck_by": struck_by,
@@ -228,13 +248,16 @@ impl<'a> MemberRepository<'a> {
 
     pub async fn count(&self) -> Result<i64, sqlx::Error> {
         let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM members")
-            .fetch_one(self.pool).await?;
+            .fetch_one(self.pool)
+            .await?;
         Ok(count)
     }
 
     pub async fn total_requests(&self) -> Result<i64, sqlx::Error> {
-        let (total,): (i64,) = sqlx::query_as("SELECT COALESCE(SUM(request_count), 0) FROM members")
-            .fetch_one(self.pool).await?;
+        let (total,): (i64,) =
+            sqlx::query_as("SELECT COALESCE(SUM(request_count), 0) FROM members")
+                .fetch_one(self.pool)
+                .await?;
         Ok(total)
     }
 

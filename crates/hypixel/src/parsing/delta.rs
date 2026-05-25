@@ -2,7 +2,6 @@ use chrono::{DateTime, Utc};
 
 use super::bedwars::{Mode, ModeStats, Stats, ratio};
 
-
 #[derive(Clone, Default)]
 pub struct SessionStats {
     pub wins: u64,
@@ -16,7 +15,6 @@ pub struct SessionStats {
     pub experience: u64,
     pub games_played: u64,
 }
-
 
 impl SessionStats {
     pub fn from_mode_stats(old: &ModeStats, new: &ModeStats) -> Self {
@@ -34,12 +32,19 @@ impl SessionStats {
         }
     }
 
-    pub fn wlr(&self) -> f64 { ratio(self.wins, self.losses) }
-    pub fn kdr(&self) -> f64 { ratio(self.kills, self.deaths) }
-    pub fn fkdr(&self) -> f64 { ratio(self.final_kills, self.final_deaths) }
-    pub fn bblr(&self) -> f64 { ratio(self.beds_broken, self.beds_lost) }
+    pub fn wlr(&self) -> f64 {
+        ratio(self.wins, self.losses)
+    }
+    pub fn kdr(&self) -> f64 {
+        ratio(self.kills, self.deaths)
+    }
+    pub fn fkdr(&self) -> f64 {
+        ratio(self.final_kills, self.final_deaths)
+    }
+    pub fn bblr(&self) -> f64 {
+        ratio(self.beds_broken, self.beds_lost)
+    }
 }
-
 
 pub struct SessionPlayerStats {
     pub username: String,
@@ -52,10 +57,10 @@ pub struct SessionPlayerStats {
     pub session_stats: SessionStats,
 }
 
-
 impl SessionPlayerStats {
     pub fn from_snapshots(old: &Stats, new: &Stats, mode: Mode, started: DateTime<Utc>) -> Self {
-        let mut session_stats = SessionStats::from_mode_stats(&old.get_mode_stats(mode), &new.get_mode_stats(mode));
+        let mut session_stats =
+            SessionStats::from_mode_stats(&old.get_mode_stats(mode), &new.get_mode_stats(mode));
         session_stats.experience = new.experience.saturating_sub(old.experience);
         session_stats.games_played = new.games_played.saturating_sub(old.games_played);
 
