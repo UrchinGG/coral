@@ -542,32 +542,7 @@ impl EventHandler for Handler {
                     .active_interactions
                     .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
             }
-            FullEvent::GuildMemberAddition { new_member, .. } => {
-                if let Err(e) =
-                    commands::user::link::handle_guild_join(ctx, new_member, &self.data).await
-                {
-                    tracing::error!("Guild join handler error: {}", e);
-                }
-            }
-            FullEvent::GuildMemberUpdate { event, .. } => {
-                if !event.user.bot() && event.user.id != ctx.cache.current_user().id {
-                    let ctx = ctx.clone();
-                    let data = self.data.clone();
-                    let guild_id = event.guild_id;
-                    let user_id = event.user.id;
-                    tokio::spawn(async move {
-                        match guild_id.member(&ctx.http, user_id).await {
-                            Ok(member) => {
-                                crate::sync::handle_member_update(&ctx, &data, &member).await
-                            }
-                            Err(e) => tracing::debug!("Failed to fetch member for update: {e}"),
-                        }
-                    });
-                }
-            }
             FullEvent::Message { new_message, .. } => {
-                crate::sync::handle_message_activity(ctx, &self.data, new_message);
-
                 let has_attachments = !new_message.attachments.is_empty()
                     || new_message
                         .message_snapshots

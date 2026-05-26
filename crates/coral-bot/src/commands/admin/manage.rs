@@ -612,7 +612,7 @@ pub async fn handle_register_modal(
         .unwrap_or(false);
 
     if verified {
-        crate::accounts::link_primary(ctx, data, target_id, &uuid).await?;
+        crate::accounts::link_primary(data, target_id, &uuid).await?;
         return refresh_main_from_modal(ctx, modal, data, invoker_rank, target_id).await;
     }
 
@@ -660,7 +660,7 @@ pub async fn handle_force_link(
             .await;
     }
 
-    crate::accounts::link_primary(ctx, data, target_id, &uuid).await?;
+    crate::accounts::link_primary(data, target_id, &uuid).await?;
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }
 

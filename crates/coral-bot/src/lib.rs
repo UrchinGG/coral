@@ -6,5 +6,4 @@ pub mod expr;
 pub mod framework;
 pub mod interact;
 pub mod preview;
-pub mod sync;
 pub mod utils;

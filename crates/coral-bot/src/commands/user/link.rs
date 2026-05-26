@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serenity::all::*;
 
-use database::{GuildConfigRepository, MemberRepository};
+use database::MemberRepository;
 
 use crate::commands::admin::accounts_panel;
 use crate::framework::Data;
@@ -102,81 +102,4 @@ pub fn build_link_parts(
     ));
 
     parts
-}
-
-pub async fn handle_guild_join(ctx: &Context, new_member: &Member, data: &Data) -> Result<()> {
-    if new_member.user.bot() {
-        return Ok(());
-    }
-    let discord_id = new_member.user.id.get() as i64;
-    let members = MemberRepository::new(data.db.pool());
-
-    let uuid = match members
-        .get_by_discord_id(discord_id)
-        .await?
-        .and_then(|m| m.uuid)
-    {
-        Some(uuid) => uuid,
-        None => {
-            assign_unlinked_role(ctx, data, new_member).await;
-            return Ok(());
-        }
-    };
-
-    let stats = match data.api.get_player_stats(&uuid).await {
-        Ok(s) => s,
-        Err(_) => return Ok(()),
-    };
-
-    let Some(hypixel_data) = stats.hypixel else {
-        return Ok(());
-    };
-
-    let config_repo = GuildConfigRepository::new(data.db.pool());
-    let config = match config_repo.get(new_member.guild_id.get() as i64).await {
-        Ok(Some(c)) => c,
-        _ => return Ok(()),
-    };
-    let rules = config_repo
-        .get_role_rules(new_member.guild_id.get() as i64)
-        .await
-        .unwrap_or_default();
-
-    if let Err(e) = crate::sync::sync_member(
-        ctx,
-        data,
-        new_member.guild_id,
-        new_member,
-        &uuid,
-        &config,
-        &rules,
-        &hypixel_data,
-        true,
-    )
-    .await
-    {
-        tracing::warn!(
-            "Failed to sync joining member {} in {}: {e}",
-            new_member.user.id,
-            new_member.guild_id
-        );
-    }
-
-    Ok(())
-}
-
-async fn assign_unlinked_role(ctx: &Context, data: &Data, member: &Member) {
-    let config = match GuildConfigRepository::new(data.db.pool())
-        .get(member.guild_id.get() as i64)
-        .await
-    {
-        Ok(Some(c)) => c,
-        _ => return,
-    };
-
-    if let Some(role_id) = config.unlinked_role_id {
-        let _ = member
-            .add_role(&ctx.http, RoleId::new(role_id as u64), None)
-            .await;
-    }
 }

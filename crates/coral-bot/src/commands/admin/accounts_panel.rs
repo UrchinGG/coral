@@ -416,7 +416,7 @@ pub async fn handle_link_pick(
     let discord_name = resolve_discord_name(ctx, &component.user, target_id).await;
     match crate::accounts::check_link(data, uuid, &discord_name).await {
         crate::accounts::LinkCheck::Verified { uuid, username } => {
-            crate::accounts::link_alt(ctx, data, target_id, member.id, &uuid).await?;
+            crate::accounts::link_alt(data, target_id, member.id, &uuid).await?;
             let _ = CacheRepository::new(data.db.pool())
                 .cache_username(&uuid, &username)
                 .await;
@@ -543,7 +543,7 @@ pub async fn handle_add_code_modal(
 
     let uuid = player.uuid.clone();
     let _ = data.api.get_player_stats(&uuid).await;
-    crate::accounts::link_alt(ctx, data, target_id, member.id, &uuid).await?;
+    crate::accounts::link_alt(data, target_id, member.id, &uuid).await?;
     let _ = CacheRepository::new(data.db.pool())
         .cache_username(&uuid, &player.username)
         .await;
@@ -601,7 +601,7 @@ pub async fn handle_add_account_modal(
         .unwrap_or(false);
 
     if verified {
-        crate::accounts::link_alt(ctx, data, target_id, member.id, &uuid).await?;
+        crate::accounts::link_alt(data, target_id, member.id, &uuid).await?;
         let _ = CacheRepository::new(data.db.pool())
             .cache_username(&uuid, &stats.username)
             .await;
@@ -692,7 +692,7 @@ pub async fn handle_force_add(
             .await;
     };
 
-    crate::accounts::link_alt(ctx, data, target_id, member.id, &uuid).await?;
+    crate::accounts::link_alt(data, target_id, member.id, &uuid).await?;
     refresh_view(ctx, component, data, true, target_id).await
 }
 
@@ -766,11 +766,11 @@ pub async fn handle_swap_primary(
         }
         accounts.remove(member.id, new_uuid).await?;
         repo.set_uuid(target_id as i64, new_uuid).await?;
-        tokio::spawn(crate::sync::sync_user(
-            ctx.clone(),
-            data.clone(),
-            UserId::new(target_id),
-        ));
+        data.sync_event_publisher
+            .publish(&coral_redis::SyncEvent::SyncUser {
+                discord_id: target_id,
+            })
+            .await;
     }
 
     let prefix = context_prefix(&component.data.custom_id);

@@ -1,6 +1,5 @@
 use anyhow::Result;
 use serde_json::Value;
-use serenity::all::*;
 
 use coral_redis::SyncEvent;
 use database::{AccountRepository, MemberRepository};
@@ -32,33 +31,22 @@ pub async fn check_link(data: &Data, player: &str, discord_username: &str) -> Li
     }
 }
 
-pub async fn link_primary(ctx: &Context, data: &Data, discord_id: u64, uuid: &str) -> Result<()> {
+pub async fn link_primary(data: &Data, discord_id: u64, uuid: &str) -> Result<()> {
     let repo = MemberRepository::new(data.db.pool());
     repo.create(discord_id as i64).await?;
     repo.set_uuid(discord_id as i64, uuid).await?;
     data.sync_event_publisher
         .publish(&SyncEvent::SyncUser { discord_id })
         .await;
-    tokio::spawn(crate::sync::sync_user(
-        ctx.clone(),
-        data.clone(),
-        UserId::new(discord_id),
-    ));
     Ok(())
 }
 
-pub async fn link_alt(
-    ctx: &Context,
-    data: &Data,
-    discord_id: u64,
-    member_id: i64,
-    uuid: &str,
-) -> Result<()> {
+pub async fn link_alt(data: &Data, discord_id: u64, member_id: i64, uuid: &str) -> Result<()> {
     let repo = MemberRepository::new(data.db.pool());
     let member = repo.get_by_discord_id(discord_id as i64).await?;
 
     if member.as_ref().and_then(|m| m.uuid.as_ref()).is_none() {
-        return link_primary(ctx, data, discord_id, uuid).await;
+        return link_primary(data, discord_id, uuid).await;
     }
 
     AccountRepository::new(data.db.pool())
