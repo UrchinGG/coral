@@ -152,7 +152,8 @@ fn build_main_view(
                 .map(|id| vec![RoleId::new(id as u64)].into()),
         },
     )
-    .placeholder("Select a linked role");
+    .placeholder("Select a linked role")
+    .min_values(0);
 
     let unlinked_role_select = CreateSelectMenu::new(
         format!("setup_unlinked_role_select:{guild_id}"),
@@ -162,7 +163,8 @@ fn build_main_view(
                 .map(|id| vec![RoleId::new(id as u64)].into()),
         },
     )
-    .placeholder("Select an unlinked role");
+    .placeholder("Select an unlinked role")
+    .min_values(0);
 
     let channel_select = CreateSelectMenu::new(
         format!("setup_link_channel_select:{guild_id}"),
@@ -173,7 +175,8 @@ fn build_main_view(
                 .map(|id| vec![GenericChannelId::new(id as u64)].into()),
         },
     )
-    .placeholder("Select a link channel");
+    .placeholder("Select a link channel")
+    .min_values(0);
 
     let parts = vec![
         text("## Server Configuration"),
