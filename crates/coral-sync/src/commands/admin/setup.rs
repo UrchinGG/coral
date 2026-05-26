@@ -11,63 +11,14 @@ use crate::utils::{separator, text};
 const AUTOROLE_HELP: &str = "\
 ## Autorole Config
 
-Autoroles assign Discord roles based on Hypixel stats when a user links their account.
-
-Each rule has a **role** and a **condition**. The role is assigned when the condition is true.
-
-**Fields** — `displayname` · `achievements.bedwars_level` · `stats.Bedwars.<stat>`
-**Discord** — `discord.name`
-**Blacklist** — `blacklist.sniper` · `blacklist.blatant_cheater` · `blacklist.closet_cheater` · `blacklist.confirmed_cheater` · `blacklist.replays_needed`
-**Compare** — `>` · `>=` · `<` · `<=` · `==` · `!=`
-**Logic** — `and` · `or` · `not`
-**Math** — `+` · `-` · `*` · `/` · `%`
-**Conditionals** — `if cond: a, else: b`
-
-### Examples
-
-**Minimum Stars**
-```py
-achievements.bedwars_level >= 500
-```
-**FKDR Threshold**
-```py
-stats.Bedwars.final_kills_bedwars
-/ stats.Bedwars.final_deaths_bedwars >= 2.0
-```
-**Any Cheater Tag**
-```py
-blacklist.blatant_cheater
-or blacklist.closet_cheater
-or blacklist.confirmed_cheater
-```
--# Any raw Hypixel API field path works.";
+**Fields** — `displayname` · `achievements.*` · `stats.Bedwars.*` · `discord.name` · `blacklist.<tag>` · `coral.access` (0=default, 1=trusted, 2=helper, 3=moderator, 4=admin, 5=owner)";
 
 const NICKNAME_HEADER: &str = "\
 ## Display Name Format
 
-Wrap expressions in `{}` to insert dynamic values. Everything else is literal text.
+`{...}` evaluates expressions. `{..expr}` marks a segment as truncatable.";
 
-**Fields** — `{displayname}` · `{achievements.bedwars_level}` · `{stats.Bedwars.<stat>}`
-**Discord** — `{discord.name}`
-**Blacklist** — `{blacklist.tag}` · `{blacklist.sniper}` · `{blacklist.blatant_cheater}` · etc.
-**Math** — `{a + b}` · `{a / b}` · `{value : .2f}`
-**Conditionals** — `{if cond: a, else: b}`
-**Truncation** — `{..expr}` marks an expression as truncatable. When the result exceeds 32 characters, this segment is trimmed to fit.";
-
-const NICKNAME_EXAMPLES: &[(&str, &str)] = &[
-    (
-        "Minecraft Username + Discord Name",
-        "{displayname} | {discord.name}",
-    ),
-    (
-        "Minecraft Username + FKDR",
-        "{displayname} [{\n  stats.Bedwars.final_kills_bedwars\n  / stats.Bedwars.final_deaths_bedwars : .1f\n}]",
-    ),
-    (
-        "BedWars Star + Minecraft Username + Discord Name",
-        "[{achievements.bedwars_level}{\n  if achievements.bedwars_level < 1100: \"✫\",\n  < 2100: \"✪\",\n  < 3100: \"⚝\",\n  else: \"✥\"\n}] {displayname} | {discord.name}",
-    ),
-];
+const DEFAULT_NICKNAME_TEMPLATE: &str = "[{achievements.bedwars_level}{\n  if achievements.bedwars_level < 1100: \"✫\",\n  < 2100: \"✪\",\n  < 3100: \"⚝\",\n  else: \"✥\"\n}] {displayname} | {discord.name}";
 
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("setup")
@@ -236,18 +187,8 @@ fn build_autorole_view(
     CreateComponent::Container(CreateContainer::new(parts))
 }
 
-fn build_nickname_help(preview_ctx: Option<&serde_json::Value>) -> String {
-    let mut help = NICKNAME_HEADER.to_string();
-    help.push_str("\n\n### Examples");
-    for (name, tmpl) in NICKNAME_EXAMPLES {
-        help.push_str(&format!("\n\n**{name}**"));
-        if let Some(p) = render_with_context(tmpl, preview_ctx) {
-            help.push_str(&format!("\n`{p}`"));
-        }
-        help.push_str(&format!("\n```py\n{tmpl}\n```"));
-    }
-    help.push_str("\n\n-# Any raw Hypixel API field path works. Set empty to clear.");
-    help
+fn build_nickname_help() -> String {
+    NICKNAME_HEADER.to_string()
 }
 
 fn build_nickname_panel(
@@ -255,7 +196,7 @@ fn build_nickname_panel(
     template: Option<&str>,
     preview_ctx: Option<&serde_json::Value>,
 ) -> CreateComponent<'static> {
-    let mut parts: Vec<CreateContainerComponent> = vec![text(build_nickname_help(preview_ctx))];
+    let mut parts: Vec<CreateContainerComponent> = vec![text(build_nickname_help())];
 
     match template {
         Some(tmpl) => {
@@ -555,10 +496,9 @@ pub async fn handle_nickname_edit_button(
         .get(guild_id as i64)
         .await?
         .and_then(|c| c.nickname_template)
-        .unwrap_or_default();
+        .unwrap_or_else(|| DEFAULT_NICKNAME_TEMPLATE.to_string());
 
     let input = CreateInputText::new(InputTextStyle::Paragraph, "template")
-        .placeholder("[{achievements.bedwars_level}] | {displayname}")
         .required(false)
         .value(current);
     let modal = CreateModal::new(
@@ -1051,7 +991,9 @@ async fn build_preview_from_member(
     user_id: u64,
     member: Option<database::Member>,
 ) -> Option<serde_json::Value> {
-    let uuid = member?.uuid?;
+    let member = member?;
+    let access = member.access_level;
+    let uuid = member.uuid?;
 
     let cache_repo = CacheRepository::new(data.db.pool());
     let (hypixel_data, discord_member, tags) = tokio::join!(
@@ -1066,6 +1008,7 @@ async fn build_preview_from_member(
         &hypixel_data,
         &discord_member,
         &tags,
+        access,
     ))
 }
 

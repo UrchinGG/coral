@@ -74,11 +74,11 @@ pub async fn handle_approve(
     let discord_id = component.user.id.get();
     let rank = super::super::tag::get_rank(data, discord_id).await?;
 
-    if rank < crate::framework::AccessRank::Member {
+    if rank < crate::framework::AccessRank::Trusted {
         return send_vote_error(
             ctx,
             component,
-            "Only members and above can review submissions",
+            "Only trusted users and above can review submissions",
         )
         .await;
     }
@@ -288,11 +288,11 @@ pub async fn handle_reject(
     let discord_id = component.user.id.get();
     let rank = super::super::tag::get_rank(data, discord_id).await?;
 
-    if rank < crate::framework::AccessRank::Member {
+    if rank < crate::framework::AccessRank::Trusted {
         return send_vote_error(
             ctx,
             component,
-            "Only members and above can review submissions",
+            "Only trusted users and above can review submissions",
         )
         .await;
     }

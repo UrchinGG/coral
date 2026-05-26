@@ -31,12 +31,12 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
 
     let discord_id = command.user.id.get();
     let rank = get_rank(data, discord_id).await?;
-    if rank < AccessRank::Member {
+    if rank < AccessRank::Trusted {
         return crate::interact::send_deferred_error(
             ctx,
             command,
             "Error",
-            "Only members and above can use this command",
+            "Only trusted users and above can use this command",
         )
         .await;
     }

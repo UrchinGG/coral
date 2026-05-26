@@ -382,7 +382,7 @@ fn access_level_options(
 ) -> Vec<CreateSelectMenuOption<'static>> {
     [
         (AccessRank::Default, "Default", "Default access"),
-        (AccessRank::Member, "Member", "Member access"),
+        (AccessRank::Trusted, "Trusted", "Trusted access"),
         (AccessRank::Helper, "Helper", "Helper access"),
         (AccessRank::Moderator, "Moderator", "Moderator access"),
         (AccessRank::Admin, "Admin", "Administrator access"),

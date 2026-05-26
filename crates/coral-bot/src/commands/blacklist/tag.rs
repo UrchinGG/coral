@@ -611,7 +611,7 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
                 })
                 .await;
 
-            let hint = if rank >= AccessRank::Member {
+            let hint = if rank >= AccessRank::Trusted {
                 "-# You can remove this tag within 30 minutes using /tag remove."
             } else {
                 "-# You can overwrite or remove this tag within 30 minutes using /tag add and /tag remove."

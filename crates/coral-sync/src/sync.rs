@@ -62,12 +62,14 @@ pub(crate) fn build_template_context(
     hypixel_data: &Value,
     member: &Member,
     active_tags: &[String],
+    coral_access: i16,
 ) -> Value {
     let mut ctx = hypixel_data.clone();
 
     ctx["discord"] = serde_json::json!({
         "name": member.user.global_name.as_deref().unwrap_or(&member.user.name),
     });
+    ctx["coral"] = serde_json::json!({ "access": coral_access });
 
     let highest = active_tags
         .iter()
@@ -431,7 +433,14 @@ pub(crate) async fn sync_member(
     preserve_custom: bool,
 ) -> Result<bool> {
     let tags = active_tags(data, uuid).await;
-    let template_ctx = build_template_context(hypixel_data, member, &tags);
+    let access = MemberRepository::new(data.db.pool())
+        .get_by_discord_id(member.user.id.get() as i64)
+        .await
+        .ok()
+        .flatten()
+        .map(|m| m.access_level)
+        .unwrap_or(0);
+    let template_ctx = build_template_context(hypixel_data, member, &tags, access);
 
     let mut roles: Vec<RoleId> = member.roles.iter().copied().collect();
     let original_roles = roles.clone();
