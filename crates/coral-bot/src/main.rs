@@ -114,10 +114,7 @@ fn parse_guild_id(name: &str) -> Option<GuildId> {
 
 async fn build_client(data: Data) -> Result<Client> {
     let token = Token::from_env("DISCORD_TOKEN").expect("Invalid DISCORD_TOKEN");
-    let intents = GatewayIntents::GUILDS
-        | GatewayIntents::GUILD_MESSAGES
-        | GatewayIntents::GUILD_MEMBERS
-        | GatewayIntents::MESSAGE_CONTENT;
+    let intents = GatewayIntents::GUILDS;
 
     let mut cache_settings = serenity::cache::Settings::default();
     cache_settings.cache_guilds = false;
