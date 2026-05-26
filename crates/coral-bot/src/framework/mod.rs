@@ -542,28 +542,6 @@ impl EventHandler for Handler {
                     .active_interactions
                     .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
             }
-            FullEvent::Message { new_message, .. } => {
-                let has_attachments = !new_message.attachments.is_empty()
-                    || new_message
-                        .message_snapshots
-                        .iter()
-                        .any(|s| !s.attachments.is_empty());
-
-                if !new_message.author.bot() && has_attachments {
-                    let ctx = ctx.clone();
-                    let msg = new_message.clone();
-                    let data = self.data.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = commands::blacklist::evidence::handle_attachment_message(
-                            &ctx, &msg, &data,
-                        )
-                        .await
-                        {
-                            tracing::error!("Evidence attachment capture error: {}", e);
-                        }
-                    });
-                }
-            }
             _ => {}
         }
     }
