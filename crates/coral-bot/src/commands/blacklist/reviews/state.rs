@@ -4,7 +4,6 @@ use blacklist::{Replay, parse_replay};
 use serenity::all::*;
 
 use super::*;
-use crate::utils::format_uuid_dashed;
 
 #[derive(Debug, Clone)]
 pub struct PlayerEntry {
@@ -82,96 +81,30 @@ pub fn parse_state_from_message(message: &Message) -> Option<SubmissionState> {
         t[start..end].parse::<u64>().ok()
     })?;
 
-    let mut players = Vec::new();
-
-    for part in &*container.components {
-        match part {
-            ContainerComponent::Section(section) => {
-                let header_text = section.components.iter().find_map(|c| match c {
-                    SectionComponent::TextDisplay(td) => td.content.clone(),
-                    _ => None,
-                });
-                if let Some(header) = header_text {
-                    if is_player_entry(&header) {
-                        if let Some(username) = parse_player_ign(&header) {
-                            players.push(new_player_entry(username, ""));
-                        }
-                    }
-                }
-            }
-            ContainerComponent::TextDisplay(td) => {
-                let Some(content) = &td.content else { continue };
-                let trimmed = content.trim();
-
-                if is_player_entry(trimmed) {
-                    if let Some(username) = parse_player_ign(trimmed) {
-                        players.push(new_player_entry(username, ""));
-                    }
-                    continue;
-                }
-
-                if is_tag_type_line(trimmed) {
-                    if let Some(tag_name) = parse_tag_type_line(trimmed) {
-                        if let Some(player) = players.last_mut() {
-                            if player.tag_type.is_empty() {
-                                player.tag_type = tag_name.to_string();
-                            }
-                        }
-                    }
-                    continue;
-                }
-
-                if let Some(player) = players.last_mut() {
-                    if trimmed.starts_with('>') {
-                        parse_player_details(player, trimmed);
-                    } else if let Some(rest) = trimmed.strip_prefix("-# Currently ") {
-                        let inner = rest
-                            .strip_prefix("**")
-                            .and_then(|s| s.strip_suffix("**"))
-                            .unwrap_or(rest);
-                        let display = inner.split('>').next_back().unwrap_or(inner).trim();
-                        if let Some(name) = lookup_tag_name_from_display(display) {
-                            player.tag_type = name.to_string();
-                        }
-                    } else if let Some(uuid_str) = trimmed.strip_prefix("-# UUID: ") {
-                        player.uuid = uuid_str
-                            .split_whitespace()
-                            .next()
-                            .unwrap_or("")
-                            .replace('-', "");
-                    } else if trimmed.contains("Nicked") && trimmed.starts_with("-#") {
-                        player.is_nicked = true;
-                    } else if let Some(status) = parse_status_line(trimmed) {
-                        player.status = status.0;
-                        player.reviewer = status.1;
-                        player.review_note = status.2;
-                    } else if let Some(votes) = parse_votes_line(trimmed) {
-                        player.accept_votes = votes.0;
-                        player.reject_votes = votes.1;
-                    } else {
-                        for line in trimmed.lines() {
-                            if let Some(evidence) = parse_evidence_line(line.trim()) {
-                                player.evidence.push(evidence);
-                            }
-                        }
-                    }
-                }
-            }
-            ContainerComponent::MediaGallery(gallery) => {
-                for item in &*gallery.items {
-                    let filename = attachment_filename_from_url(&item.media.url.to_string());
-                    if let Some(player) = players.last_mut() {
-                        player.evidence.push(Evidence::Attachment { filename });
-                    }
-                }
-            }
-            _ => {}
+    let blocks = split_into_blocks(container);
+    let mut players: Vec<PlayerEntry> = Vec::new();
+    for block in &blocks {
+        if let Some(player) = parse_player_block(block) {
+            players.push(player);
         }
     }
 
-    let submitted = texts.iter().any(|t| {
-        t.contains("Approved by") || t.contains("Rejected by") || t.contains("awaiting review")
-    });
+    let submitted = texts
+        .iter()
+        .any(|t| t.contains("Approved") || t.contains("Rejected") || t.contains("Vote"))
+        || container.components.iter().any(|c| match c {
+            ContainerComponent::ActionRow(row) => row.components.iter().any(|b| match b {
+                ActionRowComponent::Button(btn) => match &btn.data {
+                    ButtonKind::NonLink { custom_id, .. } => {
+                        custom_id.starts_with("review_approve:")
+                            || custom_id.starts_with("review_reject:")
+                    }
+                    _ => false,
+                },
+                _ => false,
+            }),
+            _ => false,
+        });
 
     let players: Vec<_> = players
         .into_iter()
@@ -187,8 +120,115 @@ pub fn parse_state_from_message(message: &Message) -> Option<SubmissionState> {
     })
 }
 
+fn split_into_blocks<'a>(
+    container: &'a serenity::all::Container,
+) -> Vec<Vec<&'a ContainerComponent>> {
+    let mut blocks = vec![Vec::new()];
+    for part in &*container.components {
+        if matches!(part, ContainerComponent::Separator(_)) {
+            blocks.push(Vec::new());
+        } else {
+            blocks.last_mut().unwrap().push(part);
+        }
+    }
+    blocks
+}
+
+fn parse_player_block(block: &[&ContainerComponent]) -> Option<PlayerEntry> {
+    let username = block.iter().find_map(|c| match c {
+        ContainerComponent::TextDisplay(td) => td
+            .content
+            .as_deref()
+            .and_then(|c| c.lines().find_map(|line| parse_player_ign(line.trim()))),
+        ContainerComponent::Section(section) => section.components.iter().find_map(|sc| match sc {
+            SectionComponent::TextDisplay(td) => td
+                .content
+                .as_deref()
+                .and_then(|c| c.lines().find_map(|line| parse_player_ign(line.trim()))),
+            _ => None,
+        }),
+        _ => None,
+    })?;
+
+    let mut player = new_player_entry(username, "");
+
+    for part in block {
+        match part {
+            ContainerComponent::TextDisplay(td) => {
+                if let Some(content) = &td.content {
+                    process_text_into_player(&mut player, content);
+                }
+            }
+            ContainerComponent::Section(section) => {
+                for sc in &*section.components {
+                    if let SectionComponent::TextDisplay(td) = sc {
+                        if let Some(content) = &td.content {
+                            process_text_into_player(&mut player, content);
+                        }
+                    }
+                }
+            }
+            ContainerComponent::MediaGallery(gallery) => {
+                for item in &*gallery.items {
+                    let filename = attachment_filename_from_url(&item.media.url.to_string());
+                    player.evidence.push(Evidence::Attachment { filename });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Some(player)
+}
+
+fn process_text_into_player(player: &mut PlayerEntry, content: &str) {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || is_player_entry(trimmed) {
+            continue;
+        }
+        if is_tag_type_line(trimmed) {
+            if let Some(tag_name) = parse_tag_type_line(trimmed) {
+                if player.tag_type.is_empty() {
+                    player.tag_type = tag_name.to_string();
+                }
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("-# currently ") {
+            let display = rest.split('>').next_back().unwrap_or(rest).trim();
+            if let Some(name) = lookup_tag_name_from_display(display) {
+                player.tag_type = name.to_string();
+            }
+        } else if let Some(uuid_str) = trimmed.strip_prefix("-# UUID: ") {
+            player.uuid = uuid_str
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .replace('-', "");
+        } else if trimmed.contains("Nicked") && trimmed.starts_with("-#") {
+            player.is_nicked = true;
+        } else if let Some(status) = parse_status_line(trimmed) {
+            player.status = status.0;
+            player.reviewer = status.1;
+            player.review_note = status.2;
+        } else if let Some((accepts, rejects)) = parse_vote_indicator(trimmed) {
+            player.accept_votes = vec![0u64; accepts];
+            player.reject_votes = vec![0u64; rejects];
+        } else if trimmed.starts_with('>') {
+            if player.reason.is_empty() {
+                if let Some(reason) = trimmed.strip_prefix("> ") {
+                    player.reason = reason.to_string();
+                } else if let Some(reason) = trimmed.strip_prefix('>') {
+                    player.reason = reason.trim().to_string();
+                }
+            }
+        } else if let Some(evidence) = parse_evidence_line(trimmed) {
+            player.evidence.push(evidence);
+        }
+    }
+}
+
 pub fn is_player_entry(text: &str) -> bool {
-    text.starts_with("IGN - `")
+    text.starts_with("### ")
 }
 
 fn is_tag_type_line(text: &str) -> bool {
@@ -196,15 +236,43 @@ fn is_tag_type_line(text: &str) -> bool {
 }
 
 fn parse_player_ign(text: &str) -> Option<String> {
-    text.strip_prefix("IGN - `")?
-        .strip_suffix('`')
-        .map(|s| s.to_string())
+    text.strip_prefix("### ").map(|s| s.trim().to_string())
 }
 
 fn parse_tag_type_line(text: &str) -> Option<&'static str> {
     let inner = text.strip_prefix("**")?.strip_suffix("**")?;
     let display = inner.split('>').next_back()?.trim();
     lookup_tag_name_from_display(display)
+}
+
+pub fn parse_vote_indicator(text: &str) -> Option<(usize, usize)> {
+    if text.starts_with("✅ [") || text.starts_with("❌ [") {
+        let slash_pos = text.find('/')?;
+        let count_str = text[..slash_pos].rsplit(' ').next()?;
+        let count = count_str.parse::<usize>().ok()?;
+        return Some(if text.starts_with("✅") {
+            (count, 0)
+        } else {
+            (0, count)
+        });
+    }
+
+    if text.contains("✅") && text.contains("❌") {
+        let parse_after = |emoji: &str| -> Option<usize> {
+            let pos = text.find(emoji)? + emoji.len();
+            let digits: String = text[pos..]
+                .chars()
+                .skip_while(|c| !c.is_ascii_digit())
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            digits.parse::<usize>().ok()
+        };
+        let accepts = parse_after("✅")?;
+        let rejects = parse_after("❌")?;
+        return Some((accepts, rejects));
+    }
+
+    None
 }
 
 fn new_player_entry(username: String, tag_type: &str) -> PlayerEntry {
@@ -224,56 +292,18 @@ fn new_player_entry(username: String, tag_type: &str) -> PlayerEntry {
     }
 }
 
-fn parse_player_details(player: &mut PlayerEntry, content: &str) {
-    if let Some(reason) = content.lines().next().and_then(|l| l.strip_prefix("> ")) {
-        player.reason = reason.to_string();
-    }
-}
-
 fn parse_status_line(text: &str) -> Option<(PlayerStatus, Option<String>, Option<String>)> {
-    let line = text.strip_prefix("-# ")?;
-
-    if line.contains("Pending") {
-        return Some((PlayerStatus::Pending, None, None));
+    if text.starts_with("✅ Approved") {
+        return Some((PlayerStatus::Approved, None, None));
     }
-    if let Some(rest) = line.strip_prefix("Approved by ") {
-        return Some((PlayerStatus::Approved, Some(rest.to_string()), None));
-    }
-    if let Some(rest) = line.strip_prefix("Rejected by ") {
-        let (reviewer, note) = match rest.find(": \"") {
-            Some(pos) => {
-                let note = rest[pos + 3..]
-                    .strip_suffix('"')
-                    .unwrap_or(&rest[pos + 3..]);
-                (rest[..pos].to_string(), Some(note.to_string()))
-            }
-            None => (rest.to_string(), None),
-        };
-        return Some((PlayerStatus::Rejected, Some(reviewer), note));
+    if text.starts_with("❌ Rejected") {
+        let note = text.find('"').and_then(|start| {
+            let rest = &text[start + 1..];
+            rest.find('"').map(|end| rest[..end].to_string())
+        });
+        return Some((PlayerStatus::Rejected, None, note));
     }
     None
-}
-
-fn parse_votes_line(text: &str) -> Option<(Vec<u64>, Vec<u64>)> {
-    let line = text.strip_prefix("-# Votes: ")?;
-    let (mut accepts, mut rejects) = (Vec::new(), Vec::new());
-
-    for token in line.split_whitespace() {
-        if let Some(id_str) = token.strip_prefix('+') {
-            if let Ok(id) = id_str.parse::<u64>() {
-                accepts.push(id);
-            }
-        } else if let Some(id_str) = token.strip_prefix('-') {
-            if let Ok(id) = id_str.parse::<u64>() {
-                rejects.push(id);
-            }
-        }
-    }
-
-    if accepts.is_empty() && rejects.is_empty() {
-        return None;
-    }
-    Some((accepts, rejects))
 }
 
 pub fn lookup_tag_name_from_display(display: &str) -> Option<&'static str> {
@@ -304,22 +334,6 @@ pub fn render_replay_line(replay: &Replay, note: Option<&str>) -> String {
         Some(n) => format!("- `{}` \u{2014} Note: \"{}\"", replay.format_command(), n),
         None => format!("- `{}`", replay.format_command()),
     }
-}
-
-pub fn render_player_details(player: &PlayerEntry) -> (String, String) {
-    let mut reason_block = format!("> {}", crate::utils::sanitize_reason(&player.reason));
-    if let Some(warning) = &player.conflict_warning {
-        reason_block.push('\n');
-        reason_block.push_str(warning);
-    }
-
-    let uuid_line = if player.is_nicked {
-        "-# Nicked \u{2014} UUID could not be resolved".to_string()
-    } else {
-        format!("-# UUID: {}", format_uuid_dashed(&player.uuid))
-    };
-
-    (reason_block, uuid_line)
 }
 
 pub fn render_evidence_summary(player: &PlayerEntry) -> Option<String> {
@@ -388,30 +402,12 @@ pub fn media_gallery_for(
 pub fn render_status_line(player: &PlayerEntry) -> String {
     match &player.status {
         PlayerStatus::Pending => "-# Pending review".to_string(),
-        PlayerStatus::Approved => "-# Approved".to_string(),
+        PlayerStatus::Approved => "✅ Approved".to_string(),
         PlayerStatus::Rejected => match &player.review_note {
-            Some(note) => format!("-# Rejected: \"{note}\""),
-            None => "-# Rejected".to_string(),
+            Some(note) => format!("❌ Rejected — \"{note}\""),
+            None => "❌ Rejected".to_string(),
         },
     }
-}
-
-pub fn render_vote_status(player: &PlayerEntry) -> String {
-    let (accepts, rejects) = (player.accept_votes.len(), player.reject_votes.len());
-    if accepts > 0 && rejects > 0 {
-        format!(
-            "-# {} accept, {} reject \u{2014} staff required",
-            accepts, rejects
-        )
-    } else if accepts > 0 {
-        format!("-# {}/3 accepting", accepts)
-    } else {
-        format!("-# {}/3 rejecting", rejects)
-    }
-}
-
-pub fn has_votes(player: &PlayerEntry) -> bool {
-    !player.accept_votes.is_empty() || !player.reject_votes.is_empty()
 }
 
 pub fn extract_media_urls_from_message(message: &Message, player_index: usize) -> Vec<String> {
@@ -419,47 +415,43 @@ pub fn extract_media_urls_from_message(message: &Message, player_index: usize) -
         return Vec::new();
     };
 
-    let mut current_player = 0usize;
-    let mut seen_first = false;
-    let mut urls = Vec::new();
-
-    for part in &*container.components {
-        match part {
-            ContainerComponent::Section(section) => {
-                let has_player = section.components.iter().any(|c| match c {
-                    SectionComponent::TextDisplay(td) => {
-                        td.content.as_ref().is_some_and(|t| is_player_entry(t))
-                    }
-                    _ => false,
-                });
-                if has_player {
-                    if seen_first {
-                        current_player += 1;
-                    }
-                    seen_first = true;
-                }
-            }
-            ContainerComponent::TextDisplay(td) => {
-                if let Some(content) = &td.content {
-                    if is_player_entry(content.trim()) {
-                        if seen_first {
-                            current_player += 1;
-                        }
-                        seen_first = true;
-                    }
-                }
-            }
-            ContainerComponent::MediaGallery(gallery)
-                if seen_first && current_player == player_index =>
-            {
-                for item in &*gallery.items {
-                    urls.push(item.media.url.to_string());
-                }
-            }
-            _ => {}
+    let blocks = split_into_blocks(container);
+    let mut idx = 0;
+    for block in &blocks {
+        if !block_has_player_marker(block) {
+            continue;
         }
+        if idx == player_index {
+            return block
+                .iter()
+                .filter_map(|c| match c {
+                    ContainerComponent::MediaGallery(gallery) => Some(
+                        gallery
+                            .items
+                            .iter()
+                            .map(|i| i.media.url.to_string())
+                            .collect::<Vec<_>>(),
+                    ),
+                    _ => None,
+                })
+                .flatten()
+                .collect();
+        }
+        idx += 1;
     }
-    urls
+    Vec::new()
+}
+
+fn block_has_player_marker(block: &[&ContainerComponent]) -> bool {
+    let scan = |content: &str| content.lines().any(|line| is_player_entry(line.trim()));
+    block.iter().any(|c| match c {
+        ContainerComponent::TextDisplay(td) => td.content.as_deref().is_some_and(scan),
+        ContainerComponent::Section(section) => section.components.iter().any(|sc| match sc {
+            SectionComponent::TextDisplay(td) => td.content.as_deref().is_some_and(scan),
+            _ => false,
+        }),
+        _ => false,
+    })
 }
 
 pub fn parse_confirmation_data(custom_id: &str, message: &Message) -> Option<ConfirmationData> {
@@ -478,9 +470,16 @@ pub fn parse_confirmation_data(custom_id: &str, message: &Message) -> Option<Con
     let is_nicked = parts[3] == "true";
 
     let texts = extract_text_displays(message);
-    let preview = texts.iter().find(|t| t.contains(" \u{2014} `"))?;
-    let player_name = preview.split('`').nth(1)?.to_string();
-    let reason = preview.split("\n> ").nth(1).unwrap_or("").to_string();
+    let player_name = texts
+        .iter()
+        .find_map(|t| t.lines().find_map(|line| parse_player_ign(line.trim())))?;
+    let reason = texts
+        .iter()
+        .find_map(|t| {
+            t.lines()
+                .find_map(|line| line.trim().strip_prefix("> ").map(|s| s.to_string()))
+        })
+        .unwrap_or_default();
 
     Some(ConfirmationData {
         player_name,

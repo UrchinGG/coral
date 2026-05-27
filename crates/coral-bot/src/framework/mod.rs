@@ -50,6 +50,7 @@ pub struct Data {
     pub session_duels_images: Arc<Mutex<HashMap<String, SessionCacheEntry<Duels>>>>,
     pub home_guild_id: Option<GuildId>,
     pub pending_overwrites: Arc<Mutex<HashMap<String, PendingOverwrite>>>,
+    pub pending_review_votes: Arc<Mutex<HashMap<u64, HashMap<usize, (Vec<u64>, Vec<u64>)>>>>,
     pub sync_cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
     pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
 }

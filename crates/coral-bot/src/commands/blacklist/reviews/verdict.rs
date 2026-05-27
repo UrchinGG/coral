@@ -7,6 +7,46 @@ use serenity::all::*;
 use super::{builder::*, state::*, *};
 use crate::{framework::Data, utils::text};
 
+fn load_player_votes(
+    data: &Data,
+    thread_id: u64,
+    player_index: usize,
+    parsed_accepts: &[u64],
+    parsed_rejects: &[u64],
+) -> (Vec<u64>, Vec<u64>) {
+    let map = data.pending_review_votes.lock().unwrap();
+    if let Some(thread) = map.get(&thread_id) {
+        if let Some((a, r)) = thread.get(&player_index) {
+            return (a.clone(), r.clone());
+        }
+    }
+    (parsed_accepts.to_vec(), parsed_rejects.to_vec())
+}
+
+fn record_player_vote(
+    data: &Data,
+    thread_id: u64,
+    player_index: usize,
+    voter_id: u64,
+    accept: bool,
+) -> (Vec<u64>, Vec<u64>) {
+    let mut map = data.pending_review_votes.lock().unwrap();
+    let thread = map.entry(thread_id).or_default();
+    let entry = thread
+        .entry(player_index)
+        .or_insert_with(|| (Vec::new(), Vec::new()));
+    if accept {
+        entry.0.push(voter_id);
+    } else {
+        entry.1.push(voter_id);
+    }
+    (entry.0.clone(), entry.1.clone())
+}
+
+fn cleanup_review_votes(data: &Data, thread_id: u64) {
+    data.pending_review_votes.lock().unwrap().remove(&thread_id);
+}
+
 pub async fn handle_submit(
     ctx: &Context,
     component: &ComponentInteraction,
@@ -99,16 +139,37 @@ pub async fn handle_approve(
     if player.status != PlayerStatus::Pending {
         return send_vote_error(ctx, component, "This player has already been reviewed").await;
     }
-    if player.accept_votes.contains(&discord_id) || player.reject_votes.contains(&discord_id) {
+
+    let thread_key = component.channel_id.get();
+    let (existing_accepts, existing_rejects) = load_player_votes(
+        data,
+        thread_key,
+        player_index,
+        &state.players[player_index].accept_votes,
+        &state.players[player_index].reject_votes,
+    );
+    state.players[player_index].accept_votes = existing_accepts;
+    state.players[player_index].reject_votes = existing_rejects;
+
+    if state.players[player_index]
+        .accept_votes
+        .contains(&discord_id)
+        || state.players[player_index]
+            .reject_votes
+            .contains(&discord_id)
+    {
         return send_vote_error(ctx, component, "You have already voted on this player").await;
     }
 
     let is_staff = rank >= crate::framework::AccessRank::Helper;
 
     if !is_staff {
-        state.players[player_index].accept_votes.push(discord_id);
+        let (new_accepts, new_rejects) =
+            record_player_vote(data, thread_key, player_index, discord_id, true);
+        state.players[player_index].accept_votes = new_accepts;
+        state.players[player_index].reject_votes = new_rejects;
         let unanimous = state.players[player_index].reject_votes.is_empty()
-            && state.players[player_index].accept_votes.len() >= 3;
+            && state.players[player_index].accept_votes.len() >= super::VOTE_THRESHOLD;
 
         if !unanimous {
             let player = &state.players[player_index];
@@ -335,13 +396,34 @@ pub async fn handle_reject(
     if player.status != PlayerStatus::Pending {
         return send_vote_error(ctx, component, "This player has already been reviewed").await;
     }
-    if player.accept_votes.contains(&discord_id) || player.reject_votes.contains(&discord_id) {
+
+    let thread_key = component.channel_id.get();
+    let (existing_accepts, existing_rejects) = load_player_votes(
+        data,
+        thread_key,
+        player_index,
+        &state.players[player_index].accept_votes,
+        &state.players[player_index].reject_votes,
+    );
+    state.players[player_index].accept_votes = existing_accepts;
+    state.players[player_index].reject_votes = existing_rejects;
+
+    if state.players[player_index]
+        .accept_votes
+        .contains(&discord_id)
+        || state.players[player_index]
+            .reject_votes
+            .contains(&discord_id)
+    {
         return send_vote_error(ctx, component, "You have already voted on this player").await;
     }
 
-    state.players[player_index].reject_votes.push(discord_id);
+    let (new_accepts, new_rejects) =
+        record_player_vote(data, thread_key, player_index, discord_id, false);
+    state.players[player_index].accept_votes = new_accepts;
+    state.players[player_index].reject_votes = new_rejects;
     let unanimous = state.players[player_index].accept_votes.is_empty()
-        && state.players[player_index].reject_votes.len() >= 3;
+        && state.players[player_index].reject_votes.len() >= super::VOTE_THRESHOLD;
 
     if !unanimous {
         let player = &state.players[player_index];
@@ -532,6 +614,8 @@ async fn check_all_resolved(
     {
         return Ok(());
     }
+
+    cleanup_review_votes(data, thread_id.get());
 
     let all_approved = state
         .players

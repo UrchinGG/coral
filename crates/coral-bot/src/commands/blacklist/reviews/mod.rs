@@ -44,6 +44,7 @@ const REVIEW_TAGS: &[&str] = &["closet_cheater", "blatant_cheater"];
 const CONFIRMABLE_TAGS: &[&str] = &["closet_cheater", "blatant_cheater"];
 const SUBMISSION_TIMEOUT_SECS: u64 = 30 * 60;
 const SUBMISSION_WARNING_SECS: u64 = 20 * 60;
+pub const VOTE_THRESHOLD: usize = 3;
 
 fn build_tag_select_options(selected: Option<&str>) -> Vec<CreateSelectMenuOption<'static>> {
     blacklist::all()
@@ -71,14 +72,27 @@ fn extract_text_displays(message: &Message) -> Vec<String> {
         return Vec::new();
     };
 
-    container
-        .components
-        .iter()
-        .filter_map(|c| match c {
-            ContainerComponent::TextDisplay(td) => td.content.clone(),
-            _ => None,
-        })
-        .collect()
+    let mut out = Vec::new();
+    for c in &*container.components {
+        match c {
+            ContainerComponent::TextDisplay(td) => {
+                if let Some(content) = &td.content {
+                    out.push(content.clone());
+                }
+            }
+            ContainerComponent::Section(section) => {
+                for sc in &*section.components {
+                    if let SectionComponent::TextDisplay(td) = sc {
+                        if let Some(content) = &td.content {
+                            out.push(content.clone());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 fn find_container(message: &Message) -> Option<&serenity::all::Container> {

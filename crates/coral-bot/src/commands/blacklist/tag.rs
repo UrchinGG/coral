@@ -572,6 +572,7 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
             tag_type,
             reason,
             false,
+            data.review_forum_id,
         );
         command
             .edit_response(
