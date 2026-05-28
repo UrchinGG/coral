@@ -77,12 +77,8 @@ pub async fn handle_submit(
 
     state.submitted = true;
     for player in &mut state.players {
-        if !player.is_nicked {
-            if let Ok(warning) =
-                check_overwrite_conflict(data, &player.uuid, &player.tag_type).await
-            {
-                player.conflict_warning = warning;
-            }
+        if let Ok(warning) = check_overwrite_conflict(data, &player.uuid, &player.tag_type).await {
+            player.conflict_warning = warning;
         }
     }
 
@@ -91,15 +87,20 @@ pub async fn handle_submit(
         .await?;
     update_builder(ctx, component.channel_id, &message, &state).await?;
 
+    // On the initial flow, Submit lives on a standalone reminder message — remove
+    // it now. When reopened, Submit is on the OP itself, so leave that in place.
+    let op_id = MessageId::new(component.channel_id.get());
+    if component.message.id != op_id {
+        let _ = ctx
+            .http
+            .delete_message(component.channel_id, component.message.id, None)
+            .await;
+    }
+
     let tags = resolve_forum_tags(ctx, data).await;
     let mut tag_ids = Vec::new();
     if let Some(id) = tags.pending {
         tag_ids.push(id);
-    }
-    if state.players.iter().any(|p| p.is_nicked) {
-        if let Some(id) = tags.nicked {
-            tag_ids.push(id);
-        }
     }
     let _ = set_forum_tags(ctx, thread_id(component.channel_id), &tag_ids).await;
     Ok(())
@@ -220,77 +221,75 @@ pub async fn handle_approve(
             .collect()
     };
 
-    if !player.is_nicked {
-        let existing_tags = repo.get_tags(&player_uuid).await?;
-        let new_priority = lookup_tag(&player_tag_type)
-            .map(|d| d.priority)
-            .unwrap_or(0);
-        if let Some(conflict) = existing_tags
-            .iter()
-            .find(|t| lookup_tag(&t.tag_type).map(|d| d.priority).unwrap_or(0) == new_priority)
+    let existing_tags = repo.get_tags(&player_uuid).await?;
+    let new_priority = lookup_tag(&player_tag_type)
+        .map(|d| d.priority)
+        .unwrap_or(0);
+    if let Some(conflict) = existing_tags
+        .iter()
+        .find(|t| lookup_tag(&t.tag_type).map(|d| d.priority).unwrap_or(0) == new_priority)
+    {
+        repo.remove_tag(conflict.id, discord_id as i64).await?;
+    }
+
+    let reviewed_by_slice = if reviewed_by.is_empty() {
+        None
+    } else {
+        Some(reviewed_by.as_slice())
+    };
+    let will_confirm =
+        !media_urls.is_empty() && CONFIRMABLE_TAGS.contains(&player_tag_type.as_str());
+    let stored_type = if will_confirm {
+        "confirmed_cheater"
+    } else {
+        &player_tag_type
+    };
+
+    let tag_id = repo
+        .add_tag(
+            &player_uuid,
+            stored_type,
+            &player_reason,
+            submitter_id as i64,
+            false,
+            reviewed_by_slice,
+        )
+        .await?;
+
+    if will_confirm {
+        let guild_id = component.guild_id.map(|g| g.get()).unwrap_or(0);
+        let review_thread_url = format!(
+            "https://discord.com/channels/{}/{}",
+            guild_id,
+            component.channel_id.get(),
+        );
+        if let Err(e) = super::super::evidence::create_evidence_from_review(
+            ctx,
+            data,
+            guild_id,
+            &player_uuid,
+            &player_username,
+            &player_tag_type,
+            tag_id,
+            &media_urls,
+            Some(&review_thread_url),
+            discord_id as i64,
+        )
+        .await
         {
-            repo.remove_tag(conflict.id, discord_id as i64).await?;
+            tracing::error!("Failed to create evidence post: {e:#}");
         }
+    }
 
-        let reviewed_by_slice = if reviewed_by.is_empty() {
-            None
-        } else {
-            Some(reviewed_by.as_slice())
-        };
-        let will_confirm =
-            !media_urls.is_empty() && CONFIRMABLE_TAGS.contains(&player_tag_type.as_str());
-        let stored_type = if will_confirm {
-            "confirmed_cheater"
-        } else {
-            &player_tag_type
-        };
-
-        let tag_id = repo
-            .add_tag(
-                &player_uuid,
-                stored_type,
-                &player_reason,
-                submitter_id as i64,
-                false,
-                reviewed_by_slice,
-            )
-            .await?;
-
-        if will_confirm {
-            let guild_id = component.guild_id.map(|g| g.get()).unwrap_or(0);
-            let review_thread_url = format!(
-                "https://discord.com/channels/{}/{}",
-                guild_id,
-                component.channel_id.get(),
-            );
-            if let Err(e) = super::super::evidence::create_evidence_from_review(
-                ctx,
-                data,
-                guild_id,
-                &player_uuid,
-                &player_username,
-                &player_tag_type,
+    let tags = repo.get_tags(&player_uuid).await?;
+    if tags.iter().any(|t| t.id == tag_id) {
+        data.event_publisher
+            .publish(&BlacklistEvent::TagAdded {
+                uuid: player_uuid.clone(),
                 tag_id,
-                &media_urls,
-                Some(&review_thread_url),
-                discord_id as i64,
-            )
-            .await
-            {
-                tracing::error!("Failed to create evidence post: {e:#}");
-            }
-        }
-
-        let tags = repo.get_tags(&player_uuid).await?;
-        if tags.iter().any(|t| t.id == tag_id) {
-            data.event_publisher
-                .publish(&BlacklistEvent::TagAdded {
-                    uuid: player_uuid.clone(),
-                    tag_id,
-                    added_by: submitter_id as i64,
-                })
-                .await;
-        }
+                added_by: submitter_id as i64,
+            })
+            .await;
     }
 
     let member_repo = MemberRepository::new(data.db.pool());
@@ -641,12 +640,6 @@ async fn check_all_resolved(
         tag_ids.push(id);
     }
 
-    if state.players.iter().any(|p| p.is_nicked) {
-        if let Some(id) = tags.nicked {
-            tag_ids.push(id);
-        }
-    }
-
     let _ = set_forum_tags(ctx, thread_id, &tag_ids).await;
 
     let channel_id: GenericChannelId = thread_id.into();
@@ -699,7 +692,6 @@ pub async fn handle_confirm(
         &conf.player_uuid,
         &conf.tag_type,
         &conf.reason,
-        conf.is_nicked,
     )
     .await
     {
@@ -712,7 +704,7 @@ pub async fn handle_confirm(
                         CreateInteractionResponseMessage::new()
                             .flags(MessageFlags::IS_COMPONENTS_V2)
                             .components(vec![CreateComponent::Container(CreateContainer::new(vec![text(format!(
-                                "## {} Tag Review Created\nYour submission has been created in <#{}>.\nAdd evidence and submit for mod review.",
+                                "## {} Tag Review Created\nYour post is ready in <#{}>.\nAdd evidence there, then submit it for voting.",
                                 EMOTE_ADDTAG, thread_id
                             ))]))]),
                     ),

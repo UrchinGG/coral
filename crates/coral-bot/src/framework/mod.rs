@@ -374,14 +374,14 @@ impl Handler {
             _ if id.starts_with("review_edit_tag:") => {
                 commands::blacklist::reviews::handle_edit_tag(ctx, component, &self.data).await
             }
+            _ if id.starts_with("review_edit_reason:") => {
+                commands::blacklist::reviews::handle_edit_reason(ctx, component, &self.data).await
+            }
             _ if id.starts_with("review_edit_done:") => {
                 commands::blacklist::reviews::handle_edit_done(ctx, component, &self.data).await
             }
             _ if id.starts_with("review_remove_player:") => {
                 commands::blacklist::reviews::handle_remove_player(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("review_edit_evidence:") => {
-                commands::blacklist::reviews::handle_edit_evidence(ctx, component, &self.data).await
             }
             _ if id.starts_with("review_remove_evidence:") => {
                 commands::blacklist::reviews::handle_remove_evidence(ctx, component, &self.data)
@@ -460,8 +460,8 @@ impl Handler {
             _ if id.starts_with("review_reject_modal:") => {
                 commands::blacklist::reviews::handle_reject_modal(ctx, modal, &self.data).await
             }
-            _ if id.starts_with("review_edit_player_modal:") => {
-                commands::blacklist::reviews::handle_edit_player_modal(ctx, modal, &self.data).await
+            _ if id.starts_with("review_edit_reason_modal:") => {
+                commands::blacklist::reviews::handle_edit_reason_modal(ctx, modal, &self.data).await
             }
             _ if id.starts_with("mt_reason:") => {
                 commands::blacklist::tag::handle_manage_reason_modal(ctx, modal, &self.data).await

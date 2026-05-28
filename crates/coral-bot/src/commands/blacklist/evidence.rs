@@ -132,7 +132,6 @@ async fn run_member_confirm(
         &player_info.uuid,
         &tag.tag_type,
         &tag.reason,
-        false,
     )
     .await?;
 

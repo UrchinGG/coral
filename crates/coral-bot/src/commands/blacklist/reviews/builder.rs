@@ -29,7 +29,22 @@ pub fn build_review_message(
     existing_urls: &HashMap<String, String>,
 ) -> Vec<CreateComponent<'static>> {
     let id = state.submitter_id;
-    let mut parts: Vec<CreateContainerComponent> = Vec::new();
+
+    if !state.submitted {
+        if let Some(idx) = state.editing {
+            if idx < state.players.len() {
+                return build_edit_page(state, idx, existing_urls);
+            }
+        }
+    }
+
+    let player_count = state.players.len();
+    let header = if player_count > 1 {
+        format!("## {EMOTE_TAG} Tag Review · {player_count} players")
+    } else {
+        format!("## {EMOTE_TAG} Tag Review")
+    };
+    let mut parts: Vec<CreateContainerComponent> = vec![text(header), separator()];
 
     if state.players.is_empty() && state.pending_add.is_none() {
         parts.push(text("-# No players added yet"));
@@ -37,8 +52,6 @@ pub fn build_review_message(
     }
 
     for (idx, player) in state.players.iter().enumerate() {
-        let is_editing = state.editing == Some(idx);
-
         if let Some(gallery) = media_gallery_for(player, existing_urls) {
             parts.push(gallery);
         }
@@ -48,12 +61,10 @@ pub fn build_review_message(
 
         build_player_card(&mut parts, player);
 
-        if is_editing && !state.submitted {
-            build_tag_edit_controls(&mut parts, player, idx, id);
-        } else if state.submitted {
+        if state.submitted {
             build_submitted_controls(&mut parts, player, idx, id);
         } else {
-            build_evidence_controls(&mut parts, player, idx, id);
+            build_evidence_controls(&mut parts, idx, id);
         }
 
         parts.push(separator());
@@ -70,9 +81,17 @@ pub fn build_review_message(
         build_editing_footer(&mut parts, state, id);
     }
 
-    parts.push(text(format!("-# Submitted by <@{}>", state.submitter_id)));
+    parts.push(submitter_line(state.submitter_id, state.reopened));
 
     vec![CreateComponent::Container(CreateContainer::new(parts))]
+}
+
+fn submitter_line(submitter_id: u64, reopened: bool) -> CreateContainerComponent<'static> {
+    if reopened {
+        text(format!("-# Submitted by <@{submitter_id}> · reopened"))
+    } else {
+        text(format!("-# Submitted by <@{submitter_id}>"))
+    }
 }
 
 pub fn build_player_card(parts: &mut Vec<CreateContainerComponent<'static>>, player: &PlayerEntry) {
@@ -80,70 +99,89 @@ pub fn build_player_card(parts: &mut Vec<CreateContainerComponent<'static>>, pla
     let emote = def.map(|d| d.emote).unwrap_or("");
     let display_name = def.map(|d| d.display_name).unwrap_or(&player.tag_type);
 
-    let tag_line = if CONFIRMABLE_TAGS.contains(&player.tag_type.as_str()) {
-        let confirmed_emote = lookup_tag("confirmed_cheater")
-            .map(|d| d.emote)
-            .unwrap_or("");
-        format!("**{confirmed_emote} Confirmed Cheater**\n-# currently {emote} {display_name}")
-    } else {
-        format!("**{emote} {display_name}**")
-    };
-
     let mut lines = vec![
-        format!("### {}", player.username),
-        tag_line,
+        format!("IGN - `{}`", player.username),
+        format!("**{emote} {display_name}**"),
         format!("> {}", sanitize_reason(&player.reason)),
     ];
     if let Some(warning) = &player.conflict_warning {
         lines.push(warning.clone());
     }
-    if player.is_nicked {
-        lines.push("-# Nicked — UUID could not be resolved".to_string());
-    } else {
-        lines.push(format!(
-            "-# UUID: {}",
-            crate::utils::format_uuid_dashed(&player.uuid)
-        ));
-    }
+    lines.push(format!(
+        "-# UUID: {}",
+        crate::utils::format_uuid_dashed(&player.uuid)
+    ));
 
     parts.push(player_section(lines.join("\n"), &player.uuid));
 }
 
 pub fn build_evidence_controls(
     parts: &mut Vec<CreateContainerComponent<'static>>,
-    player: &PlayerEntry,
     idx: usize,
     id: u64,
 ) {
-    let mut buttons = vec![
+    let buttons = vec![
         CreateButton::new(format!("review_add_replay:{idx}:{id}"))
-            .label("Replay")
+            .label("+ Replay")
             .style(ButtonStyle::Primary),
         CreateButton::new(format!("review_attach_media:{idx}:{id}"))
-            .label("Media")
+            .label("+ Media")
             .style(ButtonStyle::Primary),
         CreateButton::new(format!("review_edit_tag:{idx}:{id}"))
             .label("Edit")
             .style(ButtonStyle::Secondary),
     ];
-    if !player.evidence.is_empty() {
-        buttons.push(
-            CreateButton::new(format!("review_edit_evidence:{idx}:{id}"))
-                .label("Evidence")
-                .style(ButtonStyle::Secondary),
-        );
-    }
     parts.push(CreateContainerComponent::ActionRow(
         CreateActionRow::Buttons(buttons.into()),
     ));
 }
 
-pub fn build_tag_edit_controls(
-    parts: &mut Vec<CreateContainerComponent<'static>>,
-    player: &PlayerEntry,
+pub fn build_edit_page(
+    state: &SubmissionState,
     idx: usize,
-    id: u64,
-) {
+    existing_urls: &HashMap<String, String>,
+) -> Vec<CreateComponent<'static>> {
+    let id = state.submitter_id;
+    let player = &state.players[idx];
+
+    let mut parts: Vec<CreateContainerComponent> =
+        vec![text(format!("## {EMOTE_TAG} Edit Tag")), separator()];
+
+    for (ev_idx, ev) in player.evidence.iter().enumerate() {
+        let remove = CreateButton::new(format!("review_remove_evidence:{idx}:{ev_idx}:{id}"))
+            .label("Remove")
+            .style(ButtonStyle::Danger);
+        match ev {
+            Evidence::Replay { replay, note } => {
+                parts.push(CreateContainerComponent::Section(CreateSection::new(
+                    vec![CreateSectionComponent::TextDisplay(CreateTextDisplay::new(
+                        render_replay_line(replay, note.as_deref()),
+                    ))],
+                    CreateSectionAccessory::Button(remove),
+                )));
+            }
+            Evidence::Attachment { filename } => {
+                let url = existing_urls
+                    .get(filename)
+                    .cloned()
+                    .unwrap_or_else(|| format!("attachment://{filename}"));
+                parts.push(CreateContainerComponent::Section(CreateSection::new(
+                    vec![CreateSectionComponent::TextDisplay(CreateTextDisplay::new(
+                        format!("`{filename}`"),
+                    ))],
+                    CreateSectionAccessory::Thumbnail(CreateThumbnail::new(
+                        CreateUnfurledMediaItem::new(url),
+                    )),
+                )));
+                parts.push(CreateContainerComponent::ActionRow(
+                    CreateActionRow::Buttons(vec![remove].into()),
+                ));
+            }
+        }
+    }
+
+    build_player_card(&mut parts, player);
+
     parts.push(CreateContainerComponent::ActionRow(
         CreateActionRow::SelectMenu(
             CreateSelectMenu::new(
@@ -155,19 +193,31 @@ pub fn build_tag_edit_controls(
             .placeholder("Change tag type"),
         ),
     ));
+
+    let mut controls = vec![
+        CreateButton::new(format!("review_edit_reason:{idx}:{id}"))
+            .label("Edit Reason")
+            .style(ButtonStyle::Secondary),
+    ];
+    if state.players.len() > 1 {
+        controls.push(
+            CreateButton::new(format!("review_remove_player:{idx}:{id}"))
+                .label("Remove Tag")
+                .style(ButtonStyle::Danger),
+        );
+    }
+    controls.push(
+        CreateButton::new(format!("review_edit_done:{idx}:{id}"))
+            .label("Done")
+            .style(ButtonStyle::Primary),
+    );
     parts.push(CreateContainerComponent::ActionRow(
-        CreateActionRow::Buttons(
-            vec![
-                CreateButton::new(format!("review_remove_player:{idx}:{id}"))
-                    .label("Remove Tag")
-                    .style(ButtonStyle::Danger),
-                CreateButton::new(format!("review_edit_done:{idx}:{id}"))
-                    .label("Done")
-                    .style(ButtonStyle::Secondary),
-            ]
-            .into(),
-        ),
+        CreateActionRow::Buttons(controls.into()),
     ));
+
+    parts.push(submitter_line(id, state.reopened));
+
+    vec![CreateComponent::Container(CreateContainer::new(parts))]
 }
 
 pub fn build_submitted_controls(
@@ -236,14 +286,10 @@ pub fn build_pending_add_section(
         pending.username
     )));
 
-    let nicked = if pending.is_nicked { "1" } else { "0" };
     parts.push(CreateContainerComponent::ActionRow(
         CreateActionRow::SelectMenu(
             CreateSelectMenu::new(
-                format!(
-                    "review_pending_tag:{}:{}:{}",
-                    pending.identifier, nicked, id
-                ),
+                format!("review_pending_tag:{}:{}", pending.identifier, id),
                 CreateSelectMenuKind::String {
                     options: build_tag_select_options(None).into(),
                 },
@@ -286,22 +332,47 @@ pub fn build_editing_footer(
         buttons.push(
             CreateButton::new(format!("review_add_player:{id}"))
                 .label("+ Player")
-                .style(ButtonStyle::Secondary),
+                .style(ButtonStyle::Primary),
         );
     }
-    buttons.push(
-        CreateButton::new(format!("review_submit:{id}"))
-            .label("Submit")
-            .style(ButtonStyle::Success),
-    );
-    buttons.push(
-        CreateButton::new(format!("review_cancel_thread:{id}"))
-            .label("Cancel")
-            .style(ButtonStyle::Secondary),
-    );
-    parts.push(CreateContainerComponent::ActionRow(
-        CreateActionRow::Buttons(buttons.into()),
-    ));
+    // After an initial submission, Submit/Cancel live on the OP itself so they
+    // stay near the post instead of below the thread's discussion.
+    if state.reopened {
+        buttons.push(
+            CreateButton::new(format!("review_submit:{id}"))
+                .label("Submit")
+                .style(ButtonStyle::Success),
+        );
+        buttons.push(
+            CreateButton::new(format!("review_cancel_thread:{id}"))
+                .label("Cancel")
+                .style(ButtonStyle::Danger),
+        );
+    }
+    if !buttons.is_empty() {
+        parts.push(CreateContainerComponent::ActionRow(
+            CreateActionRow::Buttons(buttons.into()),
+        ));
+    }
+}
+
+pub fn build_submit_reminder(submitter_id: u64) -> Vec<CreateComponent<'static>> {
+    vec![CreateComponent::Container(CreateContainer::new(vec![
+        text(
+            "Add your evidence to the post above, then press **Submit** when you're ready for review.",
+        ),
+        CreateContainerComponent::ActionRow(CreateActionRow::Buttons(
+            vec![
+                CreateButton::new(format!("review_submit:{submitter_id}"))
+                    .label("Submit")
+                    .style(ButtonStyle::Success),
+                CreateButton::new(format!("review_cancel_thread:{submitter_id}"))
+                    .label("Cancel")
+                    .style(ButtonStyle::Danger),
+            ]
+            .into(),
+        )),
+    ]))]
 }
 
 pub fn build_vote_message(
@@ -348,87 +419,28 @@ pub fn build_vote_message(
         ))])
 }
 
-pub fn build_evidence_panel(
-    player: &PlayerEntry,
-    player_idx: usize,
-    submitter_id: u64,
-) -> Vec<CreateComponent<'static>> {
-    if player.evidence.is_empty() {
-        return vec![CreateComponent::Container(CreateContainer::new(vec![
-            text(format!(
-                "**Evidence for `{}`**\n-# No evidence added",
-                player.username
-            )),
-        ]))];
-    }
-
-    let summary: String = player
-        .evidence
-        .iter()
-        .map(|e| match e {
-            Evidence::Replay { replay, note } => render_replay_line(replay, note.as_deref()),
-            Evidence::Attachment { filename } => format!("\u{1F4CE} {filename}"),
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let options: Vec<CreateSelectMenuOption<'static>> = player
-        .evidence
-        .iter()
-        .enumerate()
-        .map(|(i, e)| {
-            let label = match e {
-                Evidence::Replay { replay, .. } => replay.format_command(),
-                Evidence::Attachment { filename } => filename.clone(),
-            };
-            CreateSelectMenuOption::new(label, i.to_string())
-        })
-        .collect();
-
-    vec![CreateComponent::Container(CreateContainer::new(vec![
-        text(format!("**Evidence for `{}`**\n{summary}", player.username)),
-        CreateContainerComponent::ActionRow(CreateActionRow::SelectMenu(
-            CreateSelectMenu::new(
-                format!("review_remove_evidence:{player_idx}:{submitter_id}"),
-                CreateSelectMenuKind::String {
-                    options: options.into(),
-                },
-            )
-            .placeholder("Remove evidence..."),
-        )),
-    ]))]
-}
-
 pub fn build_confirmation_message(
     submitter_id: u64,
     player_name: &str,
     player_uuid: &str,
     tag_type: &str,
     reason: &str,
-    is_nicked: bool,
     forum_id: Option<ChannelId>,
 ) -> Vec<CreateComponent<'static>> {
     let def = lookup_tag(tag_type);
     let emote = def.map(|d| d.emote).unwrap_or("");
     let display_name = def.map(|d| d.display_name).unwrap_or(tag_type);
 
-    let confirm_id = format!(
-        "review_confirm:{submitter_id}:{tag_type}:{}:{is_nicked}",
-        if player_uuid.is_empty() {
-            "none"
-        } else {
-            player_uuid
-        }
-    );
+    let confirm_id = format!("review_confirm:{submitter_id}:{tag_type}:{player_uuid}");
 
     let destination = match forum_id {
         Some(id) => format!("<#{id}>"),
-        None => "the review forum".to_string(),
+        None => "the review channel".to_string(),
     };
 
     let preview = player_section(
         format!(
-            "### {player_name}\n{emote} **{display_name}**\n> {}",
+            "IGN - `{player_name}`\n{emote} **{display_name}**\n> {}",
             sanitize_reason(reason)
         ),
         player_uuid,
@@ -437,18 +449,12 @@ pub fn build_confirmation_message(
     let mut parts: Vec<CreateContainerComponent> = vec![
         text(format!("## {EMOTE_TAG} Create Tag Review Post")),
         text(format!(
-            "This tag needs review. Confirming will open a new post in {destination} where you'll add evidence and wait for other users to review."
+            "This tag needs approval first. Confirming opens a post in {destination} where you'll add evidence, then others vote on it."
         )),
         separator(),
         text("-# Preview"),
         preview,
     ];
-
-    if is_nicked {
-        parts.push(text(
-            "-# This player could not be resolved — they will be tagged as a **nick**.",
-        ));
-    }
 
     parts.push(separator());
     parts.push(CreateContainerComponent::ActionRow(

@@ -11,7 +11,6 @@ pub struct PlayerEntry {
     pub uuid: String,
     pub tag_type: String,
     pub reason: String,
-    pub is_nicked: bool,
     pub status: PlayerStatus,
     pub reviewer: Option<String>,
     pub review_note: Option<String>,
@@ -43,7 +42,6 @@ pub enum Evidence {
 pub struct PendingAdd {
     pub identifier: String,
     pub username: String,
-    pub is_nicked: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +49,7 @@ pub struct SubmissionState {
     pub submitter_id: u64,
     pub players: Vec<PlayerEntry>,
     pub submitted: bool,
+    pub reopened: bool,
     pub editing: Option<usize>,
     pub pending_add: Option<PendingAdd>,
 }
@@ -59,7 +58,6 @@ pub struct ForumTags {
     pub pending: Option<ForumTagId>,
     pub approved: Option<ForumTagId>,
     pub rejected: Option<ForumTagId>,
-    pub nicked: Option<ForumTagId>,
     pub awaiting_evidence: Option<ForumTagId>,
 }
 
@@ -68,7 +66,6 @@ pub struct ConfirmationData {
     pub player_uuid: String,
     pub tag_type: String,
     pub reason: String,
-    pub is_nicked: bool,
 }
 
 pub fn parse_state_from_message(message: &Message) -> Option<SubmissionState> {
@@ -106,6 +103,10 @@ pub fn parse_state_from_message(message: &Message) -> Option<SubmissionState> {
             _ => false,
         });
 
+    let reopened = texts
+        .iter()
+        .any(|t| t.starts_with("-# Submitted by") && t.contains("reopened"));
+
     let players: Vec<_> = players
         .into_iter()
         .filter(|p| !p.tag_type.is_empty())
@@ -115,6 +116,7 @@ pub fn parse_state_from_message(message: &Message) -> Option<SubmissionState> {
         submitter_id,
         players,
         submitted,
+        reopened,
         editing: None,
         pending_add: None,
     })
@@ -167,6 +169,14 @@ fn parse_player_block(block: &[&ContainerComponent]) -> Option<PlayerEntry> {
                         }
                     }
                 }
+                if let SectionAccessory::Thumbnail(thumb) = &*section.accessory {
+                    let url = thumb.media.url.to_string();
+                    if url.contains("/attachments/") {
+                        player.evidence.push(Evidence::Attachment {
+                            filename: attachment_filename_from_url(&url),
+                        });
+                    }
+                }
             }
             ContainerComponent::MediaGallery(gallery) => {
                 for item in &*gallery.items {
@@ -204,8 +214,6 @@ fn process_text_into_player(player: &mut PlayerEntry, content: &str) {
                 .next()
                 .unwrap_or("")
                 .replace('-', "");
-        } else if trimmed.contains("Nicked") && trimmed.starts_with("-#") {
-            player.is_nicked = true;
         } else if let Some(status) = parse_status_line(trimmed) {
             player.status = status.0;
             player.reviewer = status.1;
@@ -228,7 +236,7 @@ fn process_text_into_player(player: &mut PlayerEntry, content: &str) {
 }
 
 pub fn is_player_entry(text: &str) -> bool {
-    text.starts_with("### ")
+    text.starts_with("IGN - `")
 }
 
 fn is_tag_type_line(text: &str) -> bool {
@@ -236,7 +244,9 @@ fn is_tag_type_line(text: &str) -> bool {
 }
 
 fn parse_player_ign(text: &str) -> Option<String> {
-    text.strip_prefix("### ").map(|s| s.trim().to_string())
+    text.strip_prefix("IGN - `")?
+        .strip_suffix('`')
+        .map(|s| s.to_string())
 }
 
 fn parse_tag_type_line(text: &str) -> Option<&'static str> {
@@ -281,7 +291,6 @@ fn new_player_entry(username: String, tag_type: &str) -> PlayerEntry {
         uuid: String::new(),
         tag_type: tag_type.to_string(),
         reason: String::new(),
-        is_nicked: false,
         status: PlayerStatus::Pending,
         reviewer: None,
         review_note: None,
@@ -346,28 +355,10 @@ pub fn render_evidence_summary(player: &PlayerEntry) -> Option<String> {
         })
         .collect();
 
-    let media_count = player
-        .evidence
-        .iter()
-        .filter(|e| matches!(e, Evidence::Attachment { .. }))
-        .count();
-
-    if replays.is_empty() && media_count == 0 {
+    if replays.is_empty() {
         return None;
     }
-
-    let mut block = replays.join("\n");
-    if media_count > 0 {
-        if !block.is_empty() {
-            block.push('\n');
-        }
-        block.push_str(&format!(
-            "-# {} media attachment{}",
-            media_count,
-            if media_count == 1 { "" } else { "s" }
-        ));
-    }
-    Some(block)
+    Some(replays.join("\n"))
 }
 
 pub fn media_gallery_for(
@@ -456,18 +447,13 @@ fn block_has_player_marker(block: &[&ContainerComponent]) -> bool {
 
 pub fn parse_confirmation_data(custom_id: &str, message: &Message) -> Option<ConfirmationData> {
     let stripped = custom_id.strip_prefix("review_confirm:")?;
-    let parts: Vec<&str> = stripped.splitn(4, ':').collect();
-    if parts.len() < 4 {
+    let parts: Vec<&str> = stripped.splitn(3, ':').collect();
+    if parts.len() < 3 {
         return None;
     }
 
     let tag_type = parts[1].to_string();
-    let player_uuid = if parts[2] == "none" {
-        String::new()
-    } else {
-        parts[2].to_string()
-    };
-    let is_nicked = parts[3] == "true";
+    let player_uuid = parts[2].to_string();
 
     let texts = extract_text_displays(message);
     let player_name = texts
@@ -486,6 +472,5 @@ pub fn parse_confirmation_data(custom_id: &str, message: &Message) -> Option<Con
         player_uuid,
         tag_type,
         reason,
-        is_nicked,
     })
 }

@@ -2,7 +2,7 @@ use anyhow::Result;
 use blacklist::parse_replay;
 use serenity::all::*;
 
-use super::{builder::*, state::*, *};
+use super::{state::*, *};
 use crate::framework::Data;
 
 pub async fn handle_add_replay(
@@ -304,37 +304,6 @@ pub async fn handle_media_modal(
     Ok(())
 }
 
-pub async fn handle_edit_evidence(
-    ctx: &Context,
-    component: &ComponentInteraction,
-    _data: &Data,
-) -> Result<()> {
-    if !require_submitter(ctx, component).await? {
-        return Ok(());
-    }
-
-    let (player_idx, _) = parse_component_ids(&component.data.custom_id);
-    let message = *component.message.clone();
-    let Some(state) = parse_state_from_message(&message) else {
-        return Ok(());
-    };
-    let Some(player) = state.players.get(player_idx) else {
-        return Ok(());
-    };
-
-    component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .flags(MessageFlags::EPHEMERAL | MessageFlags::IS_COMPONENTS_V2)
-                    .components(build_evidence_panel(player, player_idx, state.submitter_id)),
-            ),
-        )
-        .await?;
-    Ok(())
-}
-
 pub async fn handle_remove_evidence(
     ctx: &Context,
     component: &ComponentInteraction,
@@ -344,13 +313,14 @@ pub async fn handle_remove_evidence(
         return Ok(());
     }
 
-    let (player_idx, _) = parse_component_ids(&component.data.custom_id);
-    let ev_idx: usize = match &component.data.kind {
-        ComponentInteractionDataKind::StringSelect { values } => {
-            values.first().and_then(|v| v.parse().ok()).unwrap_or(0)
-        }
-        _ => return Ok(()),
-    };
+    let payload = component
+        .data
+        .custom_id
+        .strip_prefix("review_remove_evidence:")
+        .unwrap_or("");
+    let mut segments = payload.split(':');
+    let player_idx: usize = segments.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let ev_idx: usize = segments.next().and_then(|s| s.parse().ok()).unwrap_or(0);
 
     let channel_id = component.channel_id;
     let Some(builder_msg) = find_builder_message(ctx, channel_id).await else {
@@ -365,23 +335,10 @@ pub async fn handle_remove_evidence(
             player.evidence.remove(ev_idx);
         }
     }
-
-    let panel = state
-        .players
-        .get(player_idx)
-        .map(|p| build_evidence_panel(p, player_idx, state.submitter_id))
-        .unwrap_or_default();
+    state.editing = Some(player_idx);
 
     component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::UpdateMessage(
-                CreateInteractionResponseMessage::new()
-                    .flags(MessageFlags::EPHEMERAL | MessageFlags::IS_COMPONENTS_V2)
-                    .components(panel),
-            ),
-        )
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
-
-    update_builder(ctx, channel_id, &builder_msg, &state).await
+    update_builder_keep_media(ctx, channel_id, &builder_msg, &state).await
 }

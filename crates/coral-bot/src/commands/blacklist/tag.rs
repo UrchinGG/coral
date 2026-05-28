@@ -571,7 +571,6 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
             &player_info.uuid,
             tag_type,
             reason,
-            false,
             data.review_forum_id,
         );
         command

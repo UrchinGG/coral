@@ -4,7 +4,7 @@ mod evidence;
 mod state;
 mod verdict;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use blacklist::lookup as lookup_tag;
@@ -17,12 +17,12 @@ use crate::utils::sanitize_reason;
 pub use builder::build_confirmation_message;
 pub use compose::{
     handle_add_player, handle_addplayer_name_modal, handle_addplayer_reason_modal,
-    handle_edit_done, handle_edit_player_modal, handle_edit_submitted, handle_edit_tag,
-    handle_pending_tag_select, handle_remove_player, handle_tag_select_edit,
+    handle_edit_done, handle_edit_reason, handle_edit_reason_modal, handle_edit_submitted,
+    handle_edit_tag, handle_pending_tag_select, handle_remove_player, handle_tag_select_edit,
 };
 pub use evidence::{
-    handle_add_replay, handle_attach_media, handle_edit_evidence, handle_media_modal,
-    handle_remove_evidence, handle_replay_modal,
+    handle_add_replay, handle_attach_media, handle_media_modal, handle_remove_evidence,
+    handle_replay_modal,
 };
 pub use verdict::{
     handle_abort_delete, handle_approve, handle_cancel, handle_cancel_thread, handle_confirm,
@@ -34,7 +34,6 @@ use state::*;
 const TAG_PENDING: &str = "Pending";
 const TAG_APPROVED: &str = "Approved";
 const TAG_REJECTED: &str = "Rejected";
-const TAG_NICKED: &str = "Nicked";
 const TAG_AWAITING_EVIDENCE: &str = "Awaiting Evidence";
 
 const MAX_MEDIA_PER_PLAYER: usize = 4;
@@ -229,13 +228,24 @@ fn gallery_url_map(message: &Message) -> HashMap<String, String> {
 
     let mut map = HashMap::new();
     for part in &*container.components {
-        if let ContainerComponent::MediaGallery(gallery) = part {
-            for item in &*gallery.items {
-                let url = item.media.url.to_string();
-                if !url.starts_with("attachment://") {
-                    map.insert(attachment_filename_from_url(&url), url);
+        match part {
+            ContainerComponent::MediaGallery(gallery) => {
+                for item in &*gallery.items {
+                    let url = item.media.url.to_string();
+                    if !url.starts_with("attachment://") {
+                        map.insert(attachment_filename_from_url(&url), url);
+                    }
                 }
             }
+            ContainerComponent::Section(section) => {
+                if let SectionAccessory::Thumbnail(thumb) = &*section.accessory {
+                    let url = thumb.media.url.to_string();
+                    if url.contains("/attachments/") {
+                        map.insert(attachment_filename_from_url(&url), url);
+                    }
+                }
+            }
+            _ => {}
         }
     }
     map
@@ -270,6 +280,42 @@ async fn update_builder_with_files(
     Ok(())
 }
 
+async fn update_builder_keep_media(
+    ctx: &Context,
+    channel_id: GenericChannelId,
+    message: &Message,
+    state: &SubmissionState,
+) -> Result<()> {
+    let existing_urls = gallery_url_map(message);
+    let keep: HashSet<&str> = state
+        .players
+        .iter()
+        .flat_map(|p| p.evidence.iter())
+        .filter_map(|e| match e {
+            Evidence::Attachment { filename } => Some(filename.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    let mut attachments = EditAttachments::new();
+    for (fname, url) in &existing_urls {
+        if keep.contains(fname.as_str()) {
+            if let Some(id) = attachment_id_from_cdn_url(url) {
+                attachments = attachments.keep(id);
+            }
+        }
+    }
+
+    let edit = EditMessage::new()
+        .flags(MessageFlags::IS_COMPONENTS_V2)
+        .components(builder::build_review_message(state, &existing_urls))
+        .attachments(attachments);
+    ctx.http
+        .edit_message(channel_id, message.id, &edit, Vec::new())
+        .await?;
+    Ok(())
+}
+
 fn attachment_filename_from_url(url: &str) -> String {
     if let Some(name) = url.strip_prefix("attachment://") {
         return name.to_string();
@@ -286,7 +332,6 @@ async fn resolve_forum_tags(ctx: &Context, data: &Data) -> ForumTags {
         pending: None,
         approved: None,
         rejected: None,
-        nicked: None,
         awaiting_evidence: None,
     };
 
@@ -310,7 +355,6 @@ async fn resolve_forum_tags(ctx: &Context, data: &Data) -> ForumTags {
         pending: find(TAG_PENDING),
         approved: find(TAG_APPROVED),
         rejected: find(TAG_REJECTED),
-        nicked: find(TAG_NICKED),
         awaiting_evidence: find(TAG_AWAITING_EVIDENCE),
     }
 }
@@ -359,7 +403,6 @@ pub async fn create_submission(
     player_uuid: &str,
     tag_type: &str,
     reason: &str,
-    is_nicked: bool,
 ) -> Result<ThreadId> {
     let Some(forum_id) = data.review_forum_id else {
         anyhow::bail!("Review forum channel not configured");
@@ -374,7 +417,6 @@ pub async fn create_submission(
         uuid: player_uuid.to_string(),
         tag_type: tag_type.to_string(),
         reason: reason.to_string(),
-        is_nicked,
         status: PlayerStatus::Pending,
         reviewer: None,
         review_note: None,
@@ -388,6 +430,7 @@ pub async fn create_submission(
         submitter_id,
         players: vec![player],
         submitted: false,
+        reopened: false,
         editing: None,
         pending_add: None,
     };
@@ -401,13 +444,17 @@ pub async fn create_submission(
     if let Some(tag_id) = tags.awaiting_evidence {
         forum_post = forum_post.add_applied_tag(tag_id);
     }
-    if is_nicked {
-        if let Some(tag_id) = tags.nicked {
-            forum_post = forum_post.add_applied_tag(tag_id);
-        }
-    }
 
     let thread = forum_id.create_forum_post(&ctx.http, forum_post).await?;
+
+    let reminder = CreateMessage::new()
+        .flags(MessageFlags::IS_COMPONENTS_V2)
+        .components(builder::build_submit_reminder(submitter_id));
+    let _ = ctx
+        .http
+        .send_message(thread.id.into(), Vec::<CreateAttachment>::new(), &reminder)
+        .await;
+
     Ok(thread.id)
 }
 
