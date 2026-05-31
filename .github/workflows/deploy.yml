@@ -1,0 +1,41 @@
+name: deploy
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, linux, coral]
+    timeout-minutes: 30
+    env:
+      REGISTRY: localhost:5000
+      CORAL_CLIENTS_CONTEXT: /srv/coral/clients
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply private overlay (Dockerfile, compose, clients crate)
+        run: tar -xf /srv/coral/overrides/coral-overrides.tar -C .
+
+      - name: Build coral images
+        run: docker compose build coral-api coral-bot coral-sync coral-web
+
+      - name: Tag + push to local registry
+        run: |
+          PROJECT=$(basename "$GITHUB_WORKSPACE")
+          for svc in coral-api coral-bot coral-sync coral-web; do
+            docker tag "${PROJECT}-${svc}:latest" "${REGISTRY}/${svc}:latest"
+            docker push "${REGISTRY}/${svc}:latest"
+          done
+
+      - name: Deploy on coral-vm
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new debian@coral-vm.tailde25ae.ts.net <<'REMOTE'
+            set -e
+            cd ~/coral-r730
+            docker compose pull coral-api coral-bot coral-sync coral-web
+            docker compose up -d coral-api coral-bot coral-sync coral-web
+            docker image prune -f
+          REMOTE
