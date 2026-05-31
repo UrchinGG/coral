@@ -40,3 +40,51 @@ jobs:
 
       - run: npm ci
       - run: npm run build
+
+  deploy:
+    needs: [rust, web]
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    runs-on: [self-hosted, linux, coral]
+    timeout-minutes: 30
+    env:
+      REGISTRY: localhost:5000
+      CORAL_CLIENTS_CONTEXT: /srv/coral/clients
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply private overlay (Dockerfile, compose, clients crate)
+        run: tar -xf /srv/coral/overrides/coral-overrides.tar -C .
+
+      - name: Build coral images
+        run: docker compose build coral-api coral-bot coral-sync coral-web
+
+      - name: Tag + push to local registry
+        run: |
+          PROJECT=$(basename "$GITHUB_WORKSPACE")
+          for svc in coral-api coral-bot coral-sync coral-web; do
+            docker tag "${PROJECT}-${svc}:latest" "${REGISTRY}/${svc}:latest"
+            docker push "${REGISTRY}/${svc}:latest"
+          done
+
+      - name: Deploy on coral-vm and wait for healthy
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new debian@coral-vm.tailde25ae.ts.net <<'REMOTE'
+            set -e
+            cd ~/coral-r730
+            docker compose pull coral-api coral-bot coral-sync coral-web
+            docker compose up -d --wait --wait-timeout 180 coral-api coral-bot coral-sync coral-web
+            docker image prune -f
+          REMOTE
+
+      - name: Verify external endpoint serves the new build
+        run: |
+          for i in $(seq 1 12); do
+            if curl -fsS --max-time 10 https://api.urchin.gg/health | grep -q '"status":"healthy"'; then
+              echo "external /health passed on attempt $i"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "external /health did not return healthy within 60s"
+          exit 1
