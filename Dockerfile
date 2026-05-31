@@ -15,28 +15,19 @@ RUN apt-get update && apt-get install -y \
  && rm -rf /var/lib/apt/lists/*
 
 ENV RUSTFLAGS="-C linker=clang -C link-arg=-fuse-ld=mold"
-ENV CARGO_BUILD_JOBS=2
 
 COPY --from=planner /app/recipe.json recipe.json
 
-RUN --mount=type=secret,id=git_auth_token \
-    --mount=type=cache,target=/usr/local/cargo/registry \
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
-    if [ -s /run/secrets/git_auth_token ]; then \
-      git config --global url."https://$(cat /run/secrets/git_auth_token)@github.com/".insteadOf "https://github.com/"; \
-    fi && \
     cargo chef cook --release --recipe-path recipe.json
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY migrations ./migrations
 
-RUN --mount=type=secret,id=git_auth_token \
-    --mount=type=cache,target=/usr/local/cargo/registry \
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
-    if [ -s /run/secrets/git_auth_token ]; then \
-      git config --global url."https://$(cat /run/secrets/git_auth_token)@github.com/".insteadOf "https://github.com/"; \
-    fi && \
     cargo build --release --bin coral-api --bin coral-bot --bin coral-admin --bin coral-sync && \
     cp target/release/coral-api target/release/coral-bot target/release/coral-admin target/release/coral-sync /usr/local/bin/
 

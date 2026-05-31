@@ -1,5 +1,4 @@
 # Auto-loaded by `docker compose up` for local dev.
-# Coolify reads only docker-compose.yml, so this file is ignored in production.
 
 services:
   postgres:
@@ -73,9 +72,3 @@ services:
 
 volumes:
   postgres_data:
-
-# Base declares `coolify` as an external network (it exists in production).
-# Locally it doesn't, so redeclare it as a regular Compose-managed network.
-networks:
-  coolify:
-    external: false

@@ -20,14 +20,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Configure private repo access
-        env:
-          TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
-        run: |
-          if [ -n "$TOKEN" ]; then
-            git config --global url."https://$TOKEN@github.com/".insteadOf "https://github.com/"
-          fi
-
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets
       - run: cargo test --workspace
@@ -48,31 +40,3 @@ jobs:
 
       - run: npm ci
       - run: npm run build
-
-  deploy:
-    needs: [rust, web]
-    if: github.ref == 'refs/heads/master' && github.event_name == 'push' && vars.COOLIFY_DEPLOY_ENABLED == 'true'
-    runs-on: [self-hosted, coral]
-    steps:
-      - name: Deploy via Coolify
-        env:
-          DEPLOY_URL: ${{ secrets.COOLIFY_DEPLOY_WEBHOOK }}
-          TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
-        timeout-minutes: 60
-        run: |
-          set -euo pipefail
-          api_base=${DEPLOY_URL%/api/v1/*}
-          uuid=$(curl -fsSL -X POST -H "Authorization: Bearer $TOKEN" "$DEPLOY_URL" \
-            | python3 -c 'import json,sys; print(json.load(sys.stdin)["deployments"][0]["deployment_uuid"])')
-          echo "::notice::Deployment $uuid queued"
-          prev=""
-          while true; do
-            status=$(curl -fsSL -H "Authorization: Bearer $TOKEN" "$api_base/api/v1/deployments/$uuid" \
-              | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')
-            [ "$status" != "$prev" ] && echo "status=$status" && prev=$status
-            case "$status" in
-              finished) echo "::notice::Deployment succeeded"; exit 0 ;;
-              failed|error|cancelled|cancelled-by-user) echo "::error::Deployment ended with status: $status"; exit 1 ;;
-            esac
-            sleep 15
-          done

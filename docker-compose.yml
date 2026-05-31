@@ -3,9 +3,7 @@ services:
     build:
       context: .
       target: coral-api
-      secrets: [git_auth_token]
     restart: unless-stopped
-    networks: [default, coolify]
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
@@ -28,37 +26,24 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.coral-api.rule=Host(`${API_DOMAIN:-api.localhost}`)
-      - traefik.http.routers.coral-api.entrypoints=http
-      - traefik.http.services.coral-api.loadbalancer.server.port=8000
 
   coral-web:
     build:
       context: .
       target: coral-web
     restart: unless-stopped
-    networks: [default, coolify]
     environment:
       CORAL_API_URL: http://coral-api:${API_PORT:-8000}
       CORAL_INTERNAL_KEY: ${INTERNAL_API_KEY}
       SITE_URL: ${SITE_URL:-http://localhost:3000}
       STARFISH_DISCORD_CLIENT_ID: ${STARFISH_DISCORD_CLIENT_ID:-}
       STARFISH_DISCORD_CLIENT_SECRET: ${STARFISH_DISCORD_CLIENT_SECRET:-}
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.coral-web.rule=Host(`${WEB_DOMAIN:-coral.localhost}`)
-      - traefik.http.routers.coral-web.entrypoints=http
-      - traefik.http.services.coral-web.loadbalancer.server.port=3000
 
   coral-bot:
     build:
       context: .
       target: coral-bot
-      secrets: [git_auth_token]
     restart: unless-stopped
-    networks: [default, coolify]
     depends_on:
       coral-api:
         condition: service_healthy
@@ -82,9 +67,7 @@ services:
     build:
       context: .
       target: coral-sync
-      secrets: [git_auth_token]
     restart: unless-stopped
-    networks: [default, coolify]
     depends_on:
       coral-api:
         condition: service_healthy
@@ -102,19 +85,9 @@ services:
     build:
       context: .
       target: coral-admin
-      secrets: [git_auth_token]
     restart: unless-stopped
     profiles: [admin]
-    networks: [default, coolify]
     environment:
       DATABASE_URL: ${DATABASE_URL}
       ADMIN_PORT: ${ADMIN_PORT:-8080}
       RUST_LOG: ${RUST_LOG:-info}
-
-networks:
-  coolify:
-    external: true
-
-secrets:
-  git_auth_token:
-    environment: GIT_AUTH_TOKEN
