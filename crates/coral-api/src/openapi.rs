@@ -22,6 +22,8 @@ use crate::{
         crate::routes::cubelify::get_cubelify,
 
         crate::routes::player::player_tags,
+        crate::routes::player::player_face,
+        crate::routes::player::player_body,
         crate::routes::batch::batch_lookup,
         crate::routes::session::session_daily,
         crate::routes::session::session_weekly,

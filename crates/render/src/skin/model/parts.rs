@@ -53,12 +53,12 @@ impl BodyPart {
         match self {
             BodyPart::Head | BodyPart::HeadLayer => Vec3::new(-4.0, 24.0, -4.0),
             BodyPart::Body | BodyPart::BodyLayer => Vec3::new(-4.0, 12.0, -2.0),
-            BodyPart::RightArm | BodyPart::RightArmLayer => {
+            BodyPart::RightArm | BodyPart::RightArmLayer => Vec3::new(4.0, 12.0, -2.0),
+            BodyPart::LeftArm | BodyPart::LeftArmLayer => {
                 Vec3::new(if slim { -7.0 } else { -8.0 }, 12.0, -2.0)
             }
-            BodyPart::LeftArm | BodyPart::LeftArmLayer => Vec3::new(4.0, 12.0, -2.0),
-            BodyPart::RightLeg | BodyPart::RightLegLayer => Vec3::new(-4.0, 0.0, -2.0),
-            BodyPart::LeftLeg | BodyPart::LeftLegLayer => Vec3::new(0.0, 0.0, -2.0),
+            BodyPart::RightLeg | BodyPart::RightLegLayer => Vec3::new(0.0, 0.0, -2.0),
+            BodyPart::LeftLeg | BodyPart::LeftLegLayer => Vec3::new(-4.0, 0.0, -2.0),
         }
     }
 
@@ -126,10 +126,10 @@ impl BodyPart {
         match self {
             BodyPart::Head | BodyPart::HeadLayer => Vec3::new(0.0, 24.0, 0.0),
             BodyPart::Body | BodyPart::BodyLayer => Vec3::new(0.0, 12.0, 0.0),
-            BodyPart::RightArm | BodyPart::RightArmLayer => Vec3::new(-4.0, 24.0, 0.0),
-            BodyPart::LeftArm | BodyPart::LeftArmLayer => Vec3::new(4.0, 24.0, 0.0),
-            BodyPart::RightLeg | BodyPart::RightLegLayer => Vec3::new(-2.0, 12.0, 0.0),
-            BodyPart::LeftLeg | BodyPart::LeftLegLayer => Vec3::new(2.0, 12.0, 0.0),
+            BodyPart::RightArm | BodyPart::RightArmLayer => Vec3::new(4.0, 24.0, 0.0),
+            BodyPart::LeftArm | BodyPart::LeftArmLayer => Vec3::new(-4.0, 24.0, 0.0),
+            BodyPart::RightLeg | BodyPart::RightLegLayer => Vec3::new(2.0, 12.0, 0.0),
+            BodyPart::LeftLeg | BodyPart::LeftLegLayer => Vec3::new(-2.0, 12.0, 0.0),
         }
     }
 }

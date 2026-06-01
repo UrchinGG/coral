@@ -169,52 +169,57 @@ impl Mesh {
         self.add_face(
             transform,
             [
-                Vec3::new(x0, y1, z0),
                 Vec3::new(x1, y1, z0),
-                Vec3::new(x0, y0, z0),
+                Vec3::new(x0, y1, z0),
                 Vec3::new(x1, y0, z0),
+                Vec3::new(x0, y0, z0),
             ],
             &uvs.front,
+            Vec3::NEG_Z,
         );
         self.add_face(
             transform,
             [
-                Vec3::new(x1, y1, z1),
                 Vec3::new(x0, y1, z1),
-                Vec3::new(x1, y0, z1),
+                Vec3::new(x1, y1, z1),
                 Vec3::new(x0, y0, z1),
+                Vec3::new(x1, y0, z1),
             ],
             &uvs.back,
+            Vec3::Z,
         );
         self.add_face(
             transform,
             [
-                Vec3::new(x1, y1, z0),
-                Vec3::new(x1, y1, z1),
-                Vec3::new(x1, y0, z0),
-                Vec3::new(x1, y0, z1),
+                Vec3::new(x0, y1, z0),
+                Vec3::new(x0, y1, z1),
+                Vec3::new(x0, y0, z0),
+                Vec3::new(x0, y0, z1),
             ],
             &uvs.left,
-        );
-        self.add_face(
-            transform,
-            [
-                Vec3::new(x0, y1, z1),
-                Vec3::new(x0, y1, z0),
-                Vec3::new(x0, y0, z1),
-                Vec3::new(x0, y0, z0),
-            ],
-            &uvs.right,
+            Vec3::NEG_X,
         );
         self.add_face(
             transform,
             [
                 Vec3::new(x1, y1, z1),
-                Vec3::new(x0, y1, z1),
                 Vec3::new(x1, y1, z0),
+                Vec3::new(x1, y0, z1),
+                Vec3::new(x1, y0, z0),
+            ],
+            &uvs.right,
+            Vec3::X,
+        );
+        self.add_face(
+            transform,
+            [
+                Vec3::new(x0, y1, z1),
+                Vec3::new(x1, y1, z1),
                 Vec3::new(x0, y1, z0),
+                Vec3::new(x1, y1, z0),
             ],
             &uvs.top,
+            Vec3::Y,
         );
         self.add_face(
             transform,
@@ -225,13 +230,17 @@ impl Mesh {
                 Vec3::new(x1, y0, z0),
             ],
             &uvs.bottom,
+            Vec3::NEG_Y,
         );
     }
 
-    fn add_face(&mut self, transform: Mat4, corners: [Vec3; 4], uv: &FaceUv) {
+    fn add_face(&mut self, transform: Mat4, corners: [Vec3; 4], uv: &FaceUv, outward_normal: Vec3) {
         let base = self.vertices.len() as u32;
         let [p0, p1, p2, p3] = corners.map(|c| transform.transform_point3(c));
-        let normal = (p2 - p0).cross(p1 - p0).normalize().to_array();
+        let normal = transform
+            .transform_vector3(outward_normal)
+            .normalize()
+            .to_array();
 
         self.vertices.extend([
             Vertex {

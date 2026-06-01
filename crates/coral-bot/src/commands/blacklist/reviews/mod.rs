@@ -45,6 +45,33 @@ const SUBMISSION_TIMEOUT_SECS: u64 = 30 * 60;
 const SUBMISSION_WARNING_SECS: u64 = 20 * 60;
 pub const VOTE_THRESHOLD: usize = 3;
 
+async fn player_face_attachments(
+    data: &Data,
+    state: &SubmissionState,
+) -> Vec<CreateAttachment<'static>> {
+    let mut out = Vec::with_capacity(state.players.len());
+    for player in &state.players {
+        let png = data
+            .skin_provider
+            .fetch_face(&player.uuid, builder::FACE_SIZE)
+            .await
+            .unwrap_or_else(default_face_png);
+        out.push(CreateAttachment::bytes(
+            png,
+            builder::face_filename(&player.uuid),
+        ));
+    }
+    out
+}
+
+fn default_face_png() -> Vec<u8> {
+    let size = builder::FACE_SIZE;
+    let img = image::RgbaImage::from_pixel(size, size, image::Rgba([0, 0, 0, 0]));
+    let mut buf = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+    buf.into_inner()
+}
+
 fn build_tag_select_options(selected: Option<&str>) -> Vec<CreateSelectMenuOption<'static>> {
     blacklist::all()
         .iter()
@@ -201,18 +228,30 @@ fn thread_title(state: &SubmissionState) -> String {
 
 async fn update_builder(
     ctx: &Context,
+    data: &Data,
     channel_id: GenericChannelId,
     message: &Message,
     state: &SubmissionState,
 ) -> Result<()> {
+    let existing_urls = gallery_url_map(message);
+    let faces = player_face_attachments(data, state).await;
+
+    let mut attachments = EditAttachments::new();
+    for url in existing_urls.values() {
+        if let Some(id) = attachment_id_from_cdn_url(url) {
+            attachments = attachments.keep(id);
+        }
+    }
+    for f in &faces {
+        attachments = attachments.add(f.clone());
+    }
+
     let edit = EditMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(builder::build_review_message(
-            state,
-            &gallery_url_map(message),
-        ));
+        .components(builder::build_review_message(state, &existing_urls))
+        .attachments(attachments);
     ctx.http
-        .edit_message(channel_id, message.id, &edit, Vec::new())
+        .edit_message(channel_id, message.id, &edit, faces)
         .await?;
     let thread_id = thread_id(channel_id);
     let _ = thread_id
@@ -228,24 +267,13 @@ fn gallery_url_map(message: &Message) -> HashMap<String, String> {
 
     let mut map = HashMap::new();
     for part in &*container.components {
-        match part {
-            ContainerComponent::MediaGallery(gallery) => {
-                for item in &*gallery.items {
-                    let url = item.media.url.to_string();
-                    if !url.starts_with("attachment://") {
-                        map.insert(attachment_filename_from_url(&url), url);
-                    }
+        if let ContainerComponent::MediaGallery(gallery) = part {
+            for item in &*gallery.items {
+                let url = item.media.url.to_string();
+                if !url.starts_with("attachment://") {
+                    map.insert(attachment_filename_from_url(&url), url);
                 }
             }
-            ContainerComponent::Section(section) => {
-                if let SectionAccessory::Thumbnail(thumb) = &*section.accessory {
-                    let url = thumb.media.url.to_string();
-                    if url.contains("/attachments/") {
-                        map.insert(attachment_filename_from_url(&url), url);
-                    }
-                }
-            }
-            _ => {}
         }
     }
     map
@@ -253,12 +281,14 @@ fn gallery_url_map(message: &Message) -> HashMap<String, String> {
 
 async fn update_builder_with_files(
     ctx: &Context,
+    data: &Data,
     channel_id: GenericChannelId,
     message: &Message,
     state: &SubmissionState,
     files: Vec<CreateAttachment<'static>>,
 ) -> Result<()> {
     let existing_urls = gallery_url_map(message);
+    let faces = player_face_attachments(data, state).await;
 
     let mut attachments = EditAttachments::new();
     for url in existing_urls.values() {
@@ -269,19 +299,26 @@ async fn update_builder_with_files(
     for f in files.iter().cloned() {
         attachments = attachments.add(f);
     }
+    for f in &faces {
+        attachments = attachments.add(f.clone());
+    }
+
+    let mut all_files = files;
+    all_files.extend(faces);
 
     let edit = EditMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
         .components(builder::build_review_message(state, &existing_urls))
         .attachments(attachments);
     ctx.http
-        .edit_message(channel_id, message.id, &edit, files)
+        .edit_message(channel_id, message.id, &edit, all_files)
         .await?;
     Ok(())
 }
 
 async fn update_builder_keep_media(
     ctx: &Context,
+    data: &Data,
     channel_id: GenericChannelId,
     message: &Message,
     state: &SubmissionState,
@@ -296,6 +333,7 @@ async fn update_builder_keep_media(
             _ => None,
         })
         .collect();
+    let faces = player_face_attachments(data, state).await;
 
     let mut attachments = EditAttachments::new();
     for (fname, url) in &existing_urls {
@@ -305,13 +343,16 @@ async fn update_builder_keep_media(
             }
         }
     }
+    for f in &faces {
+        attachments = attachments.add(f.clone());
+    }
 
     let edit = EditMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
         .components(builder::build_review_message(state, &existing_urls))
         .attachments(attachments);
     ctx.http
-        .edit_message(channel_id, message.id, &edit, Vec::new())
+        .edit_message(channel_id, message.id, &edit, faces)
         .await?;
     Ok(())
 }
@@ -435,9 +476,13 @@ pub async fn create_submission(
         pending_add: None,
     };
 
-    let message = CreateMessage::new()
+    let faces = player_face_attachments(data, &state).await;
+    let mut message = CreateMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
         .components(builder::build_review_message(&state, &HashMap::new()));
+    for f in faces {
+        message = message.add_file(f);
+    }
 
     let mut forum_post = CreateForumPost::new(player_name.to_string(), message);
     let tags = resolve_forum_tags(ctx, data).await;

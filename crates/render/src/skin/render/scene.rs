@@ -61,7 +61,7 @@ impl Renderer {
             Camera::for_full_body()
         };
         let mvp = camera.view_projection_matrix(width as f32 / height as f32);
-        let light_direction = glam::Vec3::new(0.3, 0.8, 0.5).normalize();
+        let light_direction = glam::Vec3::new(0.3, 0.8, -0.5).normalize();
 
         let uniform_buffer =
             self.ctx

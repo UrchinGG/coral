@@ -92,7 +92,7 @@ pub async fn handle_submit(
     component
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
-    update_builder(ctx, component.channel_id, &message, &state).await?;
+    update_builder(ctx, data, component.channel_id, &message, &state).await?;
 
     // On the initial flow, Submit lives on a standalone reminder message — remove
     // it now. When reopened, Submit is on the OP itself, so leave that in place.
@@ -186,7 +186,7 @@ pub async fn handle_approve(
             component
                 .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
                 .await?;
-            update_builder(ctx, component.channel_id, &message, &state).await?;
+            update_builder(ctx, data, component.channel_id, &message, &state).await?;
             send_in_thread(ctx, component.channel_id.into(), &vote_msg).await;
             return Ok(());
         }
@@ -312,7 +312,7 @@ pub async fn handle_approve(
     component
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
-    update_builder(ctx, component.channel_id, &message, &state).await?;
+    update_builder(ctx, data, component.channel_id, &message, &state).await?;
 
     let all_resolved =
         finalize_thread_if_resolved(ctx, data, thread_id(component.channel_id), &state).await?;
@@ -419,7 +419,7 @@ pub async fn handle_reject(
         component
             .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
             .await?;
-        update_builder(ctx, component.channel_id, &message, &state).await?;
+        update_builder(ctx, data, component.channel_id, &message, &state).await?;
         send_in_thread(ctx, component.channel_id.into(), &vote_msg).await;
         return Ok(());
     }
@@ -451,7 +451,7 @@ pub async fn handle_reject(
     component
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
-    update_builder(ctx, component.channel_id, &message, &state).await?;
+    update_builder(ctx, data, component.channel_id, &message, &state).await?;
 
     let all_resolved =
         finalize_thread_if_resolved(ctx, data, thread_id(component.channel_id), &state).await?;
@@ -535,7 +535,7 @@ pub async fn handle_reject_modal(
     state.players[player_index].accept_votes.clear();
     state.players[player_index].reject_votes.clear();
 
-    update_builder(ctx, channel_id, &builder_msg, &state).await?;
+    update_builder(ctx, data, channel_id, &builder_msg, &state).await?;
 
     let all_resolved =
         finalize_thread_if_resolved(ctx, data, thread_id(modal.channel_id), &state).await?;

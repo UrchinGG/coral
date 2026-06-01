@@ -276,6 +276,7 @@ async fn run_staff_confirm(
         &HashMap::new(),
     );
 
+    let face = face_attachment(data, &player_info.uuid).await;
     let thread = forum_id
         .create_forum_post(
             &ctx.http,
@@ -283,7 +284,8 @@ async fn run_staff_confirm(
                 thread_title.clone(),
                 CreateMessage::new()
                     .flags(MessageFlags::IS_COMPONENTS_V2)
-                    .components(message_content),
+                    .components(message_content)
+                    .add_file(face),
             ),
         )
         .await?;
@@ -332,15 +334,34 @@ struct EvidenceState {
     review_url: Option<String>,
 }
 
-fn face_section_cdn(uuid: &str, content: String) -> CreateContainerComponent<'static> {
+const FACE_FILENAME: &str = "face.png";
+const FACE_SIZE: u32 = 128;
+
+fn face_section(content: String) -> CreateContainerComponent<'static> {
     CreateContainerComponent::Section(CreateSection::new(
         vec![CreateSectionComponent::TextDisplay(CreateTextDisplay::new(
             content,
         ))],
         CreateSectionAccessory::Thumbnail(CreateThumbnail::new(CreateUnfurledMediaItem::new(
-            format!("https://mc-heads.net/avatar/{uuid}/128"),
+            format!("attachment://{FACE_FILENAME}"),
         ))),
     ))
+}
+
+async fn face_attachment(data: &Data, uuid: &str) -> CreateAttachment<'static> {
+    let png = data
+        .skin_provider
+        .fetch_face(uuid, FACE_SIZE)
+        .await
+        .unwrap_or_else(default_face_png);
+    CreateAttachment::bytes(png, FACE_FILENAME)
+}
+
+fn default_face_png() -> Vec<u8> {
+    let img = image::RgbaImage::from_pixel(FACE_SIZE, FACE_SIZE, image::Rgba([0, 0, 0, 0]));
+    let mut buf = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+    buf.into_inner()
 }
 
 fn gallery_url_map(message: &Message) -> HashMap<String, String> {
@@ -452,10 +473,7 @@ fn build_evidence_message(
             CreateMediaGallery::new(items),
         ));
     }
-    parts.push(face_section_cdn(
-        uuid,
-        format!("{header}{block}\n{section_footer}"),
-    ));
+    parts.push(face_section(format!("{header}{block}\n{section_footer}")));
     parts.push(text(meta));
     parts.push(separator());
 
@@ -541,10 +559,7 @@ fn build_archived_evidence_message(
             CreateMediaGallery::new(items),
         ));
     }
-    parts.push(face_section_cdn(
-        &state.uuid,
-        format!("{header}{block}\n{section_footer}"),
-    ));
+    parts.push(face_section(format!("{header}{block}\n{section_footer}")));
     parts.push(text(meta));
     parts.push(separator());
 
@@ -803,15 +818,19 @@ pub async fn handle_media_modal(
         &urls,
     );
 
+    let face = face_attachment(data, &state.uuid).await;
     let mut attachments = EditAttachments::new();
     for url in urls.values() {
         if let Some(id) = attachment_id_from_cdn_url(url) {
             attachments = attachments.keep(id);
         }
     }
+    attachments = attachments.add(face.clone());
     for f in files.iter().cloned() {
         attachments = attachments.add(f);
     }
+    let mut all_files = files.clone();
+    all_files.push(face);
 
     modal
         .edit_response(
@@ -828,7 +847,7 @@ pub async fn handle_media_modal(
 
     match ctx
         .http
-        .edit_message(channel_id.into(), builder_msg.id, &edit, files)
+        .edit_message(channel_id.into(), builder_msg.id, &edit, all_files)
         .await
     {
         Ok(_) => {
@@ -919,12 +938,14 @@ pub async fn handle_remove(
         &urls,
     );
 
+    let face = face_attachment(data, &state.uuid).await;
     let mut attachments = EditAttachments::new();
     for url in urls.values() {
         if let Some(id) = attachment_id_from_cdn_url(url) {
             attachments = attachments.keep(id);
         }
     }
+    attachments = attachments.add(face.clone());
 
     let edit = EditMessage::new()
         .content("")
@@ -936,7 +957,7 @@ pub async fn handle_remove(
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
     ctx.http
-        .edit_message(channel_id.into(), builder_msg_id, &edit, Vec::new())
+        .edit_message(channel_id.into(), builder_msg_id, &edit, vec![face])
         .await?;
     Ok(())
 }
@@ -982,17 +1003,26 @@ pub async fn archive_evidence_for_uuid(ctx: &Context, data: &Data, uuid: &str) -
         .unwrap_or(&state.original_type);
 
     let urls = gallery_url_map(&builder_msg);
+    let face = face_attachment(data, &state.uuid).await;
+    let mut attachments = EditAttachments::new();
+    for url in urls.values() {
+        if let Some(id) = attachment_id_from_cdn_url(url) {
+            attachments = attachments.keep(id);
+        }
+    }
+    attachments = attachments.add(face.clone());
     let edit = EditMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
         .components(build_archived_evidence_message(
             &state,
             reverted_display,
             &urls,
-        ));
+        ))
+        .attachments(attachments);
 
     let _ = ctx
         .http
-        .edit_message(channel_id, builder_msg_id, &edit, Vec::new())
+        .edit_message(channel_id, builder_msg_id, &edit, vec![face])
         .await;
     let _ = thread_id
         .edit(&ctx.http, EditThread::new().archived(true).locked(true))
@@ -1035,20 +1065,35 @@ pub async fn handle_archive(
         .unwrap_or(&state.original_type);
 
     let urls = gallery_url_map(&*component.message);
+    let face = face_attachment(data, &state.uuid).await;
+    let mut attachments = EditAttachments::new();
+    for url in urls.values() {
+        if let Some(id) = attachment_id_from_cdn_url(url) {
+            attachments = attachments.keep(id);
+        }
+    }
+    attachments = attachments.add(face.clone());
+
     component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::UpdateMessage(
-                CreateInteractionResponseMessage::new()
-                    .flags(MessageFlags::IS_COMPONENTS_V2)
-                    .components(build_archived_evidence_message(
-                        &state,
-                        reverted_display,
-                        &urls,
-                    )),
-            ),
-        )
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
+    let edit = EditMessage::new()
+        .flags(MessageFlags::IS_COMPONENTS_V2)
+        .components(build_archived_evidence_message(
+            &state,
+            reverted_display,
+            &urls,
+        ))
+        .attachments(attachments);
+    let _ = ctx
+        .http
+        .edit_message(
+            component.channel_id.into(),
+            component.message.id,
+            &edit,
+            vec![face],
+        )
+        .await;
 
     let thread_id = ThreadId::new(component.channel_id.get());
     let _ = thread_id
@@ -1107,6 +1152,7 @@ pub async fn create_evidence_from_review(
         &no_urls,
     );
 
+    let initial_face = face_attachment(data, uuid).await;
     let thread = forum_id
         .create_forum_post(
             &ctx.http,
@@ -1114,7 +1160,8 @@ pub async fn create_evidence_from_review(
                 thread_title.clone(),
                 CreateMessage::new()
                     .flags(MessageFlags::IS_COMPONENTS_V2)
-                    .components(initial_components),
+                    .components(initial_components)
+                    .add_file(initial_face),
             ),
         )
         .await?;
@@ -1123,10 +1170,15 @@ pub async fn create_evidence_from_review(
         let builder_msg_id = MessageId::new(thread.id.get());
         let channel_id: GenericChannelId = thread.id.into();
 
+        let face = face_attachment(data, uuid).await;
         let mut att = EditAttachments::new();
         for f in &files {
             att = att.add(f.clone());
         }
+        att = att.add(face.clone());
+
+        let mut all_files = files.clone();
+        all_files.push(face);
 
         let edit = EditMessage::new()
             .content("")
@@ -1143,7 +1195,7 @@ pub async fn create_evidence_from_review(
             .attachments(att);
 
         ctx.http
-            .edit_message(channel_id, builder_msg_id, &edit, files)
+            .edit_message(channel_id, builder_msg_id, &edit, all_files)
             .await?;
     }
 

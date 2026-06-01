@@ -8,7 +8,7 @@ use crate::framework::Data;
 pub async fn handle_add_replay(
     ctx: &Context,
     component: &ComponentInteraction,
-    _data: &Data,
+    data: &Data,
 ) -> Result<()> {
     if !require_submitter(ctx, component).await? {
         return Ok(());
@@ -46,7 +46,7 @@ pub async fn handle_add_replay(
 pub async fn handle_replay_modal(
     ctx: &Context,
     modal: &ModalInteraction,
-    _data: &Data,
+    data: &Data,
 ) -> Result<()> {
     modal.defer_ephemeral(&ctx.http).await?;
 
@@ -124,7 +124,7 @@ pub async fn handle_replay_modal(
         note: if note.is_empty() { None } else { Some(note) },
     });
 
-    update_builder(ctx, channel_id, &builder_msg, &state).await?;
+    update_builder(ctx, data, channel_id, &builder_msg, &state).await?;
     let _ = modal.delete_response(&ctx.http).await;
     Ok(())
 }
@@ -132,7 +132,7 @@ pub async fn handle_replay_modal(
 pub async fn handle_attach_media(
     ctx: &Context,
     component: &ComponentInteraction,
-    _data: &Data,
+    data: &Data,
 ) -> Result<()> {
     if !require_submitter(ctx, component).await? {
         return Ok(());
@@ -161,7 +161,7 @@ pub async fn handle_attach_media(
 pub async fn handle_media_modal(
     ctx: &Context,
     modal: &ModalInteraction,
-    _data: &Data,
+    data: &Data,
 ) -> Result<()> {
     modal.defer_ephemeral(&ctx.http).await?;
 
@@ -286,7 +286,7 @@ pub async fn handle_media_modal(
         )
         .await?;
 
-    match update_builder_with_files(ctx, channel_id, &builder_msg, &state, files).await {
+    match update_builder_with_files(ctx, data, channel_id, &builder_msg, &state, files).await {
         Ok(()) => {
             let _ = modal.delete_response(&ctx.http).await;
         }
@@ -307,7 +307,7 @@ pub async fn handle_media_modal(
 pub async fn handle_remove_evidence(
     ctx: &Context,
     component: &ComponentInteraction,
-    _data: &Data,
+    data: &Data,
 ) -> Result<()> {
     if !require_submitter(ctx, component).await? {
         return Ok(());
@@ -340,5 +340,5 @@ pub async fn handle_remove_evidence(
     component
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
-    update_builder_keep_media(ctx, channel_id, &builder_msg, &state).await
+    update_builder_keep_media(ctx, data, channel_id, &builder_msg, &state).await
 }

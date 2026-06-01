@@ -7,7 +7,7 @@ use crate::framework::Data;
 pub async fn handle_add_player(
     ctx: &Context,
     component: &ComponentInteraction,
-    _data: &Data,
+    data: &Data,
 ) -> Result<()> {
     if !require_submitter(ctx, component).await? {
         return Ok(());
@@ -90,7 +90,7 @@ pub async fn handle_addplayer_name_modal(
         username: resolved_name,
     });
 
-    update_builder(ctx, channel_id, &builder_msg, &state).await?;
+    update_builder(ctx, data, channel_id, &builder_msg, &state).await?;
     let _ = modal.delete_response(&ctx.http).await;
     Ok(())
 }
@@ -98,7 +98,7 @@ pub async fn handle_addplayer_name_modal(
 pub async fn handle_pending_tag_select(
     ctx: &Context,
     component: &ComponentInteraction,
-    _data: &Data,
+    data: &Data,
 ) -> Result<()> {
     if !require_submitter(ctx, component).await? {
         return Ok(());
@@ -212,7 +212,7 @@ pub async fn handle_addplayer_reason_modal(
         reject_votes: Vec::new(),
     });
 
-    update_builder(ctx, channel_id, &builder_msg, &state).await?;
+    update_builder(ctx, data, channel_id, &builder_msg, &state).await?;
     let _ = modal.delete_response(&ctx.http).await;
     Ok(())
 }
@@ -220,7 +220,7 @@ pub async fn handle_addplayer_reason_modal(
 pub async fn handle_remove_player(
     ctx: &Context,
     component: &ComponentInteraction,
-    _data: &Data,
+    data: &Data,
 ) -> Result<()> {
     if !require_submitter(ctx, component).await? {
         return Ok(());
@@ -243,13 +243,13 @@ pub async fn handle_remove_player(
     component
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
-    update_builder(ctx, channel_id, &builder_msg, &state).await
+    update_builder(ctx, data, channel_id, &builder_msg, &state).await
 }
 
 pub async fn handle_edit_tag(
     ctx: &Context,
     component: &ComponentInteraction,
-    _data: &Data,
+    data: &Data,
 ) -> Result<()> {
     if !require_submitter(ctx, component).await? {
         return Ok(());
@@ -267,13 +267,13 @@ pub async fn handle_edit_tag(
     component
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
-    update_builder(ctx, component.channel_id, &message, &state).await
+    update_builder(ctx, data, component.channel_id, &message, &state).await
 }
 
 pub async fn handle_edit_done(
     ctx: &Context,
     component: &ComponentInteraction,
-    _data: &Data,
+    data: &Data,
 ) -> Result<()> {
     if !require_submitter(ctx, component).await? {
         return Ok(());
@@ -289,13 +289,13 @@ pub async fn handle_edit_done(
     component
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
-    update_builder(ctx, component.channel_id, &message, &state).await
+    update_builder(ctx, data, component.channel_id, &message, &state).await
 }
 
 pub async fn handle_tag_select_edit(
     ctx: &Context,
     component: &ComponentInteraction,
-    _data: &Data,
+    data: &Data,
 ) -> Result<()> {
     if !require_submitter(ctx, component).await? {
         return Ok(());
@@ -327,13 +327,13 @@ pub async fn handle_tag_select_edit(
     component
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
-    update_builder(ctx, channel_id, &builder_msg, &state).await
+    update_builder(ctx, data, channel_id, &builder_msg, &state).await
 }
 
 pub async fn handle_edit_reason(
     ctx: &Context,
     component: &ComponentInteraction,
-    _data: &Data,
+    data: &Data,
 ) -> Result<()> {
     if !require_submitter(ctx, component).await? {
         return Ok(());
@@ -368,7 +368,7 @@ pub async fn handle_edit_reason(
 pub async fn handle_edit_reason_modal(
     ctx: &Context,
     modal: &ModalInteraction,
-    _data: &Data,
+    data: &Data,
 ) -> Result<()> {
     modal.defer_ephemeral(&ctx.http).await?;
 
@@ -414,7 +414,7 @@ pub async fn handle_edit_reason_modal(
     player.reason = reason;
     state.editing = Some(player_idx);
 
-    update_builder(ctx, channel_id, &builder_msg, &state).await?;
+    update_builder(ctx, data, channel_id, &builder_msg, &state).await?;
     let _ = modal.delete_response(&ctx.http).await;
     Ok(())
 }
@@ -422,7 +422,7 @@ pub async fn handle_edit_reason_modal(
 pub async fn handle_edit_submitted(
     ctx: &Context,
     component: &ComponentInteraction,
-    _data: &Data,
+    data: &Data,
 ) -> Result<()> {
     if !require_submitter(ctx, component).await? {
         return Ok(());
@@ -440,5 +440,5 @@ pub async fn handle_edit_submitted(
     component
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
-    update_builder(ctx, component.channel_id, &message, &state).await
+    update_builder(ctx, data, component.channel_id, &message, &state).await
 }

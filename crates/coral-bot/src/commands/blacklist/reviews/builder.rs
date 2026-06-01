@@ -7,11 +7,14 @@ use super::super::channel::{evidence_indicator, format_tag_block};
 use super::{state::*, *};
 use crate::utils::{sanitize_reason, separator, text};
 
-const STEVE_UUID: &str = "8667ba71b85a4004af54457a9734eed7";
+pub const FACE_SIZE: u32 = 128;
 
-pub fn face_url(uuid: &str) -> String {
-    let id = if uuid.is_empty() { STEVE_UUID } else { uuid };
-    format!("https://mc-heads.net/avatar/{id}/128")
+pub fn face_filename(uuid: &str) -> String {
+    format!("face_{uuid}.png")
+}
+
+fn face_url(uuid: &str) -> String {
+    format!("attachment://{}", face_filename(uuid))
 }
 
 fn player_section(content: String, uuid: &str) -> CreateContainerComponent<'static> {

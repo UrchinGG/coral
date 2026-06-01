@@ -30,10 +30,27 @@ pub fn public_router() -> Router<AppState> {
     Router::new().route("/player/tags", get(player_tags))
 }
 
+#[derive(Deserialize)]
+pub(crate) struct FaceQuery {
+    pub uuid: Option<String>,
+    pub name: Option<String>,
+    pub size: Option<u32>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct BodyQuery {
+    pub uuid: Option<String>,
+    pub name: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
 pub fn internal_router() -> Router<AppState> {
     Router::new()
         .route("/player/profile", get(player_stats))
         .route("/player/skin", get(player_skin))
+        .route("/player/face", get(player_face))
+        .route("/player/body", get(player_body))
 }
 
 pub async fn resolve_identifier(
@@ -205,6 +222,113 @@ pub async fn player_skin(
 
     let mut buf = Cursor::new(Vec::new());
     skin.data
+        .write_to(&mut buf, image::ImageFormat::Png)
+        .map_err(|e| ApiError::Internal(format!("failed to encode png: {e}")))?;
+    Ok((
+        [(header::CONTENT_TYPE, "image/png")],
+        Body::from(buf.into_inner()),
+    )
+        .into_response())
+}
+
+#[utoipa::path(
+    get,
+    path = "/v3/player/face",
+    params(
+        ("uuid" = Option<String>, Query, description = "Player UUID"),
+        ("name" = Option<String>, Query, description = "Player username"),
+        ("size" = Option<u32>, Query, description = "Face size in pixels (default 128, max 512)"),
+    ),
+    responses(
+        (status = 200, description = "Rendered player face PNG", content_type = "image/png"),
+        (status = 400, description = "Invalid identifier", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Skin not found", body = ErrorResponse),
+        (status = 500, description = "Skin rendering unavailable", body = ErrorResponse),
+    ),
+    tag = "Internal",
+    security(("api_key" = []))
+)]
+pub async fn player_face(
+    State(state): State<AppState>,
+    dev_auth: Option<Extension<DeveloperKeyAuth>>,
+    Query(query): Query<FaceQuery>,
+) -> Result<Response, ApiError> {
+    if let Some(Extension(ref dev)) = dev_auth {
+        dev.require(permissions::PLAYER_DATA)?;
+    }
+    let provider = state
+        .skin_provider
+        .as_ref()
+        .ok_or_else(|| ApiError::Internal("skin rendering unavailable".into()))?;
+    let identifier = query
+        .uuid
+        .as_deref()
+        .or(query.name.as_deref())
+        .ok_or_else(|| ApiError::BadRequest("query parameter 'uuid' or 'name' required".into()))?;
+    let (uuid, _) = resolve_identifier(&state, identifier).await?;
+    let size = query.size.unwrap_or(128).clamp(8, 512);
+    let png = provider
+        .fetch_face(&uuid, size)
+        .await
+        .ok_or_else(|| ApiError::NotFound("skin not found".into()))?;
+    Ok(([(header::CONTENT_TYPE, "image/png")], Body::from(png)).into_response())
+}
+
+#[utoipa::path(
+    get,
+    path = "/v3/player/body",
+    params(
+        ("uuid" = Option<String>, Query, description = "Player UUID"),
+        ("name" = Option<String>, Query, description = "Player username"),
+        ("width" = Option<u32>, Query, description = "Output width (default 400)"),
+        ("height" = Option<u32>, Query, description = "Output height (default 600)"),
+    ),
+    responses(
+        (status = 200, description = "Rendered player body PNG", content_type = "image/png"),
+        (status = 400, description = "Invalid identifier", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Skin not found", body = ErrorResponse),
+        (status = 500, description = "Skin rendering unavailable", body = ErrorResponse),
+    ),
+    tag = "Internal",
+    security(("api_key" = []))
+)]
+pub async fn player_body(
+    State(state): State<AppState>,
+    dev_auth: Option<Extension<DeveloperKeyAuth>>,
+    Query(query): Query<BodyQuery>,
+) -> Result<Response, ApiError> {
+    use image::GenericImageView;
+
+    if let Some(Extension(ref dev)) = dev_auth {
+        dev.require(permissions::PLAYER_DATA)?;
+    }
+    let provider = state
+        .skin_provider
+        .as_ref()
+        .ok_or_else(|| ApiError::Internal("skin rendering unavailable".into()))?;
+    let identifier = query
+        .uuid
+        .as_deref()
+        .or(query.name.as_deref())
+        .ok_or_else(|| ApiError::BadRequest("query parameter 'uuid' or 'name' required".into()))?;
+    let (uuid, _) = resolve_identifier(&state, identifier).await?;
+    let mut image = provider
+        .fetch(&uuid)
+        .await
+        .ok_or_else(|| ApiError::NotFound("skin not found".into()))?
+        .data;
+
+    let (default_w, default_h) = (image.width(), image.height());
+    let w = query.width.unwrap_or(default_w).clamp(32, 2048);
+    let h = query.height.unwrap_or(default_h).clamp(32, 2048);
+    if w != default_w || h != default_h {
+        image = image.resize_exact(w, h, image::imageops::FilterType::Lanczos3);
+    }
+
+    let mut buf = Cursor::new(Vec::new());
+    image
         .write_to(&mut buf, image::ImageFormat::Png)
         .map_err(|e| ApiError::Internal(format!("failed to encode png: {e}")))?;
     Ok((

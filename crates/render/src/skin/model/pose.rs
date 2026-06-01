@@ -48,8 +48,8 @@ impl Pose {
         Self {
             head: Rotation::ZERO,
             body: Rotation::ZERO,
-            left_arm: Rotation::new(0.0, 0.0, 3.0),
-            right_arm: Rotation::new(0.0, 0.0, -3.0),
+            left_arm: Rotation::new(0.0, 0.0, -3.0),
+            right_arm: Rotation::new(0.0, 0.0, 3.0),
             left_leg: Rotation::ZERO,
             right_leg: Rotation::ZERO,
         }
@@ -60,8 +60,8 @@ impl Pose {
         Self {
             head: Rotation::ZERO,
             body: Rotation::ZERO,
-            left_arm: Rotation::new(-swing, 0.0, 3.0),
-            right_arm: Rotation::new(swing, 0.0, -3.0),
+            left_arm: Rotation::new(-swing, 0.0, -3.0),
+            right_arm: Rotation::new(swing, 0.0, 3.0),
             left_leg: Rotation::new(swing, 0.0, 0.0),
             right_leg: Rotation::new(-swing, 0.0, 0.0),
         }
