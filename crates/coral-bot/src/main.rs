@@ -4,7 +4,7 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 use std::collections::HashMap;
 use std::env;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use anyhow::Result;
 use serenity::all::*;
@@ -88,6 +88,7 @@ async fn init_data() -> Result<Data> {
         session_duels_images: Arc::new(Mutex::new(HashMap::new())),
         pending_overwrites: Arc::new(Mutex::new(HashMap::new())),
         pending_review_votes: Arc::new(Mutex::new(HashMap::new())),
+        evidence_threads: Arc::new(RwLock::new(HashMap::new())),
         sync_cooldowns: Arc::new(Mutex::new(HashMap::new())),
         active_interactions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     })

@@ -259,7 +259,6 @@ pub async fn handle_approve(
         if let Err(e) = super::super::evidence::create_evidence_from_review(
             ctx,
             data,
-            guild_id,
             &player_uuid,
             &player_username,
             &player_tag_type,

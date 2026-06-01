@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
 use serenity::all::*;
@@ -51,6 +51,7 @@ pub struct Data {
     pub home_guild_id: Option<GuildId>,
     pub pending_overwrites: Arc<Mutex<HashMap<String, PendingOverwrite>>>,
     pub pending_review_votes: Arc<Mutex<HashMap<u64, HashMap<usize, (Vec<u64>, Vec<u64>)>>>>,
+    pub evidence_threads: Arc<RwLock<HashMap<String, ThreadId>>>,
     pub sync_cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
     pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -58,6 +59,11 @@ pub struct Data {
 impl Data {
     pub fn is_owner(&self, user_id: u64) -> bool {
         self.owner_ids.contains(&user_id)
+    }
+
+    pub fn evidence_thread_for(&self, uuid: &str) -> Option<ThreadId> {
+        let key = uuid.replace('-', "");
+        self.evidence_threads.read().unwrap().get(&key).copied()
     }
 }
 
@@ -533,6 +539,31 @@ impl EventHandler for Handler {
                     Err(e) => tracing::error!("Failed to register global commands: {}", e),
                 }
                 crate::events::spawn_subscriber(ctx.clone(), self.data.clone());
+                let data = self.data.clone();
+                let ctx = ctx.clone();
+                tokio::spawn(async move {
+                    commands::blacklist::evidence::populate_thread_index(&ctx, &data).await;
+                });
+            }
+            FullEvent::ThreadCreate { thread, .. } => {
+                commands::blacklist::evidence::thread_index_insert(
+                    &self.data,
+                    &thread.base.name,
+                    thread.id,
+                    thread.parent_id,
+                );
+            }
+            FullEvent::ThreadUpdate { new, .. } => {
+                commands::blacklist::evidence::thread_index_remove(&self.data, new.id);
+                commands::blacklist::evidence::thread_index_insert(
+                    &self.data,
+                    &new.base.name,
+                    new.id,
+                    new.parent_id,
+                );
+            }
+            FullEvent::ThreadDelete { thread, .. } => {
+                commands::blacklist::evidence::thread_index_remove(&self.data, thread.id);
             }
             FullEvent::InteractionCreate { interaction, .. } => {
                 self.data

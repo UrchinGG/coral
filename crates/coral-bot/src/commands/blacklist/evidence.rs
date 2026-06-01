@@ -13,6 +13,97 @@ use crate::utils::{format_uuid_dashed, sanitize_reason, separator, text};
 use coral_redis::BlacklistEvent;
 
 const QUALIFYING_TAGS: &[&str] = &["closet_cheater", "blatant_cheater", "confirmed_cheater"];
+
+fn extract_uuid_from_title(title: &str) -> Option<String> {
+    let last = title.rsplit('|').next()?.trim();
+    let uuid = last.replace('-', "");
+    (uuid.len() == 32 && uuid.chars().all(|c| c.is_ascii_hexdigit())).then_some(uuid)
+}
+
+pub fn thread_index_insert(data: &Data, name: &str, thread_id: ThreadId, parent_id: ChannelId) {
+    if data.evidence_forum_id != Some(parent_id) {
+        return;
+    }
+    let Some(uuid) = extract_uuid_from_title(name) else {
+        return;
+    };
+    data.evidence_threads
+        .write()
+        .unwrap()
+        .insert(uuid, thread_id);
+}
+
+pub fn thread_index_remove(data: &Data, thread_id: ThreadId) {
+    data.evidence_threads
+        .write()
+        .unwrap()
+        .retain(|_, id| *id != thread_id);
+}
+
+pub async fn populate_thread_index(ctx: &Context, data: &Data) {
+    let Some(forum_id) = data.evidence_forum_id else {
+        return;
+    };
+    let Some(guild_id) = data.home_guild_id else {
+        return;
+    };
+
+    let mut found: HashMap<String, ThreadId> = HashMap::new();
+
+    match ctx.http.get_guild_active_threads(guild_id).await {
+        Ok(active) => {
+            for t in &active.threads {
+                if t.parent_id == forum_id {
+                    if let Some(uuid) = extract_uuid_from_title(&t.base.name) {
+                        found.insert(uuid, t.id);
+                    }
+                }
+            }
+        }
+        Err(e) => tracing::warn!("evidence index: failed to list active threads: {e}"),
+    }
+
+    let mut before: Option<Timestamp> = None;
+    loop {
+        match ctx
+            .http
+            .get_channel_archived_public_threads(forum_id, before, Some(100))
+            .await
+        {
+            Ok(batch) => {
+                for t in &batch.threads {
+                    if let Some(uuid) = extract_uuid_from_title(&t.base.name) {
+                        found.insert(uuid, t.id);
+                    }
+                }
+                let next_before = batch
+                    .threads
+                    .last()
+                    .and_then(|t| t.thread_metadata.archive_timestamp);
+                if !batch.has_more || next_before.is_none() {
+                    break;
+                }
+                before = next_before;
+            }
+            Err(e) => {
+                tracing::warn!("evidence index: failed to page archived threads: {e}");
+                break;
+            }
+        }
+    }
+
+    let count = found.len();
+    *data.evidence_threads.write().unwrap() = found;
+    tracing::info!("evidence thread index populated: {count} threads");
+}
+
+pub fn evidence_thread_url(data: &Data, uuid: &str) -> Option<String> {
+    let thread_id = data.evidence_thread_for(uuid)?;
+    let guild_id = data.home_guild_id?;
+    Some(format!(
+        "https://discord.com/channels/{guild_id}/{thread_id}"
+    ))
+}
 const ALLOWED_MEDIA_EXTENSIONS: &[&str] =
     &["png", "jpg", "jpeg", "gif", "webp", "mp4", "webm", "mov"];
 const MAX_EVIDENCE_MEDIA: u8 = 10;
@@ -85,28 +176,26 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         .await;
     };
 
-    if let Some(player) = repo.get_player(&player_info.uuid).await? {
-        if let Some(thread_url) = &player.evidence_thread {
-            let emote = lookup_tag("confirmed_cheater")
-                .map(|d| d.emote)
-                .unwrap_or("");
-            command
-                .edit_response(
-                    &ctx.http,
-                    EditInteractionResponse::new()
-                        .flags(MessageFlags::IS_COMPONENTS_V2)
-                        .components(vec![CreateComponent::Container(CreateContainer::new(
-                            vec![CreateContainerComponent::TextDisplay(
-                                CreateTextDisplay::new(format!(
-                                    "## {} Evidence Already Exists\nPlayer: `{}`\nThread: {}",
-                                    emote, player_info.username, thread_url
-                                )),
-                            )],
-                        ))]),
-                )
-                .await?;
-            return Ok(());
-        }
+    if let Some(thread_url) = evidence_thread_url(data, &player_info.uuid) {
+        let emote = lookup_tag("confirmed_cheater")
+            .map(|d| d.emote)
+            .unwrap_or("");
+        command
+            .edit_response(
+                &ctx.http,
+                EditInteractionResponse::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2)
+                    .components(vec![CreateComponent::Container(CreateContainer::new(
+                        vec![CreateContainerComponent::TextDisplay(
+                            CreateTextDisplay::new(format!(
+                                "## {} Evidence Already Exists\nPlayer: `{}`\nThread: {}",
+                                emote, player_info.username, thread_url
+                            )),
+                        )],
+                    ))]),
+            )
+            .await?;
+        return Ok(());
     }
 
     if rank < AccessRank::Helper {
@@ -191,7 +280,7 @@ async fn run_staff_confirm(
         .create_forum_post(
             &ctx.http,
             CreateForumPost::new(
-                thread_title,
+                thread_title.clone(),
                 CreateMessage::new()
                     .flags(MessageFlags::IS_COMPONENTS_V2)
                     .components(message_content),
@@ -199,14 +288,12 @@ async fn run_staff_confirm(
         )
         .await?;
 
-    let thread_url = format!(
-        "https://discord.com/channels/{}/{}",
-        command.guild_id.map(|g| g.get()).unwrap_or(0),
-        thread.id.get(),
+    thread_index_insert(
+        data,
+        &thread_title,
+        ThreadId::new(thread.id.get()),
+        forum_id,
     );
-    let repo = BlacklistRepository::new(data.db.pool());
-    repo.set_evidence_thread(&player_info.uuid, &thread_url)
-        .await?;
 
     let emote = lookup_tag("confirmed_cheater")
         .map(|d| d.emote)
@@ -872,17 +959,13 @@ async fn revert_from_confirmed(
     Ok(())
 }
 
-pub async fn archive_evidence_by_url(ctx: &Context, data: &Data, thread_url: &str) -> Result<()> {
-    let Some(id_str) = thread_url.rsplit('/').next() else {
-        return Ok(());
-    };
-    let Ok(id) = id_str.parse::<u64>() else {
+pub async fn archive_evidence_for_uuid(ctx: &Context, data: &Data, uuid: &str) -> Result<()> {
+    let Some(thread_id) = data.evidence_thread_for(uuid) else {
         return Ok(());
     };
 
-    let thread_id = ThreadId::new(id);
     let channel_id: GenericChannelId = thread_id.into();
-    let builder_msg_id = MessageId::new(id);
+    let builder_msg_id = MessageId::new(thread_id.get());
 
     let Ok(builder_msg) = ctx.http.get_message(channel_id, builder_msg_id).await else {
         return Ok(());
@@ -893,7 +976,6 @@ pub async fn archive_evidence_by_url(ctx: &Context, data: &Data, thread_url: &st
 
     let repo = BlacklistRepository::new(data.db.pool());
     revert_from_confirmed(&repo, &state).await?;
-    repo.clear_evidence_thread(&state.uuid).await?;
 
     let reverted_display = lookup_tag(&state.original_type)
         .map(|d| d.display_name)
@@ -947,7 +1029,6 @@ pub async fn handle_archive(
 
     let repo = BlacklistRepository::new(data.db.pool());
     revert_from_confirmed(&repo, &state).await?;
-    repo.clear_evidence_thread(&state.uuid).await?;
 
     let reverted_display = lookup_tag(&state.original_type)
         .map(|d| d.display_name)
@@ -979,7 +1060,6 @@ pub async fn handle_archive(
 pub async fn create_evidence_from_review(
     ctx: &Context,
     data: &Data,
-    guild_id: u64,
     uuid: &str,
     username: &str,
     original_type: &str,
@@ -988,7 +1068,7 @@ pub async fn create_evidence_from_review(
     media_urls: &[String],
     review_thread_url: Option<&str>,
     approved_by: i64,
-) -> Result<String> {
+) -> Result<()> {
     let Some(forum_id) = data.evidence_forum_id else {
         anyhow::bail!("Evidence forum channel not configured");
     };
@@ -1031,7 +1111,7 @@ pub async fn create_evidence_from_review(
         .create_forum_post(
             &ctx.http,
             CreateForumPost::new(
-                thread_title,
+                thread_title.clone(),
                 CreateMessage::new()
                     .flags(MessageFlags::IS_COMPONENTS_V2)
                     .components(initial_components),
@@ -1067,12 +1147,12 @@ pub async fn create_evidence_from_review(
             .await?;
     }
 
-    let thread_url = format!(
-        "https://discord.com/channels/{}/{}",
-        guild_id,
-        thread.id.get()
+    thread_index_insert(
+        data,
+        &thread_title,
+        ThreadId::new(thread.id.get()),
+        forum_id,
     );
-    repo.set_evidence_thread(uuid, &thread_url).await?;
 
     if !already_confirmed {
         if let Ok(Some(_tag)) = repo.get_tag_by_id(tag_id).await {
@@ -1086,5 +1166,5 @@ pub async fn create_evidence_from_review(
         }
     }
 
-    Ok(thread_url)
+    Ok(())
 }

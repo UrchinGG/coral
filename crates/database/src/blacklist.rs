@@ -9,7 +9,6 @@ pub struct BlacklistPlayer {
     pub lock_reason: Option<String>,
     pub locked_by: Option<i64>,
     pub locked_at: Option<DateTime<Utc>>,
-    pub evidence_thread: Option<String>,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -44,7 +43,7 @@ impl<'a> BlacklistRepository<'a> {
 
     pub async fn get_player(&self, uuid: &str) -> Result<Option<BlacklistPlayer>, sqlx::Error> {
         sqlx::query_as(
-            "SELECT id, uuid, is_locked, lock_reason, locked_by, locked_at, evidence_thread
+            "SELECT id, uuid, is_locked, lock_reason, locked_by, locked_at
              FROM blacklist_players WHERE uuid = $1",
         )
         .bind(uuid)
@@ -59,7 +58,7 @@ impl<'a> BlacklistRepository<'a> {
         sqlx::query_as(
             "INSERT INTO blacklist_players (uuid) VALUES ($1)
              ON CONFLICT (uuid) DO UPDATE SET uuid = EXCLUDED.uuid
-             RETURNING id, uuid, is_locked, lock_reason, locked_by, locked_at, evidence_thread",
+             RETURNING id, uuid, is_locked, lock_reason, locked_by, locked_at",
         )
         .bind(uuid)
         .fetch_one(self.pool)
@@ -352,7 +351,7 @@ impl<'a> BlacklistRepository<'a> {
         .await?;
 
         let players: Vec<BlacklistPlayer> = sqlx::query_as(
-            "SELECT id, uuid, is_locked, lock_reason, locked_by, locked_at, evidence_thread
+            "SELECT id, uuid, is_locked, lock_reason, locked_by, locked_at
              FROM blacklist_players WHERE uuid = ANY($1)",
         )
         .bind(uuids)
@@ -413,27 +412,6 @@ impl<'a> BlacklistRepository<'a> {
         .execute(self.pool)
         .await
         .map(|r| r.rows_affected())
-    }
-
-    pub async fn set_evidence_thread(
-        &self,
-        uuid: &str,
-        thread_url: &str,
-    ) -> Result<bool, sqlx::Error> {
-        sqlx::query("UPDATE blacklist_players SET evidence_thread = $2 WHERE uuid = $1")
-            .bind(uuid)
-            .bind(thread_url)
-            .execute(self.pool)
-            .await
-            .map(|r| r.rows_affected() > 0)
-    }
-
-    pub async fn clear_evidence_thread(&self, uuid: &str) -> Result<bool, sqlx::Error> {
-        sqlx::query("UPDATE blacklist_players SET evidence_thread = NULL WHERE uuid = $1")
-            .bind(uuid)
-            .execute(self.pool)
-            .await
-            .map(|r| r.rows_affected() > 0)
     }
 
     pub async fn convert_tag_to_confirmed(&self, tag_id: i64) -> Result<bool, sqlx::Error> {

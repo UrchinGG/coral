@@ -382,9 +382,7 @@ async fn run_view(ctx: &Context, command: &CommandInteraction, data: &Data) -> R
         return Ok(());
     }
 
-    let evidence_thread = player_data
-        .as_ref()
-        .and_then(|p| p.evidence_thread.as_ref());
+    let evidence_url = super::evidence::evidence_thread_url(data, &player_info.uuid);
     let lock_indicator = if is_locked { " \u{1F512}" } else { "" };
 
     let adders = player_tags
@@ -432,7 +430,7 @@ async fn run_view(ctx: &Context, command: &CommandInteraction, data: &Data) -> R
             format!("> -# **\\- Reviewed by {}**", formatted.join(", "))
         });
 
-        let indicator = evidence_indicator(&tag.tag_type, evidence_thread.is_some());
+        let indicator = evidence_indicator(&tag.tag_type, evidence_url.is_some());
 
         tag_texts.push(format_tag_block(
             &tag.tag_type,
@@ -445,8 +443,8 @@ async fn run_view(ctx: &Context, command: &CommandInteraction, data: &Data) -> R
     }
 
     let mut footer = format!("-# UUID: {dashed_uuid}");
-    if let Some(evidence_url) = evidence_thread {
-        footer.push_str(&format!(" | [Evidence]({evidence_url})"));
+    if let Some(url) = &evidence_url {
+        footer.push_str(&format!(" | [Evidence]({url})"));
     }
 
     let first_tag = tag_texts.first().cloned().unwrap_or_default();
@@ -860,12 +858,7 @@ async fn run_remove(ctx: &Context, command: &CommandInteraction, data: &Data) ->
     };
 
     if tag_type == "confirmed_cheater" {
-        let repo = ops.repo();
-        if let Some(player_data) = repo.get_player(&player_info.uuid).await? {
-            if let Some(thread_url) = &player_data.evidence_thread {
-                super::evidence::archive_evidence_by_url(ctx, data, thread_url).await?;
-            }
-        }
+        super::evidence::archive_evidence_for_uuid(ctx, data, &player_info.uuid).await?;
     }
 
     let (emote, display_name) = tag_display(tag_type);
@@ -1020,18 +1013,9 @@ async fn run_unlock(ctx: &Context, command: &CommandInteraction, data: &Data) ->
     Ok(())
 }
 
-async fn try_archive_evidence(
-    repo: &BlacklistRepository<'_>,
-    ctx: &Context,
-    data: &Data,
-    uuid: &str,
-) {
-    if let Ok(Some(p)) = repo.get_player(uuid).await {
-        if let Some(url) = &p.evidence_thread {
-            if let Err(e) = super::evidence::archive_evidence_by_url(ctx, data, url).await {
-                tracing::error!("Failed to archive evidence for {uuid}: {e}");
-            }
-        }
+async fn try_archive_evidence(ctx: &Context, data: &Data, uuid: &str) {
+    if let Err(e) = super::evidence::archive_evidence_for_uuid(ctx, data, uuid).await {
+        tracing::error!("Failed to archive evidence for {uuid}: {e}");
     }
 }
 
@@ -1379,7 +1363,7 @@ pub async fn handle_manage_confirm(
             channel::post_tag_removed(ctx, data, uuid, &name, &tag, discord_id, true).await;
 
             if tag.tag_type == "confirmed_cheater" {
-                try_archive_evidence(ops.repo(), ctx, data, uuid).await;
+                try_archive_evidence(ctx, data, uuid).await;
             }
             update_manage_view(ctx, component, data, uuid).await
         }

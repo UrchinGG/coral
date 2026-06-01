@@ -59,7 +59,6 @@ struct BlacklistPayload {
     lock_reason: Option<String>,
     locked_by: Option<i64>,
     locked_at: Option<String>,
-    evidence_thread: Option<String>,
     tags: Vec<TagPayload>,
 }
 
@@ -273,18 +272,21 @@ async fn insert_blacklist_player(
 
     let (player_id,): (i64,) = sqlx::query_as(
         r#"
-        INSERT INTO blacklist_players (uuid, is_locked, lock_reason, locked_by, locked_at, evidence_thread)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO blacklist_players (uuid, is_locked, lock_reason, locked_by, locked_at)
+        VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (uuid) DO UPDATE SET
             is_locked = EXCLUDED.is_locked, lock_reason = EXCLUDED.lock_reason,
-            locked_by = EXCLUDED.locked_by, locked_at = EXCLUDED.locked_at,
-            evidence_thread = EXCLUDED.evidence_thread
+            locked_by = EXCLUDED.locked_by, locked_at = EXCLUDED.locked_at
         RETURNING id
         "#,
     )
-    .bind(&p.uuid).bind(p.is_locked).bind(&p.lock_reason)
-    .bind(p.locked_by).bind(locked_at).bind(&p.evidence_thread)
-    .fetch_one(pool).await?;
+    .bind(&p.uuid)
+    .bind(p.is_locked)
+    .bind(&p.lock_reason)
+    .bind(p.locked_by)
+    .bind(locked_at)
+    .fetch_one(pool)
+    .await?;
 
     sqlx::query("DELETE FROM player_tags WHERE player_id = $1")
         .bind(player_id)

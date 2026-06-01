@@ -22,7 +22,6 @@ struct MongoBlacklistPlayer {
     lock_reason: Option<String>,
     locked_by: Option<serde_json::Value>,
     lock_timestamp: Option<mongodb::bson::DateTime>,
-    evidence_thread: Option<String>,
     tags: Option<Vec<MongoTag>>,
 }
 
@@ -109,7 +108,6 @@ impl MongoBlacklistPlayer {
             "lock_reason": self.lock_reason,
             "locked_by": locked_by,
             "locked_at": locked_at,
-            "evidence_thread": self.evidence_thread,
             "tags": tags,
         }))
     }

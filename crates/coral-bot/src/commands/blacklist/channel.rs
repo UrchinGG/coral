@@ -4,7 +4,9 @@ use blacklist::{
     EMOTE_ADDTAG, EMOTE_EDITTAG, EMOTE_EVIDENCE, EMOTE_NO_EVIDENCE, EMOTE_REMOVETAG, EMOTE_TAG,
     lookup as lookup_tag,
 };
-use database::{BlacklistRepository, PlayerTagRow};
+use database::PlayerTagRow;
+
+use super::evidence::evidence_thread_url;
 
 use crate::framework::{AccessRank, Data};
 use crate::utils::{format_tag_detail, format_uuid_dashed, sanitize_reason};
@@ -464,13 +466,7 @@ async fn post_to_blacklist_channel(
 ) -> Option<MessageId> {
     let channel_id = data.blacklist_channel_id?;
     let dashed_uuid = format_uuid_dashed(uuid);
-
-    let evidence_thread = BlacklistRepository::new(data.db.pool())
-        .get_player(uuid)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|p| p.evidence_thread);
+    let evidence_url = evidence_thread_url(data, uuid);
 
     let face = face_attachment(data, uuid).await;
 
@@ -488,7 +484,7 @@ async fn post_to_blacklist_channel(
             }
             _ => None,
         };
-        let indicator = evidence_indicator(&tag.tag_type, evidence_thread.is_some());
+        let indicator = evidence_indicator(&tag.tag_type, evidence_url.is_some());
 
         tag_texts.push(format_tag_block(
             &tag.tag_type,
@@ -501,7 +497,7 @@ async fn post_to_blacklist_channel(
     }
 
     let mut footer = format!("-# UUID: {dashed_uuid}");
-    if let Some(ref url) = evidence_thread {
+    if let Some(url) = &evidence_url {
         footer.push_str(&format!(" | [Evidence]({url})"));
     }
 
