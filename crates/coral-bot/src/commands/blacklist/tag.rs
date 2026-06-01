@@ -554,12 +554,19 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
             reason,
             data.review_forum_id,
         );
+        let png = data
+            .skin_provider
+            .fetch_face(&player_info.uuid, super::reviews::FACE_SIZE)
+            .await
+            .unwrap_or_else(default_face);
+        let face = CreateAttachment::bytes(png, super::reviews::face_filename(&player_info.uuid));
         command
             .edit_response(
                 &ctx.http,
                 EditInteractionResponse::new()
                     .flags(MessageFlags::IS_COMPONENTS_V2)
-                    .components(components),
+                    .components(components)
+                    .new_attachment(face),
             )
             .await?;
         return Ok(());

@@ -14,7 +14,7 @@ use serenity::all::*;
 use crate::framework::Data;
 use crate::utils::sanitize_reason;
 
-pub use builder::build_confirmation_message;
+pub use builder::{FACE_SIZE, build_confirmation_message, face_filename};
 pub use compose::{
     handle_add_player, handle_addplayer_name_modal, handle_addplayer_reason_modal,
     handle_edit_done, handle_edit_reason, handle_edit_reason_modal, handle_edit_submitted,
