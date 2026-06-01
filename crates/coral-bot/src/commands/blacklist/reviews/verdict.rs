@@ -7,6 +7,13 @@ use serenity::all::*;
 use super::{builder::*, state::*, *};
 use crate::{framework::Data, utils::text};
 
+async fn send_in_thread(ctx: &Context, channel_id: GenericChannelId, msg: &CreateMessage<'_>) {
+    let _ = ctx
+        .http
+        .send_message(channel_id, Vec::<CreateAttachment>::new(), msg)
+        .await;
+}
+
 fn load_player_votes(
     data: &Data,
     thread_id: u64,
@@ -174,27 +181,13 @@ pub async fn handle_approve(
 
         if !unanimous {
             let player = &state.players[player_index];
-            let vote_msg = build_vote_message(
-                discord_id,
-                "accept",
-                &player.tag_type,
-                &player.username,
-                false,
-                player.accept_votes.len(),
-                player.reject_votes.len(),
-            );
+            let vote_msg =
+                build_vote_message(discord_id, "accept", &player.tag_type, &player.username);
             component
                 .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
                 .await?;
             update_builder(ctx, component.channel_id, &message, &state).await?;
-            let _ = ctx
-                .http
-                .send_message(
-                    component.channel_id.into(),
-                    Vec::<CreateAttachment>::new(),
-                    &vote_msg,
-                )
-                .await;
+            send_in_thread(ctx, component.channel_id.into(), &vote_msg).await;
             return Ok(());
         }
     }
@@ -270,6 +263,7 @@ pub async fn handle_approve(
             &player_uuid,
             &player_username,
             &player_tag_type,
+            &player_reason,
             tag_id,
             &media_urls,
             Some(&review_thread_url),
@@ -321,22 +315,18 @@ pub async fn handle_approve(
         .await?;
     update_builder(ctx, component.channel_id, &message, &state).await?;
 
-    let channel_id = component.channel_id;
-    let msg = build_vote_message(
-        discord_id,
-        "accept",
-        &player_tag_type,
-        &player_username,
-        is_staff,
-        if is_staff { 1 } else { 3 },
-        0,
-    );
-    let _ = ctx
-        .http
-        .send_message(channel_id.into(), Vec::<CreateAttachment>::new(), &msg)
-        .await;
+    let all_resolved =
+        finalize_thread_if_resolved(ctx, data, thread_id(component.channel_id), &state).await?;
 
-    check_all_resolved(ctx, data, thread_id(component.channel_id), &state).await
+    let msg = build_verdict_message(
+        discord_id,
+        is_staff,
+        &state.players[player_index],
+        Some(stored_type),
+        all_resolved.then_some(&state),
+    );
+    send_in_thread(ctx, component.channel_id.into(), &msg).await;
+    Ok(())
 }
 
 pub async fn handle_reject(
@@ -426,32 +416,14 @@ pub async fn handle_reject(
 
     if !unanimous {
         let player = &state.players[player_index];
-        let vote_msg = build_vote_message(
-            discord_id,
-            "reject",
-            &player.tag_type,
-            &player.username,
-            false,
-            player.accept_votes.len(),
-            player.reject_votes.len(),
-        );
+        let vote_msg = build_vote_message(discord_id, "reject", &player.tag_type, &player.username);
         component
             .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
             .await?;
         update_builder(ctx, component.channel_id, &message, &state).await?;
-        let _ = ctx
-            .http
-            .send_message(
-                component.channel_id.into(),
-                Vec::<CreateAttachment>::new(),
-                &vote_msg,
-            )
-            .await;
+        send_in_thread(ctx, component.channel_id.into(), &vote_msg).await;
         return Ok(());
     }
-
-    let player_tag_type = state.players[player_index].tag_type.clone();
-    let player_username = state.players[player_index].username.clone();
 
     let member_repo = MemberRepository::new(data.db.pool());
     if let Err(e) = member_repo
@@ -472,16 +444,6 @@ pub async fn handle_reject(
         }
     }
 
-    let vote_msg = build_vote_message(
-        discord_id,
-        "reject",
-        &player_tag_type,
-        &player_username,
-        false,
-        0,
-        3,
-    );
-
     state.players[player_index].status = PlayerStatus::Rejected;
     state.players[player_index].reviewer = None;
     state.players[player_index].accept_votes.clear();
@@ -491,16 +453,19 @@ pub async fn handle_reject(
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
     update_builder(ctx, component.channel_id, &message, &state).await?;
-    let _ = ctx
-        .http
-        .send_message(
-            component.channel_id.into(),
-            Vec::<CreateAttachment>::new(),
-            &vote_msg,
-        )
-        .await;
 
-    check_all_resolved(ctx, data, thread_id(component.channel_id), &state).await
+    let all_resolved =
+        finalize_thread_if_resolved(ctx, data, thread_id(component.channel_id), &state).await?;
+
+    let msg = build_verdict_message(
+        discord_id,
+        false,
+        &state.players[player_index],
+        None,
+        all_resolved.then_some(&state),
+    );
+    send_in_thread(ctx, component.channel_id.into(), &msg).await;
+    Ok(())
 }
 
 pub async fn handle_reject_modal(
@@ -546,9 +511,6 @@ pub async fn handle_reject_modal(
         return Ok(());
     }
 
-    let player_username = player.username.clone();
-    let player_tag_type = player.tag_type.clone();
-
     let member_repo = MemberRepository::new(data.db.pool());
     if let Err(e) = member_repo
         .increment_rejected_tags(submitter_id as i64)
@@ -576,19 +538,17 @@ pub async fn handle_reject_modal(
 
     update_builder(ctx, channel_id, &builder_msg, &state).await?;
 
-    let vote_msg = build_vote_message(
+    let all_resolved =
+        finalize_thread_if_resolved(ctx, data, thread_id(modal.channel_id), &state).await?;
+
+    let msg = build_verdict_message(
         discord_id,
-        "reject",
-        &player_tag_type,
-        &player_username,
         true,
-        0,
-        1,
+        &state.players[player_index],
+        None,
+        all_resolved.then_some(&state),
     );
-    let _ = ctx
-        .http
-        .send_message(channel_id.into(), Vec::<CreateAttachment>::new(), &vote_msg)
-        .await;
+    send_in_thread(ctx, channel_id.into(), &msg).await;
 
     modal
         .edit_response(
@@ -596,22 +556,21 @@ pub async fn handle_reject_modal(
             EditInteractionResponse::new().content("Rejected"),
         )
         .await?;
-
-    check_all_resolved(ctx, data, thread_id(modal.channel_id), &state).await
+    Ok(())
 }
 
-async fn check_all_resolved(
+async fn finalize_thread_if_resolved(
     ctx: &Context,
     data: &Data,
     thread_id: ThreadId,
     state: &SubmissionState,
-) -> Result<()> {
+) -> Result<bool> {
     if !state
         .players
         .iter()
         .all(|p| p.status != PlayerStatus::Pending)
     {
-        return Ok(());
+        return Ok(false);
     }
 
     cleanup_review_votes(data, thread_id.get());
@@ -627,7 +586,6 @@ async fn check_all_resolved(
 
     let tags = resolve_forum_tags(ctx, data).await;
     let mut tag_ids = Vec::new();
-
     if all_approved {
         if let Some(id) = tags.approved {
             tag_ids.push(id);
@@ -639,28 +597,7 @@ async fn check_all_resolved(
     } else if let Some(id) = tags.pending {
         tag_ids.push(id);
     }
-
     let _ = set_forum_tags(ctx, thread_id, &tag_ids).await;
-
-    let channel_id: GenericChannelId = thread_id.into();
-    let mut summary = format!(
-        "<@{}> All players have been reviewed:\n",
-        state.submitter_id
-    );
-    for player in &state.players {
-        let emote = lookup_tag(&player.tag_type).map(|d| d.emote).unwrap_or("");
-        let verdict = match player.status {
-            PlayerStatus::Approved => "approved",
-            PlayerStatus::Rejected => "rejected",
-            PlayerStatus::Pending => "pending",
-        };
-        summary.push_str(&format!(
-            "- {emote} `{}` \u{2014} **{verdict}**\n",
-            player.username
-        ));
-    }
-
-    let _ = super::send_thread_message(ctx, channel_id, &summary).await;
 
     let http = ctx.http.clone();
     tokio::spawn(async move {
@@ -670,7 +607,7 @@ async fn check_all_resolved(
             .await;
     });
 
-    Ok(())
+    Ok(true)
 }
 
 pub async fn handle_confirm(

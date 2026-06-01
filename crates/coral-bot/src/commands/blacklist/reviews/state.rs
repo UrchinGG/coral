@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use blacklist::{Replay, parse_replay};
+use blacklist::{EMOTE_EVIDENCE, EMOTE_NO_EVIDENCE, Replay, parse_replay};
 use serenity::all::*;
 
 use super::*;
@@ -218,9 +218,11 @@ fn process_text_into_player(player: &mut PlayerEntry, content: &str) {
             player.status = status.0;
             player.reviewer = status.1;
             player.review_note = status.2;
-        } else if let Some((accepts, rejects)) = parse_vote_indicator(trimmed) {
-            player.accept_votes = vec![0u64; accepts];
-            player.reject_votes = vec![0u64; rejects];
+        } else if let Some((side, voters)) = parse_vote_line(trimmed) {
+            match side {
+                VoteSide::Accept => player.accept_votes = voters,
+                VoteSide::Reject => player.reject_votes = voters,
+            }
         } else if trimmed.starts_with('>') {
             if player.reason.is_empty() {
                 if let Some(reason) = trimmed.strip_prefix("> ") {
@@ -255,34 +257,25 @@ fn parse_tag_type_line(text: &str) -> Option<&'static str> {
     lookup_tag_name_from_display(display)
 }
 
-pub fn parse_vote_indicator(text: &str) -> Option<(usize, usize)> {
-    if text.starts_with("✅ [") || text.starts_with("❌ [") {
-        let slash_pos = text.find('/')?;
-        let count_str = text[..slash_pos].rsplit(' ').next()?;
-        let count = count_str.parse::<usize>().ok()?;
-        return Some(if text.starts_with("✅") {
-            (count, 0)
-        } else {
-            (0, count)
-        });
-    }
+pub enum VoteSide {
+    Accept,
+    Reject,
+}
 
-    if text.contains("✅") && text.contains("❌") {
-        let parse_after = |emoji: &str| -> Option<usize> {
-            let pos = text.find(emoji)? + emoji.len();
-            let digits: String = text[pos..]
-                .chars()
-                .skip_while(|c| !c.is_ascii_digit())
-                .take_while(|c| c.is_ascii_digit())
-                .collect();
-            digits.parse::<usize>().ok()
-        };
-        let accepts = parse_after("✅")?;
-        let rejects = parse_after("❌")?;
-        return Some((accepts, rejects));
-    }
-
-    None
+pub fn parse_vote_line(text: &str) -> Option<(VoteSide, Vec<u64>)> {
+    let side = if text.starts_with(EMOTE_EVIDENCE) {
+        VoteSide::Accept
+    } else if text.starts_with(EMOTE_NO_EVIDENCE) {
+        VoteSide::Reject
+    } else {
+        return None;
+    };
+    let ids = text
+        .split("<@")
+        .skip(1)
+        .filter_map(|s| s.split('>').next()?.parse().ok())
+        .collect();
+    Some((side, ids))
 }
 
 fn new_player_entry(username: String, tag_type: &str) -> PlayerEntry {

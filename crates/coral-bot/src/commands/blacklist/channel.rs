@@ -1,6 +1,9 @@
 use serenity::all::*;
 
-use blacklist::{EMOTE_ADDTAG, EMOTE_EDITTAG, EMOTE_REMOVETAG, EMOTE_TAG, lookup as lookup_tag};
+use blacklist::{
+    EMOTE_ADDTAG, EMOTE_EDITTAG, EMOTE_EVIDENCE, EMOTE_NO_EVIDENCE, EMOTE_REMOVETAG, EMOTE_TAG,
+    lookup as lookup_tag,
+};
 use database::{BlacklistRepository, PlayerTagRow};
 
 use crate::framework::{AccessRank, Data};
@@ -65,6 +68,46 @@ pub async fn format_added_line(ctx: &Context, tag: &PlayerTagRow) -> String {
     }
 }
 
+pub fn evidence_indicator(tag_type: &str, has_evidence: bool) -> String {
+    if tag_type != "confirmed_cheater" {
+        return String::new();
+    }
+    let emote = if has_evidence {
+        EMOTE_EVIDENCE
+    } else {
+        EMOTE_NO_EVIDENCE
+    };
+    format!(" {emote}")
+}
+
+pub fn format_tag_block(
+    tag_type: &str,
+    detail: &str,
+    evidence_indicator: &str,
+    added_line: Option<&str>,
+    reviewed_line: Option<&str>,
+    strikethrough: bool,
+) -> String {
+    let def = lookup_tag(tag_type);
+    let emote = def.map(|d| d.emote).unwrap_or("");
+    let display = def.map(|d| d.display_name).unwrap_or(tag_type);
+
+    let head = if strikethrough {
+        format!("~~**{emote} {display}**~~{evidence_indicator}")
+    } else {
+        format!("**{emote} {display}**{evidence_indicator}")
+    };
+
+    let mut lines = vec![head, format!("> {detail}")];
+    if let Some(a) = added_line {
+        lines.push(a.to_string());
+    }
+    if let Some(r) = reviewed_line {
+        lines.push(r.to_string());
+    }
+    lines.join("\n")
+}
+
 pub async fn post_new_tag(
     ctx: &Context,
     data: &Data,
@@ -107,56 +150,42 @@ pub async fn post_tag_removed(
     removed_by: u64,
     silent: bool,
 ) {
-    let def = lookup_tag(&tag.tag_type);
-    let emote = def.map(|d| d.emote).unwrap_or("");
-    let display_name = def.map(|d| d.display_name).unwrap_or(&tag.tag_type);
     let dashed_uuid = format_uuid_dashed(uuid);
+    let added_line = format_added_line(ctx, tag).await;
     let username = get_username(ctx, removed_by).await;
+    let detail = format_tag_detail(tag);
 
-    let face = face_attachment(data, uuid).await;
-    let container = CreateContainer::new(vec![
-        face_section(vec![
-            format!("## {} Tag Removed\nIGN - `{}`\n", EMOTE_REMOVETAG, name),
-            format!(
-                "**{} {}**\n> {}\n> -# **\\- Removed by `@{}`**",
-                emote,
-                display_name,
-                format_tag_detail(tag),
-                username
-            ),
-            format!("-# UUID: {dashed_uuid}"),
-        ]),
-        CreateContainerComponent::Separator(CreateSeparator::new(true)),
-    ])
-    .accent_color(COLOR_DANGER);
+    let block = format_tag_block(&tag.tag_type, &detail, "", Some(&added_line), None, true);
+    let footer = format!("-# Removed by `@{username}`\n-# UUID: {dashed_uuid}");
 
-    send_to_mod_channel(ctx, data, container, vec![face]).await;
-
-    if !silent {
-        let channel_id = match data.blacklist_channel_id {
-            Some(id) => id,
-            None => return,
-        };
-        let face = face_attachment(data, uuid).await;
-        let added_line = format_added_line(ctx, tag).await;
-        let parts = vec![
+    let make_container = || {
+        CreateContainer::new(vec![
             face_section(vec![
-                format!("## {} Tag Removed\nIGN - `{}`\n", EMOTE_REMOVETAG, name),
-                format!(
-                    "~~**{} {}**~~\n> {}\n{}\n> -# **\\- Removed by `@{}`**",
-                    emote,
-                    display_name,
-                    format_tag_detail(tag),
-                    added_line,
-                    username
-                ),
-                format!("-# UUID: {dashed_uuid}"),
+                format!("## {} Tag Removed\nIGN - `{name}`\n", EMOTE_REMOVETAG),
+                block.clone(),
+                footer.clone(),
             ]),
             CreateContainerComponent::Separator(CreateSeparator::new(true)),
-        ];
-        let container = CreateContainer::new(parts).accent_color(COLOR_DANGER);
-        send_container(ctx, channel_id, container, vec![face]).await;
+        ])
+    };
+
+    let log_face = face_attachment(data, uuid).await;
+    send_to_mod_channel(
+        ctx,
+        data,
+        make_container().accent_color(COLOR_DANGER),
+        vec![log_face],
+    )
+    .await;
+
+    if silent {
+        return;
     }
+    let Some(channel_id) = data.blacklist_channel_id else {
+        return;
+    };
+    let public_face = face_attachment(data, uuid).await;
+    send_container(ctx, channel_id, make_container(), vec![public_face]).await;
 }
 
 pub async fn post_tag_changed(
@@ -170,42 +199,37 @@ pub async fn post_tag_changed(
     changed_by: u64,
 ) {
     let dashed_uuid = format_uuid_dashed(uuid);
-
-    let old_def = lookup_tag(&old_tag.tag_type);
-    let old_emote = old_def.map(|d| d.emote).unwrap_or("");
-    let old_display = old_def.map(|d| d.display_name).unwrap_or(&old_tag.tag_type);
-
-    let new_def = lookup_tag(&new_tag.tag_type);
-    let new_emote = new_def.map(|d| d.emote).unwrap_or("");
-    let new_display = new_def.map(|d| d.display_name).unwrap_or(&new_tag.tag_type);
-
-    let old_added_line = format_added_line(ctx, old_tag).await;
-    let new_added_line = format_added_line(ctx, new_tag).await;
+    let old_added = format_added_line(ctx, old_tag).await;
+    let new_added = format_added_line(ctx, new_tag).await;
     let username = get_username(ctx, changed_by).await;
+
+    let old_block = format_tag_block(
+        &old_tag.tag_type,
+        &format_tag_detail(old_tag),
+        "",
+        Some(&old_added),
+        None,
+        false,
+    );
+    let new_block = format_tag_block(
+        &new_tag.tag_type,
+        &format_tag_detail(new_tag),
+        "",
+        Some(&new_added),
+        None,
+        false,
+    );
 
     let face = face_attachment(data, uuid).await;
     let container = CreateContainer::new(vec![
         face_section(vec![
-            format!("## {} {}\nIGN - `{}`\n", EMOTE_EDITTAG, title, name),
-            format!(
-                "Previous: **{} {}**\n> {}\n{}",
-                old_emote,
-                old_display,
-                format_tag_detail(old_tag),
-                old_added_line
-            ),
+            format!("## {EMOTE_EDITTAG} {title}\nIGN - `{name}`\n"),
+            format!("Previous:\n{old_block}"),
         ]),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!("New:\n{new_block}"))),
         CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
-            "New: **{} {}**\n> {}\n{}",
-            new_emote,
-            new_display,
-            format_tag_detail(new_tag),
-            new_added_line
-        ))),
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
-            "-# {} by `@{}`\n-# UUID: {dashed_uuid}",
-            title, username
+            "-# {title} by `@{username}`\n-# UUID: {dashed_uuid}"
         ))),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
     ]);
@@ -387,23 +411,23 @@ async fn post_tag_to_log(
     title: &str,
     emote: &str,
 ) {
-    let def = lookup_tag(&tag.tag_type);
-    let tag_emote = def.map(|d| d.emote).unwrap_or("");
-    let display_name = def.map(|d| d.display_name).unwrap_or(&tag.tag_type);
     let dashed_uuid = format_uuid_dashed(uuid);
     let added_line = format_added_line(ctx, tag).await;
     let face = face_attachment(data, uuid).await;
 
+    let block = format_tag_block(
+        &tag.tag_type,
+        &format_tag_detail(tag),
+        "",
+        Some(&added_line),
+        None,
+        false,
+    );
+
     let container = CreateContainer::new(vec![
         face_section(vec![
-            format!("## {} {}\nIGN - `{}`\n", emote, title, name),
-            format!(
-                "**{} {}**\n> {}\n{}",
-                tag_emote,
-                display_name,
-                format_tag_detail(tag),
-                added_line
-            ),
+            format!("## {emote} {title}\nIGN - `{name}`\n"),
+            block,
             format!("-# UUID: {dashed_uuid}"),
         ]),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
@@ -452,42 +476,28 @@ async fn post_to_blacklist_channel(
 
     let mut tag_texts = vec![];
     for tag in all_tags {
-        let def = lookup_tag(&tag.tag_type);
-        let tag_emote = def.map(|d| d.emote).unwrap_or("");
-        let display_name = def.map(|d| d.display_name).unwrap_or(&tag.tag_type);
-
-        let evidence_indicator = if tag.tag_type == "confirmed_cheater" {
-            if evidence_thread.is_some() {
-                " <:evidencefound:1482666860225888346>"
-            } else {
-                " <:noevidence:1482666258938990696>"
-            }
-        } else {
-            ""
-        };
-
         let added_line = format_added_line(ctx, tag).await;
-        let mut tag_text = format!(
-            "**{} {}**{}\n> {}\n{}",
-            tag_emote,
-            display_name,
-            evidence_indicator,
-            format_tag_detail(tag),
-            added_line
-        );
-
-        if let Some(reviewers) = &tag.reviewed_by {
-            if !reviewers.is_empty() {
+        let reviewed_line = match &tag.reviewed_by {
+            Some(ids) if !ids.is_empty() => {
                 let names: Vec<String> =
-                    futures::future::join_all(reviewers.iter().map(|&id| async move {
+                    futures::future::join_all(ids.iter().map(|&id| async move {
                         format!("`@{}`", get_username(ctx, id as u64).await)
                     }))
                     .await;
-                tag_text.push_str(&format!("\n> -# **\\- Reviewed by {}**", names.join(", ")));
+                Some(format!("> -# **\\- Reviewed by {}**", names.join(", ")))
             }
-        }
+            _ => None,
+        };
+        let indicator = evidence_indicator(&tag.tag_type, evidence_thread.is_some());
 
-        tag_texts.push(tag_text);
+        tag_texts.push(format_tag_block(
+            &tag.tag_type,
+            &format_tag_detail(tag),
+            &indicator,
+            Some(&added_line),
+            reviewed_line.as_deref(),
+            false,
+        ));
     }
 
     let mut footer = format!("-# UUID: {dashed_uuid}");

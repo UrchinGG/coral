@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
-use blacklist::{EMOTE_TAG, lookup as lookup_tag};
+use blacklist::{EMOTE_EVIDENCE, EMOTE_NO_EVIDENCE, EMOTE_TAG, lookup as lookup_tag};
 use serenity::all::*;
 
+use super::super::channel::{evidence_indicator, format_tag_block};
 use super::{state::*, *};
 use crate::utils::{sanitize_reason, separator, text};
 
@@ -95,15 +96,17 @@ fn submitter_line(submitter_id: u64, reopened: bool) -> CreateContainerComponent
 }
 
 pub fn build_player_card(parts: &mut Vec<CreateContainerComponent<'static>>, player: &PlayerEntry) {
-    let def = lookup_tag(&player.tag_type);
-    let emote = def.map(|d| d.emote).unwrap_or("");
-    let display_name = def.map(|d| d.display_name).unwrap_or(&player.tag_type);
+    let indicator = evidence_indicator(&player.tag_type, !player.evidence.is_empty());
+    let block = format_tag_block(
+        &player.tag_type,
+        &sanitize_reason(&player.reason),
+        &indicator,
+        None,
+        None,
+        false,
+    );
 
-    let mut lines = vec![
-        format!("IGN - `{}`", player.username),
-        format!("**{emote} {display_name}**"),
-        format!("> {}", sanitize_reason(&player.reason)),
-    ];
+    let mut lines = vec![format!("IGN - `{}`\n", player.username), block];
     if let Some(warning) = &player.conflict_warning {
         lines.push(warning.clone());
     }
@@ -240,36 +243,42 @@ pub fn build_submitted_controls(
                 .into(),
             ),
         ));
-        parts.push(text(render_vote_indicator(player)));
+        if let Some(indicator) = render_vote_indicator(player) {
+            parts.push(text(indicator));
+        }
         if has_disagreement(player) {
-            parts.push(text("-# Mod needed to resolve"));
+            parts.push(text("-# Mod vote needed to resolve"));
         }
     } else {
         parts.push(text(render_status_line(player)));
     }
 }
 
-pub fn render_vote_indicator(player: &PlayerEntry) -> String {
-    let accepts = player.accept_votes.len();
-    let rejects = player.reject_votes.len();
-    let threshold = VOTE_THRESHOLD;
-
-    if accepts > 0 && rejects > 0 {
-        return format!("✅ {accepts} · ❌ {rejects}");
+pub fn render_vote_indicator(player: &PlayerEntry) -> Option<String> {
+    if player.accept_votes.is_empty() && player.reject_votes.is_empty() {
+        return None;
     }
+    let mut lines = Vec::new();
+    if !player.accept_votes.is_empty() {
+        lines.push(format!(
+            "{EMOTE_EVIDENCE} Accept · {}",
+            mentions(&player.accept_votes)
+        ));
+    }
+    if !player.reject_votes.is_empty() {
+        lines.push(format!(
+            "{EMOTE_NO_EVIDENCE} Reject · {}",
+            mentions(&player.reject_votes)
+        ));
+    }
+    Some(lines.join("\n"))
+}
 
-    let (emoji, count) = if accepts > 0 {
-        ("✅ ", accepts)
-    } else if rejects > 0 {
-        ("❌ ", rejects)
-    } else {
-        ("", 0)
-    };
-
-    let filled = count.min(threshold);
-    let empty = threshold.saturating_sub(filled);
-    let boxes: String = "■".repeat(filled) + &"□".repeat(empty);
-    format!("{emoji}[{boxes}] {count}/{threshold}")
+fn mentions(ids: &[u64]) -> String {
+    ids.iter()
+        .map(|id| format!("<@{id}>"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub fn has_disagreement(player: &PlayerEntry) -> bool {
@@ -380,43 +389,122 @@ pub fn build_vote_message(
     vote_type: &str,
     tag_type: &str,
     username: &str,
-    is_staff: bool,
-    accept_count: usize,
-    reject_count: usize,
 ) -> CreateMessage<'static> {
     let def = lookup_tag(tag_type);
     let emote = def.map(|d| d.emote).unwrap_or("");
     let display_name = def.map(|d| d.display_name).unwrap_or(tag_type);
 
-    let content = if is_staff {
-        let action = if vote_type == "accept" {
-            "approved"
-        } else {
-            "rejected"
-        };
-        format!("<@{voter_id}> {action} the {emote} **{display_name}** tag on `{username}`.")
-    } else {
-        let total = if vote_type == "accept" {
-            accept_count
-        } else {
-            reject_count
-        };
-        let mut msg = format!(
-            "<@{voter_id}> voted to **{vote_type}** the {emote} **{display_name}** tag on `{username}`. [{total}/3]"
-        );
-        if accept_count > 0 && reject_count > 0 {
-            msg.push_str(&format!(
-                "\n-# {accept_count} accept, {reject_count} reject \u{2014} staff required to resolve"
-            ));
-        }
-        msg
-    };
+    let content = format!(
+        "<@{voter_id}> voted to **{vote_type}** the {emote} **{display_name}** tag on `{username}`."
+    );
 
     CreateMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
         .components(vec![CreateComponent::Container(CreateContainer::new(
             vec![text(content)],
         ))])
+}
+
+pub fn build_verdict_message(
+    voter_id: u64,
+    is_staff: bool,
+    decided: &PlayerEntry,
+    stored_tag_type: Option<&str>,
+    submitter_summary: Option<&SubmissionState>,
+) -> CreateMessage<'static> {
+    let approved = decided.status == PlayerStatus::Approved;
+    let def = lookup_tag(&decided.tag_type);
+    let emote = def.map(|d| d.emote).unwrap_or("");
+    let display = def.map(|d| d.display_name).unwrap_or(&decided.tag_type);
+
+    let action = if approved { "approved" } else { "rejected" };
+    let announce = if is_staff {
+        format!(
+            "<@{voter_id}> {action} the {emote} **{display}** tag on `{}`.",
+            decided.username
+        )
+    } else {
+        format!(
+            "The {emote} **{display}** tag on `{}` was **{action}** by review.",
+            decided.username
+        )
+    };
+
+    let verdict_line = if approved {
+        let stored = stored_tag_type.unwrap_or(&decided.tag_type);
+        let s_def = lookup_tag(stored);
+        let s_emote = s_def.map(|d| d.emote).unwrap_or(emote);
+        let s_display = s_def.map(|d| d.display_name).unwrap_or(display);
+        format!(
+            "→ {s_emote} **{s_display}** added to `{}`",
+            decided.username
+        )
+    } else {
+        format!("→ submission for `{}` dismissed", decided.username)
+    };
+
+    let mut content = format!("{announce}\n{verdict_line}");
+
+    if let Some(state) = submitter_summary {
+        content.push_str(&format!(
+            "\n\n<@{}> All players have been reviewed:",
+            state.submitter_id
+        ));
+        for p in &state.players {
+            let p_emote = lookup_tag(&p.tag_type).map(|d| d.emote).unwrap_or("");
+            let v = match p.status {
+                PlayerStatus::Approved => "approved",
+                PlayerStatus::Rejected => "rejected",
+                PlayerStatus::Pending => "pending",
+            };
+            content.push_str(&format!("\n- {p_emote} `{}` — **{v}**", p.username));
+        }
+    }
+
+    let mut components = vec![CreateComponent::Container(CreateContainer::new(vec![
+        text(content),
+    ]))];
+
+    if approved {
+        if let Some(stored) = stored_tag_type {
+            components.push(CreateComponent::Container(build_tag_preview(
+                &decided.username,
+                &decided.uuid,
+                stored,
+                &decided.reason,
+            )));
+        }
+    }
+
+    CreateMessage::new()
+        .flags(MessageFlags::IS_COMPONENTS_V2)
+        .components(components)
+}
+
+fn build_tag_preview(
+    username: &str,
+    uuid: &str,
+    stored_tag_type: &str,
+    reason: &str,
+) -> CreateContainer<'static> {
+    let header = format!(
+        "## {} New Tag\nIGN - `{username}`\n",
+        blacklist::EMOTE_ADDTAG
+    );
+    let block = format_tag_block(
+        stored_tag_type,
+        &sanitize_reason(reason),
+        "",
+        None,
+        None,
+        false,
+    );
+    let footer = format!("-# UUID: {}", crate::utils::format_uuid_dashed(uuid));
+
+    CreateContainer::new(vec![
+        player_section(format!("{header}{block}\n{footer}"), uuid),
+        separator(),
+    ])
 }
 
 pub fn build_confirmation_message(

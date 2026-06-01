@@ -97,6 +97,8 @@ pub const EMOTE_TAG: &str = "<:tag:1459106270207545417>";
 pub const EMOTE_ADDTAG: &str = "<:addtag:1459106318387249289>";
 pub const EMOTE_EDITTAG: &str = "<:edittag:1459106301929062430>";
 pub const EMOTE_REMOVETAG: &str = "<:removetag:1459161936355786752>";
+pub const EMOTE_EVIDENCE: &str = "<:evidencefound:1482666860225888346>";
+pub const EMOTE_NO_EVIDENCE: &str = "<:noevidence:1482666258938990696>";
 
 pub fn lookup(name: &str) -> Option<&'static TagDefinition> {
     ALL_TAGS.iter().find(|t| t.name == name).copied()

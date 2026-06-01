@@ -7,7 +7,7 @@ use coral_redis::BlacklistEvent;
 use database::{BlacklistRepository, CacheRepository, MemberRepository, TagOp, TagOpError};
 use serenity::all::*;
 
-use super::channel::{self, COLOR_DANGER, format_added_line};
+use super::channel::{self, COLOR_DANGER, evidence_indicator, format_added_line, format_tag_block};
 use crate::framework::{AccessRank, AccessRankExt, Data};
 use crate::interact;
 use crate::interact::send_deferred_error;
@@ -15,8 +15,6 @@ use crate::utils::{format_tag_detail, format_uuid_dashed, sanitize_reason};
 
 const FACE_SIZE: u32 = 128;
 const FACE_FILENAME: &str = "face.png";
-const EMOTE_EVIDENCE: &str = "<:evidencefound:1482666860225888346>";
-const EMOTE_NO_EVIDENCE: &str = "<:noevidence:1482666258938990696>";
 
 fn face_thumbnail() -> CreateThumbnail<'static> {
     CreateThumbnail::new(CreateUnfurledMediaItem::new(format!(
@@ -405,8 +403,6 @@ async fn run_view(ctx: &Context, command: &CommandInteraction, data: &Data) -> R
 
     let mut tag_texts = vec![];
     for tag in &player_tags {
-        let (emote, display_name) = tag_display(&tag.tag_type);
-
         let added_line = if tag.hide_username {
             format!("> -# **\\- <t:{}:R>**", tag.added_on.timestamp())
         } else {
@@ -436,29 +432,16 @@ async fn run_view(ctx: &Context, command: &CommandInteraction, data: &Data) -> R
             format!("> -# **\\- Reviewed by {}**", formatted.join(", "))
         });
 
-        let evidence_indicator = if tag.tag_type == "confirmed_cheater" {
-            if evidence_thread.is_some() {
-                format!(" {EMOTE_EVIDENCE}")
-            } else {
-                format!(" {EMOTE_NO_EVIDENCE}")
-            }
-        } else {
-            String::new()
-        };
+        let indicator = evidence_indicator(&tag.tag_type, evidence_thread.is_some());
 
-        let mut display = format!(
-            "**{} {}**{}\n> {}\n{}",
-            emote,
-            display_name,
-            evidence_indicator,
-            format_tag_detail(tag),
-            added_line
-        );
-        if let Some(line) = reviewed_line {
-            display.push('\n');
-            display.push_str(&line);
-        }
-        tag_texts.push(display);
+        tag_texts.push(format_tag_block(
+            &tag.tag_type,
+            &format_tag_detail(tag),
+            &indicator,
+            Some(&added_line),
+            reviewed_line.as_deref(),
+            false,
+        ));
     }
 
     let mut footer = format!("-# UUID: {dashed_uuid}");

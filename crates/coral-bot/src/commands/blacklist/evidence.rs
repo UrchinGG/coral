@@ -5,11 +5,11 @@ use blacklist::lookup as lookup_tag;
 use database::BlacklistRepository;
 use serenity::all::*;
 
-use super::channel::COLOR_DANGER;
+use super::channel::{COLOR_DANGER, evidence_indicator, format_tag_block};
 use super::reviews;
 use super::tag::get_rank;
 use crate::framework::{AccessRank, Data};
-use crate::utils::{format_uuid_dashed, separator, text};
+use crate::utils::{format_uuid_dashed, sanitize_reason, separator, text};
 use coral_redis::BlacklistEvent;
 
 const QUALIFYING_TAGS: &[&str] = &["closet_cheater", "blatant_cheater", "confirmed_cheater"];
@@ -113,7 +113,7 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         return run_member_confirm(ctx, command, data, discord_id, &player_info, tag).await;
     }
 
-    run_staff_confirm(ctx, command, data, &player_info, &tag.tag_type).await
+    run_staff_confirm(ctx, command, data, &player_info, &tag.tag_type, &tag.reason).await
 }
 
 async fn run_member_confirm(
@@ -160,6 +160,7 @@ async fn run_staff_confirm(
     data: &Data,
     player_info: &crate::api::ResolveResponse,
     original_type: &str,
+    reason: &str,
 ) -> Result<()> {
     let Some(forum_id) = data.evidence_forum_id else {
         return crate::interact::send_deferred_error(
@@ -180,6 +181,7 @@ async fn run_staff_confirm(
         &player_info.username,
         &player_info.uuid,
         original_type,
+        reason,
         &[],
         None,
         &HashMap::new(),
@@ -238,8 +240,20 @@ struct EvidenceState {
     username: String,
     uuid: String,
     original_type: String,
+    reason: String,
     evidence: Vec<EvidenceItem>,
     review_url: Option<String>,
+}
+
+fn face_section_cdn(uuid: &str, content: String) -> CreateContainerComponent<'static> {
+    CreateContainerComponent::Section(CreateSection::new(
+        vec![CreateSectionComponent::TextDisplay(CreateTextDisplay::new(
+            content,
+        ))],
+        CreateSectionAccessory::Thumbnail(CreateThumbnail::new(CreateUnfurledMediaItem::new(
+            format!("https://mc-heads.net/avatar/{uuid}/128"),
+        ))),
+    ))
 }
 
 fn gallery_url_map(message: &Message) -> HashMap<String, String> {
@@ -300,6 +314,7 @@ fn build_evidence_message(
     username: &str,
     uuid: &str,
     original_type: &str,
+    reason: &str,
     evidence: &[EvidenceItem],
     review_thread_url: Option<&str>,
     gallery_urls: &HashMap<String, String>,
@@ -307,25 +322,36 @@ fn build_evidence_message(
     let emote = lookup_tag("confirmed_cheater")
         .map(|d| d.emote)
         .unwrap_or("");
-    let original_display = lookup_tag(original_type)
-        .map(|d| d.display_name)
-        .unwrap_or(original_type);
     let dashed_uuid = format_uuid_dashed(uuid);
 
-    let mut header = format!(
-        "## {emote} Evidence — `{username}`\nUUID: `{dashed_uuid}`\nTag: Confirmed Cheater (was: {original_display})\n-# Originally: {original_type}"
+    let originally_line = lookup_tag(original_type).map(|d| {
+        format!(
+            "> -# **\\- Originally tagged as {} {}**",
+            d.emote, d.display_name
+        )
+    });
+
+    let block = format_tag_block(
+        "confirmed_cheater",
+        &sanitize_reason(reason),
+        &evidence_indicator("confirmed_cheater", !evidence.is_empty()),
+        originally_line.as_deref(),
+        None,
+        false,
     );
+
+    let header = format!("## {emote} Evidence — `{username}`\n");
+    let section_footer = format!("-# UUID: {dashed_uuid}");
+    let mut meta = format!("-# Originally: {original_type}");
     if let Some(url) = review_thread_url {
-        header.push_str(&format!("\nReview: {url}"));
+        meta.push_str(&format!(" · [Review]({url})"));
     }
 
-    let mut parts: Vec<CreateContainerComponent<'static>> =
-        vec![text(header), separator(), text("**Evidence**")];
-
+    let mut parts: Vec<CreateContainerComponent<'static>> = Vec::new();
     if evidence.is_empty() {
         parts.push(text("-# No evidence added yet"));
     } else {
-        let gallery_items: Vec<CreateMediaGalleryItem<'static>> = evidence
+        let items: Vec<CreateMediaGalleryItem<'static>> = evidence
             .iter()
             .map(|e| {
                 let url = gallery_urls
@@ -336,10 +362,14 @@ fn build_evidence_message(
             })
             .collect();
         parts.push(CreateContainerComponent::MediaGallery(
-            CreateMediaGallery::new(gallery_items),
+            CreateMediaGallery::new(items),
         ));
     }
-
+    parts.push(face_section_cdn(
+        uuid,
+        format!("{header}{block}\n{section_footer}"),
+    ));
+    parts.push(text(meta));
     parts.push(separator());
 
     if !evidence.is_empty() {
@@ -366,7 +396,7 @@ fn build_evidence_message(
             vec![
                 CreateButton::new("evidence_add_media")
                     .label("Add Media")
-                    .style(ButtonStyle::Secondary),
+                    .style(ButtonStyle::Primary),
                 CreateButton::new("evidence_archive")
                     .label("Archive")
                     .style(ButtonStyle::Danger),
@@ -375,7 +405,9 @@ fn build_evidence_message(
         ),
     ));
 
-    vec![CreateComponent::Container(CreateContainer::new(parts))]
+    vec![CreateComponent::Container(
+        CreateContainer::new(parts).accent_color(COLOR_DANGER),
+    )]
 }
 
 fn build_archived_evidence_message(
@@ -388,20 +420,26 @@ fn build_archived_evidence_message(
         .unwrap_or("");
     let dashed_uuid = format_uuid_dashed(&state.uuid);
 
-    let mut header = format!(
-        "## {emote} Evidence — `{username}` (Archived)\nUUID: `{dashed_uuid}`\nTag: Reverted to {reverted_display} (was: Confirmed Cheater)\n-# Originally: {original_type}",
-        username = state.username,
-        original_type = state.original_type,
+    let reverted_line = format!("> -# **\\- Reverted to {reverted_display}**");
+    let block = format_tag_block(
+        "confirmed_cheater",
+        &sanitize_reason(&state.reason),
+        "",
+        Some(&reverted_line),
+        None,
+        true,
     );
+
+    let header = format!("## {emote} Evidence — `{}` (Archived)\n", state.username);
+    let section_footer = format!("-# UUID: {dashed_uuid}");
+    let mut meta = format!("-# Originally: {}", state.original_type);
     if let Some(url) = &state.review_url {
-        header.push_str(&format!("\nReview: {url}"));
+        meta.push_str(&format!(" · [Review]({url})"));
     }
 
-    let mut parts: Vec<CreateContainerComponent<'static>> =
-        vec![text(header), separator(), text("**Evidence (Archived)**")];
-
+    let mut parts: Vec<CreateContainerComponent<'static>> = Vec::new();
     if !state.evidence.is_empty() {
-        let gallery_items: Vec<CreateMediaGalleryItem<'static>> = state
+        let items: Vec<CreateMediaGalleryItem<'static>> = state
             .evidence
             .iter()
             .map(|e| {
@@ -413,10 +451,14 @@ fn build_archived_evidence_message(
             })
             .collect();
         parts.push(CreateContainerComponent::MediaGallery(
-            CreateMediaGallery::new(gallery_items),
+            CreateMediaGallery::new(items),
         ));
     }
-
+    parts.push(face_section_cdn(
+        &state.uuid,
+        format!("{header}{block}\n{section_footer}"),
+    ));
+    parts.push(text(meta));
     parts.push(separator());
 
     vec![CreateComponent::Container(
@@ -430,36 +472,24 @@ fn parse_state_from_message(message: &Message) -> Option<EvidenceState> {
         _ => None,
     })?;
 
-    let mut username = String::new();
-    let mut uuid = String::new();
-    let mut original_type = String::new();
-    let mut evidence = Vec::new();
-    let mut review_url = None;
+    let mut state = EvidenceState {
+        username: String::new(),
+        uuid: String::new(),
+        original_type: String::new(),
+        reason: String::new(),
+        evidence: Vec::new(),
+        review_url: None,
+    };
 
     for part in &container.components {
         match part {
             ContainerComponent::TextDisplay(td) => {
-                let content = td.content.as_deref().unwrap_or("");
-                for line in content.lines() {
-                    if line.starts_with("UUID: `") {
-                        uuid = line
-                            .trim_start_matches("UUID: `")
-                            .trim_end_matches('`')
-                            .replace('-', "");
-                    }
-                    if let Some(name_part) = line.strip_prefix("## ") {
-                        if let Some(after_dash) = name_part.split(" — `").nth(1) {
-                            username = after_dash
-                                .trim_end_matches('`')
-                                .trim_end_matches(" (Archived)")
-                                .to_string();
-                        }
-                    }
-                    if let Some(rest) = line.strip_prefix("-# Originally: ") {
-                        original_type = rest.trim().to_string();
-                    }
-                    if let Some(rest) = line.strip_prefix("Review: ") {
-                        review_url = Some(rest.trim().to_string());
+                ingest_text(&mut state, td.content.as_deref().unwrap_or(""));
+            }
+            ContainerComponent::Section(section) => {
+                for sc in &*section.components {
+                    if let SectionComponent::TextDisplay(td) = sc {
+                        ingest_text(&mut state, td.content.as_deref().unwrap_or(""));
                     }
                 }
             }
@@ -474,7 +504,7 @@ fn parse_state_from_message(message: &Message) -> Option<EvidenceState> {
                     if !url.is_empty() {
                         let filename = url.rsplit('/').next().unwrap_or("evidence.png");
                         let filename = filename.split('?').next().unwrap_or(filename);
-                        evidence.push(EvidenceItem {
+                        state.evidence.push(EvidenceItem {
                             filename: filename.to_string(),
                         });
                     }
@@ -484,17 +514,51 @@ fn parse_state_from_message(message: &Message) -> Option<EvidenceState> {
         }
     }
 
-    if uuid.is_empty() {
+    if state.uuid.is_empty() {
         return None;
     }
+    Some(state)
+}
 
-    Some(EvidenceState {
-        username,
-        uuid,
-        original_type,
-        evidence,
-        review_url,
-    })
+fn ingest_text(state: &mut EvidenceState, content: &str) {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(name) = trimmed.strip_prefix("## ").and_then(extract_evidence_name) {
+            state.username = name;
+        } else if let Some(rest) = trimmed.strip_prefix("-# UUID: ") {
+            state.uuid = rest
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .replace('-', "");
+        } else if let Some(rest) = trimmed.strip_prefix("UUID: `") {
+            state.uuid = rest.trim_end_matches('`').replace('-', "");
+        } else if let Some(rest) = trimmed.strip_prefix("-# Originally: ") {
+            let original = rest.split(" · ").next().unwrap_or(rest).trim();
+            state.original_type = original.to_string();
+            if let Some(url) = rest.split("[Review](").nth(1) {
+                state.review_url = url.split(')').next().map(|s| s.to_string());
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("Review: ") {
+            state.review_url = Some(rest.trim().to_string());
+        } else if state.reason.is_empty() {
+            if let Some(rest) = trimmed.strip_prefix("> ") {
+                if !rest.starts_with("-#") {
+                    state.reason = rest.to_string();
+                }
+            }
+        }
+    }
+}
+
+fn extract_evidence_name(header: &str) -> Option<String> {
+    let after = header.split(" — `").nth(1)?;
+    Some(
+        after
+            .trim_end_matches('`')
+            .trim_end_matches(" (Archived)")
+            .to_string(),
+    )
 }
 
 async fn try_convert_to_confirmed(data: &Data, state: &EvidenceState, actor_id: u64) -> Result<()> {
@@ -646,6 +710,7 @@ pub async fn handle_media_modal(
         &state.username,
         &state.uuid,
         &state.original_type,
+        &state.reason,
         &state.evidence,
         state.review_url.as_deref(),
         &urls,
@@ -761,6 +826,7 @@ pub async fn handle_remove(
         &state.username,
         &state.uuid,
         &state.original_type,
+        &state.reason,
         &state.evidence,
         state.review_url.as_deref(),
         &urls,
@@ -917,6 +983,7 @@ pub async fn create_evidence_from_review(
     uuid: &str,
     username: &str,
     original_type: &str,
+    reason: &str,
     tag_id: i64,
     media_urls: &[String],
     review_thread_url: Option<&str>,
@@ -954,6 +1021,7 @@ pub async fn create_evidence_from_review(
         username,
         uuid,
         original_type,
+        reason,
         &[],
         review_thread_url,
         &no_urls,
@@ -987,6 +1055,7 @@ pub async fn create_evidence_from_review(
                 username,
                 uuid,
                 original_type,
+                reason,
                 &evidence,
                 review_thread_url,
                 &no_urls,
