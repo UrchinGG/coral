@@ -67,13 +67,51 @@ jobs:
             docker push "${REGISTRY}/${svc}:latest"
           done
 
-      - name: Deploy on coral-vm and wait for healthy
+      - name: Pull new images on coral-vm
         run: |
           ssh -o StrictHostKeyChecking=accept-new debian@coral-vm.tailde25ae.ts.net <<'REMOTE'
             set -e
             cd ~/coral-r730
             docker compose pull coral-api coral-bot coral-sync coral-web
-            docker compose up -d --wait --wait-timeout 180 coral-api coral-bot coral-sync coral-web
+          REMOTE
+
+      - name: Roll coral-api (new replica → wait healthy → stop old)
+        run: |
+          ssh debian@coral-vm.tailde25ae.ts.net <<'REMOTE'
+            set -e
+            cd ~/coral-r730
+            OLD=$(docker compose ps -q coral-api)
+            if [ -z "$OLD" ]; then
+              docker compose up -d --wait --wait-timeout 180 coral-api
+              exit 0
+            fi
+            docker compose up -d --no-recreate --scale coral-api=2 coral-api
+            NEW=$(docker compose ps -q coral-api | grep -v "$OLD" | head -1)
+            if [ -z "$NEW" ]; then
+              echo "Failed to spawn new replica"; exit 1
+            fi
+            echo "OLD=$OLD NEW=$NEW"
+            for i in $(seq 1 90); do
+              h=$(docker inspect --format '{{.State.Health.Status}}' "$NEW" 2>/dev/null || echo missing)
+              [ "$h" = "healthy" ] && break
+              [ "$h" = "missing" ] && { echo "new container disappeared"; exit 1; }
+              sleep 2
+            done
+            if [ "$h" != "healthy" ]; then
+              echo "new replica never healthy ($h), reverting"
+              docker logs "$NEW" --tail 80 || true
+              docker stop "$NEW" && docker rm -f "$NEW"
+              exit 1
+            fi
+            docker stop "$OLD" && docker rm -f "$OLD"
+          REMOTE
+
+      - name: Update bot, sync, web
+        run: |
+          ssh debian@coral-vm.tailde25ae.ts.net <<'REMOTE'
+            set -e
+            cd ~/coral-r730
+            docker compose up -d --wait --wait-timeout 120 coral-bot coral-sync coral-web
             docker image prune -f
           REMOTE
 
