@@ -22,8 +22,15 @@ pub struct SkinImage {
 
 #[async_trait]
 pub trait SkinProvider: Send + Sync {
-    async fn fetch(&self, uuid: &str) -> Option<SkinImage>;
-    async fn fetch_with_url(&self, uuid: &str, skin_url: &str, slim: bool) -> Option<SkinImage>;
+    async fn fetch(&self, uuid: &str, width: u32, height: u32) -> Option<SkinImage>;
+    async fn fetch_with_url(
+        &self,
+        uuid: &str,
+        skin_url: &str,
+        slim: bool,
+        width: u32,
+        height: u32,
+    ) -> Option<SkinImage>;
     async fn fetch_face(&self, uuid: &str, size: u32) -> Option<Vec<u8>>;
 }
 
@@ -72,6 +79,8 @@ impl LocalSkinProvider {
         uuid: &str,
         skin_url: &str,
         slim_override: Option<bool>,
+        width: u32,
+        height: u32,
     ) -> Option<SkinImage> {
         let mut skin = self.download_skin(skin_url).await?;
         if let Some(slim) = slim_override {
@@ -80,7 +89,11 @@ impl LocalSkinProvider {
 
         let output = self
             .renderer
-            .render(&skin, &Pose::standing(), OutputType::full_body(400, 600))
+            .render(
+                &skin,
+                &Pose::standing(),
+                OutputType::full_body(width, height),
+            )
             .ok()?;
 
         let skin_image = SkinImage {
@@ -88,21 +101,19 @@ impl LocalSkinProvider {
             slim: skin.is_slim(),
         };
 
-        self.cache_set(uuid, &skin_image).await;
+        self.cache_set(uuid, width, height, &skin_image).await;
         Some(skin_image)
     }
 
-    async fn cache_get(&self, uuid: &str) -> Option<SkinImage> {
-        let key = format!("cache:skin:{uuid}");
+    async fn cache_get(&self, uuid: &str, width: u32, height: u32) -> Option<SkinImage> {
+        let key = format!("cache:skin:{uuid}:{width}x{height}");
         let data: Vec<u8> = self.redis.clone().get(&key).await.ok()?;
-        if data.len() < 9 {
+        if data.is_empty() {
             return None;
         }
 
         let slim = data[0] != 0;
-        let width = u32::from_le_bytes(data[1..5].try_into().ok()?);
-        let height = u32::from_le_bytes(data[5..9].try_into().ok()?);
-        let pixels = data[9..].to_vec();
+        let pixels = data[1..].to_vec();
 
         let image = RgbaImage::from_raw(width, height, pixels)?;
         Some(SkinImage {
@@ -111,15 +122,12 @@ impl LocalSkinProvider {
         })
     }
 
-    async fn cache_set(&self, uuid: &str, skin: &SkinImage) {
-        let key = format!("cache:skin:{uuid}");
+    async fn cache_set(&self, uuid: &str, width: u32, height: u32, skin: &SkinImage) {
+        let key = format!("cache:skin:{uuid}:{width}x{height}");
         let rgba = skin.data.to_rgba8();
-        let (width, height) = rgba.dimensions();
 
-        let mut buf = Vec::with_capacity(9 + (width * height * 4) as usize);
+        let mut buf = Vec::with_capacity(1 + (width * height * 4) as usize);
         buf.push(skin.slim as u8);
-        buf.extend_from_slice(&width.to_le_bytes());
-        buf.extend_from_slice(&height.to_le_bytes());
         buf.extend_from_slice(rgba.as_raw());
 
         let _: Result<(), _> = self.redis.clone().set_ex(&key, buf, CACHE_TTL_SECS).await;
@@ -128,23 +136,31 @@ impl LocalSkinProvider {
 
 #[async_trait]
 impl SkinProvider for LocalSkinProvider {
-    async fn fetch(&self, uuid: &str) -> Option<SkinImage> {
-        if let Some(cached) = self.cache_get(uuid).await {
+    async fn fetch(&self, uuid: &str, width: u32, height: u32) -> Option<SkinImage> {
+        if let Some(cached) = self.cache_get(uuid, width, height).await {
             return Some(cached);
         }
 
         let profile = self.mojang.get_profile(uuid).await.ok()?;
         let skin_url = profile.skin_url?;
-        self.download_and_render(uuid, &skin_url, Some(profile.slim))
+        self.download_and_render(uuid, &skin_url, Some(profile.slim), width, height)
             .await
     }
 
-    async fn fetch_with_url(&self, uuid: &str, skin_url: &str, slim: bool) -> Option<SkinImage> {
-        if let Some(cached) = self.cache_get(uuid).await {
+    async fn fetch_with_url(
+        &self,
+        uuid: &str,
+        skin_url: &str,
+        slim: bool,
+        width: u32,
+        height: u32,
+    ) -> Option<SkinImage> {
+        if let Some(cached) = self.cache_get(uuid, width, height).await {
             return Some(cached);
         }
 
-        self.download_and_render(uuid, skin_url, Some(slim)).await
+        self.download_and_render(uuid, skin_url, Some(slim), width, height)
+            .await
     }
 
     async fn fetch_face(&self, uuid: &str, size: u32) -> Option<Vec<u8>> {

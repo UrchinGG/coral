@@ -931,19 +931,10 @@ impl Shape for SkinSection<'_> {
         if let Some(skin) = &self.skin {
             let level_bottom = SKIN_PADDING + level_text_height;
             let available_h = mode_y - level_bottom;
-            let max_w = COL_WIDTH - 26;
-            let (orig_w, orig_h) = (skin.width(), skin.height());
-            let scale = f64::min(
-                max_w as f64 / orig_w as f64,
-                available_h as f64 / orig_h as f64,
-            );
-            let new_w = (orig_w as f64 * scale) as u32;
-            let new_h = (orig_h as f64 * scale) as u32;
-            let skin_x = (COL_WIDTH - new_w) / 2;
-            let skin_y = level_bottom + (available_h - new_h) / 2 + 12;
-            Image::new(skin)
-                .size(new_w, new_h)
-                .draw(&mut ctx.at(skin_x as i32, skin_y as i32));
+            let (w, h) = (skin.width(), skin.height());
+            let skin_x = (COL_WIDTH - w) / 2;
+            let skin_y = level_bottom + (available_h - h) / 2 + 12;
+            Image::new(skin).draw(&mut ctx.at(skin_x as i32, skin_y as i32));
         }
     }
 

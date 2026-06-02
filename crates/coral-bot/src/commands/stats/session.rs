@@ -1143,7 +1143,8 @@ async fn fetch_player(
             let (api, guild, skin) = tokio::join!(
                 data.api.get_player_stats(player),
                 data.api.get_guild(uuid, Some("player")),
-                data.skin_provider.fetch(uuid),
+                data.skin_provider
+                    .fetch(uuid, super::SKIN_RENDER_WIDTH, super::SKIN_RENDER_HEIGHT,),
             );
             let resp = api.map_err(map_api_error)?;
             if resp.uuid == uuid {

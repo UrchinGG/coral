@@ -24,6 +24,9 @@ use render::SessionType;
 
 pub(super) const CACHE_TTL_SECS: u64 = 2 * 60;
 
+pub(super) const SKIN_RENDER_WIDTH: u32 = 192;
+pub(super) const SKIN_RENDER_HEIGHT: u32 = 288;
+
 const PERIODS: [Period; 4] = [
     Period::Daily,
     Period::Weekly,
@@ -291,8 +294,16 @@ pub(super) async fn fetch_skin(
     slim: bool,
 ) -> Option<clients::SkinImage> {
     match skin_url {
-        Some(url) => data.skin_provider.fetch_with_url(uuid, url, slim).await,
-        None => data.skin_provider.fetch(uuid).await,
+        Some(url) => {
+            data.skin_provider
+                .fetch_with_url(uuid, url, slim, SKIN_RENDER_WIDTH, SKIN_RENDER_HEIGHT)
+                .await
+        }
+        None => {
+            data.skin_provider
+                .fetch(uuid, SKIN_RENDER_WIDTH, SKIN_RENDER_HEIGHT)
+                .await
+        }
     }
 }
 

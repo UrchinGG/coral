@@ -216,7 +216,7 @@ pub async fn player_skin(
     let identifier = extract_identifier(&query)?;
     let (uuid, _) = resolve_identifier(&state, identifier).await?;
     let skin = provider
-        .fetch(&uuid)
+        .fetch(&uuid, 400, 600)
         .await
         .ok_or_else(|| ApiError::NotFound("skin not found".into()))?;
 
@@ -299,8 +299,6 @@ pub async fn player_body(
     dev_auth: Option<Extension<DeveloperKeyAuth>>,
     Query(query): Query<BodyQuery>,
 ) -> Result<Response, ApiError> {
-    use image::GenericImageView;
-
     if let Some(Extension(ref dev)) = dev_auth {
         dev.require(permissions::PLAYER_DATA)?;
     }
@@ -314,18 +312,13 @@ pub async fn player_body(
         .or(query.name.as_deref())
         .ok_or_else(|| ApiError::BadRequest("query parameter 'uuid' or 'name' required".into()))?;
     let (uuid, _) = resolve_identifier(&state, identifier).await?;
-    let mut image = provider
-        .fetch(&uuid)
+    let w = query.width.unwrap_or(400).clamp(32, 2048);
+    let h = query.height.unwrap_or(600).clamp(32, 2048);
+    let image = provider
+        .fetch(&uuid, w, h)
         .await
         .ok_or_else(|| ApiError::NotFound("skin not found".into()))?
         .data;
-
-    let (default_w, default_h) = (image.width(), image.height());
-    let w = query.width.unwrap_or(default_w).clamp(32, 2048);
-    let h = query.height.unwrap_or(default_h).clamp(32, 2048);
-    if w != default_w || h != default_h {
-        image = image.resize_exact(w, h, image::imageops::FilterType::Lanczos3);
-    }
 
     let mut buf = Cursor::new(Vec::new());
     image

@@ -250,7 +250,8 @@ async fn fetch_player_data<G: GameStats>(
             let (api, guild, skin, history) = tokio::join!(
                 data.api.get_player_stats(player),
                 data.api.get_guild(uuid, Some("player")),
-                data.skin_provider.fetch(uuid),
+                data.skin_provider
+                    .fetch(uuid, super::SKIN_RENDER_WIDTH, super::SKIN_RENDER_HEIGHT,),
                 cache_repo.get_all_snapshots_mapped(uuid, G::extract_winstreak_snapshot),
             );
             let resp = api.map_err(map_api_error)?;
