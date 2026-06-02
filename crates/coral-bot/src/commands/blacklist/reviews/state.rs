@@ -169,14 +169,6 @@ fn parse_player_block(block: &[&ContainerComponent]) -> Option<PlayerEntry> {
                         }
                     }
                 }
-                if let SectionAccessory::Thumbnail(thumb) = &*section.accessory {
-                    let url = thumb.media.url.to_string();
-                    if url.contains("/attachments/") {
-                        player.evidence.push(Evidence::Attachment {
-                            filename: attachment_filename_from_url(&url),
-                        });
-                    }
-                }
             }
             ContainerComponent::MediaGallery(gallery) => {
                 for item in &*gallery.items {
@@ -295,10 +287,10 @@ fn new_player_entry(username: String, tag_type: &str) -> PlayerEntry {
 }
 
 fn parse_status_line(text: &str) -> Option<(PlayerStatus, Option<String>, Option<String>)> {
-    if text.starts_with("✅ Approved") {
+    if text.starts_with(EMOTE_EVIDENCE) && text.contains("Approved") {
         return Some((PlayerStatus::Approved, None, None));
     }
-    if text.starts_with("❌ Rejected") {
+    if text.starts_with(EMOTE_NO_EVIDENCE) && text.contains("Rejected") {
         let note = text.find('"').and_then(|start| {
             let rest = &text[start + 1..];
             rest.find('"').map(|end| rest[..end].to_string())
@@ -386,10 +378,10 @@ pub fn media_gallery_for(
 pub fn render_status_line(player: &PlayerEntry) -> String {
     match &player.status {
         PlayerStatus::Pending => "-# Pending review".to_string(),
-        PlayerStatus::Approved => "✅ Approved".to_string(),
+        PlayerStatus::Approved => format!("{EMOTE_EVIDENCE} **Approved**"),
         PlayerStatus::Rejected => match &player.review_note {
-            Some(note) => format!("❌ Rejected — \"{note}\""),
-            None => "❌ Rejected".to_string(),
+            Some(note) => format!("{EMOTE_NO_EVIDENCE} **Rejected** — \"{note}\""),
+            None => format!("{EMOTE_NO_EVIDENCE} **Rejected**"),
         },
     }
 }

@@ -246,9 +246,7 @@ pub fn build_submitted_controls(
                 .into(),
             ),
         ));
-        if let Some(indicator) = render_vote_indicator(player) {
-            parts.push(text(indicator));
-        }
+        parts.push(text(render_vote_indicator(player)));
         if has_disagreement(player) {
             parts.push(text("-# Mod vote needed to resolve"));
         }
@@ -257,24 +255,39 @@ pub fn build_submitted_controls(
     }
 }
 
-pub fn render_vote_indicator(player: &PlayerEntry) -> Option<String> {
-    if player.accept_votes.is_empty() && player.reject_votes.is_empty() {
-        return None;
+pub fn render_vote_indicator(player: &PlayerEntry) -> String {
+    let threshold = super::VOTE_THRESHOLD;
+    let accept = player.accept_votes.len();
+    let reject = player.reject_votes.len();
+
+    if accept == 0 && reject == 0 {
+        return format!("[0/{threshold}]");
     }
+    let unanimous = accept == 0 || reject == 0;
     let mut lines = Vec::new();
-    if !player.accept_votes.is_empty() {
+    if accept > 0 {
+        let suffix = if unanimous {
+            format!(" [{accept}/{threshold}]")
+        } else {
+            String::new()
+        };
         lines.push(format!(
-            "{EMOTE_EVIDENCE} Accept · {}",
+            "{EMOTE_EVIDENCE} Accept · {}{suffix}",
             mentions(&player.accept_votes)
         ));
     }
-    if !player.reject_votes.is_empty() {
+    if reject > 0 {
+        let suffix = if unanimous {
+            format!(" [{reject}/{threshold}]")
+        } else {
+            String::new()
+        };
         lines.push(format!(
-            "{EMOTE_NO_EVIDENCE} Reject · {}",
+            "{EMOTE_NO_EVIDENCE} Reject · {}{suffix}",
             mentions(&player.reject_votes)
         ));
     }
-    Some(lines.join("\n"))
+    lines.join("\n")
 }
 
 fn mentions(ids: &[u64]) -> String {
@@ -357,7 +370,7 @@ pub fn build_editing_footer(
         );
         buttons.push(
             CreateButton::new(format!("review_cancel_thread:{id}"))
-                .label("Cancel")
+                .label("Cancel Review")
                 .style(ButtonStyle::Danger),
         );
     }
@@ -379,7 +392,7 @@ pub fn build_submit_reminder(submitter_id: u64) -> Vec<CreateComponent<'static>>
                     .label("Submit")
                     .style(ButtonStyle::Success),
                 CreateButton::new(format!("review_cancel_thread:{submitter_id}"))
-                    .label("Cancel")
+                    .label("Cancel Review")
                     .style(ButtonStyle::Danger),
             ]
             .into(),
@@ -423,7 +436,7 @@ pub fn build_verdict_message(
     let action = if approved { "approved" } else { "rejected" };
     let announce = if is_staff {
         format!(
-            "<@{voter_id}> {action} the {emote} **{display}** tag on `{}`.",
+            "<@{voter_id}> **{action}** the {emote} **{display}** tag on `{}`.",
             decided.username
         )
     } else {
