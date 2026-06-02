@@ -414,24 +414,35 @@ impl<'a> BlacklistRepository<'a> {
         .map(|r| r.rows_affected())
     }
 
-    pub async fn convert_tag_to_confirmed(&self, tag_id: i64) -> Result<bool, sqlx::Error> {
-        sqlx::query("UPDATE player_tags SET tag_type = 'confirmed_cheater' WHERE id = $1 AND removed_on IS NULL")
-            .bind(tag_id)
-            .execute(self.pool)
-            .await
-            .map(|r| r.rows_affected() > 0)
-    }
-
-    pub async fn revert_tag_from_confirmed(
+    pub async fn replace_tag(
         &self,
-        tag_id: i64,
-        original_type: &str,
-    ) -> Result<bool, sqlx::Error> {
-        sqlx::query("UPDATE player_tags SET tag_type = $2 WHERE id = $1 AND removed_on IS NULL")
-            .bind(tag_id)
-            .bind(original_type)
-            .execute(self.pool)
-            .await
-            .map(|r| r.rows_affected() > 0)
+        old_id: i64,
+        new_type: &str,
+        new_reason: &str,
+        actor: i64,
+    ) -> Result<i64, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        let (player_id,): (i64,) = sqlx::query_as(
+            "UPDATE player_tags SET removed_by = $1, removed_on = NOW()
+             WHERE id = $2 AND removed_on IS NULL
+             RETURNING player_id",
+        )
+        .bind(actor)
+        .bind(old_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let (new_id,): (i64,) = sqlx::query_as(
+            "INSERT INTO player_tags (player_id, tag_type, reason, added_by, hide_username)
+             VALUES ($1, $2, $3, $4, FALSE)
+             RETURNING id",
+        )
+        .bind(player_id)
+        .bind(new_type)
+        .bind(new_reason)
+        .bind(actor)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(new_id)
     }
 }

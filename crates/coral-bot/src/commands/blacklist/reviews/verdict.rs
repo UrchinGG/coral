@@ -261,7 +261,6 @@ pub async fn handle_approve(
             data,
             &player_uuid,
             &player_username,
-            &player_tag_type,
             &player_reason,
             tag_id,
             &media_urls,

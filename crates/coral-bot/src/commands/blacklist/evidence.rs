@@ -5,14 +5,12 @@ use blacklist::lookup as lookup_tag;
 use database::BlacklistRepository;
 use serenity::all::*;
 
-use super::channel::{COLOR_DANGER, evidence_indicator, format_tag_block};
+use super::channel::{COLOR_DANGER, format_tag_block};
 use super::reviews;
 use super::tag::get_rank;
 use crate::framework::{AccessRank, Data};
 use crate::utils::{format_uuid_dashed, sanitize_reason, separator, text};
 use coral_redis::BlacklistEvent;
-
-const QUALIFYING_TAGS: &[&str] = &["closet_cheater", "blatant_cheater", "confirmed_cheater"];
 
 fn extract_uuid_from_title(title: &str) -> Option<String> {
     let last = title.rsplit('|').next()?.trim();
@@ -202,7 +200,7 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         return run_member_confirm(ctx, command, data, discord_id, &player_info, tag).await;
     }
 
-    run_staff_confirm(ctx, command, data, &player_info, &tag.tag_type, &tag.reason).await
+    run_staff_confirm(ctx, command, data, &player_info, &tag.reason).await
 }
 
 async fn run_member_confirm(
@@ -248,7 +246,6 @@ async fn run_staff_confirm(
     command: &CommandInteraction,
     data: &Data,
     player_info: &crate::api::ResolveResponse,
-    original_type: &str,
     reason: &str,
 ) -> Result<()> {
     let Some(forum_id) = data.evidence_forum_id else {
@@ -269,7 +266,6 @@ async fn run_staff_confirm(
     let message_content = build_evidence_message(
         &player_info.username,
         &player_info.uuid,
-        original_type,
         reason,
         &[],
         None,
@@ -328,7 +324,6 @@ struct EvidenceItem {
 struct EvidenceState {
     username: String,
     uuid: String,
-    original_type: String,
     reason: String,
     evidence: Vec<EvidenceItem>,
     review_url: Option<String>,
@@ -421,41 +416,29 @@ fn url_extension(url: &str) -> &str {
 fn build_evidence_message(
     username: &str,
     uuid: &str,
-    original_type: &str,
     reason: &str,
     evidence: &[EvidenceItem],
     review_thread_url: Option<&str>,
     gallery_urls: &HashMap<String, String>,
 ) -> Vec<CreateComponent<'static>> {
-    let emote = lookup_tag("confirmed_cheater")
-        .map(|d| d.emote)
-        .unwrap_or("");
     let dashed_uuid = format_uuid_dashed(uuid);
-
-    let originally_line = lookup_tag(original_type).map(|d| {
-        format!(
-            "> -# **\\- Originally tagged as {} {}**",
-            d.emote, d.display_name
-        )
-    });
 
     let block = format_tag_block(
         "confirmed_cheater",
         &sanitize_reason(reason),
-        &evidence_indicator("confirmed_cheater", !evidence.is_empty()),
-        originally_line.as_deref(),
+        "",
+        None,
         None,
         false,
     );
 
-    let header = format!("## {emote} Evidence — `{username}`\n");
-    let section_footer = format!("-# UUID: {dashed_uuid}");
-    let mut meta = format!("-# Originally: {original_type}");
+    let mut uuid_footer = format!("-# UUID: {dashed_uuid}");
     if let Some(url) = review_thread_url {
-        meta.push_str(&format!(" · [Review]({url})"));
+        uuid_footer.push_str(&format!(" · [Review]({url})"));
     }
 
     let mut parts: Vec<CreateContainerComponent<'static>> = Vec::new();
+    parts.push(text(format!("## Evidence — `{username}`")));
     if evidence.is_empty() {
         parts.push(text("-# No evidence added yet"));
     } else {
@@ -473,8 +456,7 @@ fn build_evidence_message(
             CreateMediaGallery::new(items),
         ));
     }
-    parts.push(face_section(format!("{header}{block}\n{section_footer}")));
-    parts.push(text(meta));
+    parts.push(face_section(format!("{block}\n{uuid_footer}")));
     parts.push(separator());
 
     if !evidence.is_empty() {
@@ -517,32 +499,30 @@ fn build_evidence_message(
 
 fn build_archived_evidence_message(
     state: &EvidenceState,
-    reverted_display: &str,
     gallery_urls: &HashMap<String, String>,
 ) -> Vec<CreateComponent<'static>> {
-    let emote = lookup_tag("confirmed_cheater")
-        .map(|d| d.emote)
-        .unwrap_or("");
     let dashed_uuid = format_uuid_dashed(&state.uuid);
 
-    let reverted_line = format!("> -# **\\- Reverted to {reverted_display}**");
+    let removed_line = "> -# **\\- Tag removed**".to_string();
     let block = format_tag_block(
         "confirmed_cheater",
         &sanitize_reason(&state.reason),
         "",
-        Some(&reverted_line),
+        Some(&removed_line),
         None,
         true,
     );
 
-    let header = format!("## {emote} Evidence — `{}` (Archived)\n", state.username);
-    let section_footer = format!("-# UUID: {dashed_uuid}");
-    let mut meta = format!("-# Originally: {}", state.original_type);
+    let mut uuid_footer = format!("-# UUID: {dashed_uuid}");
     if let Some(url) = &state.review_url {
-        meta.push_str(&format!(" · [Review]({url})"));
+        uuid_footer.push_str(&format!(" · [Review]({url})"));
     }
 
     let mut parts: Vec<CreateContainerComponent<'static>> = Vec::new();
+    parts.push(text(format!(
+        "## Evidence — `{}` (Archived)",
+        state.username
+    )));
     if !state.evidence.is_empty() {
         let items: Vec<CreateMediaGalleryItem<'static>> = state
             .evidence
@@ -559,8 +539,7 @@ fn build_archived_evidence_message(
             CreateMediaGallery::new(items),
         ));
     }
-    parts.push(face_section(format!("{header}{block}\n{section_footer}")));
-    parts.push(text(meta));
+    parts.push(face_section(format!("{block}\n{uuid_footer}")));
     parts.push(separator());
 
     vec![CreateComponent::Container(
@@ -577,7 +556,6 @@ fn parse_state_from_message(message: &Message) -> Option<EvidenceState> {
     let mut state = EvidenceState {
         username: String::new(),
         uuid: String::new(),
-        original_type: String::new(),
         reason: String::new(),
         evidence: Vec::new(),
         review_url: None,
@@ -633,16 +611,11 @@ fn ingest_text(state: &mut EvidenceState, content: &str) {
                 .next()
                 .unwrap_or("")
                 .replace('-', "");
-        } else if let Some(rest) = trimmed.strip_prefix("UUID: `") {
-            state.uuid = rest.trim_end_matches('`').replace('-', "");
-        } else if let Some(rest) = trimmed.strip_prefix("-# Originally: ") {
-            let original = rest.split(" · ").next().unwrap_or(rest).trim();
-            state.original_type = original.to_string();
             if let Some(url) = rest.split("[Review](").nth(1) {
                 state.review_url = url.split(')').next().map(|s| s.to_string());
             }
-        } else if let Some(rest) = trimmed.strip_prefix("Review: ") {
-            state.review_url = Some(rest.trim().to_string());
+        } else if let Some(rest) = trimmed.strip_prefix("UUID: `") {
+            state.uuid = rest.trim_end_matches('`').replace('-', "");
         } else if state.reason.is_empty() {
             if let Some(rest) = trimmed.strip_prefix("> ") {
                 if !rest.starts_with("-#") {
@@ -664,29 +637,30 @@ fn extract_evidence_name(header: &str) -> Option<String> {
 }
 
 async fn try_convert_to_confirmed(data: &Data, state: &EvidenceState, actor_id: u64) -> Result<()> {
-    if state.original_type.is_empty() || state.original_type == "confirmed_cheater" {
-        return Ok(());
-    }
     let repo = BlacklistRepository::new(data.db.pool());
     let tags = repo.get_tags(&state.uuid).await?;
-    if let Some(tag) = tags.iter().find(|t| t.tag_type == state.original_type) {
-        let old_tag_type = tag.tag_type.clone();
-        let old_reason = tag.reason.clone();
-        let old_tag_id = tag.id;
-        repo.convert_tag_to_confirmed(tag.id).await?;
-        if let Some(updated_tag) = repo.get_tag_by_id(tag.id).await? {
-            data.event_publisher
-                .publish(&BlacklistEvent::TagOverwritten {
-                    uuid: state.uuid.clone(),
-                    old_tag_id,
-                    old_tag_type,
-                    old_reason,
-                    new_tag_id: updated_tag.id,
-                    overwritten_by: actor_id as i64,
-                })
-                .await;
-        }
+    if tags.iter().any(|t| t.tag_type == "confirmed_cheater") {
+        return Ok(());
     }
+    let Some(tag) = tags.iter().find(|t| t.tag_type != "confirmed_cheater") else {
+        return Ok(());
+    };
+    let old_tag_type = tag.tag_type.clone();
+    let old_reason = tag.reason.clone();
+    let old_tag_id = tag.id;
+    let new_tag_id = repo
+        .replace_tag(tag.id, "confirmed_cheater", &old_reason, actor_id as i64)
+        .await?;
+    data.event_publisher
+        .publish(&BlacklistEvent::TagOverwritten {
+            uuid: state.uuid.clone(),
+            old_tag_id,
+            old_tag_type,
+            old_reason,
+            new_tag_id,
+            overwritten_by: actor_id as i64,
+        })
+        .await;
     Ok(())
 }
 
@@ -811,7 +785,6 @@ pub async fn handle_media_modal(
     let components = build_evidence_message(
         &state.username,
         &state.uuid,
-        &state.original_type,
         &state.reason,
         &state.evidence,
         state.review_url.as_deref(),
@@ -931,7 +904,6 @@ pub async fn handle_remove(
     let components = build_evidence_message(
         &state.username,
         &state.uuid,
-        &state.original_type,
         &state.reason,
         &state.evidence,
         state.review_url.as_deref(),
@@ -962,20 +934,14 @@ pub async fn handle_remove(
     Ok(())
 }
 
-async fn revert_from_confirmed(
+async fn remove_confirmed_tag(
     repo: &BlacklistRepository<'_>,
     state: &EvidenceState,
+    actor: i64,
 ) -> Result<()> {
-    if state.original_type.is_empty() || state.original_type == "confirmed_cheater" {
-        return Ok(());
-    }
-    if blacklist::lookup(&state.original_type).is_none() {
-        return Ok(());
-    }
     let tags = repo.get_tags(&state.uuid).await?;
     if let Some(confirmed_tag) = tags.iter().find(|t| t.tag_type == "confirmed_cheater") {
-        repo.revert_tag_from_confirmed(confirmed_tag.id, &state.original_type)
-            .await?;
+        repo.remove_tag(confirmed_tag.id, actor).await?;
     }
     Ok(())
 }
@@ -995,13 +961,6 @@ pub async fn archive_evidence_for_uuid(ctx: &Context, data: &Data, uuid: &str) -
         return Ok(());
     };
 
-    let repo = BlacklistRepository::new(data.db.pool());
-    revert_from_confirmed(&repo, &state).await?;
-
-    let reverted_display = lookup_tag(&state.original_type)
-        .map(|d| d.display_name)
-        .unwrap_or(&state.original_type);
-
     let urls = gallery_url_map(&builder_msg);
     let face = face_attachment(data, &state.uuid).await;
     let mut attachments = EditAttachments::new();
@@ -1013,11 +972,7 @@ pub async fn archive_evidence_for_uuid(ctx: &Context, data: &Data, uuid: &str) -
     attachments = attachments.add(face.clone());
     let edit = EditMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(build_archived_evidence_message(
-            &state,
-            reverted_display,
-            &urls,
-        ))
+        .components(build_archived_evidence_message(&state, &urls))
         .attachments(attachments);
 
     let _ = ctx
@@ -1058,11 +1013,7 @@ pub async fn handle_archive(
     };
 
     let repo = BlacklistRepository::new(data.db.pool());
-    revert_from_confirmed(&repo, &state).await?;
-
-    let reverted_display = lookup_tag(&state.original_type)
-        .map(|d| d.display_name)
-        .unwrap_or(&state.original_type);
+    remove_confirmed_tag(&repo, &state, discord_id as i64).await?;
 
     let urls = gallery_url_map(&*component.message);
     let face = face_attachment(data, &state.uuid).await;
@@ -1079,11 +1030,7 @@ pub async fn handle_archive(
         .await?;
     let edit = EditMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(build_archived_evidence_message(
-            &state,
-            reverted_display,
-            &urls,
-        ))
+        .components(build_archived_evidence_message(&state, &urls))
         .attachments(attachments);
     let _ = ctx
         .http
@@ -1107,7 +1054,6 @@ pub async fn create_evidence_from_review(
     data: &Data,
     uuid: &str,
     username: &str,
-    original_type: &str,
     reason: &str,
     tag_id: i64,
     media_urls: &[String],
@@ -1119,14 +1065,22 @@ pub async fn create_evidence_from_review(
     };
 
     let repo = BlacklistRepository::new(data.db.pool());
-    let already_confirmed = repo
-        .get_tag_by_id(tag_id)
-        .await?
-        .map(|t| t.tag_type == "confirmed_cheater")
-        .unwrap_or(false);
-
-    if !already_confirmed {
-        repo.convert_tag_to_confirmed(tag_id).await?;
+    if let Some(old) = repo.get_tag_by_id(tag_id).await?
+        && old.tag_type != "confirmed_cheater"
+    {
+        let new_id = repo
+            .replace_tag(tag_id, "confirmed_cheater", reason, approved_by)
+            .await?;
+        data.event_publisher
+            .publish(&BlacklistEvent::TagOverwritten {
+                uuid: uuid.to_string(),
+                old_tag_id: tag_id,
+                old_tag_type: old.tag_type,
+                old_reason: old.reason,
+                new_tag_id: new_id,
+                overwritten_by: approved_by,
+            })
+            .await;
     }
 
     let mut evidence: Vec<EvidenceItem> = Vec::new();
@@ -1142,15 +1096,8 @@ pub async fn create_evidence_from_review(
 
     let thread_title = format!("{} | {}", username, format_uuid_dashed(uuid));
     let no_urls = HashMap::new();
-    let initial_components = build_evidence_message(
-        username,
-        uuid,
-        original_type,
-        reason,
-        &[],
-        review_thread_url,
-        &no_urls,
-    );
+    let initial_components =
+        build_evidence_message(username, uuid, reason, &[], review_thread_url, &no_urls);
 
     let initial_face = face_attachment(data, uuid).await;
     let thread = forum_id
@@ -1186,7 +1133,6 @@ pub async fn create_evidence_from_review(
             .components(build_evidence_message(
                 username,
                 uuid,
-                original_type,
                 reason,
                 &evidence,
                 review_thread_url,
@@ -1205,18 +1151,6 @@ pub async fn create_evidence_from_review(
         ThreadId::new(thread.id.get()),
         forum_id,
     );
-
-    if !already_confirmed {
-        if let Ok(Some(_tag)) = repo.get_tag_by_id(tag_id).await {
-            data.event_publisher
-                .publish(&BlacklistEvent::TagAdded {
-                    uuid: uuid.to_string(),
-                    tag_id,
-                    added_by: approved_by,
-                })
-                .await;
-        }
-    }
 
     Ok(())
 }
