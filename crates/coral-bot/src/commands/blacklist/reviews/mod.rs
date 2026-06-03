@@ -413,23 +413,27 @@ async fn check_overwrite_conflict(
     tag_type: &str,
 ) -> Result<Option<String>> {
     let repo = BlacklistRepository::new(data.db.pool());
-    let existing_tags = repo.get_tags(uuid).await?;
+    let existing_tags = repo.get_active_tags(uuid).await?;
     let new_priority = lookup_tag(tag_type).map(|d| d.priority).unwrap_or(0);
 
-    let conflict = existing_tags
-        .iter()
-        .find(|t| lookup_tag(&t.tag_type).map(|d| d.priority).unwrap_or(0) == new_priority);
+    let conflict = existing_tags.iter().find(|t| {
+        lookup_tag(t.tag_type.as_deref().unwrap_or(""))
+            .map(|d| d.priority)
+            .unwrap_or(0)
+            == new_priority
+    });
 
     match conflict {
         Some(tag) => {
-            let def = lookup_tag(&tag.tag_type);
+            let tag_type = tag.tag_type.as_deref().unwrap_or("");
+            let def = lookup_tag(tag_type);
             let emote = def.map(|d| d.emote).unwrap_or("");
-            let display = def.map(|d| d.display_name).unwrap_or(&tag.tag_type);
+            let display = def.map(|d| d.display_name).unwrap_or(tag_type);
             Ok(Some(format!(
                 "\u{26A0} Existing tag: {} {} \u{2014} \"{}\"",
                 emote,
                 display,
-                sanitize_reason(&tag.reason)
+                sanitize_reason(tag.reason.as_deref().unwrap_or(""))
             )))
         }
         None => Ok(None),

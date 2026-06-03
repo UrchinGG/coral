@@ -278,7 +278,7 @@ pub(crate) async fn build_dashboard_view(
 
     parts.push(separator());
     let total_tags = BlacklistRepository::new(data.db.pool())
-        .count_tags_by_user(member.discord_id)
+        .count_events_by_author(member.discord_id)
         .await
         .unwrap_or(0);
     parts.push(text(format!(

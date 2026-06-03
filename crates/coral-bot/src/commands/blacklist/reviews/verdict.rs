@@ -214,15 +214,22 @@ pub async fn handle_approve(
             .collect()
     };
 
-    let existing_tags = repo.get_tags(&player_uuid).await?;
+    let existing_tags = repo.get_active_tags(&player_uuid).await?;
     let new_priority = lookup_tag(&player_tag_type)
         .map(|d| d.priority)
         .unwrap_or(0);
-    if let Some(conflict) = existing_tags
-        .iter()
-        .find(|t| lookup_tag(&t.tag_type).map(|d| d.priority).unwrap_or(0) == new_priority)
-    {
-        repo.remove_tag(conflict.id, discord_id as i64).await?;
+    if let Some(conflict) = existing_tags.iter().find(|t| {
+        lookup_tag(t.tag_type.as_deref().unwrap_or(""))
+            .map(|d| d.priority)
+            .unwrap_or(0)
+            == new_priority
+    }) {
+        repo.remove_event(
+            &player_uuid,
+            conflict.tag_type.as_deref().unwrap_or(""),
+            Some(discord_id as i64),
+        )
+        .await?;
     }
 
     let reviewed_by_slice = if reviewed_by.is_empty() {
@@ -238,16 +245,30 @@ pub async fn handle_approve(
         &player_tag_type
     };
 
-    let tag_id = repo
-        .add_tag(
+    let blocking = vec![stored_type.to_string()];
+    let outcome = repo
+        .add_event(
             &player_uuid,
             stored_type,
             &player_reason,
-            submitter_id as i64,
             false,
+            None,
             reviewed_by_slice,
+            Some(submitter_id as i64),
+            &blocking,
         )
         .await?;
+    let tag_id = match outcome {
+        database::AddOutcome::Inserted(id) => id,
+        database::AddOutcome::Conflict(_) => {
+            return send_vote_error(
+                ctx,
+                component,
+                "Could not apply tag — a conflicting tag was added concurrently",
+            )
+            .await;
+        }
+    };
 
     if will_confirm {
         let guild_id = component.guild_id.map(|g| g.get()).unwrap_or(0);
@@ -262,10 +283,8 @@ pub async fn handle_approve(
             &player_uuid,
             &player_username,
             &player_reason,
-            tag_id,
             &media_urls,
             Some(&review_thread_url),
-            discord_id as i64,
         )
         .await
         {
@@ -273,7 +292,7 @@ pub async fn handle_approve(
         }
     }
 
-    let tags = repo.get_tags(&player_uuid).await?;
+    let tags = repo.get_active_tags(&player_uuid).await?;
     if tags.iter().any(|t| t.id == tag_id) {
         data.event_publisher
             .publish(&BlacklistEvent::TagAdded {

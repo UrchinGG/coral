@@ -1,7 +1,7 @@
 use axum::{Json, Router, extract::*, routing::get};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
+use sqlx::{FromRow, PgPool};
 
 use crate::state::AppState;
 
@@ -36,9 +36,14 @@ struct PlayerWithTags {
     tags: Vec<Tag>,
 }
 
-#[derive(Serialize, FromRow, Clone)]
-struct PlayerRow {
+#[derive(FromRow, Clone)]
+struct PlayerListRow {
     id: i64,
+    uuid: String,
+}
+
+#[derive(Serialize, FromRow, Clone)]
+struct LockState {
     uuid: String,
     is_locked: bool,
     lock_reason: Option<String>,
@@ -49,15 +54,34 @@ struct PlayerRow {
 #[derive(Serialize, FromRow, Clone)]
 struct Tag {
     id: i64,
-    player_id: i64,
+    uuid: String,
     tag_type: String,
-    reason: String,
-    added_by: i64,
-    added_on: DateTime<Utc>,
-    hide_username: bool,
-    removed_by: Option<i64>,
-    removed_on: Option<DateTime<Utc>>,
+    reason: Option<String>,
+    #[serde(rename = "added_by")]
+    author: Option<i64>,
+    #[serde(rename = "added_on")]
+    ts: DateTime<Utc>,
+    hide_username: Option<bool>,
 }
+
+#[derive(Serialize, FromRow, Clone)]
+struct RemovedTag {
+    add_id: i64,
+    uuid: String,
+    tag_type: String,
+    reason: Option<String>,
+    added_by: Option<i64>,
+    added_on: DateTime<Utc>,
+    removed_by: Option<i64>,
+    removed_on: DateTime<Utc>,
+}
+
+const ACTIVE_TAGS_CTE: &str = "active_tags AS (
+    SELECT DISTINCT ON (uuid, tag_type) id, uuid, tag_type, reason, author, ts, hide_username, kind
+    FROM player_events
+    WHERE kind IN ('tag_set', 'tag_clear')
+    ORDER BY uuid, tag_type, ts DESC, id DESC
+)";
 
 async fn list(
     State(state): State<AppState>,
@@ -67,144 +91,44 @@ async fn list(
     let offset = params.offset.unwrap_or(0);
     let pool = state.db.pool();
 
-    let (count_sql, list_sql, search_pattern) = match (&params.search, &params.tag_type) {
-        (Some(search), Some(tag_type)) => {
-            let pattern = format!("%{search}%");
-            (
-                r#"SELECT COUNT(DISTINCT bp.id) FROM blacklist_players bp
-                   JOIN player_tags pt ON pt.player_id = bp.id
-                   WHERE bp.uuid LIKE $1 AND pt.tag_type = $2 AND pt.removed_on IS NULL"#,
-                r#"SELECT DISTINCT bp.id, bp.uuid, bp.is_locked, bp.lock_reason, bp.locked_by, bp.locked_at
-                   FROM blacklist_players bp
-                   JOIN player_tags pt ON pt.player_id = bp.id
-                   WHERE bp.uuid LIKE $1 AND pt.tag_type = $2 AND pt.removed_on IS NULL
-                   ORDER BY bp.id DESC LIMIT $3 OFFSET $4"#,
-                Some((pattern, tag_type.clone())),
-            )
-        }
-        (Some(search), None) => {
-            let pattern = format!("%{search}%");
-            (
-                "SELECT COUNT(*) FROM blacklist_players WHERE uuid LIKE $1",
-                r#"SELECT id, uuid, is_locked, lock_reason, locked_by, locked_at
-                   FROM blacklist_players WHERE uuid LIKE $1
-                   ORDER BY id DESC LIMIT $2 OFFSET $3"#,
-                Some((pattern, String::new())),
-            )
-        }
-        (None, Some(tag_type)) => (
-            r#"SELECT COUNT(DISTINCT bp.id) FROM blacklist_players bp
-               JOIN player_tags pt ON pt.player_id = bp.id
-               WHERE pt.tag_type = $1 AND pt.removed_on IS NULL"#,
-            r#"SELECT DISTINCT bp.id, bp.uuid, bp.is_locked, bp.lock_reason, bp.locked_by, bp.locked_at
-               FROM blacklist_players bp
-               JOIN player_tags pt ON pt.player_id = bp.id
-               WHERE pt.tag_type = $1 AND pt.removed_on IS NULL
-               ORDER BY bp.id DESC LIMIT $2 OFFSET $3"#,
-            Some((String::new(), tag_type.clone())),
-        ),
-        (None, None) => (
-            "SELECT COUNT(*) FROM blacklist_players",
-            r#"SELECT id, uuid, is_locked, lock_reason, locked_by, locked_at
-               FROM blacklist_players ORDER BY id DESC LIMIT $1 OFFSET $2"#,
-            None,
-        ),
-    };
+    let (total, players) = fetch_players(pool, &params, limit, offset).await;
 
-    let (total, players): (i64, Vec<PlayerRow>) = match search_pattern {
-        Some((ref pattern, ref tag_type)) if !pattern.is_empty() && !tag_type.is_empty() => {
-            let total = sqlx::query_scalar(count_sql)
-                .bind(pattern)
-                .bind(tag_type)
-                .fetch_one(pool)
-                .await
-                .unwrap_or(0);
-            let players = sqlx::query_as(list_sql)
-                .bind(pattern)
-                .bind(tag_type)
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(pool)
-                .await
-                .unwrap_or_default();
-            (total, players)
-        }
-        Some((ref pattern, _)) if !pattern.is_empty() => {
-            let total = sqlx::query_scalar(count_sql)
-                .bind(pattern)
-                .fetch_one(pool)
-                .await
-                .unwrap_or(0);
-            let players = sqlx::query_as(list_sql)
-                .bind(pattern)
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(pool)
-                .await
-                .unwrap_or_default();
-            (total, players)
-        }
-        Some((_, ref tag_type)) if !tag_type.is_empty() => {
-            let total = sqlx::query_scalar(count_sql)
-                .bind(tag_type)
-                .fetch_one(pool)
-                .await
-                .unwrap_or(0);
-            let players = sqlx::query_as(list_sql)
-                .bind(tag_type)
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(pool)
-                .await
-                .unwrap_or_default();
-            (total, players)
-        }
-        _ => {
-            let total = sqlx::query_scalar(count_sql)
-                .fetch_one(pool)
-                .await
-                .unwrap_or(0);
-            let players = sqlx::query_as(list_sql)
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(pool)
-                .await
-                .unwrap_or_default();
-            (total, players)
-        }
-    };
-
-    let player_ids: Vec<i64> = players.iter().map(|p| p.id).collect();
-    let all_tags: Vec<Tag> = if player_ids.is_empty() {
-        vec![]
+    let uuids: Vec<String> = players.iter().map(|p| p.uuid.clone()).collect();
+    let (all_tags, lock_states) = if uuids.is_empty() {
+        (vec![], vec![])
     } else {
-        sqlx::query_as(
-            r#"SELECT id, player_id, tag_type, reason, added_by, added_on, hide_username, removed_by, removed_on
-               FROM player_tags WHERE player_id = ANY($1) AND removed_on IS NULL
-               ORDER BY added_on DESC"#,
+        tokio::join!(
+            fetch_tags_for(pool, &uuids),
+            fetch_lock_states(pool, &uuids)
         )
-        .bind(&player_ids)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default()
     };
 
     let players = players
         .into_iter()
         .map(|p| {
-            let tags = all_tags
+            let lock = lock_states
                 .iter()
-                .filter(|t| t.player_id == p.id)
+                .find(|l| l.uuid == p.uuid)
                 .cloned()
-                .collect();
+                .unwrap_or(LockState {
+                    uuid: p.uuid.clone(),
+                    is_locked: false,
+                    lock_reason: None,
+                    locked_by: None,
+                    locked_at: None,
+                });
             PlayerWithTags {
                 id: p.id,
-                uuid: p.uuid,
-                is_locked: p.is_locked,
-                lock_reason: p.lock_reason,
-                locked_by: p.locked_by,
-                locked_at: p.locked_at,
-                tags,
+                uuid: p.uuid.clone(),
+                is_locked: lock.is_locked,
+                lock_reason: lock.lock_reason,
+                locked_by: lock.locked_by,
+                locked_at: lock.locked_at,
+                tags: all_tags
+                    .iter()
+                    .filter(|t| t.uuid == p.uuid)
+                    .cloned()
+                    .collect(),
             }
         })
         .collect();
@@ -212,11 +136,160 @@ async fn list(
     Json(ListResponse { total, players })
 }
 
+async fn fetch_players(
+    pool: &PgPool,
+    params: &ListParams,
+    limit: i64,
+    offset: i64,
+) -> (i64, Vec<PlayerListRow>) {
+    match (&params.search, &params.tag_type) {
+        (Some(search), Some(tag_type)) => {
+            let pattern = format!("%{search}%");
+            let count_sql = format!(
+                "WITH {ACTIVE_TAGS_CTE}
+                 SELECT COUNT(DISTINCT at.uuid) FROM active_tags at
+                 WHERE at.uuid LIKE $1 AND at.tag_type = $2 AND at.kind = 'tag_set'"
+            );
+            let list_sql = format!(
+                "WITH {ACTIVE_TAGS_CTE}
+                 SELECT MAX(at.id) AS id, at.uuid FROM active_tags at
+                 WHERE at.uuid LIKE $1 AND at.tag_type = $2 AND at.kind = 'tag_set'
+                 GROUP BY at.uuid
+                 ORDER BY MAX(at.ts) DESC LIMIT $3 OFFSET $4"
+            );
+            let total = sqlx::query_scalar(&count_sql)
+                .bind(&pattern)
+                .bind(tag_type)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
+            let players = sqlx::query_as(&list_sql)
+                .bind(&pattern)
+                .bind(tag_type)
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default();
+            (total, players)
+        }
+        (Some(search), None) => {
+            let pattern = format!("%{search}%");
+            let total = sqlx::query_scalar(
+                "SELECT COUNT(DISTINCT uuid) FROM player_events WHERE uuid LIKE $1",
+            )
+            .bind(&pattern)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
+            let players = sqlx::query_as(
+                "SELECT MAX(id) AS id, uuid FROM player_events
+                 WHERE uuid LIKE $1
+                 GROUP BY uuid
+                 ORDER BY MAX(ts) DESC LIMIT $2 OFFSET $3",
+            )
+            .bind(&pattern)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+            (total, players)
+        }
+        (None, Some(tag_type)) => {
+            let count_sql = format!(
+                "WITH {ACTIVE_TAGS_CTE}
+                 SELECT COUNT(DISTINCT at.uuid) FROM active_tags at
+                 WHERE at.tag_type = $1 AND at.kind = 'tag_set'"
+            );
+            let list_sql = format!(
+                "WITH {ACTIVE_TAGS_CTE}
+                 SELECT MAX(at.id) AS id, at.uuid FROM active_tags at
+                 WHERE at.tag_type = $1 AND at.kind = 'tag_set'
+                 GROUP BY at.uuid
+                 ORDER BY MAX(at.ts) DESC LIMIT $2 OFFSET $3"
+            );
+            let total = sqlx::query_scalar(&count_sql)
+                .bind(tag_type)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
+            let players = sqlx::query_as(&list_sql)
+                .bind(tag_type)
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default();
+            (total, players)
+        }
+        (None, None) => {
+            let total = sqlx::query_scalar("SELECT COUNT(DISTINCT uuid) FROM player_events")
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
+            let players = sqlx::query_as(
+                "SELECT MAX(id) AS id, uuid FROM player_events
+                 GROUP BY uuid
+                 ORDER BY MAX(ts) DESC LIMIT $1 OFFSET $2",
+            )
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+            (total, players)
+        }
+    }
+}
+
+async fn fetch_tags_for(pool: &PgPool, uuids: &[String]) -> Vec<Tag> {
+    sqlx::query_as(&format!(
+        "WITH {ACTIVE_TAGS_CTE}
+         SELECT id, uuid, tag_type, reason, author, ts, hide_username
+         FROM active_tags
+         WHERE uuid = ANY($1) AND kind = 'tag_set'
+         ORDER BY ts DESC"
+    ))
+    .bind(uuids)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
+}
+
+async fn fetch_lock_states(pool: &PgPool, uuids: &[String]) -> Vec<LockState> {
+    sqlx::query_as(
+        "SELECT DISTINCT ON (uuid)
+             uuid,
+             (kind = 'lock') AS is_locked,
+             reason AS lock_reason,
+             author AS locked_by,
+             ts AS locked_at
+         FROM player_events
+         WHERE uuid = ANY($1) AND kind IN ('lock', 'unlock')
+         ORDER BY uuid, ts DESC, id DESC",
+    )
+    .bind(uuids)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
+}
+
 #[derive(Serialize)]
 struct DetailResponse {
-    player: PlayerRow,
+    player: DetailPlayer,
     tags: Vec<Tag>,
-    tag_history: Vec<Tag>,
+    tag_history: Vec<RemovedTag>,
+}
+
+#[derive(Serialize)]
+struct DetailPlayer {
+    id: i64,
+    uuid: String,
+    is_locked: bool,
+    lock_reason: Option<String>,
+    locked_by: Option<i64>,
+    locked_at: Option<DateTime<Utc>>,
 }
 
 async fn detail(
@@ -225,41 +298,65 @@ async fn detail(
 ) -> Json<Option<DetailResponse>> {
     let pool = state.db.pool();
 
-    let player = sqlx::query_as::<_, PlayerRow>(
-        "SELECT id, uuid, is_locked, lock_reason, locked_by, locked_at FROM blacklist_players WHERE uuid = $1",
-    )
-    .bind(&uuid)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
-
-    let Some(player) = player else {
+    let Some(max_id): Option<i64> =
+        sqlx::query_scalar("SELECT MAX(id) FROM player_events WHERE uuid = $1")
+            .bind(&uuid)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .flatten()
+    else {
         return Json(None);
     };
 
-    let tags = sqlx::query_as::<_, Tag>(
-        r#"SELECT id, player_id, tag_type, reason, added_by, added_on, hide_username, removed_by, removed_on
-           FROM player_tags WHERE player_id = $1 AND removed_on IS NULL
-           ORDER BY added_on DESC"#,
-    )
-    .bind(player.id)
+    let lock = fetch_lock_states(pool, std::slice::from_ref(&uuid))
+        .await
+        .into_iter()
+        .next();
+
+    let tags = sqlx::query_as::<_, Tag>(&format!(
+        "WITH {ACTIVE_TAGS_CTE}
+         SELECT id, uuid, tag_type, reason, author, ts, hide_username
+         FROM active_tags WHERE uuid = $1 AND kind = 'tag_set'
+         ORDER BY ts DESC"
+    ))
+    .bind(&uuid)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
 
-    let tag_history = sqlx::query_as::<_, Tag>(
-        r#"SELECT id, player_id, tag_type, reason, added_by, added_on, hide_username, removed_by, removed_on
-           FROM player_tags WHERE player_id = $1 AND removed_on IS NOT NULL
-           ORDER BY removed_on DESC"#,
+    let tag_history: Vec<RemovedTag> = sqlx::query_as(
+        "WITH events AS (
+             SELECT id, tag_type, reason, author, ts, kind,
+                    LEAD(author) OVER w AS next_author,
+                    LEAD(ts) OVER w AS next_ts,
+                    LEAD(kind) OVER w AS next_kind
+             FROM player_events
+             WHERE uuid = $1 AND kind IN ('tag_set', 'tag_clear')
+             WINDOW w AS (PARTITION BY tag_type ORDER BY ts, id)
+         )
+         SELECT id AS add_id, $1::text AS uuid, tag_type, reason,
+                author AS added_by, ts AS added_on,
+                next_author AS removed_by, next_ts AS removed_on
+         FROM events
+         WHERE kind = 'tag_set' AND next_kind = 'tag_clear' AND next_ts IS NOT NULL
+         ORDER BY next_ts DESC",
     )
-    .bind(player.id)
+    .bind(&uuid)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
 
     Json(Some(DetailResponse {
-        player,
+        player: DetailPlayer {
+            id: max_id,
+            uuid: uuid.clone(),
+            is_locked: lock.as_ref().map(|l| l.is_locked).unwrap_or(false),
+            lock_reason: lock.as_ref().and_then(|l| l.lock_reason.clone()),
+            locked_by: lock.as_ref().and_then(|l| l.locked_by),
+            locked_at: lock.as_ref().and_then(|l| l.locked_at),
+        },
         tags,
         tag_history,
     }))

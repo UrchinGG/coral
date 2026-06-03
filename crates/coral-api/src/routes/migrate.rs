@@ -140,19 +140,14 @@ async fn wipe_cache(pool: &sqlx::PgPool) -> std::result::Result<Json<Result>, Ap
 }
 
 async fn wipe_blacklist(pool: &sqlx::PgPool) -> std::result::Result<Json<Result>, ApiError> {
-    let tags = sqlx::query("DELETE FROM player_tags")
-        .execute(pool)
-        .await?
-        .rows_affected();
-    let players = sqlx::query("DELETE FROM blacklist_players")
+    let events = sqlx::query("DELETE FROM player_events")
         .execute(pool)
         .await?
         .rows_affected();
 
-    let total = (players + tags) as usize;
-    info!("Wiped blacklist: {players} players, {tags} tags");
+    info!("Wiped blacklist: {events} player events");
     Ok(Json(Result {
-        migrated: total,
+        migrated: events as usize,
         errors: 0,
     }))
 }
@@ -264,34 +259,29 @@ async fn insert_blacklist_player(
     pool: &sqlx::PgPool,
     p: &BlacklistPayload,
 ) -> std::result::Result<(), sqlx::Error> {
-    let locked_at = p
-        .locked_at
-        .as_ref()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.with_timezone(&chrono::Utc));
-
-    let (player_id,): (i64,) = sqlx::query_as(
-        r#"
-        INSERT INTO blacklist_players (uuid, is_locked, lock_reason, locked_by, locked_at)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (uuid) DO UPDATE SET
-            is_locked = EXCLUDED.is_locked, lock_reason = EXCLUDED.lock_reason,
-            locked_by = EXCLUDED.locked_by, locked_at = EXCLUDED.locked_at
-        RETURNING id
-        "#,
-    )
-    .bind(&p.uuid)
-    .bind(p.is_locked)
-    .bind(&p.lock_reason)
-    .bind(p.locked_by)
-    .bind(locked_at)
-    .fetch_one(pool)
-    .await?;
-
-    sqlx::query("DELETE FROM player_tags WHERE player_id = $1")
-        .bind(player_id)
+    sqlx::query("DELETE FROM player_events WHERE uuid = $1")
+        .bind(&p.uuid)
         .execute(pool)
         .await?;
+
+    if p.is_locked {
+        let locked_at = p
+            .locked_at
+            .as_ref()
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+            .unwrap_or_else(chrono::Utc::now);
+
+        sqlx::query(
+            "INSERT INTO player_events (uuid, kind, reason, author, ts) VALUES ($1, 'lock', $2, $3, $4)",
+        )
+        .bind(&p.uuid)
+        .bind(&p.lock_reason)
+        .bind(p.locked_by)
+        .bind(locked_at)
+        .execute(pool)
+        .await?;
+    }
 
     for tag in &p.tags {
         let added_on = tag
@@ -306,9 +296,9 @@ async fn insert_blacklist_player(
             .unwrap_or_else(chrono::Utc::now);
 
         let _ = sqlx::query(
-            "INSERT INTO player_tags (player_id, tag_type, reason, added_by, added_on, hide_username) VALUES ($1, $2, $3, $4, $5, $6)",
-        ).bind(player_id).bind(&tag.tag_type).bind(&tag.reason)
-         .bind(tag.added_by).bind(added_on).bind(tag.hide_username)
+            "INSERT INTO player_events (uuid, kind, tag_type, reason, hide_username, author, ts) VALUES ($1, 'tag_set', $2, $3, $4, $5, $6)",
+        ).bind(&p.uuid).bind(&tag.tag_type).bind(&tag.reason)
+         .bind(tag.hide_username).bind(tag.added_by).bind(added_on)
          .execute(pool).await;
     }
 

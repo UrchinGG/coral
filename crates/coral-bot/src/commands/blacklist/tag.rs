@@ -79,7 +79,7 @@ fn op_error_message(e: &TagOpError) -> &'static str {
 
 pub struct PendingOverwrite {
     pub uuid: String,
-    pub old_tag_id: i64,
+    pub old_tag_type: String,
     pub tag_type: String,
     pub reason: String,
     pub hide: bool,
@@ -355,15 +355,15 @@ async fn run_view(ctx: &Context, command: &CommandInteraction, data: &Data) -> R
     };
 
     let repo = BlacklistRepository::new(data.db.pool());
-    let (player_data, player_tags, face) = tokio::join!(
-        repo.get_player(&player_info.uuid),
-        repo.get_tags(&player_info.uuid),
+    let (lock_state, player_tags, face) = tokio::join!(
+        repo.get_lock_state(&player_info.uuid),
+        repo.get_active_tags(&player_info.uuid),
         face_attachment(data, &player_info.uuid),
     );
-    let player_data = player_data?;
+    let lock_state = lock_state?;
     let player_tags = player_tags?;
 
-    let is_locked = player_data.as_ref().map(|p| p.is_locked).unwrap_or(false);
+    let is_locked = lock_state.locked;
     let dashed_uuid = format_uuid_dashed(&player_info.uuid);
 
     if player_tags.is_empty() {
@@ -387,8 +387,8 @@ async fn run_view(ctx: &Context, command: &CommandInteraction, data: &Data) -> R
 
     let adders = player_tags
         .iter()
-        .filter(|t| !t.hide_username)
-        .map(|t| t.added_by);
+        .filter(|t| !t.hide_username.unwrap_or(false))
+        .filter_map(|t| t.author);
     let reviewers = player_tags
         .iter()
         .flat_map(|t| t.reviewed_by.iter().flatten().copied());
@@ -401,19 +401,17 @@ async fn run_view(ctx: &Context, command: &CommandInteraction, data: &Data) -> R
 
     let mut tag_texts = vec![];
     for tag in &player_tags {
-        let added_line = if tag.hide_username {
-            format!("> -# **\\- <t:{}:R>**", tag.added_on.timestamp())
-        } else {
-            let fallback = tag.added_by.to_string();
-            let username = resolved_names
-                .get(&tag.added_by)
-                .map(|s| s.as_str())
-                .unwrap_or(&fallback);
-            format!(
-                "> -# **\\- Added by `@{}` <t:{}:R>**",
-                username,
-                tag.added_on.timestamp()
-            )
+        let ts = tag.ts.timestamp();
+        let added_line = match tag.author.filter(|_| !tag.hide_username.unwrap_or(false)) {
+            Some(author) => {
+                let fallback = author.to_string();
+                let username = resolved_names
+                    .get(&author)
+                    .map(|s| s.as_str())
+                    .unwrap_or(&fallback);
+                format!("> -# **\\- Added by `@{username}` <t:{ts}:R>**")
+            }
+            None => format!("> -# **\\- <t:{ts}:R>**"),
         };
 
         let reviewed_line = tag.reviewed_by.as_ref().map(|ids| {
@@ -430,10 +428,11 @@ async fn run_view(ctx: &Context, command: &CommandInteraction, data: &Data) -> R
             format!("> -# **\\- Reviewed by {}**", formatted.join(", "))
         });
 
-        let indicator = evidence_indicator(&tag.tag_type, evidence_url.is_some());
+        let tag_type = tag.tag_type.as_deref().unwrap_or("");
+        let indicator = evidence_indicator(tag_type, evidence_url.is_some());
 
         tag_texts.push(format_tag_block(
-            &tag.tag_type,
+            tag_type,
             &format_tag_detail(tag),
             &indicator,
             Some(&added_line),
@@ -653,12 +652,13 @@ async fn show_overwrite_prompt(
     command: &CommandInteraction,
     data: &Data,
     player_info: &crate::api::ResolveResponse,
-    conflict: &database::PlayerTagRow,
+    conflict: &database::PlayerEvent,
     tag_type: &str,
     reason: &str,
     hide: bool,
 ) -> Result<()> {
-    let (old_emote, old_display) = tag_display(&conflict.tag_type);
+    let conflict_type = conflict.tag_type.as_deref().unwrap_or("");
+    let (old_emote, old_display) = tag_display(conflict_type);
     let (new_emote, new_display) = tag_display(tag_type);
     let dashed_uuid = format_uuid_dashed(&player_info.uuid);
 
@@ -667,7 +667,7 @@ async fn show_overwrite_prompt(
         overwrite_key.clone(),
         PendingOverwrite {
             uuid: player_info.uuid.clone(),
-            old_tag_id: conflict.id,
+            old_tag_type: conflict_type.to_string(),
             tag_type: tag_type.to_string(),
             reason: reason.to_string(),
             hide,
@@ -758,7 +758,7 @@ pub async fn handle_overwrite_button(
     let (old_tag, new_tag) = match ops
         .overwrite(
             uuid,
-            overwrite.old_tag_id,
+            &overwrite.old_tag_type,
             &overwrite.tag_type,
             &overwrite.reason,
             discord_id as i64,
@@ -805,8 +805,8 @@ pub async fn handle_overwrite_button(
         .publish(&BlacklistEvent::TagOverwritten {
             uuid: uuid.to_string(),
             old_tag_id: old_tag.id,
-            old_tag_type: old_tag.tag_type.clone(),
-            old_reason: old_tag.reason.clone(),
+            old_tag_type: old_tag.tag_type.clone().unwrap_or_default(),
+            old_reason: old_tag.reason.clone().unwrap_or_default(),
             new_tag_id: new_tag.id,
             overwritten_by: discord_id as i64,
         })
@@ -973,7 +973,10 @@ async fn run_unlock(ctx: &Context, command: &CommandInteraction, data: &Data) ->
     };
 
     let ops = TagOp::new(data.db.pool());
-    let unlocked = match ops.unlock_player(&player_info.uuid, rank.to_level()).await {
+    let unlocked = match ops
+        .unlock_player(&player_info.uuid, discord_id as i64, rank.to_level())
+        .await
+    {
         Ok(u) => u,
         Err(e) => return send_deferred_error(ctx, command, "Error", op_error_message(&e)).await,
     };
@@ -1101,15 +1104,15 @@ async fn build_manage_main(
     let repo = BlacklistRepository::new(data.db.pool());
     let cache = CacheRepository::new(data.db.pool());
     let (active, history, username) = tokio::join!(
-        repo.get_tags(uuid),
+        repo.get_active_tags(uuid),
         repo.get_tag_history(uuid),
         cache.get_username(uuid),
     );
     let active = active?;
-    let removed_count = history?.iter().filter(|t| t.removed_on.is_some()).count();
+    let removed_count = pair_history(&history?).len();
     let username = username.ok().flatten().unwrap_or_else(|| uuid.to_string());
     let dashed_uuid = format_uuid_dashed(uuid);
-    let names = resolve_names(&ctx.http, active.iter().map(|t| t.added_by)).await;
+    let names = resolve_names(&ctx.http, active.iter().filter_map(|t| t.author)).await;
 
     let mut parts: Vec<CreateContainerComponent> = vec![CreateContainerComponent::TextDisplay(
         CreateTextDisplay::new(format!(
@@ -1128,19 +1131,24 @@ async fn build_manage_main(
         parts.push(CreateContainerComponent::Separator(CreateSeparator::new(
             true,
         )));
-        let (emote, display) = tag_display(&tag.tag_type);
-        let added_name = names
-            .get(&tag.added_by)
-            .map(|s| s.as_str())
+        let tag_type = tag.tag_type.as_deref().unwrap_or("");
+        let (emote, display) = tag_display(tag_type);
+        let added_name = tag
+            .author
+            .and_then(|id| names.get(&id).map(|s| s.as_str()))
             .unwrap_or("unknown");
-        let hide_label = if tag.hide_username { " *(hidden)*" } else { "" };
+        let hide_label = if tag.hide_username.unwrap_or(false) {
+            " *(hidden)*"
+        } else {
+            ""
+        };
         let expiry = tag
             .expires_at
             .map(|e| format!(" — expires <t:{}:R>", e.timestamp()))
             .unwrap_or_default();
         parts.push(CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
             "{emote} **{display}**{hide_label}\n> {}\n> -# Added by `@{added_name}` <t:{}:R>{expiry}",
-            format_tag_detail(tag), tag.added_on.timestamp()
+            format_tag_detail(tag), tag.ts.timestamp()
         ))));
 
         if confirming == Some(tag.id) {
@@ -1206,10 +1214,46 @@ async fn build_manage_main(
 
 const HISTORY_PAGE_SIZE: usize = 5;
 
+struct RemovedTag {
+    add: database::PlayerEvent,
+    remove: database::PlayerEvent,
+}
+
+fn pair_history(events: &[database::PlayerEvent]) -> Vec<RemovedTag> {
+    let mut pending: HashMap<String, database::PlayerEvent> = HashMap::new();
+    let mut out = Vec::new();
+    for event in events {
+        let Some(tag_type) = event.tag_type.clone() else {
+            continue;
+        };
+        match event.kind.as_str() {
+            "tag_set" => {
+                if let Some(prev) = pending.insert(tag_type, event.clone()) {
+                    out.push(RemovedTag {
+                        add: prev,
+                        remove: event.clone(),
+                    });
+                }
+            }
+            "tag_clear" => {
+                if let Some(add) = pending.remove(&tag_type) {
+                    out.push(RemovedTag {
+                        add,
+                        remove: event.clone(),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    out.sort_by(|a, b| b.remove.ts.cmp(&a.remove.ts));
+    out
+}
+
 fn build_history_view(
     username: &str,
     uuid: &str,
-    removed: &[database::PlayerTagRow],
+    removed: &[RemovedTag],
     names: &HashMap<i64, String>,
     page: usize,
 ) -> Vec<CreateComponent<'static>> {
@@ -1227,26 +1271,30 @@ fn build_history_view(
         )),
     )];
 
-    for tag in page_items {
+    for entry in page_items {
         parts.push(CreateContainerComponent::Separator(CreateSeparator::new(
             true,
         )));
-        let (emote, display) = tag_display(&tag.tag_type);
-        let added_name = names.get(&tag.added_by).map(|s| s.as_str()).unwrap_or("?");
-        let removed_name = tag
-            .removed_by
+        let (emote, display) = tag_display(entry.add.tag_type.as_deref().unwrap_or(""));
+        let added_name = entry
+            .add
+            .author
             .and_then(|id| names.get(&id).map(|s| s.as_str()))
             .unwrap_or("?");
-        let removed_ts = tag.removed_on.map(|t| t.timestamp()).unwrap_or(0);
+        let removed_name = entry
+            .remove
+            .author
+            .and_then(|id| names.get(&id).map(|s| s.as_str()))
+            .unwrap_or("?");
 
-        let mut detail = format!(
-            "{emote} ~~**{display}**~~\n> {}\n> -# Added by `@{added_name}` <t:{}:R>",
-            format_tag_detail(tag),
-            tag.added_on.timestamp()
+        let detail = format!(
+            "{emote} ~~**{display}**~~\n> {}\n\
+             > -# Added by `@{added_name}` <t:{}:R>\n\
+             > -# Removed by `@{removed_name}` <t:{}:R>",
+            format_tag_detail(&entry.add),
+            entry.add.ts.timestamp(),
+            entry.remove.ts.timestamp(),
         );
-        detail.push_str(&format!(
-            "\n> -# Removed by `@{removed_name}` <t:{removed_ts}:R>"
-        ));
         parts.push(CreateContainerComponent::TextDisplay(
             CreateTextDisplay::new(detail),
         ));
@@ -1369,7 +1417,7 @@ pub async fn handle_manage_confirm(
                 .unwrap_or_else(|| uuid.to_string());
             channel::post_tag_removed(ctx, data, uuid, &name, &tag, discord_id, true).await;
 
-            if tag.tag_type == "confirmed_cheater" {
+            if tag.tag_type.as_deref() == Some("confirmed_cheater") {
                 try_archive_evidence(ctx, data, uuid).await;
             }
             update_manage_view(ctx, component, data, uuid).await
@@ -1403,17 +1451,13 @@ pub async fn handle_manage_history(
     let repo = BlacklistRepository::new(data.db.pool());
     let cache = CacheRepository::new(data.db.pool());
     let (history, username) = tokio::join!(repo.get_tag_history(uuid), cache.get_username(uuid),);
-    let history = history?;
+    let removed = pair_history(&history?);
     let username = username.ok().flatten().unwrap_or_else(|| uuid.to_string());
-    let removed: Vec<_> = history
-        .into_iter()
-        .filter(|t| t.removed_on.is_some())
-        .collect();
 
     let all_ids = removed
         .iter()
-        .map(|t| t.added_by)
-        .chain(removed.iter().filter_map(|t| t.removed_by));
+        .filter_map(|t| t.add.author)
+        .chain(removed.iter().filter_map(|t| t.remove.author));
     let names = resolve_names(&ctx.http, all_ids).await;
 
     let components = build_history_view(&username, uuid, &removed, &names, page);
@@ -1515,7 +1559,7 @@ async fn manage_add_tag(
             let (old_tag, new_tag) = ops
                 .overwrite(
                     uuid,
-                    conflict.id,
+                    conflict.tag_type.as_deref().unwrap_or(""),
                     tag_type,
                     reason,
                     discord_id as i64,

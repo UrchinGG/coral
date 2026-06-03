@@ -75,13 +75,13 @@ pub struct SuccessResponse {
 }
 
 impl TagResponse {
-    pub fn from_db(tag: &database::PlayerTagRow) -> Self {
+    pub fn from_db(tag: &database::PlayerEvent) -> Self {
         Self {
-            tag_type: tag.tag_type.clone(),
-            reason: tag.reason.clone(),
-            added_by: tag.added_by,
-            added_on: tag.added_on.timestamp_millis(),
-            hide_username: tag.hide_username,
+            tag_type: tag.tag_type.clone().unwrap_or_default(),
+            reason: tag.reason.clone().unwrap_or_default(),
+            added_by: tag.author.unwrap_or(0),
+            added_on: tag.ts.timestamp_millis(),
+            hide_username: tag.hide_username.unwrap_or(false),
             expires_at: tag.expires_at.map(|t| t.timestamp_millis()),
         }
     }

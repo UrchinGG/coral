@@ -7,7 +7,7 @@ use utoipa::ToSchema;
 
 use clients::normalize_uuid;
 use coral_redis::RateLimitResult;
-use database::{BlacklistRepository, Member, MemberRepository, PlayerTagRow};
+use database::{BlacklistRepository, Member, MemberRepository, PlayerEvent};
 
 use crate::cache::refresh_player_cache;
 use crate::responses::{CubelifyResponse, CubelifyScore, CubelifyTag};
@@ -91,19 +91,19 @@ async fn check_rate_limit(
     }
 }
 
-async fn fetch_tags(state: &AppState, uuid: &str) -> Result<Vec<PlayerTagRow>, CubelifyResponse> {
+async fn fetch_tags(state: &AppState, uuid: &str) -> Result<Vec<PlayerEvent>, CubelifyResponse> {
     BlacklistRepository::new(state.db.pool())
-        .get_tags(uuid)
+        .get_active_tags(uuid)
         .await
         .map_err(|_| CubelifyResponse::error("Internal Error", "mdi-alert-circle"))
 }
 
-async fn build_response(state: &AppState, tags: &[PlayerTagRow]) -> CubelifyResponse {
+async fn build_response(state: &AppState, tags: &[PlayerEvent]) -> CubelifyResponse {
     let mut cubelify_tags = Vec::new();
     let mut total_score = 0.0;
 
     for tag in tags {
-        if let Some(def) = blacklist::lookup(&tag.tag_type) {
+        if let Some(def) = blacklist::lookup(tag.tag_type.as_deref().unwrap_or("")) {
             cubelify_tags.push(CubelifyTag {
                 icon: def.icon.to_string(),
                 color: def.color,
@@ -123,23 +123,24 @@ async fn build_response(state: &AppState, tags: &[PlayerTagRow]) -> CubelifyResp
     }
 }
 
-async fn build_tooltip(state: &AppState, tag_name: &str, tag: &PlayerTagRow) -> String {
+async fn build_tooltip(state: &AppState, tag_name: &str, tag: &PlayerEvent) -> String {
     let name = capitalize(tag_name);
-    let time_ago = relative_time(tag.added_on);
+    let time_ago = relative_time(tag.ts);
 
-    let mut tooltip = if tag.hide_username {
-        format!("{name} (Added {time_ago})")
-    } else {
-        let added_by = state
-            .discord
-            .resolve_username(tag.added_by as u64)
-            .await
-            .unwrap_or_else(|| "Unknown".into());
-        format!("{name} (Added by {added_by} {time_ago})")
+    let mut tooltip = match tag.author.filter(|_| !tag.hide_username.unwrap_or(false)) {
+        Some(author) => {
+            let added_by = state
+                .discord
+                .resolve_username(author as u64)
+                .await
+                .unwrap_or_else(|| "Unknown".into());
+            format!("{name} (Added by {added_by} {time_ago})")
+        }
+        None => format!("{name} (Added {time_ago})"),
     };
 
-    if !tag.reason.is_empty() {
-        tooltip.push_str(&format!("\n- {}", tag.reason));
+    if let Some(reason) = tag.reason.as_deref().filter(|r| !r.is_empty()) {
+        tooltip.push_str(&format!("\n- {reason}"));
     }
     if let Some(expires_at) = tag.expires_at {
         let remaining = relative_time_future(expires_at);

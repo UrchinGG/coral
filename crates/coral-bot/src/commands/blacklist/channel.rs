@@ -4,7 +4,7 @@ use blacklist::{
     EMOTE_ADDTAG, EMOTE_EDITTAG, EMOTE_EVIDENCE, EMOTE_NO_EVIDENCE, EMOTE_REMOVETAG, EMOTE_TAG,
     lookup as lookup_tag,
 };
-use database::PlayerTagRow;
+use database::PlayerEvent;
 
 use super::evidence::evidence_thread_url;
 
@@ -57,16 +57,14 @@ pub async fn get_username(ctx: &Context, user_id: u64) -> String {
         .unwrap_or_else(|_| user_id.to_string())
 }
 
-pub async fn format_added_line(ctx: &Context, tag: &PlayerTagRow) -> String {
-    if tag.hide_username {
-        format!("> -# **\\- <t:{}:R>**", tag.added_on.timestamp())
-    } else {
-        let username = get_username(ctx, tag.added_by as u64).await;
-        format!(
-            "> -# **\\- Added by `@{}` <t:{}:R>**",
-            username,
-            tag.added_on.timestamp()
-        )
+pub async fn format_added_line(ctx: &Context, tag: &PlayerEvent) -> String {
+    let ts = tag.ts.timestamp();
+    match tag.author.filter(|_| !tag.hide_username.unwrap_or(false)) {
+        Some(author) => {
+            let username = get_username(ctx, author as u64).await;
+            format!("> -# **\\- Added by `@{username}` <t:{ts}:R>**")
+        }
+        None => format!("> -# **\\- <t:{ts}:R>**"),
     }
 }
 
@@ -115,8 +113,8 @@ pub async fn post_new_tag(
     data: &Data,
     uuid: &str,
     name: &str,
-    tag: &PlayerTagRow,
-    all_tags: &[PlayerTagRow],
+    tag: &PlayerEvent,
+    all_tags: &[PlayerEvent],
 ) -> Option<MessageId> {
     post_tag_to_log(ctx, data, uuid, name, tag, "New Tag", EMOTE_ADDTAG).await;
     post_to_blacklist_channel(ctx, data, uuid, name, all_tags, "New Tag", EMOTE_ADDTAG).await
@@ -127,8 +125,8 @@ pub async fn post_overwritten_tag(
     data: &Data,
     uuid: &str,
     name: &str,
-    tag: &PlayerTagRow,
-    all_tags: &[PlayerTagRow],
+    tag: &PlayerEvent,
+    all_tags: &[PlayerEvent],
 ) -> Option<MessageId> {
     post_tag_to_log(ctx, data, uuid, name, tag, "Tag Overwritten", EMOTE_EDITTAG).await;
     post_to_blacklist_channel(
@@ -148,7 +146,7 @@ pub async fn post_tag_removed(
     data: &Data,
     uuid: &str,
     name: &str,
-    tag: &PlayerTagRow,
+    tag: &PlayerEvent,
     removed_by: u64,
     silent: bool,
 ) {
@@ -157,7 +155,14 @@ pub async fn post_tag_removed(
     let username = get_username(ctx, removed_by).await;
     let detail = format_tag_detail(tag);
 
-    let block = format_tag_block(&tag.tag_type, &detail, "", Some(&added_line), None, true);
+    let block = format_tag_block(
+        tag.tag_type.as_deref().unwrap_or(""),
+        &detail,
+        "",
+        Some(&added_line),
+        None,
+        true,
+    );
     let footer = format!("-# Removed by `@{username}`\n-# UUID: {dashed_uuid}");
 
     let make_container = || {
@@ -195,8 +200,8 @@ pub async fn post_tag_changed(
     data: &Data,
     uuid: &str,
     name: &str,
-    old_tag: &PlayerTagRow,
-    new_tag: &PlayerTagRow,
+    old_tag: &PlayerEvent,
+    new_tag: &PlayerEvent,
     title: &str,
     changed_by: u64,
 ) {
@@ -206,7 +211,7 @@ pub async fn post_tag_changed(
     let username = get_username(ctx, changed_by).await;
 
     let old_block = format_tag_block(
-        &old_tag.tag_type,
+        old_tag.tag_type.as_deref().unwrap_or(""),
         &format_tag_detail(old_tag),
         "",
         Some(&old_added),
@@ -214,7 +219,7 @@ pub async fn post_tag_changed(
         false,
     );
     let new_block = format_tag_block(
-        &new_tag.tag_type,
+        new_tag.tag_type.as_deref().unwrap_or(""),
         &format_tag_detail(new_tag),
         "",
         Some(&new_added),
@@ -409,7 +414,7 @@ async fn post_tag_to_log(
     data: &Data,
     uuid: &str,
     name: &str,
-    tag: &PlayerTagRow,
+    tag: &PlayerEvent,
     title: &str,
     emote: &str,
 ) {
@@ -418,7 +423,7 @@ async fn post_tag_to_log(
     let face = face_attachment(data, uuid).await;
 
     let block = format_tag_block(
-        &tag.tag_type,
+        tag.tag_type.as_deref().unwrap_or(""),
         &format_tag_detail(tag),
         "",
         Some(&added_line),
@@ -460,7 +465,7 @@ async fn post_to_blacklist_channel(
     data: &Data,
     uuid: &str,
     name: &str,
-    all_tags: &[PlayerTagRow],
+    all_tags: &[PlayerEvent],
     title: &str,
     emote: &str,
 ) -> Option<MessageId> {
@@ -484,10 +489,11 @@ async fn post_to_blacklist_channel(
             }
             _ => None,
         };
-        let indicator = evidence_indicator(&tag.tag_type, evidence_url.is_some());
+        let tag_type = tag.tag_type.as_deref().unwrap_or("");
+        let indicator = evidence_indicator(tag_type, evidence_url.is_some());
 
         tag_texts.push(format_tag_block(
-            &tag.tag_type,
+            tag_type,
             &format_tag_detail(tag),
             &indicator,
             Some(&added_line),

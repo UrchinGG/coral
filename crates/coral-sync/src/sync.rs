@@ -87,11 +87,11 @@ pub(crate) fn build_template_context(
 
 pub(crate) async fn active_tags(data: &Data, uuid: &str) -> Vec<String> {
     BlacklistRepository::new(data.db.pool())
-        .get_tags(uuid)
+        .get_active_tags(uuid)
         .await
         .unwrap_or_default()
         .into_iter()
-        .map(|row| row.tag_type)
+        .filter_map(|row| row.tag_type)
         .collect()
 }
 

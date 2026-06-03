@@ -149,9 +149,12 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     };
 
     let repo = BlacklistRepository::new(data.db.pool());
-    let tags = repo.get_tags(&player_info.uuid).await?;
+    let tags = repo.get_active_tags(&player_info.uuid).await?;
 
-    if tags.iter().any(|t| t.tag_type == "confirmed_cheater") {
+    if tags
+        .iter()
+        .any(|t| t.tag_type.as_deref() == Some("confirmed_cheater"))
+    {
         return crate::interact::send_deferred_error(
             ctx,
             command,
@@ -161,10 +164,12 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         .await;
     }
 
-    let Some(tag) = tags
-        .iter()
-        .find(|t| t.tag_type == "closet_cheater" || t.tag_type == "blatant_cheater")
-    else {
+    let Some(tag) = tags.iter().find(|t| {
+        matches!(
+            t.tag_type.as_deref(),
+            Some("closet_cheater" | "blatant_cheater")
+        )
+    }) else {
         return crate::interact::send_deferred_error(
             ctx,
             command,
@@ -200,7 +205,8 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         return run_member_confirm(ctx, command, data, discord_id, &player_info, tag).await;
     }
 
-    run_staff_confirm(ctx, command, data, &player_info, &tag.reason).await
+    let reason = tag.reason.clone().unwrap_or_default();
+    run_staff_confirm(ctx, command, data, &player_info, &reason).await
 }
 
 async fn run_member_confirm(
@@ -209,16 +215,17 @@ async fn run_member_confirm(
     data: &Data,
     discord_id: u64,
     player_info: &crate::api::ResolveResponse,
-    tag: &database::PlayerTagRow,
+    tag: &database::PlayerEvent,
 ) -> Result<()> {
+    let reason = tag.reason.as_deref().unwrap_or("");
     let thread_id = reviews::create_submission(
         ctx,
         data,
         discord_id,
         &player_info.username,
         &player_info.uuid,
-        &tag.tag_type,
-        &tag.reason,
+        tag.tag_type.as_deref().unwrap_or(""),
+        reason,
     )
     .await?;
 
@@ -638,29 +645,49 @@ fn extract_evidence_name(header: &str) -> Option<String> {
 
 async fn try_convert_to_confirmed(data: &Data, state: &EvidenceState, actor_id: u64) -> Result<()> {
     let repo = BlacklistRepository::new(data.db.pool());
-    let tags = repo.get_tags(&state.uuid).await?;
-    if tags.iter().any(|t| t.tag_type == "confirmed_cheater") {
+    let tags = repo.get_active_tags(&state.uuid).await?;
+    if tags
+        .iter()
+        .any(|t| t.tag_type.as_deref() == Some("confirmed_cheater"))
+    {
         return Ok(());
     }
-    let Some(tag) = tags.iter().find(|t| t.tag_type != "confirmed_cheater") else {
+    let Some(tag) = tags
+        .iter()
+        .find(|t| t.tag_type.as_deref() != Some("confirmed_cheater"))
+    else {
         return Ok(());
     };
-    let old_tag_type = tag.tag_type.clone();
-    let old_reason = tag.reason.clone();
+    let old_tag_type = tag.tag_type.clone().unwrap_or_default();
+    let old_reason = tag.reason.clone().unwrap_or_default();
     let old_tag_id = tag.id;
-    let new_tag_id = repo
-        .replace_tag(tag.id, "confirmed_cheater", &old_reason, actor_id as i64)
+    let blocking = blacklist::priority_lane_excluding("confirmed_cheater", &old_tag_type);
+    let outcome = repo
+        .overwrite_event(
+            &state.uuid,
+            &old_tag_type,
+            "confirmed_cheater",
+            &old_reason,
+            tag.hide_username.unwrap_or(false),
+            None,
+            None,
+            Some(actor_id as i64),
+            &blocking,
+            Some(tag.id),
+        )
         .await?;
-    data.event_publisher
-        .publish(&BlacklistEvent::TagOverwritten {
-            uuid: state.uuid.clone(),
-            old_tag_id,
-            old_tag_type,
-            old_reason,
-            new_tag_id,
-            overwritten_by: actor_id as i64,
-        })
-        .await;
+    if let database::OverwriteOutcome::Inserted { new, .. } = outcome {
+        data.event_publisher
+            .publish(&BlacklistEvent::TagOverwritten {
+                uuid: state.uuid.clone(),
+                old_tag_id,
+                old_tag_type,
+                old_reason,
+                new_tag_id: new.id,
+                overwritten_by: actor_id as i64,
+            })
+            .await;
+    }
     Ok(())
 }
 
@@ -939,10 +966,8 @@ async fn remove_confirmed_tag(
     state: &EvidenceState,
     actor: i64,
 ) -> Result<()> {
-    let tags = repo.get_tags(&state.uuid).await?;
-    if let Some(confirmed_tag) = tags.iter().find(|t| t.tag_type == "confirmed_cheater") {
-        repo.remove_tag(confirmed_tag.id, actor).await?;
-    }
+    repo.remove_event(&state.uuid, "confirmed_cheater", Some(actor))
+        .await?;
     Ok(())
 }
 
@@ -1055,33 +1080,12 @@ pub async fn create_evidence_from_review(
     uuid: &str,
     username: &str,
     reason: &str,
-    tag_id: i64,
     media_urls: &[String],
     review_thread_url: Option<&str>,
-    approved_by: i64,
 ) -> Result<()> {
     let Some(forum_id) = data.evidence_forum_id else {
         anyhow::bail!("Evidence forum channel not configured");
     };
-
-    let repo = BlacklistRepository::new(data.db.pool());
-    if let Some(old) = repo.get_tag_by_id(tag_id).await?
-        && old.tag_type != "confirmed_cheater"
-    {
-        let new_id = repo
-            .replace_tag(tag_id, "confirmed_cheater", reason, approved_by)
-            .await?;
-        data.event_publisher
-            .publish(&BlacklistEvent::TagOverwritten {
-                uuid: uuid.to_string(),
-                old_tag_id: tag_id,
-                old_tag_type: old.tag_type,
-                old_reason: old.reason,
-                new_tag_id: new_id,
-                overwritten_by: approved_by,
-            })
-            .await;
-    }
 
     let mut evidence: Vec<EvidenceItem> = Vec::new();
     let mut files: Vec<CreateAttachment<'static>> = Vec::new();

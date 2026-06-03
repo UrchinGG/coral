@@ -120,7 +120,7 @@ pub async fn player_tags(
     let identifier = extract_identifier(&query)?;
     let (uuid, _) = resolve_identifier(&state, identifier).await?;
     let tags = BlacklistRepository::new(state.db.pool())
-        .get_tags(&uuid)
+        .get_active_tags(&uuid)
         .await?;
     Ok(Json(PlayerTagsResponse {
         uuid,
@@ -160,7 +160,7 @@ pub async fn player_stats(
     let hypixel = state.require_hypixel()?;
     let (player_data, tags, profile) = tokio::join!(
         hypixel.get_player(&uuid),
-        repo.get_tags(&uuid),
+        repo.get_active_tags(&uuid),
         state.mojang.get_profile(&uuid),
     );
     let (player_data, tags) = (player_data?, tags?);

@@ -116,6 +116,22 @@ pub fn is_user_addable(name: &str) -> bool {
     USER_ADDABLE_TAGS.iter().any(|t| t.name == name)
 }
 
+pub fn priority_lane(tag_type: &str) -> Vec<String> {
+    let priority = lookup(tag_type).map(|d| d.priority).unwrap_or(0);
+    ALL_TAGS
+        .iter()
+        .filter(|d| d.priority == priority)
+        .map(|d| d.name.to_string())
+        .collect()
+}
+
+pub fn priority_lane_excluding(tag_type: &str, excluded: &str) -> Vec<String> {
+    priority_lane(tag_type)
+        .into_iter()
+        .filter(|n| n != excluded)
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 pub struct Replay {
     pub id: String,

@@ -25,7 +25,7 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         member_repo.total_requests(),
         blacklist_repo.count_players(),
         blacklist_repo.count_active_tags(),
-        blacklist_repo.count_tags_by_type(),
+        blacklist_repo.count_active_tags_by_type(),
         cache_repo.count_snapshots(),
         cache_repo.count_unique_players(),
     );

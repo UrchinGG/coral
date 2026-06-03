@@ -45,8 +45,8 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     };
 
     let blacklist_repo = BlacklistRepository::new(data.db.pool());
-    let tags = blacklist_repo.get_tags(&stats.uuid).await?;
-    let blacklist_player = blacklist_repo.get_player(&stats.uuid).await?;
+    let tags = blacklist_repo.get_active_tags(&stats.uuid).await?;
+    let lock_state = blacklist_repo.get_lock_state(&stats.uuid).await?;
 
     let face = data.skin_provider
         .fetch_face(&stats.uuid, FACE_SIZE)
@@ -55,7 +55,7 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
 
     let container = build_info_container(
         &stats.uuid, &stats.username, stats.hypixel.as_ref(),
-        &tags, blacklist_player.as_ref(), face.is_some(),
+        &tags, &lock_state, face.is_some(),
     );
 
     let mut msg = CreateInteractionResponseMessage::new()
@@ -74,8 +74,8 @@ fn build_info_container(
     uuid: &str,
     username: &str,
     player: Option<&serde_json::Value>,
-    tags: &[database::PlayerTagRow],
-    blacklist_player: Option<&database::BlacklistPlayer>,
+    tags: &[database::PlayerEvent],
+    lock_state: &database::LockState,
     has_face: bool,
 ) -> CreateContainer<'static> {
     let name = player
@@ -98,13 +98,12 @@ fn build_info_container(
         .map(calculate_network_level)
         .unwrap_or(1);
 
-    let is_locked = blacklist_player.map(|p| p.is_locked).unwrap_or(false);
     let tag_list = if tags.is_empty() {
         "None".into()
     } else {
-        tags.iter().map(|t| t.tag_type.as_str()).collect::<Vec<_>>().join(", ")
+        tags.iter().filter_map(|t| t.tag_type.as_deref()).collect::<Vec<_>>().join(", ")
     };
-    let lock_status = if is_locked { "\u{1F512} Locked" } else { "\u{1F513} Unlocked" };
+    let lock_status = if lock_state.locked { "\u{1F512} Locked" } else { "\u{1F513} Unlocked" };
 
     let header_text = CreateTextDisplay::new(format!("## Player Info: `{name}`"));
     let header = if has_face {

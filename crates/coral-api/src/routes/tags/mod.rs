@@ -37,14 +37,16 @@ pub(crate) struct RemoveTagBody {
     pub tag_type: String,
 }
 
+/// Overwrites an existing tag. `tag_type` identifies the existing tag (must currently be active).
+/// `new_type` may equal `tag_type` to replace just the reason; otherwise it switches the tag type.
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct UpdateTagBody {
     #[serde(rename = "type")]
     pub tag_type: String,
-    pub reason: String,
-    pub new_type: Option<String>,
-    pub new_reason: Option<String>,
-    pub hide_username: Option<bool>,
+    pub new_type: String,
+    pub new_reason: String,
+    #[serde(default)]
+    pub hide_username: bool,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -86,9 +88,10 @@ fn map_op_error(e: TagOpError) -> ApiError {
         TagOpError::TagAlreadyExists => {
             ApiError::Conflict("player already has this tag type".into())
         }
-        TagOpError::PriorityConflict(t) => {
-            ApiError::Conflict(format!("conflicts with existing '{}' tag", t.tag_type))
-        }
+        TagOpError::PriorityConflict(t) => ApiError::Conflict(format!(
+            "conflicts with existing '{}' tag",
+            t.tag_type.as_deref().unwrap_or("")
+        )),
         TagOpError::TagNotFound => ApiError::NotFound("tag not found".into()),
         TagOpError::EditWindowExpired => ApiError::Forbidden("edit window has expired".into()),
         TagOpError::ModeratorRequired => ApiError::Forbidden("moderator access required".into()),
@@ -235,97 +238,46 @@ pub async fn update_tag(
             "tagging is disabled on your account".into(),
         ));
     }
-    if body.new_type.is_none() && body.new_reason.is_none() && body.hide_username.is_none() {
-        return Err(ApiError::BadRequest(
-            "at least one of new_type, new_reason, or hide_username is required".into(),
-        ));
-    }
-    if body.new_type.as_deref() == Some("confirmed_cheater") {
+    if body.new_type == "confirmed_cheater" {
         return Err(ApiError::Forbidden(
             "confirmed cheater tags can only be applied through the review system".into(),
         ));
     }
-    if let Some(ref reason) = body.new_reason {
-        validate_reason(reason)?;
-    }
+    validate_reason(&body.new_reason)?;
     enforce_tag_limit(&state, &member.0).await?;
 
     let uuid = validate_uuid(&query.uuid)?;
     let ops = TagOp::new(state.db.pool());
 
-    let old_tag = ops
-        .repo()
-        .get_tag_by_type(&uuid, &body.tag_type)
+    let (old_tag, new_tag) = ops
+        .overwrite(
+            &uuid,
+            &body.tag_type,
+            &body.new_type,
+            &body.new_reason,
+            member.0.discord_id,
+            member.0.access_level,
+            body.hide_username,
+        )
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .ok_or_else(|| ApiError::NotFound("tag not found".into()))?;
+        .map_err(map_op_error)?;
 
-    if old_tag.reason != body.reason {
-        return Err(ApiError::Conflict(
-            "provided reason does not match current tag reason".into(),
-        ));
-    }
-
-    let updated = if let Some(ref new_type) = body.new_type {
-        let reason = body.new_reason.as_deref().unwrap_or(&old_tag.reason);
-        let hide = body.hide_username.unwrap_or(old_tag.hide_username);
-        let (_removed, new_tag) = ops
-            .overwrite(
-                &uuid,
-                old_tag.id,
-                new_type,
-                reason,
-                member.0.discord_id,
-                member.0.access_level,
-                hide,
-            )
-            .await
-            .map_err(map_op_error)?;
-
-        state
-            .event_publisher
-            .publish(&BlacklistEvent::TagOverwritten {
-                uuid: uuid.clone(),
-                old_tag_id: old_tag.id,
-                old_tag_type: old_tag.tag_type.clone(),
-                old_reason: old_tag.reason.clone(),
-                new_tag_id: new_tag.id,
-                overwritten_by: member.0.discord_id,
-            })
-            .await;
-
-        new_tag
-    } else {
-        let tag = ops
-            .modify(
-                &uuid,
-                &body.tag_type,
-                member.0.discord_id,
-                member.0.access_level,
-                body.new_reason.as_deref(),
-                body.hide_username,
-            )
-            .await
-            .map_err(map_op_error)?;
-
-        state
-            .event_publisher
-            .publish(&BlacklistEvent::TagEdited {
-                uuid: uuid.clone(),
-                tag_id: tag.id,
-                old_tag_type: body.tag_type.clone(),
-                old_reason: body.reason.clone(),
-                edited_by: member.0.discord_id,
-            })
-            .await;
-
-        tag
-    };
+    state
+        .event_publisher
+        .publish(&BlacklistEvent::TagOverwritten {
+            uuid: uuid.clone(),
+            old_tag_id: old_tag.id,
+            old_tag_type: old_tag.tag_type.clone().unwrap_or_default(),
+            old_reason: old_tag.reason.clone().unwrap_or_default(),
+            new_tag_id: new_tag.id,
+            overwritten_by: member.0.discord_id,
+        })
+        .await;
 
     let state = state.clone();
     tokio::spawn(async move { refresh_player_cache(&state, &uuid, None).await });
 
-    Ok(Json(TagResponse::from_db(&updated)))
+    Ok(Json(TagResponse::from_db(&new_tag)))
 }
 
 #[utoipa::path(
@@ -387,7 +339,7 @@ pub async fn unlock_player(
     let uuid = validate_uuid(&query.uuid)?;
 
     TagOp::new(state.db.pool())
-        .unlock_player(&uuid, member.0.access_level)
+        .unlock_player(&uuid, member.0.discord_id, member.0.access_level)
         .await
         .map_err(map_op_error)?;
 

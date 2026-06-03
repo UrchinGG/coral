@@ -15,7 +15,7 @@ mod tag_ops;
 
 pub use access::AccessRank;
 pub use accounts::{AccountRepository, MinecraftAccount};
-pub use blacklist::{BlacklistPlayer, BlacklistRepository, PlayerTagRow};
+pub use blacklist::{AddOutcome, BlacklistRepository, LockState, OverwriteOutcome, PlayerEvent};
 pub use cache::{CacheRepository, SnapshotResult, calculate_delta, reconstruct};
 pub use delta::session_delta;
 pub use developer_keys::{DeveloperKey, DeveloperKeyRepository, permissions};

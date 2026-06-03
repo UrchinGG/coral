@@ -54,14 +54,14 @@ pub fn sanitize_reason(reason: &str) -> String {
     out
 }
 
-pub fn format_tag_detail(tag: &database::PlayerTagRow) -> String {
-    if tag.tag_type == "replays_needed" {
+pub fn format_tag_detail(tag: &database::PlayerEvent) -> String {
+    if tag.tag_type.as_deref() == Some("replays_needed") {
         return match tag.expires_at {
             Some(ts) => format!("Expires <t:{}:R>", ts.timestamp()),
             None => "No expiration".into(),
         };
     }
-    sanitize_reason(&tag.reason)
+    sanitize_reason(tag.reason.as_deref().unwrap_or(""))
 }
 
 pub fn generate_api_key() -> String {
