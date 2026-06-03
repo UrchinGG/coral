@@ -15,6 +15,7 @@ SELECT uuid, 'lock', lock_reason, locked_by, COALESCE(locked_at, NOW())
 FROM blacklist_players
 WHERE is_locked;
 
+DROP TABLE player_tags_legacy;
 DROP TABLE blacklist_players;
 
 ALTER INDEX idx_pte_active RENAME TO idx_pe_active;
