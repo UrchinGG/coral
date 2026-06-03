@@ -67,9 +67,15 @@ jobs:
             docker push "${REGISTRY}/${svc}:latest"
           done
 
+      - name: Refresh coral-vm SSH host keys
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keygen -R coral-vm.tailde25ae.ts.net 2>/dev/null || true
+          ssh-keyscan -H coral-vm.tailde25ae.ts.net >> ~/.ssh/known_hosts
+
       - name: Pull new images on coral-vm
         run: |
-          ssh -o StrictHostKeyChecking=accept-new debian@coral-vm.tailde25ae.ts.net <<'REMOTE'
+          ssh debian@coral-vm.tailde25ae.ts.net <<'REMOTE'
             set -e
             cd ~/coral-r730
             docker compose pull coral-api coral-bot coral-sync coral-web
