@@ -1181,7 +1181,7 @@ fn spawn_guild_sync(ctx: &Context, token: &str, data: &Data, guild_id: u64) {
         "Changing Display Names",
         move |cancel| {
             Box::pin(async move {
-                crate::sync::sync_guild_fresh(
+                crate::sync::sync_guild_cached(
                     ctx_clone,
                     data_clone,
                     GuildId::new(guild_id),
@@ -1223,7 +1223,7 @@ fn spawn_role_swap(
                 cancel.clone(),
             )
             .await;
-            crate::sync::sync_guild_fresh(ctx_clone, data_clone, GuildId::new(guild_id), cancel)
+            crate::sync::sync_guild_cached(ctx_clone, data_clone, GuildId::new(guild_id), cancel)
                 .await;
         })
     });
