@@ -24,6 +24,8 @@ use crate::{
 pub(crate) struct PlayerQuery {
     pub uuid: Option<String>,
     pub name: Option<String>,
+    #[serde(default)]
+    pub fallback: Option<String>,
 }
 
 pub fn public_router() -> Router<AppState> {
@@ -158,20 +160,40 @@ pub async fn player_stats(
     let (uuid, username_hint) = resolve_identifier(&state, identifier).await?;
     let repo = BlacklistRepository::new(state.db.pool());
     let hypixel = state.require_hypixel()?;
-    let (player_data, tags, profile) = tokio::join!(
+    let (player_result, tags, profile) = tokio::join!(
         hypixel.get_player(&uuid),
         repo.get_active_tags(&uuid),
         state.mojang.get_profile(&uuid),
     );
-    let (player_data, tags) = (player_data?, tags?);
+    let tags = tags?;
     let (skin_url, slim) = match profile.ok() {
         Some(p) => (p.skin_url, p.slim),
         None => (None, false),
     };
+
+    let allow_cache_fallback = query.fallback.as_deref() == Some("cache");
+    let (player_data, stale) = match player_result {
+        Ok(data) => (data, false),
+        Err(err) if allow_cache_fallback => {
+            match CacheRepository::new(state.db.pool())
+                .get_latest_snapshot(&uuid)
+                .await
+                .ok()
+                .flatten()
+            {
+                Some(cached) => (Some(cached), true),
+                None => return Err(err.into()),
+            }
+        }
+        Err(err) => return Err(err.into()),
+    };
+
     let username = resolve_username(username_hint, &player_data, &uuid);
 
-    if let Some(ref data) = player_data {
-        spawn_cache_update(&state, &uuid, data, &username);
+    if !stale {
+        if let Some(ref data) = player_data {
+            spawn_cache_update(&state, &uuid, data, &username);
+        }
     }
 
     Ok(Json(PlayerStatsResponse {
@@ -181,6 +203,7 @@ pub async fn player_stats(
         tags: tags.iter().map(TagResponse::from_db).collect(),
         skin_url,
         slim,
+        stale,
     }))
 }
 

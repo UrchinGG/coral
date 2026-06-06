@@ -12,6 +12,8 @@ pub struct PlayerStatsResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skin_url: Option<String>,
     pub slim: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stale: bool,
 }
 
 #[derive(Serialize, ToSchema)]

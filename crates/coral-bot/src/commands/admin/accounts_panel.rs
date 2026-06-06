@@ -414,24 +414,52 @@ pub async fn handle_link_pick(
     };
 
     let discord_name = resolve_discord_name(ctx, &component.user, target_id).await;
-    match crate::accounts::check_link(data, uuid, &discord_name).await {
-        crate::accounts::LinkCheck::Verified { uuid, username } => {
-            crate::accounts::link_alt(data, target_id, member.id, &uuid).await?;
-            let _ = CacheRepository::new(data.db.pool())
-                .cache_username(&uuid, &username)
-                .await;
-            refresh_view(ctx, component, data, true, target_id).await
-        }
+    let (uuid, username) = match crate::accounts::check_link(data, uuid, &discord_name).await {
+        crate::accounts::LinkCheck::Verified { uuid, username } => (uuid, username),
         _ => {
-            interact::send_component_error(
+            return interact::send_component_error(
                 ctx,
                 component,
                 "Verification Failed",
                 "That account's Discord link no longer matches.",
             )
-            .await
+            .await;
+        }
+    };
+    match crate::accounts::link_alt(data, target_id, member.id, &uuid).await? {
+        crate::accounts::LinkOutcome::AlreadyLinked => {
+            send_already_linked_component(ctx, component).await
+        }
+        crate::accounts::LinkOutcome::Added => {
+            let _ = CacheRepository::new(data.db.pool())
+                .cache_username(&uuid, &username)
+                .await;
+            refresh_view(ctx, component, data, true, target_id).await
         }
     }
+}
+
+async fn send_already_linked_component(
+    ctx: &Context,
+    component: &ComponentInteraction,
+) -> Result<()> {
+    interact::send_component_error(
+        ctx,
+        component,
+        "Already Linked",
+        "You already have this account linked.",
+    )
+    .await
+}
+
+async fn send_already_linked_modal(ctx: &Context, modal: &ModalInteraction) -> Result<()> {
+    interact::send_modal_error(
+        ctx,
+        modal,
+        "Already Linked",
+        "You already have this account linked.",
+    )
+    .await
 }
 
 pub async fn handle_add_account_button(
@@ -543,18 +571,22 @@ pub async fn handle_add_code_modal(
 
     let uuid = player.uuid.clone();
     let _ = data.api.get_player_stats(&uuid).await;
-    crate::accounts::link_alt(data, target_id, member.id, &uuid).await?;
-    let _ = CacheRepository::new(data.db.pool())
-        .cache_username(&uuid, &player.username)
-        .await;
-    refresh_view_from_modal(
-        ctx,
-        modal,
-        data,
-        resolve_can_modify(prefix, invoker_rank, target_rank, is_self),
-        target_id,
-    )
-    .await
+    match crate::accounts::link_alt(data, target_id, member.id, &uuid).await? {
+        crate::accounts::LinkOutcome::AlreadyLinked => send_already_linked_modal(ctx, modal).await,
+        crate::accounts::LinkOutcome::Added => {
+            let _ = CacheRepository::new(data.db.pool())
+                .cache_username(&uuid, &player.username)
+                .await;
+            refresh_view_from_modal(
+                ctx,
+                modal,
+                data,
+                resolve_can_modify(prefix, invoker_rank, target_rank, is_self),
+                target_id,
+            )
+            .await
+        }
+    }
 }
 
 pub async fn handle_add_account_modal(
@@ -579,7 +611,7 @@ pub async fn handle_add_account_modal(
         return interact::send_modal_error(ctx, modal, "Error", "User is not registered").await;
     };
 
-    let stats = match data.api.get_player_stats(&username).await {
+    let stats = match data.api.get_player_stats_or_cached(&username).await {
         Ok(s) => s,
         Err(_) => {
             return interact::send_modal_error(
@@ -601,18 +633,24 @@ pub async fn handle_add_account_modal(
         .unwrap_or(false);
 
     if verified {
-        crate::accounts::link_alt(data, target_id, member.id, &uuid).await?;
-        let _ = CacheRepository::new(data.db.pool())
-            .cache_username(&uuid, &stats.username)
-            .await;
-        return refresh_view_from_modal(
-            ctx,
-            modal,
-            data,
-            resolve_can_modify(prefix, invoker_rank, target_rank, is_self),
-            target_id,
-        )
-        .await;
+        return match crate::accounts::link_alt(data, target_id, member.id, &uuid).await? {
+            crate::accounts::LinkOutcome::AlreadyLinked => {
+                send_already_linked_modal(ctx, modal).await
+            }
+            crate::accounts::LinkOutcome::Added => {
+                let _ = CacheRepository::new(data.db.pool())
+                    .cache_username(&uuid, &stats.username)
+                    .await;
+                refresh_view_from_modal(
+                    ctx,
+                    modal,
+                    data,
+                    resolve_can_modify(prefix, invoker_rank, target_rank, is_self),
+                    target_id,
+                )
+                .await
+            }
+        };
     }
 
     if is_self && invoker_rank < AccessRank::Moderator {
@@ -620,12 +658,23 @@ pub async fn handle_add_account_modal(
             ctx,
             modal,
             "Error",
-            "Your Discord must be linked in Hypixel social settings for this account",
+            &format!(
+                "Your Discord must be linked in Hypixel social settings for this account{}",
+                stale_cache_notice(stats.stale)
+            ),
         )
         .await;
     }
 
     show_force_link_prompt(ctx, modal, data, &stats.username, prefix, target_id, &uuid).await
+}
+
+fn stale_cache_notice(stale: bool) -> &'static str {
+    if stale {
+        "\n\n-# *Hypixel was unreachable — using cached data. If you just updated your link, try again shortly.*"
+    } else {
+        ""
+    }
 }
 
 async fn resolve_discord_name_from_modal(
@@ -692,8 +741,14 @@ pub async fn handle_force_add(
             .await;
     };
 
-    crate::accounts::link_alt(data, target_id, member.id, &uuid).await?;
-    refresh_view(ctx, component, data, true, target_id).await
+    match crate::accounts::link_alt(data, target_id, member.id, &uuid).await? {
+        crate::accounts::LinkOutcome::AlreadyLinked => {
+            send_already_linked_component(ctx, component).await
+        }
+        crate::accounts::LinkOutcome::Added => {
+            refresh_view(ctx, component, data, true, target_id).await
+        }
+    }
 }
 
 pub async fn handle_remove_account(

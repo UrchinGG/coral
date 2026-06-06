@@ -76,6 +76,10 @@ impl Handler {
         let id = component.data.custom_id.as_str();
         tracing::debug!("component interaction: {id}");
 
+        if let Some(action) = id.strip_prefix("link_") {
+            return self.handle_link_component(ctx, component, action).await;
+        }
+
         match id {
             "setup_link" => {
                 commands::admin::setup::handle_link_button(ctx, component, &self.data).await
@@ -143,6 +147,48 @@ impl Handler {
         }
     }
 
+    async fn handle_link_component(
+        &self,
+        ctx: &Context,
+        component: &ComponentInteraction,
+        action: &str,
+    ) -> anyhow::Result<()> {
+        use commands::admin::accounts_panel;
+        match action {
+            _ if action.starts_with("swap_primary:") => {
+                accounts_panel::handle_swap_primary(ctx, component, &self.data).await
+            }
+            _ if action.starts_with("link_new:") => {
+                accounts_panel::handle_link_new(ctx, component, &self.data).await
+            }
+            _ if action.starts_with("link_pick:") => {
+                accounts_panel::handle_link_pick(ctx, component, &self.data).await
+            }
+            _ if action.starts_with("add_account:") => {
+                accounts_panel::handle_add_account_button(ctx, component, &self.data).await
+            }
+            _ if action.starts_with("add_code:") => {
+                accounts_panel::handle_add_code_button(ctx, component, &self.data).await
+            }
+            _ if action.starts_with("remove_account:") => {
+                accounts_panel::handle_remove_account(ctx, component, &self.data).await
+            }
+            _ if action.starts_with("force_add:") => {
+                accounts_panel::handle_force_add(ctx, component, &self.data).await
+            }
+            _ if action.starts_with("cancel_add:") => {
+                accounts_panel::handle_cancel_add(ctx, component, &self.data).await
+            }
+            _ if action.starts_with("accounts_back:") => {
+                accounts_panel::handle_accounts_back_generic(ctx, component, &self.data).await
+            }
+            _ => {
+                tracing::warn!("unhandled link component: {action}");
+                Ok(())
+            }
+        }
+    }
+
     async fn handle_modal(&self, ctx: &Context, modal: &ModalInteraction) -> anyhow::Result<()> {
         let id = modal.data.custom_id.as_str();
 
@@ -155,6 +201,13 @@ impl Handler {
             }
             _ if id.starts_with("setup_rule_edit_modal:") => {
                 commands::admin::setup::handle_rule_edit_modal(ctx, modal, &self.data).await
+            }
+            _ if id.starts_with("link_add_account_modal:") => {
+                commands::admin::accounts_panel::handle_add_account_modal(ctx, modal, &self.data)
+                    .await
+            }
+            _ if id.starts_with("link_add_code_modal:") => {
+                commands::admin::accounts_panel::handle_add_code_modal(ctx, modal, &self.data).await
             }
             _ => Ok(()),
         }

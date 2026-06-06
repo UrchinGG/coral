@@ -33,6 +33,8 @@ pub struct PlayerStatsResponse {
     pub skin_url: Option<String>,
     #[serde(default)]
     pub slim: bool,
+    #[serde(default)]
+    pub stale: bool,
 }
 
 #[derive(Deserialize)]
@@ -83,14 +85,30 @@ impl CoralApiClient {
         &self,
         identifier: &str,
     ) -> Result<PlayerStatsResponse, ApiError> {
+        self.fetch_player_stats(identifier, false).await
+    }
+
+    pub async fn get_player_stats_or_cached(
+        &self,
+        identifier: &str,
+    ) -> Result<PlayerStatsResponse, ApiError> {
+        self.fetch_player_stats(identifier, true).await
+    }
+
+    async fn fetch_player_stats(
+        &self,
+        identifier: &str,
+        allow_cache: bool,
+    ) -> Result<PlayerStatsResponse, ApiError> {
         let param = if identifier.len() == 32 && identifier.chars().all(|c| c.is_ascii_hexdigit()) {
             "uuid"
         } else {
             "name"
         };
+        let suffix = if allow_cache { "&fallback=cache" } else { "" };
         self.get(&format!(
-            "{}/v3/player/profile?{}={}",
-            self.base_url, param, identifier
+            "{}/v3/player/profile?{}={}{}",
+            self.base_url, param, identifier, suffix
         ))
         .await
     }

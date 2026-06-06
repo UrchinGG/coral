@@ -13,6 +13,11 @@ pub enum LinkCheck {
     HypixelNotFound,
 }
 
+pub enum LinkOutcome {
+    Added,
+    AlreadyLinked,
+}
+
 pub async fn check_link(data: &Data, player: &str, discord_username: &str) -> LinkCheck {
     let stats = match data.api.get_player_stats(player).await {
         Ok(s) => s,
@@ -41,18 +46,27 @@ pub async fn link_primary(data: &Data, discord_id: u64, uuid: &str) -> Result<()
     Ok(())
 }
 
-pub async fn link_alt(data: &Data, discord_id: u64, member_id: i64, uuid: &str) -> Result<()> {
-    let repo = MemberRepository::new(data.db.pool());
-    let member = repo.get_by_discord_id(discord_id as i64).await?;
-
-    if member.as_ref().and_then(|m| m.uuid.as_ref()).is_none() {
-        return link_primary(data, discord_id, uuid).await;
+pub async fn link_alt(
+    data: &Data,
+    discord_id: u64,
+    member_id: i64,
+    uuid: &str,
+) -> Result<LinkOutcome> {
+    let accounts = AccountRepository::new(data.db.pool());
+    if accounts.is_owned_by(uuid, discord_id as i64).await? {
+        return Ok(LinkOutcome::AlreadyLinked);
     }
 
-    AccountRepository::new(data.db.pool())
-        .add(member_id, uuid)
+    let member = MemberRepository::new(data.db.pool())
+        .get_by_discord_id(discord_id as i64)
         .await?;
-    Ok(())
+
+    if member.as_ref().and_then(|m| m.uuid.as_ref()).is_none() {
+        link_primary(data, discord_id, uuid).await?;
+    } else {
+        accounts.add(member_id, uuid).await?;
+    }
+    Ok(LinkOutcome::Added)
 }
 
 pub fn is_discord_linked(player: &Value, discord_username: &str) -> bool {
