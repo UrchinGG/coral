@@ -1,0 +1,61 @@
+name: Deploy Verify
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'crates/mc-verify/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/deploy-verify.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, linux, coral]
+    timeout-minutes: 15
+    env:
+      VPS: ubuntu@207.211.176.142
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refresh VPS SSH host keys
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keygen -R 207.211.176.142 2>/dev/null || true
+          ssh-keyscan -H 207.211.176.142 >> ~/.ssh/known_hosts
+
+      - name: Stage source archive
+        run: git archive HEAD -o /tmp/coral-src.tar.gz
+
+      - name: Ship + build + roll
+        run: |
+          scp /tmp/coral-src.tar.gz "$VPS":/tmp/coral-src.tar.gz
+          ssh "$VPS" <<'REMOTE'
+            set -euo pipefail
+            STAGE=$HOME/coral-build
+            rm -rf "$STAGE" && mkdir -p "$STAGE"
+            tar -xzf /tmp/coral-src.tar.gz -C "$STAGE"
+            rm -f /tmp/coral-src.tar.gz
+            cd "$STAGE"
+            cargo build -p mc-verify --release
+            sudo install -o root -g root -m 755 target/release/coral-verify /usr/local/bin/coral-verify.new
+            sudo mv /usr/local/bin/coral-verify.new /usr/local/bin/coral-verify
+            sudo systemctl restart coral-verify
+          REMOTE
+
+      - name: Health check
+        run: |
+          ssh "$VPS" '
+            for i in $(seq 1 15); do
+              if systemctl is-active --quiet coral-verify && ss -tln "( sport = :25565 )" | grep -q :25565; then
+                echo "verify is up on attempt $i"
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "verify never came up"
+            sudo journalctl -u coral-verify --no-pager -n 30
+            exit 1
+          '
