@@ -100,8 +100,10 @@ impl<'a> CacheRepository<'a> {
         .await?;
 
         if let Some(baseline) = baseline {
-            let deltas = self.get_deltas_in_range(uuid, &baseline, timestamp).await?;
-            return Ok(Some(reconstruct(&baseline.data, &deltas)));
+            let (value, _) = self
+                .stream_reconstruct(uuid, baseline.timestamp, baseline.data, timestamp)
+                .await?;
+            return Ok(Some(value));
         }
 
         let first: Option<SnapshotRow> = sqlx::query_as(
@@ -258,22 +260,14 @@ impl<'a> CacheRepository<'a> {
         let mut indexed: Vec<(usize, DateTime<Utc>)> =
             timestamps.iter().copied().enumerate().collect();
         indexed.sort_by_key(|(_, ts)| *ts);
+        let earliest = indexed[0].1;
         let latest = indexed[indexed.len() - 1].1;
 
-        let baseline: Option<SnapshotRow> = sqlx::query_as(
-            "SELECT id, is_baseline, data, timestamp FROM player_snapshots
-             WHERE uuid = $1 AND is_baseline = true
-             ORDER BY timestamp ASC LIMIT 1",
-        )
-        .bind(uuid)
-        .fetch_optional(self.pool)
-        .await?;
-
-        let Some(baseline) = baseline else {
+        let Some(baseline) = self.pick_baseline_for(uuid, earliest).await? else {
             return Ok(vec![None; timestamps.len()]);
         };
 
-        let rows: Vec<SnapshotRow> = sqlx::query_as(
+        let mut stream = sqlx::query_as::<_, SnapshotRow>(
             "SELECT id, is_baseline, data, timestamp FROM player_snapshots
              WHERE uuid = $1 AND timestamp > $2 AND timestamp <= $3
              ORDER BY timestamp ASC",
@@ -281,20 +275,26 @@ impl<'a> CacheRepository<'a> {
         .bind(uuid)
         .bind(baseline.timestamp)
         .bind(latest)
-        .fetch_all(self.pool)
-        .await?;
+        .fetch(self.pool);
 
         let mut current = baseline.data;
         let mut current_ts = baseline.timestamp;
         let mut results = vec![None; timestamps.len()];
-        let mut rows = rows.into_iter().peekable();
+        let mut pending: Option<SnapshotRow> = None;
 
         for &(orig_idx, target_ts) in &indexed {
-            while let Some(row) = rows.peek() {
+            loop {
+                let row = match pending.take() {
+                    Some(r) => r,
+                    None => match stream.try_next().await? {
+                        Some(r) => r,
+                        None => break,
+                    },
+                };
                 if row.timestamp > target_ts {
+                    pending = Some(row);
                     break;
                 }
-                let row = rows.next().unwrap();
                 current_ts = row.timestamp;
                 if row.is_baseline {
                     current = row.data;
@@ -305,6 +305,35 @@ impl<'a> CacheRepository<'a> {
             results[orig_idx] = Some((current_ts, current.clone()));
         }
         Ok(results)
+    }
+
+    async fn pick_baseline_for(
+        &self,
+        uuid: &str,
+        target: DateTime<Utc>,
+    ) -> Result<Option<SnapshotRow>, sqlx::Error> {
+        let recent: Option<SnapshotRow> = sqlx::query_as(
+            "SELECT id, is_baseline, data, timestamp FROM player_snapshots
+             WHERE uuid = $1 AND is_baseline = true AND timestamp <= $2
+             ORDER BY timestamp DESC LIMIT 1",
+        )
+        .bind(uuid)
+        .bind(target)
+        .fetch_optional(self.pool)
+        .await?;
+
+        if recent.is_some() {
+            return Ok(recent);
+        }
+
+        sqlx::query_as(
+            "SELECT id, is_baseline, data, timestamp FROM player_snapshots
+             WHERE uuid = $1 AND is_baseline = true
+             ORDER BY timestamp ASC LIMIT 1",
+        )
+        .bind(uuid)
+        .fetch_optional(self.pool)
+        .await
     }
 
     async fn insert_snapshot(
@@ -341,40 +370,15 @@ impl<'a> CacheRepository<'a> {
         let Some(baseline) = self.get_latest_baseline(uuid).await? else {
             return Ok(());
         };
-        let deltas = self
-            .get_deltas_in_range(uuid, &baseline, Utc::now())
+        let (_, merge_time) = self
+            .stream_reconstruct(uuid, baseline.timestamp, baseline.data, Utc::now())
             .await?;
-        if deltas.is_empty() {
-            return Ok(());
-        }
 
-        let start = Instant::now();
-        let _ = reconstruct(&baseline.data, &deltas);
-
-        if start.elapsed() > RECONSTRUCTION_THRESHOLD {
+        if merge_time > RECONSTRUCTION_THRESHOLD {
             self.insert_snapshot(uuid, full_data, None, Some("promotion"), username, true)
                 .await?;
         }
         Ok(())
-    }
-
-    async fn get_deltas_in_range(
-        &self,
-        uuid: &str,
-        baseline: &SnapshotRow,
-        until: DateTime<Utc>,
-    ) -> Result<Vec<Value>, sqlx::Error> {
-        sqlx::query_as::<_, (Value,)>(
-            "SELECT data FROM player_snapshots
-             WHERE uuid = $1 AND is_baseline = false AND timestamp > $2 AND timestamp <= $3
-             ORDER BY timestamp ASC",
-        )
-        .bind(uuid)
-        .bind(baseline.timestamp)
-        .bind(until)
-        .fetch_all(self.pool)
-        .await
-        .map(|rows| rows.into_iter().map(|r| r.0).collect())
     }
 
     async fn get_latest_baseline(&self, uuid: &str) -> Result<Option<SnapshotRow>, sqlx::Error> {
@@ -393,8 +397,37 @@ impl<'a> CacheRepository<'a> {
         uuid: &str,
         baseline: &SnapshotRow,
     ) -> Result<Value, sqlx::Error> {
-        let deltas = self.get_deltas_in_range(uuid, baseline, Utc::now()).await?;
-        Ok(reconstruct(&baseline.data, &deltas))
+        let (value, _) = self
+            .stream_reconstruct(uuid, baseline.timestamp, baseline.data.clone(), Utc::now())
+            .await?;
+        Ok(value)
+    }
+
+    async fn stream_reconstruct(
+        &self,
+        uuid: &str,
+        baseline_ts: DateTime<Utc>,
+        baseline_data: Value,
+        until: DateTime<Utc>,
+    ) -> Result<(Value, Duration), sqlx::Error> {
+        let mut stream = sqlx::query_as::<_, (Value,)>(
+            "SELECT data FROM player_snapshots
+             WHERE uuid = $1 AND is_baseline = false AND timestamp > $2 AND timestamp <= $3
+             ORDER BY timestamp ASC",
+        )
+        .bind(uuid)
+        .bind(baseline_ts)
+        .bind(until)
+        .fetch(self.pool);
+
+        let mut current = baseline_data;
+        let mut merge_time = Duration::ZERO;
+        while let Some((delta,)) = stream.try_next().await? {
+            let start = Instant::now();
+            deep_merge_mut(&mut current, &delta);
+            merge_time += start.elapsed();
+        }
+        Ok((current, merge_time))
     }
 }
 
