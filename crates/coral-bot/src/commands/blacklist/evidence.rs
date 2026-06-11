@@ -270,6 +270,7 @@ async fn run_staff_confirm(
         player_info.username,
         format_uuid_dashed(&player_info.uuid)
     );
+    let history = fetch_history(ctx, data, &player_info.uuid).await;
     let message_content = build_evidence_message(
         &player_info.username,
         &player_info.uuid,
@@ -277,6 +278,7 @@ async fn run_staff_confirm(
         &[],
         None,
         &HashMap::new(),
+        history.as_deref(),
     );
 
     let face = face_attachment(data, &player_info.uuid).await;
@@ -321,6 +323,16 @@ async fn run_staff_confirm(
         )
         .await?;
     Ok(())
+}
+
+const HISTORY_LIMIT: usize = 10;
+
+async fn fetch_history(ctx: &Context, data: &Data, uuid: &str) -> Option<String> {
+    let events = BlacklistRepository::new(data.db.pool())
+        .get_tag_history(uuid)
+        .await
+        .ok()?;
+    super::channel::format_tag_history(ctx, &events, HISTORY_LIMIT).await
 }
 
 #[derive(Debug, Clone)]
@@ -427,6 +439,7 @@ fn build_evidence_message(
     evidence: &[EvidenceItem],
     review_thread_url: Option<&str>,
     gallery_urls: &HashMap<String, String>,
+    history: Option<&str>,
 ) -> Vec<CreateComponent<'static>> {
     let dashed_uuid = format_uuid_dashed(uuid);
 
@@ -464,6 +477,9 @@ fn build_evidence_message(
         ));
     }
     parts.push(face_section(format!("{block}\n{uuid_footer}")));
+    if let Some(h) = history {
+        parts.push(text(h.to_string()));
+    }
     parts.push(separator());
 
     if !evidence.is_empty() {
@@ -685,6 +701,7 @@ async fn try_convert_to_confirmed(data: &Data, state: &EvidenceState, actor_id: 
                 old_reason,
                 new_tag_id: new.id,
                 overwritten_by: actor_id as i64,
+                silent: false,
             })
             .await;
     }
@@ -809,6 +826,7 @@ pub async fn handle_media_modal(
     }
 
     let urls = gallery_url_map(&builder_msg);
+    let history = fetch_history(ctx, data, &state.uuid).await;
     let components = build_evidence_message(
         &state.username,
         &state.uuid,
@@ -816,6 +834,7 @@ pub async fn handle_media_modal(
         &state.evidence,
         state.review_url.as_deref(),
         &urls,
+        history.as_deref(),
     );
 
     let face = face_attachment(data, &state.uuid).await;
@@ -928,6 +947,7 @@ pub async fn handle_remove(
     let mut urls = gallery_url_map(&builder_msg);
     urls.remove(&removed_filename);
 
+    let history = fetch_history(ctx, data, &state.uuid).await;
     let components = build_evidence_message(
         &state.username,
         &state.uuid,
@@ -935,6 +955,7 @@ pub async fn handle_remove(
         &state.evidence,
         state.review_url.as_deref(),
         &urls,
+        history.as_deref(),
     );
 
     let face = face_attachment(data, &state.uuid).await;
@@ -1100,8 +1121,16 @@ pub async fn create_evidence_from_review(
 
     let thread_title = format!("{} | {}", username, format_uuid_dashed(uuid));
     let no_urls = HashMap::new();
-    let initial_components =
-        build_evidence_message(username, uuid, reason, &[], review_thread_url, &no_urls);
+    let history = fetch_history(ctx, data, uuid).await;
+    let initial_components = build_evidence_message(
+        username,
+        uuid,
+        reason,
+        &[],
+        review_thread_url,
+        &no_urls,
+        history.as_deref(),
+    );
 
     let initial_face = face_attachment(data, uuid).await;
     let thread = forum_id
@@ -1141,6 +1170,7 @@ pub async fn create_evidence_from_review(
                 &evidence,
                 review_thread_url,
                 &no_urls,
+                history.as_deref(),
             ))
             .attachments(att);
 

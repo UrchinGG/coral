@@ -160,6 +160,7 @@ pub async fn add_tag(
             uuid: uuid.clone(),
             tag_id: tag.id,
             added_by: member.0.discord_id,
+            silent: false,
         })
         .await;
 
@@ -207,6 +208,7 @@ pub async fn remove_tag(
             uuid: uuid.clone(),
             tag_id: tag.id,
             removed_by: member.0.discord_id,
+            silent: false,
         })
         .await;
 
@@ -271,6 +273,7 @@ pub async fn update_tag(
             old_reason: old_tag.reason.clone().unwrap_or_default(),
             new_tag_id: new_tag.id,
             overwritten_by: member.0.discord_id,
+            silent: false,
         })
         .await;
 

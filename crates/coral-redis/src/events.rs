@@ -13,6 +13,8 @@ pub enum BlacklistEvent {
         uuid: String,
         tag_id: i64,
         added_by: i64,
+        #[serde(default)]
+        silent: bool,
     },
     TagOverwritten {
         uuid: String,
@@ -21,11 +23,15 @@ pub enum BlacklistEvent {
         old_reason: String,
         new_tag_id: i64,
         overwritten_by: i64,
+        #[serde(default)]
+        silent: bool,
     },
     TagRemoved {
         uuid: String,
         tag_id: i64,
         removed_by: i64,
+        #[serde(default)]
+        silent: bool,
     },
     TagEdited {
         uuid: String,

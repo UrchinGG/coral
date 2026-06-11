@@ -1,3 +1,3 @@
 mod blacklist;
 
-pub use blacklist::spawn_subscriber;
+pub use blacklist::{hydrate_expiring_tags, spawn_subscriber};

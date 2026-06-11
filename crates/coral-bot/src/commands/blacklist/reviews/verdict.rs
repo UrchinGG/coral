@@ -299,6 +299,7 @@ pub async fn handle_approve(
                 uuid: player_uuid.clone(),
                 tag_id,
                 added_by: submitter_id as i64,
+                silent: false,
             })
             .await;
     }

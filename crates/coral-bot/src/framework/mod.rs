@@ -303,8 +303,9 @@ impl Handler {
             _ if id.starts_with("mt_back:") => {
                 commands::blacklist::tag::handle_manage_back(ctx, component, &self.data).await
             }
-            _ if id.starts_with("mt_history:") => {
-                commands::blacklist::tag::handle_manage_history(ctx, component, &self.data).await
+            _ if id == "mt_replace_cancel" => {
+                commands::blacklist::tag::handle_manage_replace_cancel(ctx, component, &self.data)
+                    .await
             }
             _ if id.starts_with("evidence_add_media") => {
                 commands::blacklist::evidence::handle_add_media(ctx, component, &self.data).await
@@ -543,6 +544,10 @@ impl EventHandler for Handler {
                 let ctx = ctx.clone();
                 tokio::spawn(async move {
                     commands::blacklist::evidence::populate_thread_index(&ctx, &data).await;
+                });
+                let data = self.data.clone();
+                tokio::spawn(async move {
+                    crate::events::hydrate_expiring_tags(data).await;
                 });
             }
             FullEvent::ThreadCreate { thread, .. } => {

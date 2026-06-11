@@ -129,6 +129,7 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
             uuid: player_info.uuid.clone(),
             tag_id: tag.id,
             added_by: discord_id as i64,
+            silent: false,
         })
         .await;
 

@@ -1,3 +1,4 @@
+use chrono::Utc;
 use serenity::all::*;
 
 use coral_redis::{BlacklistEvent, EventSubscriber};
@@ -39,11 +40,19 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
     let cache = CacheRepository::new(data.db.pool());
 
     match event {
-        BlacklistEvent::TagAdded { uuid, tag_id, .. } => {
+        BlacklistEvent::TagAdded {
+            uuid,
+            tag_id,
+            silent,
+            ..
+        } => {
             let tag = fetch_event(&repo, tag_id, "TagAdded").await?;
+            if let (Some(tag_type), Some(expires_at)) = (tag.tag_type.clone(), tag.expires_at) {
+                schedule_expiry(data.clone(), uuid.clone(), tag_type, tag_id, expires_at);
+            }
             let all_tags = repo.get_active_tags(&uuid).await.unwrap_or_default();
             let name = resolve_name(&cache, &uuid).await;
-            channel::post_new_tag(ctx, data, &uuid, &name, &tag, &all_tags).await;
+            channel::post_new_tag(ctx, data, &uuid, &name, &tag, &all_tags, silent).await;
         }
 
         BlacklistEvent::TagOverwritten {
@@ -51,6 +60,7 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
             old_tag_id,
             new_tag_id,
             overwritten_by,
+            silent,
             ..
         } => {
             let new_tag = fetch_event(&repo, new_tag_id, "TagOverwritten").await?;
@@ -68,20 +78,22 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
                 overwritten_by as u64,
             )
             .await;
-            channel::post_overwritten_tag(ctx, data, &uuid, &name, &new_tag, &all_tags).await;
+            channel::post_overwritten_tag(ctx, data, &uuid, &name, &new_tag, &all_tags, silent)
+                .await;
         }
 
         BlacklistEvent::TagRemoved {
             uuid,
             tag_id,
             removed_by,
+            silent,
         } => {
             let Some(tag) = repo.get_event_by_id(tag_id).await? else {
                 tracing::warn!("event {tag_id} not found for TagRemoved");
                 return Ok(());
             };
             let name = resolve_name(&cache, &uuid).await;
-            channel::post_tag_removed(ctx, data, &uuid, &name, &tag, removed_by as u64, false)
+            channel::post_tag_removed(ctx, data, &uuid, &name, &tag, removed_by as u64, silent)
                 .await;
         }
 
@@ -132,4 +144,48 @@ async fn resolve_name(cache: &CacheRepository<'_>, uuid: &str) -> String {
         .ok()
         .flatten()
         .unwrap_or_else(|| uuid.to_string())
+}
+
+fn schedule_expiry(
+    data: Data,
+    uuid: String,
+    tag_type: String,
+    tag_id: i64,
+    expires_at: chrono::DateTime<Utc>,
+) {
+    tokio::spawn(async move {
+        let delay = (expires_at - Utc::now()).to_std().unwrap_or_default();
+        tokio::time::sleep(delay).await;
+        let repo = BlacklistRepository::new(data.db.pool());
+        if repo
+            .remove_event(&uuid, &tag_type, None)
+            .await
+            .unwrap_or(false)
+        {
+            data.event_publisher
+                .publish(&BlacklistEvent::TagRemoved {
+                    uuid,
+                    tag_id,
+                    removed_by: 0,
+                    silent: false,
+                })
+                .await;
+        }
+    });
+}
+
+pub async fn hydrate_expiring_tags(data: Data) {
+    let repo = BlacklistRepository::new(data.db.pool());
+    match repo.get_active_expiring_tags().await {
+        Ok(tags) => {
+            let count = tags.len();
+            for tag in tags {
+                if let (Some(tag_type), Some(expires_at)) = (tag.tag_type, tag.expires_at) {
+                    schedule_expiry(data.clone(), tag.uuid, tag_type, tag.id, expires_at);
+                }
+            }
+            tracing::info!("scheduled expiry for {count} active tags");
+        }
+        Err(e) => tracing::error!("failed to hydrate expiring tags: {e}"),
+    }
 }

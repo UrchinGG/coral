@@ -14,7 +14,7 @@ use utoipa::OpenApi;
 use utoipa_scalar::{Scalar, Servable};
 
 use clients::{HypixelClient, LocalSkinProvider, MojangClient, SkinProvider};
-use coral_redis::{BlacklistEvent, EventPublisher, RedisPool};
+use coral_redis::RedisPool;
 use database::Database;
 
 mod auth;
@@ -35,7 +35,6 @@ async fn main() -> Result<()> {
     if state.starfish.is_some() {
         spawn_starfish_cleanup(state.db.clone());
     }
-    spawn_tag_expiry_sweep(state.db.clone(), state.event_publisher.clone());
     serve(build_router(state)).await
 }
 
@@ -46,29 +45,6 @@ fn spawn_starfish_cleanup(db: std::sync::Arc<database::Database>) {
             let repo = database::StarfishRepository::new(db.pool());
             if let Err(e) = repo.cleanup_expired().await {
                 tracing::warn!("Starfish cleanup failed: {e}");
-            }
-        }
-    });
-}
-
-fn spawn_tag_expiry_sweep(db: std::sync::Arc<database::Database>, publisher: EventPublisher) {
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-            let repo = database::BlacklistRepository::new(db.pool());
-            match repo.cleanup_expired_tags().await {
-                Ok(swept) => {
-                    for (uuid, _tag_type, add_id) in swept {
-                        publisher
-                            .publish(&BlacklistEvent::TagRemoved {
-                                uuid,
-                                tag_id: add_id,
-                                removed_by: 0,
-                            })
-                            .await;
-                    }
-                }
-                Err(e) => tracing::warn!("Tag expiry sweep failed: {e}"),
             }
         }
     });

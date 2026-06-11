@@ -80,6 +80,73 @@ pub fn evidence_indicator(tag_type: &str, has_evidence: bool) -> String {
     format!(" {emote}")
 }
 
+pub async fn format_tag_history(
+    ctx: &Context,
+    events: &[PlayerEvent],
+    max_entries: usize,
+) -> Option<String> {
+    let mut tag_events: Vec<&PlayerEvent> = events
+        .iter()
+        .filter(|e| e.kind == "tag_set" || e.kind == "tag_clear")
+        .collect();
+    if tag_events.is_empty() {
+        return None;
+    }
+    tag_events.sort_by(|a, b| b.ts.cmp(&a.ts).then(b.id.cmp(&a.id)));
+
+    let total = tag_events.len();
+    let displayed: Vec<&&PlayerEvent> = tag_events.iter().take(max_entries).collect();
+
+    let mut author_ids: Vec<u64> = displayed
+        .iter()
+        .filter_map(|e| e.author.filter(|_| !e.hide_username.unwrap_or(false)))
+        .map(|a| a as u64)
+        .collect();
+    author_ids.sort();
+    author_ids.dedup();
+    let mut names: std::collections::HashMap<u64, String> = std::collections::HashMap::new();
+    for id in author_ids {
+        names.insert(id, get_username(ctx, id).await);
+    }
+
+    let mut lines = vec!["### Tag History".to_string()];
+    for event in displayed {
+        let tag_type = event.tag_type.as_deref().unwrap_or("");
+        let def = lookup_tag(tag_type);
+        let emote = def.map(|d| d.emote).unwrap_or("");
+        let display = def.map(|d| d.display_name).unwrap_or(tag_type);
+        let ts = event.ts.timestamp();
+
+        let actor = match event
+            .author
+            .filter(|_| !event.hide_username.unwrap_or(false))
+        {
+            Some(id) => {
+                let name = names
+                    .get(&(id as u64))
+                    .cloned()
+                    .unwrap_or_else(|| id.to_string());
+                format!("by `@{name}`")
+            }
+            None if event.author.is_none() => "by system".to_string(),
+            _ => String::new(),
+        };
+
+        let line = if event.kind == "tag_set" {
+            let reason = sanitize_reason(event.reason.as_deref().unwrap_or(""));
+            format!("-# {emote} **{display}** \"{reason}\" — {actor} <t:{ts}:R>")
+        } else {
+            format!("-# {emote} ~~{display}~~ — {actor} <t:{ts}:R>")
+        };
+        lines.push(line);
+    }
+
+    if total > max_entries {
+        lines.push(format!("-# … and {} more", total - max_entries));
+    }
+    Some(lines.join("\n"))
+}
+
 pub fn format_tag_block(
     tag_type: &str,
     detail: &str,
@@ -115,8 +182,12 @@ pub async fn post_new_tag(
     name: &str,
     tag: &PlayerEvent,
     all_tags: &[PlayerEvent],
+    silent: bool,
 ) -> Option<MessageId> {
     post_tag_to_log(ctx, data, uuid, name, tag, "New Tag", EMOTE_ADDTAG).await;
+    if silent {
+        return None;
+    }
     post_to_blacklist_channel(ctx, data, uuid, name, all_tags, "New Tag", EMOTE_ADDTAG).await
 }
 
@@ -127,8 +198,12 @@ pub async fn post_overwritten_tag(
     name: &str,
     tag: &PlayerEvent,
     all_tags: &[PlayerEvent],
+    silent: bool,
 ) -> Option<MessageId> {
     post_tag_to_log(ctx, data, uuid, name, tag, "Tag Overwritten", EMOTE_EDITTAG).await;
+    if silent {
+        return None;
+    }
     post_to_blacklist_channel(
         ctx,
         data,

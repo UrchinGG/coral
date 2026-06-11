@@ -290,28 +290,19 @@ impl<'a> BlacklistRepository<'a> {
             .await
     }
 
-    pub async fn cleanup_expired_tags(&self) -> Result<Vec<(String, String, i64)>, sqlx::Error> {
-        let expired: Vec<(String, String, i64)> = sqlx::query_as(
-            "SELECT uuid, tag_type, id FROM (
-                 SELECT DISTINCT ON (uuid, tag_type) uuid, tag_type, id, kind, expires_at
+    pub async fn get_active_expiring_tags(&self) -> Result<Vec<PlayerEvent>, sqlx::Error> {
+        sqlx::query_as(&format!(
+            "SELECT {COLS} FROM (
+                 SELECT DISTINCT ON (uuid, tag_type) {COLS}
                  FROM player_events
                  WHERE kind IN ('tag_set', 'tag_clear')
                  ORDER BY uuid, tag_type, ts DESC, id DESC
              ) latest
              WHERE kind = 'tag_set'
-               AND expires_at IS NOT NULL
-               AND expires_at <= NOW()",
-        )
+               AND expires_at IS NOT NULL",
+        ))
         .fetch_all(self.pool)
-        .await?;
-
-        let mut swept = Vec::new();
-        for (uuid, tag_type, add_id) in expired {
-            if self.remove_event(&uuid, &tag_type, None).await? {
-                swept.push((uuid, tag_type, add_id));
-            }
-        }
-        Ok(swept)
+        .await
     }
 
     pub async fn count_active_tags(&self) -> Result<i64, sqlx::Error> {

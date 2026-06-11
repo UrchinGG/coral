@@ -83,6 +83,7 @@ pub struct PendingOverwrite {
     pub tag_type: String,
     pub reason: String,
     pub hide: bool,
+    pub silent: bool,
 }
 
 fn tag_choices(option: CreateCommandOption<'static>) -> CreateCommandOption<'static> {
@@ -595,6 +596,7 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
                     uuid: player_info.uuid.clone(),
                     tag_id: new_tag.id,
                     added_by: discord_id as i64,
+                    silent: false,
                 })
                 .await;
 
@@ -671,6 +673,7 @@ async fn show_overwrite_prompt(
             tag_type: tag_type.to_string(),
             reason: reason.to_string(),
             hide,
+            silent: false,
         },
     );
 
@@ -809,6 +812,7 @@ pub async fn handle_overwrite_button(
             old_reason: old_tag.reason.clone().unwrap_or_default(),
             new_tag_id: new_tag.id,
             overwritten_by: discord_id as i64,
+            silent: overwrite.silent,
         })
         .await;
 
@@ -898,6 +902,7 @@ async fn run_remove(ctx: &Context, command: &CommandInteraction, data: &Data) ->
             uuid: player_info.uuid.clone(),
             tag_id: tag.id,
             removed_by: discord_id as i64,
+            silent: false,
         })
         .await;
 
@@ -1049,6 +1054,7 @@ pub async fn handle_undo(
                     uuid,
                     tag_id,
                     removed_by: discord_id as i64,
+                    silent: false,
                 })
                 .await;
             component
@@ -1109,7 +1115,7 @@ async fn build_manage_main(
         cache.get_username(uuid),
     );
     let active = active?;
-    let removed_count = pair_history(&history?).len();
+    let history_text = channel::format_tag_history(ctx, &history?, 10).await;
     let username = username.ok().flatten().unwrap_or_else(|| uuid.to_string());
     let dashed_uuid = format_uuid_dashed(uuid);
     let names = resolve_names(&ctx.http, active.iter().filter_map(|t| t.author)).await;
@@ -1176,6 +1182,14 @@ async fn build_manage_main(
     parts.push(CreateContainerComponent::Separator(CreateSeparator::new(
         true,
     )));
+    if let Some(h) = history_text {
+        parts.push(CreateContainerComponent::TextDisplay(
+            CreateTextDisplay::new(h),
+        ));
+        parts.push(CreateContainerComponent::Separator(CreateSeparator::new(
+            true,
+        )));
+    }
     parts.push(CreateContainerComponent::TextDisplay(
         CreateTextDisplay::new(format!("-# UUID: {dashed_uuid}")),
     ));
@@ -1197,142 +1211,9 @@ async fn build_manage_main(
         ),
     ));
 
-    if removed_count > 0 {
-        parts.push(CreateContainerComponent::ActionRow(
-            CreateActionRow::buttons(vec![
-                CreateButton::new(format!("mt_history:{uuid}:0"))
-                    .label(format!("History ({removed_count})"))
-                    .style(ButtonStyle::Secondary),
-            ]),
-        ));
-    }
-
     Ok(vec![CreateComponent::Container(CreateContainer::new(
         parts,
     ))])
-}
-
-const HISTORY_PAGE_SIZE: usize = 5;
-
-struct RemovedTag {
-    add: database::PlayerEvent,
-    remove: database::PlayerEvent,
-}
-
-fn pair_history(events: &[database::PlayerEvent]) -> Vec<RemovedTag> {
-    let mut pending: HashMap<String, database::PlayerEvent> = HashMap::new();
-    let mut out = Vec::new();
-    for event in events {
-        let Some(tag_type) = event.tag_type.clone() else {
-            continue;
-        };
-        match event.kind.as_str() {
-            "tag_set" => {
-                if let Some(prev) = pending.insert(tag_type, event.clone()) {
-                    out.push(RemovedTag {
-                        add: prev,
-                        remove: event.clone(),
-                    });
-                }
-            }
-            "tag_clear" => {
-                if let Some(add) = pending.remove(&tag_type) {
-                    out.push(RemovedTag {
-                        add,
-                        remove: event.clone(),
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-    out.sort_by(|a, b| b.remove.ts.cmp(&a.remove.ts));
-    out
-}
-
-fn build_history_view(
-    username: &str,
-    uuid: &str,
-    removed: &[RemovedTag],
-    names: &HashMap<i64, String>,
-    page: usize,
-) -> Vec<CreateComponent<'static>> {
-    let total_pages = (removed.len() + HISTORY_PAGE_SIZE - 1) / HISTORY_PAGE_SIZE;
-    let page = page.min(total_pages.saturating_sub(1));
-    let page_items = removed
-        .iter()
-        .skip(page * HISTORY_PAGE_SIZE)
-        .take(HISTORY_PAGE_SIZE);
-
-    let mut parts: Vec<CreateContainerComponent> = vec![CreateContainerComponent::TextDisplay(
-        CreateTextDisplay::new(format!(
-            "## {} Tag History\nIGN - `{}`",
-            EMOTE_TAG, username
-        )),
-    )];
-
-    for entry in page_items {
-        parts.push(CreateContainerComponent::Separator(CreateSeparator::new(
-            true,
-        )));
-        let (emote, display) = tag_display(entry.add.tag_type.as_deref().unwrap_or(""));
-        let added_name = entry
-            .add
-            .author
-            .and_then(|id| names.get(&id).map(|s| s.as_str()))
-            .unwrap_or("?");
-        let removed_name = entry
-            .remove
-            .author
-            .and_then(|id| names.get(&id).map(|s| s.as_str()))
-            .unwrap_or("?");
-
-        let detail = format!(
-            "{emote} ~~**{display}**~~\n> {}\n\
-             > -# Added by `@{added_name}` <t:{}:R>\n\
-             > -# Removed by `@{removed_name}` <t:{}:R>",
-            format_tag_detail(&entry.add),
-            entry.add.ts.timestamp(),
-            entry.remove.ts.timestamp(),
-        );
-        parts.push(CreateContainerComponent::TextDisplay(
-            CreateTextDisplay::new(detail),
-        ));
-    }
-
-    parts.push(CreateContainerComponent::Separator(CreateSeparator::new(
-        true,
-    )));
-    if total_pages > 1 {
-        parts.push(CreateContainerComponent::TextDisplay(
-            CreateTextDisplay::new(format!("-# Page {} of {}", page + 1, total_pages)),
-        ));
-    }
-
-    let mut buttons = vec![
-        CreateButton::new(format!("mt_back:{uuid}"))
-            .label("Back")
-            .style(ButtonStyle::Secondary),
-    ];
-    if page > 0 {
-        buttons.push(
-            CreateButton::new(format!("mt_history:{uuid}:{}", page - 1))
-                .label("Previous")
-                .style(ButtonStyle::Secondary),
-        );
-    }
-    if page + 1 < total_pages {
-        buttons.push(
-            CreateButton::new(format!("mt_history:{uuid}:{}", page + 1))
-                .label("Next")
-                .style(ButtonStyle::Secondary),
-        );
-    }
-    parts.push(CreateContainerComponent::ActionRow(
-        CreateActionRow::buttons(buttons),
-    ));
-
-    vec![CreateComponent::Container(CreateContainer::new(parts))]
 }
 
 async fn update_manage_view(
@@ -1408,14 +1289,14 @@ pub async fn handle_manage_confirm(
         .await
     {
         Ok((_, tag)) => {
-            let cache = CacheRepository::new(data.db.pool());
-            let name = cache
-                .get_username(uuid)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| uuid.to_string());
-            channel::post_tag_removed(ctx, data, uuid, &name, &tag, discord_id, true).await;
+            data.event_publisher
+                .publish(&BlacklistEvent::TagRemoved {
+                    uuid: uuid.to_string(),
+                    tag_id: tag.id,
+                    removed_by: discord_id as i64,
+                    silent: true,
+                })
+                .await;
 
             if tag.tag_type.as_deref() == Some("confirmed_cheater") {
                 try_archive_evidence(ctx, data, uuid).await;
@@ -1433,45 +1314,6 @@ pub async fn handle_manage_back(
 ) -> Result<()> {
     let uuid = parse_manage_uuid(&component.data.custom_id);
     update_manage_view(ctx, component, data, uuid).await
-}
-
-pub async fn handle_manage_history(
-    ctx: &Context,
-    component: &ComponentInteraction,
-    data: &Data,
-) -> Result<()> {
-    let payload = component
-        .data
-        .custom_id
-        .strip_prefix("mt_history:")
-        .unwrap_or("");
-    let (uuid, page_str) = payload.rsplit_once(':').unwrap_or(("", "0"));
-    let page: usize = page_str.parse().unwrap_or(0);
-
-    let repo = BlacklistRepository::new(data.db.pool());
-    let cache = CacheRepository::new(data.db.pool());
-    let (history, username) = tokio::join!(repo.get_tag_history(uuid), cache.get_username(uuid),);
-    let removed = pair_history(&history?);
-    let username = username.ok().flatten().unwrap_or_else(|| uuid.to_string());
-
-    let all_ids = removed
-        .iter()
-        .filter_map(|t| t.add.author)
-        .chain(removed.iter().filter_map(|t| t.remove.author));
-    let names = resolve_names(&ctx.http, all_ids).await;
-
-    let components = build_history_view(&username, uuid, &removed, &names, page);
-    component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::UpdateMessage(
-                CreateInteractionResponseMessage::new()
-                    .flags(MessageFlags::IS_COMPONENTS_V2)
-                    .components(components),
-            ),
-        )
-        .await?;
-    Ok(())
 }
 
 pub async fn handle_manage_add_select(
@@ -1527,16 +1369,21 @@ pub async fn handle_manage_add_select(
     Ok(())
 }
 
-async fn manage_add_tag(
-    ctx: &Context,
+enum ManagePlaceOutcome {
+    Added,
+    NeedsConfirmation { conflict: database::PlayerEvent },
+}
+
+async fn manage_place_tag(
     data: &Data,
     uuid: &str,
+    modal_id: u64,
     tag_type: &str,
     reason: &str,
     discord_id: u64,
     rank: AccessRank,
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
-) -> Result<String> {
+) -> Result<ManagePlaceOutcome> {
     let ops = TagOp::new(data.db.pool());
     match ops
         .add(
@@ -1551,48 +1398,91 @@ async fn manage_add_tag(
         )
         .await
     {
-        Ok(_) => {
-            let (_, display) = tag_display(tag_type);
-            Ok(format!("{display} tag added (silent)"))
+        Ok(new_tag) => {
+            data.event_publisher
+                .publish(&BlacklistEvent::TagAdded {
+                    uuid: uuid.to_string(),
+                    tag_id: new_tag.id,
+                    added_by: discord_id as i64,
+                    silent: true,
+                })
+                .await;
+            Ok(ManagePlaceOutcome::Added)
         }
         Err(TagOpError::PriorityConflict(conflict)) => {
-            let (old_tag, new_tag) = ops
-                .overwrite(
-                    uuid,
-                    conflict.tag_type.as_deref().unwrap_or(""),
-                    tag_type,
-                    reason,
-                    discord_id as i64,
-                    rank.to_level(),
-                    false,
-                )
-                .await
-                .map_err(|e| anyhow::anyhow!("{}", op_error_message(&e)))?;
-
-            let cache = CacheRepository::new(data.db.pool());
-            let name = cache
-                .get_username(uuid)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| uuid.to_string());
-            channel::post_tag_changed(
-                ctx,
-                data,
-                uuid,
-                &name,
-                &old_tag,
-                &new_tag,
-                "Tag Overwritten (Silent)",
-                discord_id,
-            )
-            .await;
-
-            let (_, display) = tag_display(tag_type);
-            Ok(format!("{display} tag replaced existing (silent)"))
+            let old_tag_type = conflict.tag_type.clone().unwrap_or_default();
+            data.pending_overwrites.lock().unwrap().insert(
+                modal_id.to_string(),
+                PendingOverwrite {
+                    uuid: uuid.to_string(),
+                    old_tag_type,
+                    tag_type: tag_type.to_string(),
+                    reason: reason.to_string(),
+                    hide: false,
+                    silent: true,
+                },
+            );
+            Ok(ManagePlaceOutcome::NeedsConfirmation { conflict })
         }
         Err(e) => Err(anyhow::anyhow!("{}", op_error_message(&e))),
     }
+}
+
+async fn show_manage_replace_prompt(
+    ctx: &Context,
+    modal: &ModalInteraction,
+    conflict: &database::PlayerEvent,
+    new_tag_type: &str,
+    new_reason: &str,
+) -> Result<()> {
+    let conflict_type = conflict.tag_type.as_deref().unwrap_or("");
+    let (old_emote, old_display) = tag_display(conflict_type);
+    let (new_emote, new_display) = tag_display(new_tag_type);
+    let old_added = format_added_line(ctx, conflict).await;
+
+    let key = modal.id.get().to_string();
+    let replace_btn = CreateButton::new(format!("tag_overwrite:{key}"))
+        .label("Replace Tag")
+        .style(ButtonStyle::Danger);
+    let cancel_btn = CreateButton::new("mt_replace_cancel")
+        .label("Cancel")
+        .style(ButtonStyle::Secondary);
+
+    let body = format!(
+        "## {} Replace tag?\n**{} {}** will be replaced.\n\n\
+         **Existing:**\n{} **{}**\n> {}\n{}\n\n\
+         **Replacement:**\n{} **{}**\n> {}\n\n\
+         -# This is recorded in tag history. No public log entry will be posted.",
+        EMOTE_EDITTAG,
+        old_emote,
+        old_display,
+        old_emote,
+        old_display,
+        format_tag_detail(conflict),
+        old_added,
+        new_emote,
+        new_display,
+        sanitize_reason(new_reason),
+    );
+
+    modal
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2)
+                    .ephemeral(true)
+                    .components(vec![
+                        CreateComponent::TextDisplay(CreateTextDisplay::new(body)),
+                        CreateComponent::ActionRow(CreateActionRow::buttons(vec![
+                            replace_btn,
+                            cancel_btn,
+                        ])),
+                    ]),
+            ),
+        )
+        .await?;
+    Ok(())
 }
 
 pub async fn handle_manage_reason_modal(
@@ -1614,23 +1504,27 @@ pub async fn handle_manage_reason_modal(
     let discord_id = modal.user.id.get();
     let rank = get_rank(data, discord_id).await?;
 
-    let msg = match manage_add_tag(ctx, data, uuid, tag_type, &reason, discord_id, rank, None).await
+    match manage_place_tag(
+        data,
+        uuid,
+        modal.id.get(),
+        tag_type,
+        &reason,
+        discord_id,
+        rank,
+        None,
+    )
+    .await
     {
-        Ok(msg) => msg,
-        Err(e) => e.to_string(),
-    };
-
-    modal
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .content(msg)
-                    .ephemeral(true),
-            ),
-        )
-        .await?;
-    Ok(())
+        Ok(ManagePlaceOutcome::Added) => {
+            let (_, display) = tag_display(tag_type);
+            manage_simple_response(ctx, modal, &format!("{display} tag added (silent)")).await
+        }
+        Ok(ManagePlaceOutcome::NeedsConfirmation { conflict }) => {
+            show_manage_replace_prompt(ctx, modal, &conflict, tag_type, &reason).await
+        }
+        Err(e) => manage_simple_response(ctx, modal, &e.to_string()).await,
+    }
 }
 
 pub async fn handle_manage_expiry_modal(
@@ -1658,10 +1552,10 @@ pub async fn handle_manage_expiry_modal(
     let discord_id = modal.user.id.get();
     let rank = get_rank(data, discord_id).await?;
 
-    let msg = match manage_add_tag(
-        ctx,
+    match manage_place_tag(
         data,
         uuid,
+        modal.id.get(),
         "replays_needed",
         "",
         discord_id,
@@ -1670,17 +1564,47 @@ pub async fn handle_manage_expiry_modal(
     )
     .await
     {
-        Ok(msg) => msg,
-        Err(e) => e.to_string(),
-    };
+        Ok(ManagePlaceOutcome::Added) => {
+            let (_, display) = tag_display("replays_needed");
+            manage_simple_response(ctx, modal, &format!("{display} tag added (silent)")).await
+        }
+        Ok(ManagePlaceOutcome::NeedsConfirmation { conflict }) => {
+            show_manage_replace_prompt(ctx, modal, &conflict, "replays_needed", "").await
+        }
+        Err(e) => manage_simple_response(ctx, modal, &e.to_string()).await,
+    }
+}
 
+async fn manage_simple_response(
+    ctx: &Context,
+    modal: &ModalInteraction,
+    message: &str,
+) -> Result<()> {
     modal
         .create_response(
             &ctx.http,
             CreateInteractionResponse::Message(
                 CreateInteractionResponseMessage::new()
-                    .content(msg)
+                    .content(message)
                     .ephemeral(true),
+            ),
+        )
+        .await?;
+    Ok(())
+}
+
+pub async fn handle_manage_replace_cancel(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    _data: &Data,
+) -> Result<()> {
+    component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .content("Cancelled.")
+                    .components(vec![]),
             ),
         )
         .await?;
