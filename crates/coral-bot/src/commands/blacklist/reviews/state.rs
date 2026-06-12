@@ -73,9 +73,13 @@ pub fn parse_state_from_message(message: &Message) -> Option<SubmissionState> {
     let texts = extract_text_displays(message);
 
     let submitter_id = texts.iter().find_map(|t| {
-        let start = t.find("<@")? + 2;
-        let end = t[start..].find('>')? + start;
-        t[start..end].parse::<u64>().ok()
+        t.lines().find_map(|line| {
+            let rest = line
+                .trim()
+                .strip_prefix("-# Evidence submitted by <@")
+                .or_else(|| line.trim().strip_prefix("-# Submitted by <@"))?;
+            rest.split('>').next()?.parse::<u64>().ok()
+        })
     })?;
 
     let blocks = split_into_blocks(container);
@@ -103,9 +107,13 @@ pub fn parse_state_from_message(message: &Message) -> Option<SubmissionState> {
             _ => false,
         });
 
-    let reopened = texts
-        .iter()
-        .any(|t| t.starts_with("-# Submitted by") && t.contains("reopened"));
+    let reopened = texts.iter().any(|t| {
+        t.lines().any(|line| {
+            let line = line.trim();
+            (line.starts_with("-# Evidence submitted by") || line.starts_with("-# Submitted by"))
+                && line.contains("reopened")
+        })
+    });
 
     let players: Vec<_> = players
         .into_iter()
@@ -255,9 +263,10 @@ pub enum VoteSide {
 }
 
 pub fn parse_vote_line(text: &str) -> Option<(VoteSide, Vec<u64>)> {
-    let side = if text.starts_with(EMOTE_EVIDENCE) {
+    let stripped = text.trim_start_matches("### ").trim_start_matches("## ");
+    let side = if stripped.starts_with(EMOTE_EVIDENCE) {
         VoteSide::Accept
-    } else if text.starts_with(EMOTE_NO_EVIDENCE) {
+    } else if stripped.starts_with(EMOTE_NO_EVIDENCE) {
         VoteSide::Reject
     } else {
         return None;

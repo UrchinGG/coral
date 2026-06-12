@@ -238,14 +238,15 @@ pub async fn post_tag_removed(
         None,
         true,
     );
-    let footer = format!("-# Removed by `@{username}`\n-# UUID: {dashed_uuid}");
+    let log_footer = format!("-# Removed by `@{username}`\n-# UUID: {dashed_uuid}");
+    let pub_footer = format!("-# UUID: {dashed_uuid}");
 
-    let make_container = || {
+    let make_container = |footer: String| {
         CreateContainer::new(vec![
             face_section(vec![
                 format!("## {} Tag Removed\nIGN - `{name}`\n", EMOTE_REMOVETAG),
                 block.clone(),
-                footer.clone(),
+                footer,
             ]),
             CreateContainerComponent::Separator(CreateSeparator::new(true)),
         ])
@@ -255,7 +256,7 @@ pub async fn post_tag_removed(
     send_to_mod_channel(
         ctx,
         data,
-        make_container().accent_color(COLOR_DANGER),
+        make_container(log_footer).accent_color(COLOR_DANGER),
         vec![log_face],
     )
     .await;
@@ -267,7 +268,13 @@ pub async fn post_tag_removed(
         return;
     };
     let public_face = face_attachment(data, uuid).await;
-    send_container(ctx, channel_id, make_container(), vec![public_face]).await;
+    send_container(
+        ctx,
+        channel_id,
+        make_container(pub_footer),
+        vec![public_face],
+    )
+    .await;
 }
 
 pub async fn post_tag_changed(

@@ -36,16 +36,24 @@ fn record_player_vote(
     player_index: usize,
     voter_id: u64,
     accept: bool,
+    current_accepts: &[u64],
+    current_rejects: &[u64],
 ) -> (Vec<u64>, Vec<u64>) {
     let mut map = data.pending_review_votes.lock().unwrap();
     let thread = map.entry(thread_id).or_default();
     let entry = thread
         .entry(player_index)
-        .or_insert_with(|| (Vec::new(), Vec::new()));
+        .or_insert_with(|| (current_accepts.to_vec(), current_rejects.to_vec()));
     if accept {
-        entry.0.push(voter_id);
+        entry.1.retain(|&id| id != voter_id);
+        if !entry.0.contains(&voter_id) {
+            entry.0.push(voter_id);
+        }
     } else {
-        entry.1.push(voter_id);
+        entry.0.retain(|&id| id != voter_id);
+        if !entry.1.contains(&voter_id) {
+            entry.1.push(voter_id);
+        }
     }
     (entry.0.clone(), entry.1.clone())
 }
@@ -162,18 +170,30 @@ pub async fn handle_approve(
     if state.players[player_index]
         .accept_votes
         .contains(&discord_id)
-        || state.players[player_index]
-            .reject_votes
-            .contains(&discord_id)
     {
-        return send_vote_error(ctx, component, "You have already voted on this player").await;
+        return send_vote_error(
+            ctx,
+            component,
+            "You have already voted to accept this player",
+        )
+        .await;
     }
+    let changing_vote = state.players[player_index]
+        .reject_votes
+        .contains(&discord_id);
 
     let is_staff = rank >= crate::framework::AccessRank::Helper;
 
     if !is_staff {
-        let (new_accepts, new_rejects) =
-            record_player_vote(data, thread_key, player_index, discord_id, true);
+        let (new_accepts, new_rejects) = record_player_vote(
+            data,
+            thread_key,
+            player_index,
+            discord_id,
+            true,
+            &state.players[player_index].accept_votes,
+            &state.players[player_index].reject_votes,
+        );
         state.players[player_index].accept_votes = new_accepts;
         state.players[player_index].reject_votes = new_rejects;
         let unanimous = state.players[player_index].reject_votes.is_empty()
@@ -181,8 +201,13 @@ pub async fn handle_approve(
 
         if !unanimous {
             let player = &state.players[player_index];
-            let vote_msg =
-                build_vote_message(discord_id, "accept", &player.tag_type, &player.username);
+            let vote_msg = build_vote_message(
+                discord_id,
+                "accept",
+                &player.tag_type,
+                &player.username,
+                changing_vote,
+            );
             component
                 .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
                 .await?;
@@ -416,17 +441,29 @@ pub async fn handle_reject(
     state.players[player_index].reject_votes = existing_rejects;
 
     if state.players[player_index]
-        .accept_votes
+        .reject_votes
         .contains(&discord_id)
-        || state.players[player_index]
-            .reject_votes
-            .contains(&discord_id)
     {
-        return send_vote_error(ctx, component, "You have already voted on this player").await;
+        return send_vote_error(
+            ctx,
+            component,
+            "You have already voted to reject this player",
+        )
+        .await;
     }
+    let changing_vote = state.players[player_index]
+        .accept_votes
+        .contains(&discord_id);
 
-    let (new_accepts, new_rejects) =
-        record_player_vote(data, thread_key, player_index, discord_id, false);
+    let (new_accepts, new_rejects) = record_player_vote(
+        data,
+        thread_key,
+        player_index,
+        discord_id,
+        false,
+        &state.players[player_index].accept_votes,
+        &state.players[player_index].reject_votes,
+    );
     state.players[player_index].accept_votes = new_accepts;
     state.players[player_index].reject_votes = new_rejects;
     let unanimous = state.players[player_index].accept_votes.is_empty()
@@ -434,7 +471,13 @@ pub async fn handle_reject(
 
     if !unanimous {
         let player = &state.players[player_index];
-        let vote_msg = build_vote_message(discord_id, "reject", &player.tag_type, &player.username);
+        let vote_msg = build_vote_message(
+            discord_id,
+            "reject",
+            &player.tag_type,
+            &player.username,
+            changing_vote,
+        );
         component
             .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
             .await?;

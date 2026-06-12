@@ -92,9 +92,11 @@ pub fn build_review_message(
 
 fn submitter_line(submitter_id: u64, reopened: bool) -> CreateContainerComponent<'static> {
     if reopened {
-        text(format!("-# Submitted by <@{submitter_id}> · reopened"))
+        text(format!(
+            "-# Evidence submitted by <@{submitter_id}> · reopened"
+        ))
     } else {
-        text(format!("-# Submitted by <@{submitter_id}>"))
+        text(format!("-# Evidence submitted by <@{submitter_id}>"))
     }
 }
 
@@ -233,12 +235,32 @@ pub fn build_submitted_controls(
     id: u64,
 ) {
     if player.status == PlayerStatus::Pending {
+        let threshold = super::VOTE_THRESHOLD;
+        parts.push(text(vote_tally(
+            EMOTE_EVIDENCE,
+            "Accept",
+            &player.accept_votes,
+            threshold,
+        )));
         parts.push(CreateContainerComponent::ActionRow(
             CreateActionRow::Buttons(
                 vec![
                     CreateButton::new(format!("review_approve:{idx}:{id}"))
                         .label("Accept")
                         .style(ButtonStyle::Success),
+                ]
+                .into(),
+            ),
+        ));
+        parts.push(text(vote_tally(
+            EMOTE_NO_EVIDENCE,
+            "Reject",
+            &player.reject_votes,
+            threshold,
+        )));
+        parts.push(CreateContainerComponent::ActionRow(
+            CreateActionRow::Buttons(
+                vec![
                     CreateButton::new(format!("review_reject:{idx}:{id}"))
                         .label("Reject")
                         .style(ButtonStyle::Danger),
@@ -246,7 +268,6 @@ pub fn build_submitted_controls(
                 .into(),
             ),
         ));
-        parts.push(text(render_vote_indicator(player)));
         if has_disagreement(player) {
             parts.push(text("-# Mod vote needed to resolve"));
         }
@@ -255,39 +276,16 @@ pub fn build_submitted_controls(
     }
 }
 
-pub fn render_vote_indicator(player: &PlayerEntry) -> String {
-    let threshold = super::VOTE_THRESHOLD;
-    let accept = player.accept_votes.len();
-    let reject = player.reject_votes.len();
-
-    if accept == 0 && reject == 0 {
-        return format!("[0/{threshold}]");
+fn vote_tally(emote: &str, label: &str, votes: &[u64], threshold: usize) -> String {
+    let count = votes.len();
+    if count == 0 {
+        format!("### {emote} {label} [0/{threshold}]")
+    } else {
+        format!(
+            "### {emote} {label} [{count}/{threshold}] — {}",
+            mentions(votes)
+        )
     }
-    let unanimous = accept == 0 || reject == 0;
-    let mut lines = Vec::new();
-    if accept > 0 {
-        let suffix = if unanimous {
-            format!(" [{accept}/{threshold}]")
-        } else {
-            String::new()
-        };
-        lines.push(format!(
-            "{EMOTE_EVIDENCE} Accept · {}{suffix}",
-            mentions(&player.accept_votes)
-        ));
-    }
-    if reject > 0 {
-        let suffix = if unanimous {
-            format!(" [{reject}/{threshold}]")
-        } else {
-            String::new()
-        };
-        lines.push(format!(
-            "{EMOTE_NO_EVIDENCE} Reject · {}{suffix}",
-            mentions(&player.reject_votes)
-        ));
-    }
-    lines.join("\n")
 }
 
 fn mentions(ids: &[u64]) -> String {
@@ -405,14 +403,21 @@ pub fn build_vote_message(
     vote_type: &str,
     tag_type: &str,
     username: &str,
+    changed: bool,
 ) -> CreateMessage<'static> {
     let def = lookup_tag(tag_type);
     let emote = def.map(|d| d.emote).unwrap_or("");
     let display_name = def.map(|d| d.display_name).unwrap_or(tag_type);
 
-    let content = format!(
-        "<@{voter_id}> voted to **{vote_type}** the {emote} **{display_name}** tag on `{username}`."
-    );
+    let content = if changed {
+        format!(
+            "<@{voter_id}> changed their vote to **{vote_type}** the {emote} **{display_name}** tag on `{username}`."
+        )
+    } else {
+        format!(
+            "<@{voter_id}> voted to **{vote_type}** the {emote} **{display_name}** tag on `{username}`."
+        )
+    };
 
     CreateMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
