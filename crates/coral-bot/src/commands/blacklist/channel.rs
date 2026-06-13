@@ -126,17 +126,17 @@ pub async fn format_tag_history(
                     .get(&(id as u64))
                     .cloned()
                     .unwrap_or_else(|| id.to_string());
-                format!("by `@{name}`")
+                format!("`@{name}`")
             }
-            None if event.author.is_none() => "by system".to_string(),
+            None if event.author.is_none() => "system".to_string(),
             _ => String::new(),
         };
 
         let line = if event.kind == "tag_set" {
             let reason = sanitize_reason(event.reason.as_deref().unwrap_or(""));
-            format!("-# {emote} **{display}** \"{reason}\" — {actor} <t:{ts}:R>")
+            format!("-# {EMOTE_ADDTAG} {emote} **{display}** *{reason}* · {actor} <t:{ts}:R>")
         } else {
-            format!("-# {emote} ~~{display}~~ — {actor} <t:{ts}:R>")
+            format!("-# {EMOTE_REMOVETAG} {emote} ~~{display}~~ · {actor} <t:{ts}:R>")
         };
         lines.push(line);
     }

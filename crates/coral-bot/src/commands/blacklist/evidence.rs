@@ -5,7 +5,7 @@ use blacklist::lookup as lookup_tag;
 use database::BlacklistRepository;
 use serenity::all::*;
 
-use super::channel::{COLOR_DANGER, format_tag_block};
+use super::channel::{format_added_line, format_tag_block};
 use super::reviews;
 use super::tag::get_rank;
 use crate::framework::{AccessRank, Data};
@@ -206,7 +206,8 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     }
 
     let reason = tag.reason.clone().unwrap_or_default();
-    run_staff_confirm(ctx, command, data, &player_info, &reason).await
+    let added_line = format_added_line(ctx, tag).await;
+    run_staff_confirm(ctx, command, data, &player_info, &reason, Some(&added_line)).await
 }
 
 async fn run_member_confirm(
@@ -254,6 +255,7 @@ async fn run_staff_confirm(
     data: &Data,
     player_info: &crate::api::ResolveResponse,
     reason: &str,
+    added_line: Option<&str>,
 ) -> Result<()> {
     let Some(forum_id) = data.evidence_forum_id else {
         return crate::interact::send_deferred_error(
@@ -275,6 +277,7 @@ async fn run_staff_confirm(
         &player_info.username,
         &player_info.uuid,
         reason,
+        added_line,
         &[],
         None,
         &HashMap::new(),
@@ -344,6 +347,7 @@ struct EvidenceState {
     username: String,
     uuid: String,
     reason: String,
+    added_line: Option<String>,
     evidence: Vec<EvidenceItem>,
     review_url: Option<String>,
 }
@@ -436,6 +440,7 @@ fn build_evidence_message(
     username: &str,
     uuid: &str,
     reason: &str,
+    added_line: Option<&str>,
     evidence: &[EvidenceItem],
     review_thread_url: Option<&str>,
     gallery_urls: &HashMap<String, String>,
@@ -447,7 +452,7 @@ fn build_evidence_message(
         "confirmed_cheater",
         &sanitize_reason(reason),
         "",
-        None,
+        added_line,
         None,
         false,
     );
@@ -515,9 +520,7 @@ fn build_evidence_message(
         ),
     ));
 
-    vec![CreateComponent::Container(
-        CreateContainer::new(parts).accent_color(COLOR_DANGER),
-    )]
+    vec![CreateComponent::Container(CreateContainer::new(parts))]
 }
 
 fn build_archived_evidence_message(
@@ -531,8 +534,8 @@ fn build_archived_evidence_message(
         "confirmed_cheater",
         &sanitize_reason(&state.reason),
         "",
+        state.added_line.as_deref(),
         Some(&removed_line),
-        None,
         true,
     );
 
@@ -565,9 +568,7 @@ fn build_archived_evidence_message(
     parts.push(face_section(format!("{block}\n{uuid_footer}")));
     parts.push(separator());
 
-    vec![CreateComponent::Container(
-        CreateContainer::new(parts).accent_color(COLOR_DANGER),
-    )]
+    vec![CreateComponent::Container(CreateContainer::new(parts))]
 }
 
 fn parse_state_from_message(message: &Message) -> Option<EvidenceState> {
@@ -580,6 +581,7 @@ fn parse_state_from_message(message: &Message) -> Option<EvidenceState> {
         username: String::new(),
         uuid: String::new(),
         reason: String::new(),
+        added_line: None,
         evidence: Vec::new(),
         review_url: None,
     };
@@ -639,6 +641,10 @@ fn ingest_text(state: &mut EvidenceState, content: &str) {
             }
         } else if let Some(rest) = trimmed.strip_prefix("UUID: `") {
             state.uuid = rest.trim_end_matches('`').replace('-', "");
+        } else if let Some(rest) = trimmed.strip_prefix("> -# ") {
+            if rest.starts_with("**\\-") && state.added_line.is_none() {
+                state.added_line = Some(trimmed.to_string());
+            }
         } else if state.reason.is_empty() {
             if let Some(rest) = trimmed.strip_prefix("> ") {
                 if !rest.starts_with("-#") {
@@ -831,6 +837,7 @@ pub async fn handle_media_modal(
         &state.username,
         &state.uuid,
         &state.reason,
+        state.added_line.as_deref(),
         &state.evidence,
         state.review_url.as_deref(),
         &urls,
@@ -952,6 +959,7 @@ pub async fn handle_remove(
         &state.username,
         &state.uuid,
         &state.reason,
+        state.added_line.as_deref(),
         &state.evidence,
         state.review_url.as_deref(),
         &urls,
@@ -1126,6 +1134,7 @@ pub async fn create_evidence_from_review(
         username,
         uuid,
         reason,
+        None,
         &[],
         review_thread_url,
         &no_urls,
@@ -1167,6 +1176,7 @@ pub async fn create_evidence_from_review(
                 username,
                 uuid,
                 reason,
+                None,
                 &evidence,
                 review_thread_url,
                 &no_urls,
