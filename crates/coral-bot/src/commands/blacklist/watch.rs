@@ -7,7 +7,6 @@ use serenity::all::*;
 use super::tag::{MemberCheck, require_linked_member};
 use crate::framework::{AccessRank, Data};
 use crate::interact::send_deferred_error;
-use crate::utils::format_uuid_dashed;
 
 const DEFAULT_EXPIRY_DAYS: i64 = 14;
 
@@ -133,27 +132,14 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         })
         .await;
 
-    let expiry_text = match expires_at {
-        Some(ts) => format!("expires <t:{}:R>", ts.timestamp()),
-        None => "no expiration".into(),
-    };
-    let dashed_uuid = format_uuid_dashed(&player_info.uuid);
-
-    let container = CreateContainer::new(vec![CreateContainerComponent::TextDisplay(
-        CreateTextDisplay::new(format!(
-            "## Replays Needed\n`{}` is now being watched ({})\n-# UUID: {dashed_uuid}",
-            player_info.username, expiry_text
-        )),
-    )]);
-
-    command
-        .edit_response(
-            &ctx.http,
-            EditInteractionResponse::new()
-                .flags(MessageFlags::IS_COMPONENTS_V2)
-                .components(vec![CreateComponent::Container(container)]),
-        )
-        .await?;
-
-    Ok(())
+    super::tag::send_tag_applied(
+        ctx,
+        command,
+        data,
+        &player_info.username,
+        &player_info.uuid,
+        &tag,
+        "-# You can remove this tag within 30 minutes using /tag remove.",
+    )
+    .await
 }

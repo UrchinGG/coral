@@ -1,10 +1,11 @@
+use anyhow::Result;
 use serenity::all::*;
 
 use blacklist::{
     EMOTE_ADDTAG, EMOTE_EDITTAG, EMOTE_EVIDENCE, EMOTE_NO_EVIDENCE, EMOTE_REMOVETAG, EMOTE_TAG,
     lookup as lookup_tag,
 };
-use database::PlayerEvent;
+use database::{BlacklistRepository, CacheRepository, PlayerEvent};
 
 use super::evidence::evidence_thread_url;
 
@@ -14,11 +15,7 @@ use crate::utils::{format_tag_detail, format_uuid_dashed, sanitize_reason};
 const FACE_SIZE: u32 = 128;
 const FACE_FILENAME: &str = "face.png";
 
-pub const COLOR_SUCCESS: u32 = 0x00FF00;
-pub const COLOR_DANGER: u32 = 0xFF5555;
 pub const COLOR_ERROR: u32 = 0xED4245;
-pub const COLOR_INFO: u32 = 0x5865F2;
-pub const COLOR_FALLBACK: u32 = 0xFFA500;
 
 fn face_thumbnail() -> CreateThumbnail<'static> {
     CreateThumbnail::new(CreateUnfurledMediaItem::new(format!(
@@ -68,6 +65,13 @@ pub async fn format_added_line(ctx: &Context, tag: &PlayerEvent) -> String {
     }
 }
 
+pub fn tag_label(tag_type: &str) -> String {
+    let def = lookup_tag(tag_type);
+    let emote = def.map(|d| d.emote).unwrap_or("");
+    let display = def.map(|d| d.display_name).unwrap_or(tag_type);
+    format!("{emote} **{display}**")
+}
+
 pub fn evidence_indicator(tag_type: &str, has_evidence: bool) -> String {
     if tag_type != "confirmed_cheater" {
         return String::new();
@@ -80,71 +84,178 @@ pub fn evidence_indicator(tag_type: &str, has_evidence: bool) -> String {
     format!(" {emote}")
 }
 
-pub async fn format_tag_history(
+const HISTORY_PER_PAGE: usize = 8;
+
+fn reason_for_event(event: &PlayerEvent, all_events: &[PlayerEvent]) -> String {
+    let reason = if event.kind == "tag_set" {
+        event.reason.clone()
+    } else {
+        all_events
+            .iter()
+            .filter(|e| e.kind == "tag_set" && e.tag_type == event.tag_type && e.ts <= event.ts)
+            .max_by_key(|e| e.ts)
+            .and_then(|e| e.reason.clone())
+    };
+    sanitize_reason(reason.as_deref().unwrap_or(""))
+}
+
+fn render_history_entry(
+    event: &PlayerEvent,
+    all_events: &[PlayerEvent],
+    names: &std::collections::HashMap<i64, String>,
+) -> String {
+    let (action_emote, action) = if event.kind == "tag_set" {
+        (EMOTE_ADDTAG, "Added")
+    } else {
+        (EMOTE_REMOVETAG, "Removed")
+    };
+    let tag_type = event.tag_type.as_deref().unwrap_or("");
+    let def = lookup_tag(tag_type);
+    let emote = def.map(|d| d.emote).unwrap_or("");
+    let display = def.map(|d| d.display_name).unwrap_or(tag_type);
+    let ts = event.ts.timestamp();
+
+    let attribution = match event.author {
+        Some(id) => {
+            let name = names.get(&id).cloned().unwrap_or_else(|| id.to_string());
+            if event.hide_username.unwrap_or(false) {
+                format!("**`@{name}`** (hidden)")
+            } else {
+                format!("**`@{name}`**")
+            }
+        }
+        None => "**system**".to_string(),
+    };
+
+    let mut lines = vec![
+        format!("**{action_emote} {action}**"),
+        format!("> -# **{emote} {display}**"),
+    ];
+    let reason = reason_for_event(event, all_events);
+    if !reason.is_empty() {
+        lines.push(format!("> -# {reason}"));
+    }
+    lines.push(format!("> -# \\- {action} by {attribution} <t:{ts}:R>"));
+    lines.join("\n")
+}
+
+async fn render_tag_history(
     ctx: &Context,
+    username: &str,
     events: &[PlayerEvent],
-    max_entries: usize,
-) -> Option<String> {
+    page: usize,
+) -> (String, usize) {
+    let header = format!("## Tag History — `{username}`");
     let mut tag_events: Vec<&PlayerEvent> = events
         .iter()
         .filter(|e| e.kind == "tag_set" || e.kind == "tag_clear")
         .collect();
-    if tag_events.is_empty() {
-        return None;
-    }
     tag_events.sort_by(|a, b| b.ts.cmp(&a.ts).then(b.id.cmp(&a.id)));
 
     let total = tag_events.len();
-    let displayed: Vec<&&PlayerEvent> = tag_events.iter().take(max_entries).collect();
+    if total == 0 {
+        return (format!("{header}\n-# No tag history yet"), 1);
+    }
+    let total_pages = total.div_ceil(HISTORY_PER_PAGE);
+    let page = page.min(total_pages - 1);
+    let slice = &tag_events[page * HISTORY_PER_PAGE..((page + 1) * HISTORY_PER_PAGE).min(total)];
 
-    let mut author_ids: Vec<u64> = displayed
-        .iter()
-        .filter_map(|e| e.author.filter(|_| !e.hide_username.unwrap_or(false)))
-        .map(|a| a as u64)
-        .collect();
-    author_ids.sort();
-    author_ids.dedup();
-    let mut names: std::collections::HashMap<u64, String> = std::collections::HashMap::new();
-    for id in author_ids {
-        names.insert(id, get_username(ctx, id).await);
+    let mut names: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
+    for id in slice.iter().filter_map(|e| e.author) {
+        if !names.contains_key(&id) {
+            names.insert(id, get_username(ctx, id as u64).await);
+        }
     }
 
-    let mut lines = vec!["### Tag History".to_string()];
-    for event in displayed {
-        let tag_type = event.tag_type.as_deref().unwrap_or("");
-        let def = lookup_tag(tag_type);
-        let emote = def.map(|d| d.emote).unwrap_or("");
-        let display = def.map(|d| d.display_name).unwrap_or(tag_type);
-        let ts = event.ts.timestamp();
+    let mut out = vec![header];
+    for event in slice {
+        out.push(render_history_entry(event, events, &names));
+    }
+    (out.join("\n\n"), total_pages)
+}
 
-        let actor = match event
-            .author
-            .filter(|_| !event.hide_username.unwrap_or(false))
-        {
-            Some(id) => {
-                let name = names
-                    .get(&(id as u64))
-                    .cloned()
-                    .unwrap_or_else(|| id.to_string());
-                format!("`@{name}`")
-            }
-            None if event.author.is_none() => "system".to_string(),
-            _ => String::new(),
-        };
+async fn respond_history(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+    uuid: &str,
+    page: usize,
+    update: bool,
+) -> Result<()> {
+    let events = BlacklistRepository::new(data.db.pool())
+        .get_tag_history(uuid)
+        .await
+        .unwrap_or_default();
+    let username = CacheRepository::new(data.db.pool())
+        .get_username(uuid)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| uuid.to_string());
+    let (content, total_pages) = render_tag_history(ctx, &username, &events, page).await;
+    let page = page.min(total_pages.saturating_sub(1));
 
-        let line = if event.kind == "tag_set" {
-            let reason = sanitize_reason(event.reason.as_deref().unwrap_or(""));
-            format!("-# {EMOTE_ADDTAG} {emote} **{display}** *{reason}* · {actor} <t:{ts}:R>")
-        } else {
-            format!("-# {EMOTE_REMOVETAG} {emote} ~~{display}~~ · {actor} <t:{ts}:R>")
-        };
-        lines.push(line);
+    let mut parts = vec![CreateContainerComponent::TextDisplay(
+        CreateTextDisplay::new(content),
+    )];
+    if total_pages > 1 {
+        parts.push(CreateContainerComponent::TextDisplay(
+            CreateTextDisplay::new(format!("-# Page {} / {}", page + 1, total_pages)),
+        ));
+        parts.push(CreateContainerComponent::ActionRow(
+            CreateActionRow::buttons(vec![
+                CreateButton::new(format!("tag_history_nav:{uuid}:{}", page.saturating_sub(1)))
+                    .label("◀ Prev")
+                    .style(ButtonStyle::Secondary)
+                    .disabled(page == 0),
+                CreateButton::new(format!("tag_history_nav:{uuid}:{}", page + 1))
+                    .label("Next ▶")
+                    .style(ButtonStyle::Secondary)
+                    .disabled(page + 1 >= total_pages),
+            ]),
+        ));
     }
 
-    if total > max_entries {
-        lines.push(format!("-# … and {} more", total - max_entries));
-    }
-    Some(lines.join("\n"))
+    let msg = CreateInteractionResponseMessage::new()
+        .flags(MessageFlags::IS_COMPONENTS_V2)
+        .components(vec![CreateComponent::Container(CreateContainer::new(
+            parts,
+        ))]);
+    let response = if update {
+        CreateInteractionResponse::UpdateMessage(msg)
+    } else {
+        CreateInteractionResponse::Message(msg.ephemeral(true))
+    };
+    component.create_response(&ctx.http, response).await?;
+    Ok(())
+}
+
+pub async fn handle_history_open(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let uuid = component
+        .data
+        .custom_id
+        .strip_prefix("tag_history:")
+        .unwrap_or_default();
+    respond_history(ctx, component, data, uuid, 0, false).await
+}
+
+pub async fn handle_history_nav(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let rest = component
+        .data
+        .custom_id
+        .strip_prefix("tag_history_nav:")
+        .unwrap_or_default();
+    let (uuid, page) = rest.rsplit_once(':').unwrap_or((rest, "0"));
+    let page = page.parse().unwrap_or(0);
+    respond_history(ctx, component, data, uuid, page, true).await
 }
 
 pub fn format_tag_block(
@@ -256,7 +367,7 @@ pub async fn post_tag_removed(
     send_to_mod_channel(
         ctx,
         data,
-        make_container(log_footer).accent_color(COLOR_DANGER),
+        make_container(log_footer).accent_color(COLOR_ERROR),
         vec![log_face],
     )
     .await;
@@ -366,32 +477,6 @@ pub async fn post_lock_change(
     send_to_mod_channel(ctx, data, CreateContainer::new(parts), vec![face]).await;
 }
 
-pub async fn post_key_revoked(
-    ctx: &Context,
-    data: &Data,
-    target_id: u64,
-    reason: &str,
-    invoker_id: u64,
-) {
-    let invoker = get_username(ctx, invoker_id).await;
-    let container = CreateContainer::new(vec![
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
-            "## \u{1F528} User Banned\n<@{target_id}>"
-        ))),
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
-            "> {}",
-            sanitize_reason(reason)
-        ))),
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
-            "-# Banned by `@{invoker}`"
-        ))),
-        CreateContainerComponent::Separator(CreateSeparator::new(true)),
-    ])
-    .accent_color(COLOR_DANGER);
-
-    send_to_mod_channel(ctx, data, container, vec![]).await;
-}
-
 pub async fn post_key_locked(ctx: &Context, data: &Data, target_id: u64, invoker_id: u64) {
     post_key_change(ctx, data, target_id, invoker_id, true).await;
 }
@@ -451,7 +536,7 @@ pub async fn post_tagging_toggled(
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
     ]);
     let container = if disabled {
-        container.accent_color(COLOR_DANGER)
+        container.accent_color(COLOR_ERROR)
     } else {
         container
     };
@@ -483,7 +568,7 @@ async fn post_key_change(
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
     ]);
     let container = if locked {
-        container.accent_color(COLOR_DANGER)
+        container.accent_color(COLOR_ERROR)
     } else {
         container
     };

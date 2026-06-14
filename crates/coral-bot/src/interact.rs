@@ -24,12 +24,6 @@ pub fn parse_ids(custom_id: &str) -> Option<(u64, String)> {
     Some((parts.next()?.parse().ok()?, parts.next()?.to_string()))
 }
 
-pub fn parse_compound_id(custom_id: &str) -> Option<(u64, u64)> {
-    let payload = custom_id.splitn(2, ':').nth(1)?;
-    let mut parts = payload.split(':');
-    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
-}
-
 pub fn extract_modal_value(components: &[Component], field_id: &str) -> String {
     for component in components {
         if let Component::Label(label) = component {

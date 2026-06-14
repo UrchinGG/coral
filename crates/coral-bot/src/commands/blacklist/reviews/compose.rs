@@ -204,10 +204,8 @@ pub async fn handle_addplayer_reason_modal(
         tag_type,
         reason,
         status: PlayerStatus::Pending,
-        reviewer: None,
         review_note: None,
         evidence: Vec::new(),
-        conflict_warning: None,
         accept_votes: Vec::new(),
         reject_votes: Vec::new(),
     });

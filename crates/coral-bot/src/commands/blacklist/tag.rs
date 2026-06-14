@@ -7,7 +7,7 @@ use coral_redis::BlacklistEvent;
 use database::{BlacklistRepository, CacheRepository, MemberRepository, TagOp, TagOpError};
 use serenity::all::*;
 
-use super::channel::{self, COLOR_DANGER, evidence_indicator, format_added_line, format_tag_block};
+use super::channel::{COLOR_ERROR, evidence_indicator, format_added_line, format_tag_block};
 use crate::framework::{AccessRank, AccessRankExt, Data};
 use crate::interact;
 use crate::interact::send_deferred_error;
@@ -55,12 +55,6 @@ fn simple_result(emote: &str, msg: &str) -> CreateContainer<'static> {
     CreateContainer::new(vec![CreateContainerComponent::TextDisplay(
         CreateTextDisplay::new(format!("## {emote} {msg}")),
     )])
-}
-
-fn tag_display(tag_type: &str) -> (&'static str, &'static str) {
-    lookup_tag(tag_type)
-        .map(|d| (d.emote, d.display_name))
-        .unwrap_or(("", "Unknown"))
 }
 
 fn op_error_message(e: &TagOpError) -> &'static str {
@@ -344,6 +338,41 @@ async fn send_tag_response(
     Ok(())
 }
 
+pub async fn send_tag_applied(
+    ctx: &Context,
+    command: &CommandInteraction,
+    data: &Data,
+    username: &str,
+    uuid: &str,
+    tag: &database::PlayerEvent,
+    hint: &str,
+) -> Result<()> {
+    let added_line = format_added_line(ctx, tag).await;
+    let block = format_tag_block(
+        tag.tag_type.as_deref().unwrap_or(""),
+        &format_tag_detail(tag),
+        "",
+        Some(&added_line),
+        None,
+        false,
+    );
+    let container = CreateContainer::new(vec![
+        face_section(vec![
+            format!("## {} New Tag Applied\nIGN - `{username}`\n", EMOTE_ADDTAG),
+            block,
+            format!("-# UUID: {}", format_uuid_dashed(uuid)),
+        ]),
+        CreateContainerComponent::Separator(CreateSeparator::new(true)),
+        CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
+            CreateButton::new(format!("tag_undo:{}", tag.id))
+                .label("Undo")
+                .style(ButtonStyle::Danger),
+        ])),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(hint.to_string())),
+    ]);
+    send_tag_response(ctx, command, data, uuid, container).await
+}
+
 async fn run_view(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
     command.defer(&ctx.http).await?;
 
@@ -370,7 +399,10 @@ async fn run_view(ctx: &Context, command: &CommandInteraction, data: &Data) -> R
     if player_tags.is_empty() {
         let container = CreateContainer::new(vec![
             face_section(vec![
-                format!("## No Tags\n`{}` is not tagged.", player_info.username),
+                format!(
+                    "## {} No Tags\n`{}` is not tagged.",
+                    EMOTE_TAG, player_info.username
+                ),
                 format!("-# UUID: {dashed_uuid}"),
             ]),
             CreateContainerComponent::Separator(CreateSeparator::new(true)),
@@ -538,7 +570,8 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         .await;
     }
 
-    let needs_review = rank == AccessRank::Default && tag_type != "sniper";
+    let needs_review =
+        rank == AccessRank::Default && super::reviews::REVIEW_TAGS.contains(&tag_type);
 
     let player_info = match data.api.resolve(player).await {
         Ok(info) => info,
@@ -546,6 +579,14 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     };
 
     if needs_review {
+        let current = match conflicting_tag(data, &player_info.uuid, tag_type).await {
+            Some(tag) => Some(super::reviews::CurrentTag {
+                tag_type: tag.tag_type.clone().unwrap_or_default(),
+                detail: format_tag_detail(&tag),
+                added_line: format_added_line(ctx, &tag).await,
+            }),
+            None => None,
+        };
         let components = super::reviews::build_confirmation_message(
             discord_id,
             &player_info.username,
@@ -553,6 +594,7 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
             tag_type,
             reason,
             data.review_forum_id,
+            current,
         );
         let png = data
             .skin_provider
@@ -587,10 +629,6 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         .await
     {
         Ok(new_tag) => {
-            let (emote, display_name) = tag_display(tag_type);
-            let dashed_uuid = format_uuid_dashed(&player_info.uuid);
-            let added_line = format_added_line(ctx, &new_tag).await;
-
             data.event_publisher
                 .publish(&BlacklistEvent::TagAdded {
                     uuid: player_info.uuid.clone(),
@@ -606,31 +644,16 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
                 "-# You can overwrite or remove this tag within 30 minutes using /tag add and /tag remove."
             };
 
-            let container = CreateContainer::new(vec![
-                face_section(vec![
-                    format!(
-                        "## {} New Tag Applied\nIGN - `{}`\n",
-                        EMOTE_ADDTAG, player_info.username
-                    ),
-                    format!(
-                        "**{} {}**\n> {}\n{}",
-                        emote,
-                        display_name,
-                        sanitize_reason(reason),
-                        added_line
-                    ),
-                    format!("-# UUID: {dashed_uuid}"),
-                ]),
-                CreateContainerComponent::Separator(CreateSeparator::new(true)),
-                CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
-                    CreateButton::new(format!("tag_undo:{}", new_tag.id))
-                        .label("Undo")
-                        .style(ButtonStyle::Danger),
-                ])),
-                CreateContainerComponent::TextDisplay(CreateTextDisplay::new(hint)),
-            ]);
-
-            send_tag_response(ctx, command, data, &player_info.uuid, container).await
+            send_tag_applied(
+                ctx,
+                command,
+                data,
+                &player_info.username,
+                &player_info.uuid,
+                &new_tag,
+                hint,
+            )
+            .await
         }
         Err(TagOpError::PriorityConflict(conflict)) => {
             show_overwrite_prompt(
@@ -649,6 +672,17 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     }
 }
 
+async fn conflicting_tag(data: &Data, uuid: &str, tag_type: &str) -> Option<database::PlayerEvent> {
+    let priority = lookup_tag(tag_type)?.priority;
+    let tags = BlacklistRepository::new(data.db.pool())
+        .get_active_tags(uuid)
+        .await
+        .ok()?;
+    tags.into_iter().find(|t| {
+        lookup_tag(t.tag_type.as_deref().unwrap_or("")).map(|d| d.priority) == Some(priority)
+    })
+}
+
 async fn show_overwrite_prompt(
     ctx: &Context,
     command: &CommandInteraction,
@@ -660,8 +694,6 @@ async fn show_overwrite_prompt(
     hide: bool,
 ) -> Result<()> {
     let conflict_type = conflict.tag_type.as_deref().unwrap_or("");
-    let (old_emote, old_display) = tag_display(conflict_type);
-    let (new_emote, new_display) = tag_display(tag_type);
     let dashed_uuid = format_uuid_dashed(&player_info.uuid);
 
     let overwrite_key = command.id.to_string();
@@ -680,52 +712,55 @@ async fn show_overwrite_prompt(
     let button = CreateButton::new(format!("tag_overwrite:{overwrite_key}"))
         .label("Overwrite Tag")
         .style(ButtonStyle::Danger);
-    let old_tag_added = format_added_line(ctx, conflict).await;
-    let new_tag_added = if hide {
-        String::new()
-    } else {
-        format!("\n> -# **\\- Added by `@{}`**", command.user.name)
-    };
+    let old_added = format_added_line(ctx, conflict).await;
+    let new_added = (!hide).then(|| format!("> -# **\\- Added by `@{}`**", command.user.name));
+
+    let current_block = format_tag_block(
+        conflict_type,
+        &format_tag_detail(conflict),
+        "",
+        Some(&old_added),
+        None,
+        false,
+    );
+    let proposed_block = format_tag_block(
+        tag_type,
+        &sanitize_reason(reason),
+        "",
+        new_added.as_deref(),
+        None,
+        false,
+    );
 
     let container = CreateContainer::new(vec![
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "## {} Tag Overwrite",
+            EMOTE_EDITTAG
+        ))),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
+            "This player already has an incompatible tag. Overwriting replaces it with your tag.",
+        )),
+        CreateContainerComponent::Separator(CreateSeparator::new(true)),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new("-# Current")),
         face_section(vec![
-            format!(
-                "## {} Tag Overwrite\nIGN - `{}`\n",
-                EMOTE_EDITTAG, player_info.username
-            ),
-            format!(
-                "**{} {}**\n> {}\n{}",
-                old_emote,
-                old_display,
-                format_tag_detail(conflict),
-                old_tag_added
-            ),
+            format!("IGN - `{}`\n", player_info.username),
+            current_block,
             format!("-# UUID: {dashed_uuid}"),
         ]),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new("-# New")),
         CreateContainerComponent::Section(CreateSection::new(
             vec![CreateSectionComponent::TextDisplay(CreateTextDisplay::new(
-                format!(
-                    "**{} {}**\n> {}{}",
-                    new_emote,
-                    new_display,
-                    sanitize_reason(reason),
-                    new_tag_added
-                ),
+                proposed_block,
             ))],
             CreateSectionAccessory::Button(button),
         )),
     ]);
 
-    let mut resp = EditInteractionResponse::new()
+    let resp = EditInteractionResponse::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(vec![
-            CreateComponent::TextDisplay(CreateTextDisplay::new(
-                "This user already has an incompatible tag! Would you like to overwrite?",
-            )),
-            CreateComponent::Container(container),
-        ]);
-    resp = resp.new_attachment(face_attachment(data, &player_info.uuid).await);
+        .components(vec![CreateComponent::Container(container)])
+        .new_attachment(face_attachment(data, &player_info.uuid).await);
     command.edit_response(&ctx.http, resp).await?;
     Ok(())
 }
@@ -774,9 +809,16 @@ pub async fn handle_overwrite_button(
         Err(e) => return send_component_message(ctx, component, op_error_message(&e)).await,
     };
 
-    let (emote, display_name) = tag_display(&overwrite.tag_type);
     let dashed_uuid = format_uuid_dashed(uuid);
     let added_line = format_added_line(ctx, &new_tag).await;
+    let block = format_tag_block(
+        new_tag.tag_type.as_deref().unwrap_or(""),
+        &format_tag_detail(&new_tag),
+        "",
+        Some(&added_line),
+        None,
+        false,
+    );
 
     let container = CreateContainer::new(vec![
         face_section(vec![
@@ -784,13 +826,7 @@ pub async fn handle_overwrite_button(
                 "## {} Tag Overwritten\nIGN - `{}`\n",
                 EMOTE_EDITTAG, player_name
             ),
-            format!(
-                "**{} {}**\n> {}\n{}",
-                emote,
-                display_name,
-                sanitize_reason(&overwrite.reason),
-                added_line
-            ),
+            block,
             format!("-# UUID: {dashed_uuid}"),
         ]),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
@@ -872,9 +908,16 @@ async fn run_remove(ctx: &Context, command: &CommandInteraction, data: &Data) ->
         super::evidence::archive_evidence_for_uuid(ctx, data, &player_info.uuid).await?;
     }
 
-    let (emote, display_name) = tag_display(tag_type);
     let dashed_uuid = format_uuid_dashed(&player_info.uuid);
     let added_line = format_added_line(ctx, &tag).await;
+    let block = format_tag_block(
+        tag_type,
+        &format_tag_detail(&tag),
+        "",
+        Some(&added_line),
+        None,
+        true,
+    );
 
     let container = CreateContainer::new(vec![
         face_section(vec![
@@ -882,18 +925,12 @@ async fn run_remove(ctx: &Context, command: &CommandInteraction, data: &Data) ->
                 "## {} Tag Removed\nIGN - `{}`\n",
                 EMOTE_REMOVETAG, player_info.username
             ),
-            format!(
-                "**{} {}**\n> {}\n{}",
-                emote,
-                display_name,
-                format_tag_detail(&tag),
-                added_line
-            ),
+            block,
             format!("-# UUID: {dashed_uuid}"),
         ]),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
     ])
-    .accent_color(COLOR_DANGER);
+    .accent_color(COLOR_ERROR);
 
     send_tag_response(ctx, command, data, &player_info.uuid, container).await?;
 
@@ -1109,23 +1146,16 @@ async fn build_manage_main(
 ) -> Result<Vec<CreateComponent<'static>>> {
     let repo = BlacklistRepository::new(data.db.pool());
     let cache = CacheRepository::new(data.db.pool());
-    let (active, history, username) = tokio::join!(
-        repo.get_active_tags(uuid),
-        repo.get_tag_history(uuid),
-        cache.get_username(uuid),
-    );
+    let (active, username) = tokio::join!(repo.get_active_tags(uuid), cache.get_username(uuid));
     let active = active?;
-    let history_text = channel::format_tag_history(ctx, &history?, 10).await;
     let username = username.ok().flatten().unwrap_or_else(|| uuid.to_string());
     let dashed_uuid = format_uuid_dashed(uuid);
     let names = resolve_names(&ctx.http, active.iter().filter_map(|t| t.author)).await;
 
-    let mut parts: Vec<CreateContainerComponent> = vec![CreateContainerComponent::TextDisplay(
-        CreateTextDisplay::new(format!(
-            "## {} Manage Tags\nIGN - `{}`",
-            EMOTE_EDITTAG, username
-        )),
-    )];
+    let mut parts: Vec<CreateContainerComponent> = vec![face_section(vec![format!(
+        "## {} Manage Tags\nIGN - `{}`",
+        EMOTE_EDITTAG, username
+    )])];
 
     if active.is_empty() {
         parts.push(CreateContainerComponent::TextDisplay(
@@ -1138,24 +1168,29 @@ async fn build_manage_main(
             true,
         )));
         let tag_type = tag.tag_type.as_deref().unwrap_or("");
-        let (emote, display) = tag_display(tag_type);
-        let added_name = tag
-            .author
-            .and_then(|id| names.get(&id).map(|s| s.as_str()))
-            .unwrap_or("unknown");
-        let hide_label = if tag.hide_username.unwrap_or(false) {
-            " *(hidden)*"
-        } else {
-            ""
+        let ts = tag.ts.timestamp();
+        let added_line = match tag.author {
+            Some(id) => {
+                let name = names.get(&id).map(|s| s.as_str()).unwrap_or("unknown");
+                let hidden = if tag.hide_username.unwrap_or(false) {
+                    " (hidden)"
+                } else {
+                    ""
+                };
+                format!("> -# **\\- Added by `@{name}`{hidden} <t:{ts}:R>**")
+            }
+            None => format!("> -# **\\- <t:{ts}:R>**"),
         };
-        let expiry = tag
-            .expires_at
-            .map(|e| format!(" — expires <t:{}:R>", e.timestamp()))
-            .unwrap_or_default();
-        parts.push(CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
-            "{emote} **{display}**{hide_label}\n> {}\n> -# Added by `@{added_name}` <t:{}:R>{expiry}",
-            format_tag_detail(tag), tag.ts.timestamp()
-        ))));
+        parts.push(CreateContainerComponent::TextDisplay(
+            CreateTextDisplay::new(format_tag_block(
+                tag_type,
+                &format_tag_detail(tag),
+                "",
+                Some(&added_line),
+                None,
+                false,
+            )),
+        ));
 
         if confirming == Some(tag.id) {
             parts.push(CreateContainerComponent::ActionRow(
@@ -1182,33 +1217,18 @@ async fn build_manage_main(
     parts.push(CreateContainerComponent::Separator(CreateSeparator::new(
         true,
     )));
-    if let Some(h) = history_text {
-        parts.push(CreateContainerComponent::TextDisplay(
-            CreateTextDisplay::new(h),
-        ));
-        parts.push(CreateContainerComponent::Separator(CreateSeparator::new(
-            true,
-        )));
-    }
     parts.push(CreateContainerComponent::TextDisplay(
         CreateTextDisplay::new(format!("-# UUID: {dashed_uuid}")),
     ));
-
-    let type_options: Vec<CreateSelectMenuOption<'static>> = blacklist::all()
-        .iter()
-        .filter(|t| t.name != "confirmed_cheater")
-        .map(|t| CreateSelectMenuOption::new(t.display_name, t.name))
-        .collect();
     parts.push(CreateContainerComponent::ActionRow(
-        CreateActionRow::SelectMenu(
-            CreateSelectMenu::new(
-                format!("mt_add:{uuid}"),
-                CreateSelectMenuKind::String {
-                    options: type_options.into(),
-                },
-            )
-            .placeholder("Add a tag..."),
-        ),
+        CreateActionRow::buttons(vec![
+            CreateButton::new(format!("tag_history:{uuid}"))
+                .label("Tag History")
+                .style(ButtonStyle::Secondary),
+            CreateButton::new(format!("mt_addbtn:{uuid}"))
+                .label("New Tag")
+                .style(ButtonStyle::Primary),
+        ]),
     ));
 
     Ok(vec![CreateComponent::Container(CreateContainer::new(
@@ -1229,7 +1249,8 @@ async fn update_manage_view(
             CreateInteractionResponse::UpdateMessage(
                 CreateInteractionResponseMessage::new()
                     .flags(MessageFlags::IS_COMPONENTS_V2)
-                    .components(components),
+                    .components(components)
+                    .add_file(face_attachment(data, uuid).await),
             ),
         )
         .await?;
@@ -1260,7 +1281,8 @@ pub async fn handle_manage_remove(
             CreateInteractionResponse::UpdateMessage(
                 CreateInteractionResponseMessage::new()
                     .flags(MessageFlags::IS_COMPONENTS_V2)
-                    .components(components),
+                    .components(components)
+                    .add_file(face_attachment(data, uuid).await),
             ),
         )
         .await?;
@@ -1314,6 +1336,51 @@ pub async fn handle_manage_back(
 ) -> Result<()> {
     let uuid = parse_manage_uuid(&component.data.custom_id);
     update_manage_view(ctx, component, data, uuid).await
+}
+
+pub async fn handle_manage_add_button(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let uuid = parse_manage_uuid(&component.data.custom_id);
+    let type_options: Vec<CreateSelectMenuOption<'static>> = blacklist::all()
+        .iter()
+        .filter(|t| t.name != "confirmed_cheater")
+        .map(|t| CreateSelectMenuOption::new(t.display_name, t.name))
+        .collect();
+    let picker = CreateContainer::new(vec![
+        face_section(vec![format!(
+            "## {} Add Tag\nSelect a tag type to add:",
+            EMOTE_ADDTAG
+        )]),
+        CreateContainerComponent::ActionRow(CreateActionRow::SelectMenu(
+            CreateSelectMenu::new(
+                format!("mt_add:{uuid}"),
+                CreateSelectMenuKind::String {
+                    options: type_options.into(),
+                },
+            )
+            .placeholder("Tag type..."),
+        )),
+        CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
+            CreateButton::new(format!("mt_back:{uuid}"))
+                .label("Cancel")
+                .style(ButtonStyle::Secondary),
+        ])),
+    ]);
+    component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2)
+                    .components(vec![CreateComponent::Container(picker)])
+                    .add_file(face_attachment(data, uuid).await),
+            ),
+        )
+        .await?;
+    Ok(())
 }
 
 pub async fn handle_manage_add_select(
@@ -1436,34 +1503,49 @@ async fn show_manage_replace_prompt(
     new_reason: &str,
 ) -> Result<()> {
     let conflict_type = conflict.tag_type.as_deref().unwrap_or("");
-    let (old_emote, old_display) = tag_display(conflict_type);
-    let (new_emote, new_display) = tag_display(new_tag_type);
     let old_added = format_added_line(ctx, conflict).await;
+    let current_block = format_tag_block(
+        conflict_type,
+        &format_tag_detail(conflict),
+        "",
+        Some(&old_added),
+        None,
+        false,
+    );
+    let new_block = format_tag_block(
+        new_tag_type,
+        &sanitize_reason(new_reason),
+        "",
+        None,
+        None,
+        false,
+    );
 
     let key = modal.id.get().to_string();
     let replace_btn = CreateButton::new(format!("tag_overwrite:{key}"))
         .label("Replace Tag")
         .style(ButtonStyle::Danger);
-    let cancel_btn = CreateButton::new("mt_replace_cancel")
-        .label("Cancel")
-        .style(ButtonStyle::Secondary);
 
-    let body = format!(
-        "## {} Replace tag?\n**{} {}** will be replaced.\n\n\
-         **Existing:**\n{} **{}**\n> {}\n{}\n\n\
-         **Replacement:**\n{} **{}**\n> {}\n\n\
-         -# This is recorded in tag history. No public log entry will be posted.",
-        EMOTE_EDITTAG,
-        old_emote,
-        old_display,
-        old_emote,
-        old_display,
-        format_tag_detail(conflict),
-        old_added,
-        new_emote,
-        new_display,
-        sanitize_reason(new_reason),
-    );
+    let container = CreateContainer::new(vec![
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "## {} Replace Tag",
+            EMOTE_EDITTAG
+        ))),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
+            "Replaces the current tag. Recorded in tag history; no public log entry.",
+        )),
+        CreateContainerComponent::Separator(CreateSeparator::new(true)),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new("-# Current")),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(current_block)),
+        CreateContainerComponent::Separator(CreateSeparator::new(true)),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new("-# New")),
+        CreateContainerComponent::Section(CreateSection::new(
+            vec![CreateSectionComponent::TextDisplay(CreateTextDisplay::new(
+                new_block,
+            ))],
+            CreateSectionAccessory::Button(replace_btn),
+        )),
+    ]);
 
     modal
         .create_response(
@@ -1472,13 +1554,7 @@ async fn show_manage_replace_prompt(
                 CreateInteractionResponseMessage::new()
                     .flags(MessageFlags::IS_COMPONENTS_V2)
                     .ephemeral(true)
-                    .components(vec![
-                        CreateComponent::TextDisplay(CreateTextDisplay::new(body)),
-                        CreateComponent::ActionRow(CreateActionRow::buttons(vec![
-                            replace_btn,
-                            cancel_btn,
-                        ])),
-                    ]),
+                    .components(vec![CreateComponent::Container(container)]),
             ),
         )
         .await?;
@@ -1516,10 +1592,7 @@ pub async fn handle_manage_reason_modal(
     )
     .await
     {
-        Ok(ManagePlaceOutcome::Added) => {
-            let (_, display) = tag_display(tag_type);
-            manage_simple_response(ctx, modal, &format!("{display} tag added (silent)")).await
-        }
+        Ok(ManagePlaceOutcome::Added) => refresh_manage_modal(ctx, modal, data, uuid).await,
         Ok(ManagePlaceOutcome::NeedsConfirmation { conflict }) => {
             show_manage_replace_prompt(ctx, modal, &conflict, tag_type, &reason).await
         }
@@ -1564,15 +1637,33 @@ pub async fn handle_manage_expiry_modal(
     )
     .await
     {
-        Ok(ManagePlaceOutcome::Added) => {
-            let (_, display) = tag_display("replays_needed");
-            manage_simple_response(ctx, modal, &format!("{display} tag added (silent)")).await
-        }
+        Ok(ManagePlaceOutcome::Added) => refresh_manage_modal(ctx, modal, data, uuid).await,
         Ok(ManagePlaceOutcome::NeedsConfirmation { conflict }) => {
             show_manage_replace_prompt(ctx, modal, &conflict, "replays_needed", "").await
         }
         Err(e) => manage_simple_response(ctx, modal, &e.to_string()).await,
     }
+}
+
+async fn refresh_manage_modal(
+    ctx: &Context,
+    modal: &ModalInteraction,
+    data: &Data,
+    uuid: &str,
+) -> Result<()> {
+    let components = build_manage_main(ctx, data, uuid, None).await?;
+    modal
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2)
+                    .components(components)
+                    .add_file(face_attachment(data, uuid).await),
+            ),
+        )
+        .await?;
+    Ok(())
 }
 
 async fn manage_simple_response(
@@ -1587,24 +1678,6 @@ async fn manage_simple_response(
                 CreateInteractionResponseMessage::new()
                     .content(message)
                     .ephemeral(true),
-            ),
-        )
-        .await?;
-    Ok(())
-}
-
-pub async fn handle_manage_replace_cancel(
-    ctx: &Context,
-    component: &ComponentInteraction,
-    _data: &Data,
-) -> Result<()> {
-    component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::UpdateMessage(
-                CreateInteractionResponseMessage::new()
-                    .content("Cancelled.")
-                    .components(vec![]),
             ),
         )
         .await?;

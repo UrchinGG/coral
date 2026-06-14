@@ -2,7 +2,6 @@ pub mod accounts;
 pub mod api;
 pub mod commands;
 pub mod events;
-pub mod expr;
 pub mod framework;
 pub mod interact;
 pub mod preview;

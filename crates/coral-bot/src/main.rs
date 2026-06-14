@@ -15,7 +15,7 @@ use coral_redis::{EventPublisher, RedisPool, SyncEventPublisher};
 use database::Database;
 
 use coral_bot::api::CoralApiClient;
-use coral_bot::framework::{Data, Handler};
+use coral_bot::framework::{AccessRank, Data, Handler};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -91,6 +91,12 @@ async fn init_data() -> Result<Data> {
         evidence_threads: Arc::new(RwLock::new(HashMap::new())),
         sync_cooldowns: Arc::new(Mutex::new(HashMap::new())),
         active_interactions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        vote_min_rank: env::var("VOTE_MIN_RANK")
+            .ok()
+            .and_then(|v| v.parse::<i16>().ok())
+            .map(AccessRank::from_level)
+            .unwrap_or(AccessRank::Trusted),
+        vote_messages: Arc::new(Mutex::new(HashMap::new())),
     })
 }
 

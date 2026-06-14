@@ -54,6 +54,8 @@ pub struct Data {
     pub evidence_threads: Arc<RwLock<HashMap<String, ThreadId>>>,
     pub sync_cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
     pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
+    pub vote_min_rank: AccessRank,
+    pub vote_messages: Arc<Mutex<HashMap<(u64, usize, u64), u64>>>,
 }
 
 impl Data {
@@ -297,24 +299,40 @@ impl Handler {
             _ if id.starts_with("mt_confirm:") => {
                 commands::blacklist::tag::handle_manage_confirm(ctx, component, &self.data).await
             }
+            _ if id.starts_with("mt_addbtn:") => {
+                commands::blacklist::tag::handle_manage_add_button(ctx, component, &self.data).await
+            }
             _ if id.starts_with("mt_add:") => {
                 commands::blacklist::tag::handle_manage_add_select(ctx, component, &self.data).await
             }
             _ if id.starts_with("mt_back:") => {
                 commands::blacklist::tag::handle_manage_back(ctx, component, &self.data).await
             }
-            _ if id == "mt_replace_cancel" => {
-                commands::blacklist::tag::handle_manage_replace_cancel(ctx, component, &self.data)
-                    .await
-            }
             _ if id.starts_with("evidence_add_media") => {
                 commands::blacklist::evidence::handle_add_media(ctx, component, &self.data).await
             }
-            _ if id.starts_with("evidence_remove") => {
-                commands::blacklist::evidence::handle_remove(ctx, component, &self.data).await
+            _ if id.starts_with("evidence_manage:") => {
+                commands::blacklist::evidence::handle_manage(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("evidence_msel:") => {
+                commands::blacklist::evidence::handle_manage_select(ctx, component, &self.data)
+                    .await
+            }
+            _ if id.starts_with("evidence_mrem:") => {
+                commands::blacklist::evidence::handle_manage_remove(ctx, component, &self.data)
+                    .await
+            }
+            _ if id.starts_with("evidence_mclose:") => {
+                commands::blacklist::evidence::handle_manage_close(ctx, component, &self.data).await
             }
             _ if id.starts_with("evidence_archive") => {
                 commands::blacklist::evidence::handle_archive(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("tag_history_nav:") => {
+                commands::blacklist::channel::handle_history_nav(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("tag_history:") => {
+                commands::blacklist::channel::handle_history_open(ctx, component, &self.data).await
             }
             _ if id.starts_with("manage_access_select:") => {
                 commands::admin::manage::handle_access_select(ctx, component, &self.data).await
@@ -394,6 +412,13 @@ impl Handler {
                 commands::blacklist::reviews::handle_remove_evidence(ctx, component, &self.data)
                     .await
             }
+            _ if id.starts_with("review_edit_replay:") => {
+                commands::blacklist::reviews::handle_edit_replay(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("review_evsel:") => {
+                commands::blacklist::reviews::handle_evidence_select(ctx, component, &self.data)
+                    .await
+            }
             _ if id.starts_with("review_add_player:") => {
                 commands::blacklist::reviews::handle_add_player(ctx, component, &self.data).await
             }
@@ -426,9 +451,6 @@ impl Handler {
             }
             _ if id.starts_with("review_abort_delete:") => {
                 commands::blacklist::reviews::handle_abort_delete(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("review_cancel:") => {
-                commands::blacklist::reviews::handle_cancel(ctx, component, &self.data).await
             }
             _ => {
                 tracing::warn!("unhandled component interaction: {id}");
@@ -469,6 +491,9 @@ impl Handler {
             }
             _ if id.starts_with("review_edit_reason_modal:") => {
                 commands::blacklist::reviews::handle_edit_reason_modal(ctx, modal, &self.data).await
+            }
+            _ if id.starts_with("review_edit_replay_modal:") => {
+                commands::blacklist::reviews::handle_edit_replay_modal(ctx, modal, &self.data).await
             }
             _ if id.starts_with("mt_reason:") => {
                 commands::blacklist::tag::handle_manage_reason_modal(ctx, modal, &self.data).await

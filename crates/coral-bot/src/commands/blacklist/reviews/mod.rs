@@ -7,26 +7,23 @@ mod verdict;
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
-use blacklist::lookup as lookup_tag;
-use database::BlacklistRepository;
 use serenity::all::*;
 
 use crate::framework::Data;
-use crate::utils::sanitize_reason;
 
-pub use builder::{FACE_SIZE, build_confirmation_message, face_filename};
+pub use builder::{CurrentTag, FACE_SIZE, build_confirmation_message, face_filename};
 pub use compose::{
     handle_add_player, handle_addplayer_name_modal, handle_addplayer_reason_modal,
     handle_edit_done, handle_edit_reason, handle_edit_reason_modal, handle_edit_submitted,
     handle_edit_tag, handle_pending_tag_select, handle_remove_player, handle_tag_select_edit,
 };
 pub use evidence::{
-    handle_add_replay, handle_attach_media, handle_media_modal, handle_remove_evidence,
-    handle_replay_modal,
+    handle_add_replay, handle_attach_media, handle_edit_replay, handle_edit_replay_modal,
+    handle_evidence_select, handle_media_modal, handle_remove_evidence, handle_replay_modal,
 };
 pub use verdict::{
-    handle_abort_delete, handle_approve, handle_cancel, handle_cancel_thread, handle_confirm,
-    handle_reject, handle_reject_modal, handle_submit,
+    handle_abort_delete, handle_approve, handle_cancel_thread, handle_confirm, handle_reject,
+    handle_reject_modal, handle_submit,
 };
 
 use state::*;
@@ -39,11 +36,13 @@ const TAG_AWAITING_EVIDENCE: &str = "Awaiting Evidence";
 const MAX_MEDIA_PER_PLAYER: usize = 4;
 const ALLOWED_MEDIA_EXTENSIONS: &[&str] =
     &["png", "jpg", "jpeg", "gif", "webp", "mp4", "webm", "mov"];
-const REVIEW_TAGS: &[&str] = &["closet_cheater", "blatant_cheater"];
+pub const REVIEW_TAGS: &[&str] = &["closet_cheater", "blatant_cheater"];
 const CONFIRMABLE_TAGS: &[&str] = &["closet_cheater", "blatant_cheater"];
 const SUBMISSION_TIMEOUT_SECS: u64 = 30 * 60;
 const SUBMISSION_WARNING_SECS: u64 = 20 * 60;
-pub const VOTE_THRESHOLD: usize = 3;
+
+pub const ACCEPT_THRESHOLD: usize = 6;
+pub const REJECT_THRESHOLD: usize = 3;
 
 async fn player_face_attachments(
     data: &Data,
@@ -226,6 +225,36 @@ fn thread_title(state: &SubmissionState) -> String {
         .join(", ")
 }
 
+async fn fetch_replaced(
+    ctx: &Context,
+    data: &Data,
+    state: &SubmissionState,
+) -> HashMap<String, builder::ReplacedTag> {
+    let repo = database::BlacklistRepository::new(data.db.pool());
+    let mut map = HashMap::new();
+    for player in &state.players {
+        let Ok(tags) = repo.get_active_tags(&player.uuid).await else {
+            continue;
+        };
+        let lane = blacklist::priority_lane(&player.tag_type);
+        let Some(existing) = tags.iter().find(|t| {
+            let tt = t.tag_type.as_deref().unwrap_or("");
+            tt != player.tag_type && lane.iter().any(|l| l == tt)
+        }) else {
+            continue;
+        };
+        map.insert(
+            player.uuid.clone(),
+            builder::ReplacedTag {
+                tag_type: existing.tag_type.clone().unwrap_or_default(),
+                reason: existing.reason.clone().unwrap_or_default(),
+                added_line: super::channel::format_added_line(ctx, existing).await,
+            },
+        );
+    }
+    map
+}
+
 async fn update_builder(
     ctx: &Context,
     data: &Data,
@@ -234,6 +263,7 @@ async fn update_builder(
     state: &SubmissionState,
 ) -> Result<()> {
     let existing_urls = gallery_url_map(message);
+    let replaced = fetch_replaced(ctx, data, state).await;
     let faces = player_face_attachments(data, state).await;
 
     let mut attachments = EditAttachments::new();
@@ -248,7 +278,11 @@ async fn update_builder(
 
     let edit = EditMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(builder::build_review_message(state, &existing_urls))
+        .components(builder::build_review_message(
+            state,
+            &existing_urls,
+            &replaced,
+        ))
         .attachments(attachments);
     ctx.http
         .edit_message(channel_id, message.id, &edit, faces)
@@ -288,6 +322,7 @@ async fn update_builder_with_files(
     files: Vec<CreateAttachment<'static>>,
 ) -> Result<()> {
     let existing_urls = gallery_url_map(message);
+    let replaced = fetch_replaced(ctx, data, state).await;
     let faces = player_face_attachments(data, state).await;
 
     let mut attachments = EditAttachments::new();
@@ -308,7 +343,11 @@ async fn update_builder_with_files(
 
     let edit = EditMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(builder::build_review_message(state, &existing_urls))
+        .components(builder::build_review_message(
+            state,
+            &existing_urls,
+            &replaced,
+        ))
         .attachments(attachments);
     ctx.http
         .edit_message(channel_id, message.id, &edit, all_files)
@@ -324,6 +363,7 @@ async fn update_builder_keep_media(
     state: &SubmissionState,
 ) -> Result<()> {
     let existing_urls = gallery_url_map(message);
+    let replaced = fetch_replaced(ctx, data, state).await;
     let keep: HashSet<&str> = state
         .players
         .iter()
@@ -349,7 +389,11 @@ async fn update_builder_keep_media(
 
     let edit = EditMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(builder::build_review_message(state, &existing_urls))
+        .components(builder::build_review_message(
+            state,
+            &existing_urls,
+            &replaced,
+        ))
         .attachments(attachments);
     ctx.http
         .edit_message(channel_id, message.id, &edit, faces)
@@ -407,39 +451,6 @@ async fn set_forum_tags(ctx: &Context, thread_id: ThreadId, tag_ids: &[ForumTagI
     Ok(())
 }
 
-async fn check_overwrite_conflict(
-    data: &Data,
-    uuid: &str,
-    tag_type: &str,
-) -> Result<Option<String>> {
-    let repo = BlacklistRepository::new(data.db.pool());
-    let existing_tags = repo.get_active_tags(uuid).await?;
-    let new_priority = lookup_tag(tag_type).map(|d| d.priority).unwrap_or(0);
-
-    let conflict = existing_tags.iter().find(|t| {
-        lookup_tag(t.tag_type.as_deref().unwrap_or(""))
-            .map(|d| d.priority)
-            .unwrap_or(0)
-            == new_priority
-    });
-
-    match conflict {
-        Some(tag) => {
-            let tag_type = tag.tag_type.as_deref().unwrap_or("");
-            let def = lookup_tag(tag_type);
-            let emote = def.map(|d| d.emote).unwrap_or("");
-            let display = def.map(|d| d.display_name).unwrap_or(tag_type);
-            Ok(Some(format!(
-                "\u{26A0} Existing tag: {} {} \u{2014} \"{}\"",
-                emote,
-                display,
-                sanitize_reason(tag.reason.as_deref().unwrap_or(""))
-            )))
-        }
-        None => Ok(None),
-    }
-}
-
 pub async fn create_submission(
     ctx: &Context,
     data: &Data,
@@ -463,10 +474,8 @@ pub async fn create_submission(
         tag_type: tag_type.to_string(),
         reason: reason.to_string(),
         status: PlayerStatus::Pending,
-        reviewer: None,
         review_note: None,
         evidence: Vec::new(),
-        conflict_warning: None,
         accept_votes: Vec::new(),
         reject_votes: Vec::new(),
     };
@@ -477,13 +486,19 @@ pub async fn create_submission(
         submitted: false,
         reopened: false,
         editing: None,
+        editing_evidence: 0,
         pending_add: None,
     };
 
+    let replaced = fetch_replaced(ctx, data, &state).await;
     let faces = player_face_attachments(data, &state).await;
     let mut message = CreateMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(builder::build_review_message(&state, &HashMap::new()));
+        .components(builder::build_review_message(
+            &state,
+            &HashMap::new(),
+            &replaced,
+        ));
     for f in faces {
         message = message.add_file(f);
     }

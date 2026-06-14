@@ -121,14 +121,6 @@ impl<'a> MemberRepository<'a> {
             .map(|r| r.rows_affected() > 0)
     }
 
-    pub async fn revoke_api_key(&self, discord_id: i64) -> Result<bool, sqlx::Error> {
-        sqlx::query("UPDATE members SET api_key = NULL, key_locked = true WHERE discord_id = $1")
-            .bind(discord_id)
-            .execute(self.pool)
-            .await
-            .map(|r| r.rows_affected() > 0)
-    }
-
     pub async fn unlock_key(&self, discord_id: i64) -> Result<bool, sqlx::Error> {
         sqlx::query("UPDATE members SET key_locked = false WHERE discord_id = $1")
             .bind(discord_id)

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use blacklist::lookup as lookup_tag;
+use blacklist::{EMOTE_EVIDENCE, EMOTE_NO_EVIDENCE, lookup as lookup_tag};
 use database::BlacklistRepository;
 use serenity::all::*;
 
@@ -189,13 +189,12 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
                 EditInteractionResponse::new()
                     .flags(MessageFlags::IS_COMPONENTS_V2)
                     .components(vec![CreateComponent::Container(CreateContainer::new(
-                        vec![CreateContainerComponent::TextDisplay(
-                            CreateTextDisplay::new(format!(
-                                "## {} Evidence Already Exists\nPlayer: `{}`\nThread: {}",
-                                emote, player_info.username, thread_url
-                            )),
-                        )],
-                    ))]),
+                        vec![face_section(format!(
+                            "## {} Evidence Already Exists\nIGN - `{}`\nThread: {}",
+                            emote, player_info.username, thread_url
+                        ))],
+                    ))])
+                    .new_attachment(face_attachment(data, &player_info.uuid).await),
             )
             .await?;
         return Ok(());
@@ -240,11 +239,12 @@ async fn run_member_confirm(
         EditInteractionResponse::new()
             .flags(MessageFlags::IS_COMPONENTS_V2)
             .components(vec![CreateComponent::Container(CreateContainer::new(
-                vec![CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
-                    "## {} Review Submitted\nPlayer: `{}`\nThread: <#{}>\n-# Add evidence to the thread to proceed",
+                vec![face_section(format!(
+                    "## {} Review Submitted\nIGN - `{}`\nThread: <#{}>\n-# Add evidence to the thread to proceed",
                     emote, player_info.username, thread_id.get()
-                )))],
-            ))]),
+                ))],
+            ))])
+            .new_attachment(face_attachment(data, &player_info.uuid).await),
     ).await?;
     Ok(())
 }
@@ -272,7 +272,6 @@ async fn run_staff_confirm(
         player_info.username,
         format_uuid_dashed(&player_info.uuid)
     );
-    let history = fetch_history(ctx, data, &player_info.uuid).await;
     let message_content = build_evidence_message(
         &player_info.username,
         &player_info.uuid,
@@ -281,7 +280,6 @@ async fn run_staff_confirm(
         &[],
         None,
         &HashMap::new(),
-        history.as_deref(),
     );
 
     let face = face_attachment(data, &player_info.uuid).await;
@@ -314,28 +312,28 @@ async fn run_staff_confirm(
             EditInteractionResponse::new()
                 .flags(MessageFlags::IS_COMPONENTS_V2)
                 .components(vec![CreateComponent::Container(CreateContainer::new(
-                    vec![CreateContainerComponent::TextDisplay(
-                        CreateTextDisplay::new(format!(
-                            "## {} Evidence Post Created\nPlayer: `{}`\nThread: <#{}>",
-                            emote,
-                            player_info.username,
-                            thread.id.get()
-                        )),
-                    )],
-                ))]),
+                    vec![face_section(format!(
+                        "## {} Evidence Post Created\nIGN - `{}`\nThread: <#{}>",
+                        emote,
+                        player_info.username,
+                        thread.id.get()
+                    ))],
+                ))])
+                .new_attachment(face_attachment(data, &player_info.uuid).await),
         )
         .await?;
     Ok(())
 }
 
-const HISTORY_LIMIT: usize = 10;
-
-async fn fetch_history(ctx: &Context, data: &Data, uuid: &str) -> Option<String> {
-    let events = BlacklistRepository::new(data.db.pool())
-        .get_tag_history(uuid)
+async fn evidence_added_line(ctx: &Context, data: &Data, uuid: &str) -> Option<String> {
+    let tags = BlacklistRepository::new(data.db.pool())
+        .get_active_tags(uuid)
         .await
         .ok()?;
-    super::channel::format_tag_history(ctx, &events, HISTORY_LIMIT).await
+    let tag = tags
+        .iter()
+        .find(|t| t.tag_type.as_deref() == Some("confirmed_cheater"))?;
+    Some(format_added_line(ctx, tag).await)
 }
 
 #[derive(Debug, Clone)]
@@ -444,7 +442,6 @@ fn build_evidence_message(
     evidence: &[EvidenceItem],
     review_thread_url: Option<&str>,
     gallery_urls: &HashMap<String, String>,
-    history: Option<&str>,
 ) -> Vec<CreateComponent<'static>> {
     let dashed_uuid = format_uuid_dashed(uuid);
 
@@ -462,65 +459,149 @@ fn build_evidence_message(
         uuid_footer.push_str(&format!(" · [Review]({url})"));
     }
 
+    let header_emote = if evidence.is_empty() {
+        EMOTE_NO_EVIDENCE
+    } else {
+        EMOTE_EVIDENCE
+    };
     let mut parts: Vec<CreateContainerComponent<'static>> = Vec::new();
-    parts.push(text(format!("## Evidence — `{username}`")));
+    parts.push(text(format!("## {header_emote} Evidence — `{username}`")));
     if evidence.is_empty() {
         parts.push(text("-# No evidence added yet"));
     } else {
-        let items: Vec<CreateMediaGalleryItem<'static>> = evidence
-            .iter()
-            .map(|e| {
-                let url = gallery_urls
-                    .get(&e.filename)
-                    .cloned()
-                    .unwrap_or_else(|| format!("attachment://{}", e.filename));
-                CreateMediaGalleryItem::new(CreateUnfurledMediaItem::new(url))
-            })
-            .collect();
-        parts.push(CreateContainerComponent::MediaGallery(
-            CreateMediaGallery::new(items),
-        ));
+        parts.push(media_gallery(evidence, gallery_urls));
     }
     parts.push(face_section(format!("{block}\n{uuid_footer}")));
-    if let Some(h) = history {
-        parts.push(text(h.to_string()));
-    }
-    parts.push(separator());
-
-    if !evidence.is_empty() {
-        let options: Vec<CreateSelectMenuOption<'static>> = evidence
-            .iter()
-            .enumerate()
-            .map(|(i, e)| CreateSelectMenuOption::new(e.filename.clone(), i.to_string()))
-            .collect();
-        parts.push(CreateContainerComponent::ActionRow(
-            CreateActionRow::SelectMenu(
-                CreateSelectMenu::new(
-                    "evidence_remove",
-                    CreateSelectMenuKind::String {
-                        options: options.into(),
-                    },
-                )
-                .placeholder("Remove evidence..."),
-            ),
-        ));
-    }
-
     parts.push(CreateContainerComponent::ActionRow(
         CreateActionRow::Buttons(
             vec![
-                CreateButton::new("evidence_add_media")
-                    .label("Add Media")
-                    .style(ButtonStyle::Primary),
-                CreateButton::new("evidence_archive")
-                    .label("Archive")
-                    .style(ButtonStyle::Danger),
+                CreateButton::new(format!("tag_history:{uuid}"))
+                    .label("Tag History")
+                    .style(ButtonStyle::Secondary),
             ]
             .into(),
         ),
     ));
+    parts.push(separator());
+
+    let mut buttons = vec![
+        CreateButton::new("evidence_add_media")
+            .label("Add Media")
+            .style(ButtonStyle::Primary),
+    ];
+    if !evidence.is_empty() {
+        buttons.push(
+            CreateButton::new(format!("evidence_manage:{uuid}"))
+                .label("Remove Media")
+                .style(ButtonStyle::Secondary),
+        );
+    }
+    buttons.push(
+        CreateButton::new("evidence_archive")
+            .label("Archive")
+            .style(ButtonStyle::Danger),
+    );
+    parts.push(CreateContainerComponent::ActionRow(
+        CreateActionRow::Buttons(buttons.into()),
+    ));
 
     vec![CreateComponent::Container(CreateContainer::new(parts))]
+}
+
+fn evidence_name_index(filename: &str) -> (&str, Option<&str>) {
+    let stem = filename
+        .rsplit_once('.')
+        .map(|(s, _)| s)
+        .unwrap_or(filename);
+    match stem.rsplit_once('_') {
+        Some((name, n)) => (name, Some(n)),
+        None => (stem, None),
+    }
+}
+
+fn evidence_label(filename: &str) -> String {
+    match evidence_name_index(filename) {
+        (name, Some(n)) => format!("{name} ({n})"),
+        (name, None) => name.to_string(),
+    }
+}
+
+fn evidence_label_code(filename: &str) -> String {
+    match evidence_name_index(filename) {
+        (name, Some(n)) => format!("`{name}` ({n})"),
+        (name, None) => format!("`{name}`"),
+    }
+}
+
+fn build_evidence_manage_container(
+    uuid: &str,
+    opener: u64,
+    evidence: &[EvidenceItem],
+    selected: &str,
+    gallery_urls: &HashMap<String, String>,
+) -> CreateComponent<'static> {
+    let url = gallery_urls
+        .get(selected)
+        .cloned()
+        .unwrap_or_else(|| format!("attachment://{selected}"));
+    let mut parts = vec![
+        text(format!(
+            "## Remove Media\n{}",
+            evidence_label_code(selected)
+        )),
+        CreateContainerComponent::MediaGallery(CreateMediaGallery::new(vec![
+            CreateMediaGalleryItem::new(CreateUnfurledMediaItem::new(url)),
+        ])),
+    ];
+    if evidence.len() > 1 {
+        let options: Vec<CreateSelectMenuOption<'static>> = evidence
+            .iter()
+            .filter(|e| e.filename != selected)
+            .map(|e| CreateSelectMenuOption::new(evidence_label(&e.filename), e.filename.clone()))
+            .collect();
+        parts.push(CreateContainerComponent::ActionRow(
+            CreateActionRow::SelectMenu(
+                CreateSelectMenu::new(
+                    format!("evidence_msel:{uuid}:{opener}"),
+                    CreateSelectMenuKind::String {
+                        options: options.into(),
+                    },
+                )
+                .placeholder("View another piece..."),
+            ),
+        ));
+    }
+    parts.push(CreateContainerComponent::ActionRow(
+        CreateActionRow::Buttons(
+            vec![
+                CreateButton::new(format!("evidence_mrem:{uuid}:{opener}:{selected}"))
+                    .label("Remove")
+                    .style(ButtonStyle::Danger),
+                CreateButton::new(format!("evidence_mclose:{uuid}:{opener}"))
+                    .label("Done")
+                    .style(ButtonStyle::Secondary),
+            ]
+            .into(),
+        ),
+    ));
+    CreateComponent::Container(CreateContainer::new(parts))
+}
+
+fn media_gallery(
+    evidence: &[EvidenceItem],
+    gallery_urls: &HashMap<String, String>,
+) -> CreateContainerComponent<'static> {
+    let items: Vec<CreateMediaGalleryItem<'static>> = evidence
+        .iter()
+        .map(|e| {
+            let url = gallery_urls
+                .get(&e.filename)
+                .cloned()
+                .unwrap_or_else(|| format!("attachment://{}", e.filename));
+            CreateMediaGalleryItem::new(CreateUnfurledMediaItem::new(url))
+        })
+        .collect();
+    CreateContainerComponent::MediaGallery(CreateMediaGallery::new(items))
 }
 
 fn build_archived_evidence_message(
@@ -528,44 +609,33 @@ fn build_archived_evidence_message(
     gallery_urls: &HashMap<String, String>,
 ) -> Vec<CreateComponent<'static>> {
     let dashed_uuid = format_uuid_dashed(&state.uuid);
-
-    let removed_line = "> -# **\\- Tag removed**".to_string();
-    let block = format_tag_block(
-        "confirmed_cheater",
-        &sanitize_reason(&state.reason),
-        "",
-        state.added_line.as_deref(),
-        Some(&removed_line),
-        true,
-    );
-
-    let mut uuid_footer = format!("-# UUID: {dashed_uuid}");
+    let mut footer = format!("-# UUID: {dashed_uuid}");
     if let Some(url) = &state.review_url {
-        uuid_footer.push_str(&format!(" · [Review]({url})"));
+        footer.push_str(&format!(" · [Review]({url})"));
     }
 
-    let mut parts: Vec<CreateContainerComponent<'static>> = Vec::new();
-    parts.push(text(format!(
-        "## Evidence — `{}` (Archived)",
+    let header_emote = if state.evidence.is_empty() {
+        EMOTE_NO_EVIDENCE
+    } else {
+        EMOTE_EVIDENCE
+    };
+    let mut parts: Vec<CreateContainerComponent<'static>> = vec![face_section(format!(
+        "## {header_emote} Evidence — `{}` (Archived)\n{footer}",
         state.username
-    )));
+    ))];
     if !state.evidence.is_empty() {
-        let items: Vec<CreateMediaGalleryItem<'static>> = state
-            .evidence
-            .iter()
-            .map(|e| {
-                let url = gallery_urls
-                    .get(&e.filename)
-                    .cloned()
-                    .unwrap_or_else(|| format!("attachment://{}", e.filename));
-                CreateMediaGalleryItem::new(CreateUnfurledMediaItem::new(url))
-            })
-            .collect();
-        parts.push(CreateContainerComponent::MediaGallery(
-            CreateMediaGallery::new(items),
-        ));
+        parts.push(media_gallery(&state.evidence, gallery_urls));
     }
-    parts.push(face_section(format!("{block}\n{uuid_footer}")));
+    parts.push(CreateContainerComponent::ActionRow(
+        CreateActionRow::Buttons(
+            vec![
+                CreateButton::new(format!("tag_history:{}", state.uuid))
+                    .label("Tag History")
+                    .style(ButtonStyle::Secondary),
+            ]
+            .into(),
+        ),
+    ));
     parts.push(separator());
 
     vec![CreateComponent::Container(CreateContainer::new(parts))]
@@ -659,8 +729,8 @@ fn extract_evidence_name(header: &str) -> Option<String> {
     let after = header.split(" — `").nth(1)?;
     Some(
         after
-            .trim_end_matches('`')
             .trim_end_matches(" (Archived)")
+            .trim_end_matches('`')
             .to_string(),
     )
 }
@@ -832,7 +902,6 @@ pub async fn handle_media_modal(
     }
 
     let urls = gallery_url_map(&builder_msg);
-    let history = fetch_history(ctx, data, &state.uuid).await;
     let components = build_evidence_message(
         &state.username,
         &state.uuid,
@@ -841,7 +910,6 @@ pub async fn handle_media_modal(
         &state.evidence,
         state.review_url.as_deref(),
         &urls,
-        history.as_deref(),
     );
 
     let face = face_attachment(data, &state.uuid).await;
@@ -896,7 +964,60 @@ pub async fn handle_media_modal(
     Ok(())
 }
 
-pub async fn handle_remove(
+async fn rebuild_evidence_op(
+    ctx: &Context,
+    data: &Data,
+    channel_id: GenericChannelId,
+    message_id: MessageId,
+    uuid: &str,
+    components: Vec<CreateComponent<'static>>,
+    urls: &HashMap<String, String>,
+) -> Result<()> {
+    let face = face_attachment(data, uuid).await;
+    let mut attachments = EditAttachments::new();
+    for url in urls.values() {
+        if let Some(id) = attachment_id_from_cdn_url(url) {
+            attachments = attachments.keep(id);
+        }
+    }
+    attachments = attachments.add(face.clone());
+    let edit = EditMessage::new()
+        .content("")
+        .flags(MessageFlags::IS_COMPONENTS_V2)
+        .components(components)
+        .attachments(attachments);
+    ctx.http
+        .edit_message(channel_id, message_id, &edit, vec![face])
+        .await?;
+    Ok(())
+}
+
+async fn manage_locked_error(ctx: &Context, component: &ComponentInteraction) -> Result<()> {
+    crate::interact::send_component_error(
+        ctx,
+        component,
+        "Error",
+        "Only the person managing this evidence can use these controls",
+    )
+    .await
+}
+
+fn evidence_op_view(
+    state: &EvidenceState,
+    urls: &HashMap<String, String>,
+) -> Vec<CreateComponent<'static>> {
+    build_evidence_message(
+        &state.username,
+        &state.uuid,
+        &state.reason,
+        state.added_line.as_deref(),
+        &state.evidence,
+        state.review_url.as_deref(),
+        urls,
+    )
+}
+
+pub async fn handle_manage(
     ctx: &Context,
     component: &ComponentInteraction,
     data: &Data,
@@ -912,25 +1033,7 @@ pub async fn handle_remove(
         )
         .await;
     }
-
-    let idx: usize = match &component.data.kind {
-        ComponentInteractionDataKind::StringSelect { values } => {
-            values.first().and_then(|v| v.parse().ok()).unwrap_or(0)
-        }
-        _ => return Ok(()),
-    };
-
-    let channel_id = component.channel_id;
-    let builder_msg_id = MessageId::new(channel_id.get());
-    let Ok(builder_msg) = ctx
-        .http
-        .get_message(channel_id.into(), builder_msg_id)
-        .await
-    else {
-        return Ok(());
-    };
-
-    let Some(mut state) = parse_state_from_message(&builder_msg) else {
+    let Some(state) = parse_state_from_message(&component.message) else {
         return crate::interact::send_component_error(
             ctx,
             component,
@@ -939,55 +1042,172 @@ pub async fn handle_remove(
         )
         .await;
     };
-
-    if idx >= state.evidence.len() {
+    let Some(first) = state.evidence.first() else {
         return crate::interact::send_component_error(
             ctx,
             component,
             "Error",
-            "Invalid evidence index",
+            "No evidence to remove",
         )
         .await;
-    }
+    };
 
-    let removed_filename = state.evidence.remove(idx).filename;
-    let mut urls = gallery_url_map(&builder_msg);
-    urls.remove(&removed_filename);
-
-    let history = fetch_history(ctx, data, &state.uuid).await;
-    let components = build_evidence_message(
-        &state.username,
+    let urls = gallery_url_map(&component.message);
+    let mut components = evidence_op_view(&state, &urls);
+    components.push(build_evidence_manage_container(
         &state.uuid,
-        &state.reason,
-        state.added_line.as_deref(),
+        discord_id,
         &state.evidence,
-        state.review_url.as_deref(),
+        &first.filename,
         &urls,
-        history.as_deref(),
-    );
-
-    let face = face_attachment(data, &state.uuid).await;
-    let mut attachments = EditAttachments::new();
-    for url in urls.values() {
-        if let Some(id) = attachment_id_from_cdn_url(url) {
-            attachments = attachments.keep(id);
-        }
-    }
-    attachments = attachments.add(face.clone());
-
-    let edit = EditMessage::new()
-        .content("")
-        .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(components)
-        .attachments(attachments);
-
+    ));
     component
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
-    ctx.http
-        .edit_message(channel_id.into(), builder_msg_id, &edit, vec![face])
+    rebuild_evidence_op(
+        ctx,
+        data,
+        component.channel_id.into(),
+        component.message.id,
+        &state.uuid,
+        components,
+        &urls,
+    )
+    .await
+}
+
+pub async fn handle_manage_select(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let rest = component
+        .data
+        .custom_id
+        .strip_prefix("evidence_msel:")
+        .unwrap_or_default();
+    let opener: u64 = rest.rsplit(':').next().unwrap_or("").parse().unwrap_or(0);
+    if component.user.id.get() != opener {
+        return manage_locked_error(ctx, component).await;
+    }
+    let selected = match &component.data.kind {
+        ComponentInteractionDataKind::StringSelect { values } => {
+            values.first().cloned().unwrap_or_default()
+        }
+        _ => return Ok(()),
+    };
+    let Some(state) = parse_state_from_message(&component.message) else {
+        return Ok(());
+    };
+    let urls = gallery_url_map(&component.message);
+    let mut components = evidence_op_view(&state, &urls);
+    components.push(build_evidence_manage_container(
+        &state.uuid,
+        opener,
+        &state.evidence,
+        &selected,
+        &urls,
+    ));
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
-    Ok(())
+    rebuild_evidence_op(
+        ctx,
+        data,
+        component.channel_id.into(),
+        component.message.id,
+        &state.uuid,
+        components,
+        &urls,
+    )
+    .await
+}
+
+pub async fn handle_manage_remove(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let discord_id = component.user.id.get();
+    let rest = component
+        .data
+        .custom_id
+        .strip_prefix("evidence_mrem:")
+        .unwrap_or_default();
+    let mut segs = rest.splitn(3, ':');
+    let _uuid = segs.next().unwrap_or("");
+    let opener: u64 = segs.next().unwrap_or("").parse().unwrap_or(0);
+    let filename = segs.next().unwrap_or("");
+    if discord_id != opener {
+        return manage_locked_error(ctx, component).await;
+    }
+    let rank = get_rank(data, discord_id).await?;
+    if rank < AccessRank::Helper {
+        return crate::interact::send_component_error(
+            ctx,
+            component,
+            "Error",
+            "Only helpers and above can remove evidence",
+        )
+        .await;
+    }
+    let Some(mut state) = parse_state_from_message(&component.message) else {
+        return Ok(());
+    };
+    state.evidence.retain(|e| e.filename != filename);
+    let mut urls = gallery_url_map(&component.message);
+    urls.remove(filename);
+
+    let components = evidence_op_view(&state, &urls);
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await?;
+    rebuild_evidence_op(
+        ctx,
+        data,
+        component.channel_id.into(),
+        component.message.id,
+        &state.uuid,
+        components,
+        &urls,
+    )
+    .await
+}
+
+pub async fn handle_manage_close(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let opener: u64 = component
+        .data
+        .custom_id
+        .rsplit(':')
+        .next()
+        .unwrap_or("")
+        .parse()
+        .unwrap_or(0);
+    if component.user.id.get() != opener {
+        return manage_locked_error(ctx, component).await;
+    }
+    let Some(state) = parse_state_from_message(&component.message) else {
+        return Ok(());
+    };
+    let urls = gallery_url_map(&component.message);
+    let components = evidence_op_view(&state, &urls);
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await?;
+    rebuild_evidence_op(
+        ctx,
+        data,
+        component.channel_id.into(),
+        component.message.id,
+        &state.uuid,
+        components,
+        &urls,
+    )
+    .await
 }
 
 async fn remove_confirmed_tag(
@@ -1129,16 +1349,15 @@ pub async fn create_evidence_from_review(
 
     let thread_title = format!("{} | {}", username, format_uuid_dashed(uuid));
     let no_urls = HashMap::new();
-    let history = fetch_history(ctx, data, uuid).await;
+    let added_line = evidence_added_line(ctx, data, uuid).await;
     let initial_components = build_evidence_message(
         username,
         uuid,
         reason,
-        None,
+        added_line.as_deref(),
         &[],
         review_thread_url,
         &no_urls,
-        history.as_deref(),
     );
 
     let initial_face = face_attachment(data, uuid).await;
@@ -1176,11 +1395,10 @@ pub async fn create_evidence_from_review(
                 username,
                 uuid,
                 reason,
-                None,
+                added_line.as_deref(),
                 &evidence,
                 review_thread_url,
                 &no_urls,
-                history.as_deref(),
             ))
             .attachments(att);
 

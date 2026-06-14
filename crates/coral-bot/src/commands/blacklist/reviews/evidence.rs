@@ -129,6 +129,165 @@ pub async fn handle_replay_modal(
     Ok(())
 }
 
+pub async fn handle_evidence_select(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    if !require_submitter(ctx, component).await? {
+        return Ok(());
+    }
+    let (player_idx, _) = parse_component_ids(&component.data.custom_id);
+    let sel: usize = match &component.data.kind {
+        ComponentInteractionDataKind::StringSelect { values } => {
+            values.first().and_then(|v| v.parse().ok()).unwrap_or(0)
+        }
+        _ => return Ok(()),
+    };
+
+    let Some(message) = find_builder_message(ctx, component.channel_id).await else {
+        return Ok(());
+    };
+    let Some(mut state) = parse_state_from_message(&message) else {
+        return Ok(());
+    };
+    state.editing = Some(player_idx);
+    state.editing_evidence = sel;
+
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await?;
+    update_builder(ctx, data, component.channel_id, &message, &state).await
+}
+
+pub async fn handle_edit_replay(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    _data: &Data,
+) -> Result<()> {
+    if !require_submitter(ctx, component).await? {
+        return Ok(());
+    }
+    let rest = component
+        .data
+        .custom_id
+        .strip_prefix("review_edit_replay:")
+        .unwrap_or("");
+    let mut segs = rest.split(':');
+    let player_idx: usize = segs.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let ev_idx: usize = segs.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let submitter_id: u64 = segs.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+
+    let Some(message) = find_builder_message(ctx, component.channel_id).await else {
+        return Ok(());
+    };
+    let Some(state) = parse_state_from_message(&message) else {
+        return Ok(());
+    };
+    let Some(Evidence::Replay { replay, note }) = state
+        .players
+        .get(player_idx)
+        .and_then(|p| p.evidence.get(ev_idx))
+    else {
+        return Ok(());
+    };
+
+    let replay_input = CreateInputText::new(InputTextStyle::Short, "replay")
+        .value(replay.format_command())
+        .min_length(1)
+        .max_length(200);
+    let mut note_input = CreateInputText::new(InputTextStyle::Short, "note")
+        .placeholder("Optional note about this replay")
+        .required(false)
+        .max_length(75);
+    if let Some(n) = note {
+        note_input = note_input.value(n.clone());
+    }
+
+    let modal = CreateModal::new(
+        format!("review_edit_replay_modal:{player_idx}:{ev_idx}:{submitter_id}"),
+        "Edit Replay Evidence",
+    )
+    .components(vec![
+        CreateModalComponent::Label(CreateLabel::input_text(
+            "Replay Command or ID",
+            replay_input,
+        )),
+        CreateModalComponent::Label(CreateLabel::input_text("Note (optional)", note_input)),
+    ]);
+
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Modal(modal))
+        .await?;
+    Ok(())
+}
+
+pub async fn handle_edit_replay_modal(
+    ctx: &Context,
+    modal: &ModalInteraction,
+    data: &Data,
+) -> Result<()> {
+    modal.defer_ephemeral(&ctx.http).await?;
+
+    let rest = modal
+        .data
+        .custom_id
+        .strip_prefix("review_edit_replay_modal:")
+        .unwrap_or("");
+    let mut segs = rest.split(':');
+    let player_idx: usize = segs.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let ev_idx: usize = segs.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+
+    let replay_input = extract_modal_value(modal, "replay");
+    let note = extract_modal_value(modal, "note");
+
+    let Some(replay) = parse_replay(&replay_input) else {
+        modal
+            .edit_response(
+                &ctx.http,
+                EditInteractionResponse::new().content(
+                    "Could not parse replay. Provide a valid replay UUID or `/replay` command",
+                ),
+            )
+            .await?;
+        return Ok(());
+    };
+
+    let channel_id = modal.channel_id;
+    let Some(builder_msg) = find_builder_message(ctx, channel_id).await else {
+        modal
+            .edit_response(
+                &ctx.http,
+                EditInteractionResponse::new().content("Could not find the submission message"),
+            )
+            .await?;
+        return Ok(());
+    };
+    let Some(mut state) = parse_state_from_message(&builder_msg) else {
+        modal
+            .edit_response(
+                &ctx.http,
+                EditInteractionResponse::new().content("Could not parse submission state"),
+            )
+            .await?;
+        return Ok(());
+    };
+    if let Some(player) = state.players.get_mut(player_idx) {
+        if let Some(ev) = player.evidence.get_mut(ev_idx) {
+            *ev = Evidence::Replay {
+                replay,
+                note: if note.is_empty() { None } else { Some(note) },
+            };
+        }
+    }
+    state.editing = Some(player_idx);
+    state.editing_evidence = ev_idx;
+
+    update_builder(ctx, data, channel_id, &builder_msg, &state).await?;
+    let _ = modal.delete_response(&ctx.http).await;
+    Ok(())
+}
+
 pub async fn handle_attach_media(
     ctx: &Context,
     component: &ComponentInteraction,

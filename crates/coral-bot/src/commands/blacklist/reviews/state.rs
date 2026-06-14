@@ -12,10 +12,8 @@ pub struct PlayerEntry {
     pub tag_type: String,
     pub reason: String,
     pub status: PlayerStatus,
-    pub reviewer: Option<String>,
     pub review_note: Option<String>,
     pub evidence: Vec<Evidence>,
-    pub conflict_warning: Option<String>,
     pub accept_votes: Vec<u64>,
     pub reject_votes: Vec<u64>,
 }
@@ -51,6 +49,7 @@ pub struct SubmissionState {
     pub submitted: bool,
     pub reopened: bool,
     pub editing: Option<usize>,
+    pub editing_evidence: usize,
     pub pending_add: Option<PendingAdd>,
 }
 
@@ -126,6 +125,7 @@ pub fn parse_state_from_message(message: &Message) -> Option<SubmissionState> {
         submitted,
         reopened,
         editing: None,
+        editing_evidence: 0,
         pending_add: None,
     })
 }
@@ -197,6 +197,11 @@ fn process_text_into_player(player: &mut PlayerEntry, content: &str) {
         if trimmed.is_empty() || is_player_entry(trimmed) {
             continue;
         }
+        if trimmed == "-# Proposed" {
+            player.tag_type.clear();
+            player.reason.clear();
+            continue;
+        }
         if is_tag_type_line(trimmed) {
             if let Some(tag_name) = parse_tag_type_line(trimmed) {
                 if player.tag_type.is_empty() {
@@ -214,10 +219,9 @@ fn process_text_into_player(player: &mut PlayerEntry, content: &str) {
                 .next()
                 .unwrap_or("")
                 .replace('-', "");
-        } else if let Some(status) = parse_status_line(trimmed) {
-            player.status = status.0;
-            player.reviewer = status.1;
-            player.review_note = status.2;
+        } else if let Some((status, note)) = parse_status_line(trimmed) {
+            player.status = status;
+            player.review_note = note;
         } else if let Some((side, voters)) = parse_vote_line(trimmed) {
             match side {
                 VoteSide::Accept => player.accept_votes = voters,
@@ -286,25 +290,23 @@ fn new_player_entry(username: String, tag_type: &str) -> PlayerEntry {
         tag_type: tag_type.to_string(),
         reason: String::new(),
         status: PlayerStatus::Pending,
-        reviewer: None,
         review_note: None,
         evidence: Vec::new(),
-        conflict_warning: None,
         accept_votes: Vec::new(),
         reject_votes: Vec::new(),
     }
 }
 
-fn parse_status_line(text: &str) -> Option<(PlayerStatus, Option<String>, Option<String>)> {
+fn parse_status_line(text: &str) -> Option<(PlayerStatus, Option<String>)> {
     if text.starts_with(EMOTE_EVIDENCE) && text.contains("Approved") {
-        return Some((PlayerStatus::Approved, None, None));
+        return Some((PlayerStatus::Approved, None));
     }
     if text.starts_with(EMOTE_NO_EVIDENCE) && text.contains("Rejected") {
         let note = text.find('"').and_then(|start| {
             let rest = &text[start + 1..];
             rest.find('"').map(|end| rest[..end].to_string())
         });
-        return Some((PlayerStatus::Rejected, None, note));
+        return Some((PlayerStatus::Rejected, note));
     }
     None
 }
@@ -453,12 +455,15 @@ pub fn parse_confirmation_data(custom_id: &str, message: &Message) -> Option<Con
     let player_name = texts
         .iter()
         .find_map(|t| t.lines().find_map(|line| parse_player_ign(line.trim())))?;
-    let reason = texts
-        .iter()
-        .find_map(|t| {
-            t.lines()
-                .find_map(|line| line.trim().strip_prefix("> ").map(|s| s.to_string()))
-        })
+
+    let body = texts.join("\n");
+    let scope = body
+        .split_once("-# Proposed")
+        .or_else(|| body.split_once("-# Preview"))
+        .map_or(body.as_str(), |(_, rest)| rest);
+    let reason = scope
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("> ").map(|s| s.to_string()))
         .unwrap_or_default();
 
     Some(ConfirmationData {

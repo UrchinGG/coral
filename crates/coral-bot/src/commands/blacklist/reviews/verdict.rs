@@ -1,5 +1,5 @@
 use anyhow::Result;
-use blacklist::{EMOTE_ADDTAG, EMOTE_TAG, lookup as lookup_tag};
+use blacklist::{EMOTE_ADDTAG, lookup as lookup_tag};
 use coral_redis::BlacklistEvent;
 use database::{BlacklistRepository, MemberRepository};
 use serenity::all::*;
@@ -7,11 +7,64 @@ use serenity::all::*;
 use super::{builder::*, state::*, *};
 use crate::{framework::Data, utils::text};
 
-async fn send_in_thread(ctx: &Context, channel_id: GenericChannelId, msg: &CreateMessage<'_>) {
-    let _ = ctx
+async fn send_in_thread(
+    ctx: &Context,
+    channel_id: GenericChannelId,
+    msg: &CreateMessage<'_>,
+    files: Vec<CreateAttachment<'_>>,
+) {
+    let _ = ctx.http.send_message(channel_id, files, msg).await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn announce_vote(
+    ctx: &Context,
+    data: &Data,
+    channel_id: GenericChannelId,
+    player_index: usize,
+    voter_id: u64,
+    vote_type: &str,
+    tag_type: &str,
+    username: &str,
+    changed: bool,
+) {
+    let key = (channel_id.get(), player_index, voter_id);
+    let existing = data.vote_messages.lock().unwrap().get(&key).copied();
+    if let Some(mid) = existing {
+        let edit = EditMessage::new()
+            .flags(MessageFlags::IS_COMPONENTS_V2)
+            .components(build_vote_components(
+                voter_id, vote_type, tag_type, username, changed,
+            ));
+        if ctx
+            .http
+            .edit_message(
+                channel_id,
+                MessageId::new(mid),
+                &edit,
+                Vec::<CreateAttachment>::new(),
+            )
+            .await
+            .is_ok()
+        {
+            return;
+        }
+    }
+    let msg = CreateMessage::new()
+        .flags(MessageFlags::IS_COMPONENTS_V2)
+        .components(build_vote_components(
+            voter_id, vote_type, tag_type, username, changed,
+        ));
+    if let Ok(sent) = ctx
         .http
-        .send_message(channel_id, Vec::<CreateAttachment>::new(), msg)
-        .await;
+        .send_message(channel_id, Vec::<CreateAttachment>::new(), &msg)
+        .await
+    {
+        data.vote_messages
+            .lock()
+            .unwrap()
+            .insert(key, sent.id.get());
+    }
 }
 
 fn load_player_votes(
@@ -60,6 +113,10 @@ fn record_player_vote(
 
 fn cleanup_review_votes(data: &Data, thread_id: u64) {
     data.pending_review_votes.lock().unwrap().remove(&thread_id);
+    data.vote_messages
+        .lock()
+        .unwrap()
+        .retain(|(t, _, _), _| *t != thread_id);
 }
 
 pub async fn handle_submit(
@@ -91,19 +148,12 @@ pub async fn handle_submit(
     }
 
     state.submitted = true;
-    for player in &mut state.players {
-        if let Ok(warning) = check_overwrite_conflict(data, &player.uuid, &player.tag_type).await {
-            player.conflict_warning = warning;
-        }
-    }
 
     component
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
     update_builder(ctx, data, component.channel_id, &message, &state).await?;
 
-    // On the initial flow, Submit lives on a standalone reminder message — remove
-    // it now. When reopened, Submit is on the OP itself, so leave that in place.
     let op_id = MessageId::new(component.channel_id.get());
     if component.message.id != op_id {
         let _ = ctx
@@ -130,11 +180,11 @@ pub async fn handle_approve(
     let discord_id = component.user.id.get();
     let rank = super::super::tag::get_rank(data, discord_id).await?;
 
-    if rank < crate::framework::AccessRank::Trusted {
+    if rank < data.vote_min_rank {
         return send_vote_error(
             ctx,
             component,
-            "Only trusted users and above can review submissions",
+            "You do not have permission to review submissions",
         )
         .await;
     }
@@ -197,22 +247,27 @@ pub async fn handle_approve(
         state.players[player_index].accept_votes = new_accepts;
         state.players[player_index].reject_votes = new_rejects;
         let unanimous = state.players[player_index].reject_votes.is_empty()
-            && state.players[player_index].accept_votes.len() >= super::VOTE_THRESHOLD;
+            && state.players[player_index].accept_votes.len() >= super::ACCEPT_THRESHOLD;
 
         if !unanimous {
-            let player = &state.players[player_index];
-            let vote_msg = build_vote_message(
-                discord_id,
-                "accept",
-                &player.tag_type,
-                &player.username,
-                changing_vote,
-            );
+            let tag_type = state.players[player_index].tag_type.clone();
+            let username = state.players[player_index].username.clone();
             component
                 .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
                 .await?;
             update_builder(ctx, data, component.channel_id, &message, &state).await?;
-            send_in_thread(ctx, component.channel_id.into(), &vote_msg).await;
+            announce_vote(
+                ctx,
+                data,
+                component.channel_id.into(),
+                player_index,
+                discord_id,
+                "accept",
+                &tag_type,
+                &username,
+                changing_vote,
+            )
+            .await;
             return Ok(());
         }
     }
@@ -349,7 +404,6 @@ pub async fn handle_approve(
     }
 
     state.players[player_index].status = PlayerStatus::Approved;
-    state.players[player_index].reviewer = None;
     state.players[player_index].accept_votes.clear();
     state.players[player_index].reject_votes.clear();
 
@@ -368,7 +422,11 @@ pub async fn handle_approve(
         Some(stored_type),
         all_resolved.then_some(&state),
     );
-    send_in_thread(ctx, component.channel_id.into(), &msg).await;
+    let face = verdict_face(data, &state.players[player_index].uuid).await;
+    send_in_thread(ctx, component.channel_id.into(), &msg, vec![face]).await;
+    if all_resolved {
+        close_thread(ctx, thread_id(component.channel_id)).await;
+    }
     Ok(())
 }
 
@@ -381,11 +439,11 @@ pub async fn handle_reject(
     let discord_id = component.user.id.get();
     let rank = super::super::tag::get_rank(data, discord_id).await?;
 
-    if rank < crate::framework::AccessRank::Trusted {
+    if rank < data.vote_min_rank {
         return send_vote_error(
             ctx,
             component,
-            "Only trusted users and above can review submissions",
+            "You do not have permission to review submissions",
         )
         .await;
     }
@@ -467,22 +525,27 @@ pub async fn handle_reject(
     state.players[player_index].accept_votes = new_accepts;
     state.players[player_index].reject_votes = new_rejects;
     let unanimous = state.players[player_index].accept_votes.is_empty()
-        && state.players[player_index].reject_votes.len() >= super::VOTE_THRESHOLD;
+        && state.players[player_index].reject_votes.len() >= super::REJECT_THRESHOLD;
 
     if !unanimous {
-        let player = &state.players[player_index];
-        let vote_msg = build_vote_message(
-            discord_id,
-            "reject",
-            &player.tag_type,
-            &player.username,
-            changing_vote,
-        );
+        let tag_type = state.players[player_index].tag_type.clone();
+        let username = state.players[player_index].username.clone();
         component
             .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
             .await?;
         update_builder(ctx, data, component.channel_id, &message, &state).await?;
-        send_in_thread(ctx, component.channel_id.into(), &vote_msg).await;
+        announce_vote(
+            ctx,
+            data,
+            component.channel_id.into(),
+            player_index,
+            discord_id,
+            "reject",
+            &tag_type,
+            &username,
+            changing_vote,
+        )
+        .await;
         return Ok(());
     }
 
@@ -506,7 +569,6 @@ pub async fn handle_reject(
     }
 
     state.players[player_index].status = PlayerStatus::Rejected;
-    state.players[player_index].reviewer = None;
     state.players[player_index].accept_votes.clear();
     state.players[player_index].reject_votes.clear();
 
@@ -525,7 +587,10 @@ pub async fn handle_reject(
         None,
         all_resolved.then_some(&state),
     );
-    send_in_thread(ctx, component.channel_id.into(), &msg).await;
+    send_in_thread(ctx, component.channel_id.into(), &msg, Vec::new()).await;
+    if all_resolved {
+        close_thread(ctx, thread_id(component.channel_id)).await;
+    }
     Ok(())
 }
 
@@ -592,7 +657,6 @@ pub async fn handle_reject_modal(
     }
 
     state.players[player_index].status = PlayerStatus::Rejected;
-    state.players[player_index].reviewer = None;
     state.players[player_index].review_note = Some(reason.clone());
     state.players[player_index].accept_votes.clear();
     state.players[player_index].reject_votes.clear();
@@ -609,7 +673,10 @@ pub async fn handle_reject_modal(
         None,
         all_resolved.then_some(&state),
     );
-    send_in_thread(ctx, channel_id.into(), &msg).await;
+    send_in_thread(ctx, channel_id.into(), &msg, Vec::new()).await;
+    if all_resolved {
+        close_thread(ctx, thread_id(modal.channel_id)).await;
+    }
 
     modal
         .edit_response(
@@ -660,15 +727,22 @@ async fn finalize_thread_if_resolved(
     }
     let _ = set_forum_tags(ctx, thread_id, &tag_ids).await;
 
-    let http = ctx.http.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(600)).await;
-        let _ = thread_id
-            .edit(&http, EditThread::new().archived(true).locked(true))
-            .await;
-    });
-
     Ok(true)
+}
+
+async fn close_thread(ctx: &Context, thread_id: ThreadId) {
+    let _ = thread_id
+        .edit(&ctx.http, EditThread::new().archived(true).locked(true))
+        .await;
+}
+
+async fn verdict_face(data: &Data, uuid: &str) -> CreateAttachment<'static> {
+    let png = data
+        .skin_provider
+        .fetch_face(uuid, FACE_SIZE)
+        .await
+        .unwrap_or_else(super::default_face_png);
+    CreateAttachment::bytes(png, face_filename(uuid))
 }
 
 pub async fn handle_confirm(
@@ -725,26 +799,6 @@ pub async fn handle_confirm(
                 .await?;
         }
     }
-    Ok(())
-}
-
-pub async fn handle_cancel(
-    ctx: &Context,
-    component: &ComponentInteraction,
-    _data: &Data,
-) -> Result<()> {
-    component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::UpdateMessage(
-                CreateInteractionResponseMessage::new()
-                    .flags(MessageFlags::IS_COMPONENTS_V2)
-                    .components(vec![CreateComponent::Container(CreateContainer::new(
-                        vec![text(format!("## {} Submission Cancelled", EMOTE_TAG))],
-                    ))]),
-            ),
-        )
-        .await?;
     Ok(())
 }
 
