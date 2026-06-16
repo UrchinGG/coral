@@ -56,6 +56,8 @@ pub struct Data {
     pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
     pub vote_min_rank: AccessRank,
     pub vote_messages: Arc<Mutex<HashMap<(u64, usize, u64), u64>>>,
+    pub started_at: i64,
+    pub info_cache: Arc<Mutex<commands::admin::info::InfoCache>>,
 }
 
 impl Data {
@@ -98,7 +100,7 @@ impl Handler {
             commands::user::unlink::register(),
             commands::user::dashboard::register(),
             commands::user::help::register(),
-            commands::admin::stats::register(),
+            commands::admin::info::register(),
             commands::admin::manage::register(),
             commands::admin::strike::register(),
             commands::blacklist::evidence::register(),
@@ -136,7 +138,7 @@ impl Handler {
             "unlink" => commands::user::unlink::run(ctx, command, &self.data).await,
             "dashboard" => commands::user::dashboard::run(ctx, command, &self.data).await,
             "help" => commands::user::help::run(ctx, command, &self.data).await,
-            "stats" => commands::admin::stats::run(ctx, command, &self.data).await,
+            "info" => commands::admin::info::run(ctx, command, &self.data).await,
             "manage" => commands::admin::manage::run(ctx, command, &self.data).await,
             "strike" => commands::admin::strike::run(ctx, command, &self.data).await,
             "confirm" => commands::blacklist::evidence::run(ctx, command, &self.data).await,
@@ -229,6 +231,12 @@ impl Handler {
                     ctx, component, &self.data,
                 )
                 .await
+            }
+            "info_taggers" => {
+                commands::admin::info::handle_taggers(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("info_page:") => {
+                commands::admin::info::handle_page(ctx, component, &self.data).await
             }
             "help_button" => {
                 commands::user::help::handle_help_button(ctx, component, &self.data).await

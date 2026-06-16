@@ -20,6 +20,7 @@ coral-redis = { path = "../coral-redis" }
 render = { path = "../render" }
 
 serenity.workspace = true
+futures-util = "0.3"
 image.workspace = true
 mctext.workspace = true
 serde.workspace = true

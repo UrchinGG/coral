@@ -344,6 +344,36 @@ impl<'a> BlacklistRepository<'a> {
         Ok(count)
     }
 
+    pub async fn top_taggers(
+        &self,
+        since: Option<DateTime<Utc>>,
+        limit: i64,
+    ) -> Result<Vec<(i64, i64)>, sqlx::Error> {
+        match since {
+            Some(ts) => {
+                sqlx::query_as(
+                    "SELECT author, COUNT(*) FROM player_events
+                 WHERE kind = 'tag_set' AND author IS NOT NULL AND author <> 0 AND ts >= $1
+                 GROUP BY author ORDER BY COUNT(*) DESC LIMIT $2",
+                )
+                .bind(ts)
+                .bind(limit)
+                .fetch_all(self.pool)
+                .await
+            }
+            None => {
+                sqlx::query_as(
+                    "SELECT author, COUNT(*) FROM player_events
+                 WHERE kind = 'tag_set' AND author IS NOT NULL AND author <> 0
+                 GROUP BY author ORDER BY COUNT(*) DESC LIMIT $1",
+                )
+                .bind(limit)
+                .fetch_all(self.pool)
+                .await
+            }
+        }
+    }
+
     pub async fn count_events_by_author(&self, author: i64) -> Result<i64, sqlx::Error> {
         let (count,): (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM player_events

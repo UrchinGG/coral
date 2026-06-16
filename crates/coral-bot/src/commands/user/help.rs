@@ -83,10 +83,10 @@ fn build_help_view(api_key: Option<&str>, from_dashboard: bool) -> Vec<CreateCom
     ));
     match api_key {
         Some(key) => parts.push(text(format!(
-            "Your URL (click to reveal):\n||```\nhttps://api.urchin.gg/v3/cubelify?uuid={{id}}&key={key}\n```||"
+            "Your URL (click to reveal):\n||```\nhttps://api.urchin.gg/v3/cubelify?uuid={{{{id}}}}&key={key}\n```||"
         ))),
         None => parts.push(text(
-            "```\nhttps://api.urchin.gg/v3/cubelify?uuid={id}&key=YOUR_KEY\n```"
+            "```\nhttps://api.urchin.gg/v3/cubelify?uuid={{id}}&key=YOUR_KEY\n```"
         )),
     }
 

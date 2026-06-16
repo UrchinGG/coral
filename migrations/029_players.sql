@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS players (
+    uuid VARCHAR(32) PRIMARY KEY,
+    first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO players (uuid)
+SELECT DISTINCT uuid FROM player_snapshots
+ON CONFLICT DO NOTHING;

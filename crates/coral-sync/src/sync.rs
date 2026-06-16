@@ -66,6 +66,10 @@ pub(crate) fn build_template_context(
 ) -> Value {
     let mut ctx = hypixel_data.clone();
 
+    if ctx.pointer("/achievements/bedwars_level").is_none() {
+        ctx["achievements"]["bedwars_level"] = serde_json::json!(0);
+    }
+
     ctx["discord"] = serde_json::json!({
         "name": member.user.global_name.as_deref().unwrap_or(&member.user.name),
     });

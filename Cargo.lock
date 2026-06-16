@@ -745,6 +745,7 @@ dependencies = [
  "coral-redis",
  "database",
  "dotenvy",
+ "futures-util",
  "hypixel",
  "image",
  "mctext",

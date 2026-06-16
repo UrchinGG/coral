@@ -40,17 +40,26 @@ impl<'a> CacheRepository<'a> {
     }
 
     pub async fn count_unique_players(&self) -> Result<i64, sqlx::Error> {
-        let (count,): (i64,) = sqlx::query_as(
-            "SELECT CASE WHEN s.n_distinct >= 0 THEN s.n_distinct
-                         ELSE -s.n_distinct * c.reltuples
-                    END::bigint
-             FROM pg_stats s, pg_class c
-             WHERE s.tablename = 'player_snapshots' AND s.attname = 'uuid'
-               AND c.relname = 'player_snapshots'",
-        )
-        .fetch_one(self.pool)
-        .await?;
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM players")
+            .fetch_one(self.pool)
+            .await?;
         Ok(count)
+    }
+
+    async fn register_player(&self, uuid: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT INTO players (uuid) VALUES ($1) ON CONFLICT DO NOTHING")
+            .bind(uuid)
+            .execute(self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn storage_bytes(&self) -> Result<i64, sqlx::Error> {
+        let (size,): (i64,) =
+            sqlx::query_as("SELECT pg_total_relation_size('player_snapshots')::bigint")
+                .fetch_one(self.pool)
+                .await?;
+        Ok(size)
     }
 
     pub async fn store_snapshot(
@@ -61,6 +70,7 @@ impl<'a> CacheRepository<'a> {
         source: Option<&str>,
         username: Option<&str>,
     ) -> Result<SnapshotResult, sqlx::Error> {
+        self.register_player(uuid).await?;
         let latest_baseline = self.get_latest_baseline(uuid).await?;
 
         let id = match latest_baseline {
