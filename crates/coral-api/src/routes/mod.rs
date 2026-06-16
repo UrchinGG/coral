@@ -10,7 +10,6 @@ pub mod batch;
 pub mod cubelify;
 pub mod guild;
 pub mod hypixel;
-pub mod migrate;
 pub mod player;
 pub mod resolve;
 pub mod session;
@@ -37,7 +36,6 @@ pub fn router(state: AppState) -> Router<AppState> {
         .merge(hypixel::router())
         .merge(resolve::router())
         .merge(verify::router())
-        .merge(migrate::router())
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_internal_or_admin,

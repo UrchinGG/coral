@@ -1,10 +1,9 @@
 use anyhow::Result;
 use mongodb::{Database, bson::doc};
 use serde::Deserialize;
-use serde_json::json;
 use tracing::{info, warn};
 
-use crate::client::CoralClient;
+use crate::sink::{BlacklistRow, Sink, TagRow};
 
 const BATCH_SIZE: usize = 200;
 
@@ -20,7 +19,7 @@ struct MongoBlacklistPlayer {
     uuid: String,
     is_locked: Option<bool>,
     lock_reason: Option<String>,
-    locked_by: Option<serde_json::Value>,
+    locked_by: Option<mongodb::bson::Bson>,
     lock_timestamp: Option<mongodb::bson::DateTime>,
     tags: Option<Vec<MongoTag>>,
 }
@@ -29,15 +28,19 @@ struct MongoBlacklistPlayer {
 struct MongoTag {
     tag_type: String,
     reason: Option<String>,
-    added_by: Option<serde_json::Value>,
+    added_by: Option<mongodb::bson::Bson>,
     added_on: Option<String>,
     hide_username: Option<bool>,
 }
 
-fn parse_i64(val: &serde_json::Value) -> Option<i64> {
+fn bson_i64(val: &mongodb::bson::Bson) -> Option<i64> {
+    use mongodb::bson::Bson;
     match val {
-        serde_json::Value::Number(n) => n.as_i64(),
-        serde_json::Value::String(s) => s.parse().ok(),
+        Bson::Int64(n) => Some(*n),
+        Bson::Int32(n) => Some(*n as i64),
+        Bson::Double(n) => Some(*n as i64),
+        Bson::Decimal128(d) => d.to_string().split('.').next()?.parse().ok(),
+        Bson::String(s) => s.parse().ok(),
         _ => None,
     }
 }
@@ -49,20 +52,21 @@ fn normalize_timestamp(s: &str) -> String {
     format!("{s}+00:00")
 }
 
-fn map_tag(tag: &MongoTag) -> Option<serde_json::Value> {
-    let reason = tag.reason.as_deref().unwrap_or("");
-    let added_by = tag.added_by.as_ref().and_then(parse_i64).unwrap_or(0);
+fn map_tag(tag: &MongoTag) -> Option<TagRow> {
+    let reason = tag.reason.as_deref().unwrap_or("").to_string();
+    let added_by = tag.added_by.as_ref().and_then(bson_i64).unwrap_or(0);
     let added_on = tag.added_on.as_deref().map(normalize_timestamp);
+    let hide_username = tag.hide_username.unwrap_or(false);
 
     if tag.tag_type == "caution" {
         if reason.to_lowercase().contains("replays needed") {
-            return Some(json!({
-                "tag_type": "replays_needed",
-                "reason": "",
-                "added_by": added_by,
-                "added_on": added_on,
-                "hide_username": tag.hide_username.unwrap_or(false),
-            }));
+            return Some(TagRow {
+                tag_type: "replays_needed".into(),
+                reason: String::new(),
+                added_by,
+                added_on,
+                hide_username,
+            });
         }
         return None;
     }
@@ -71,18 +75,18 @@ fn map_tag(tag: &MongoTag) -> Option<serde_json::Value> {
         return None;
     }
 
-    Some(json!({
-        "tag_type": tag.tag_type,
-        "reason": reason,
-        "added_by": added_by,
-        "added_on": added_on,
-        "hide_username": tag.hide_username.unwrap_or(false),
-    }))
+    Some(TagRow {
+        tag_type: tag.tag_type.clone(),
+        reason,
+        added_by,
+        added_on,
+        hide_username,
+    })
 }
 
 impl MongoBlacklistPlayer {
-    fn to_payload(&self) -> Option<serde_json::Value> {
-        let tags: Vec<serde_json::Value> = self
+    fn to_row(&self) -> Option<BlacklistRow> {
+        let tags: Vec<TagRow> = self
             .tags
             .as_deref()
             .unwrap_or(&[])
@@ -100,20 +104,18 @@ impl MongoBlacklistPlayer {
                 .to_rfc3339()
         });
 
-        let locked_by = self.locked_by.as_ref().and_then(parse_i64);
-
-        Some(json!({
-            "uuid": self.uuid,
-            "is_locked": self.is_locked.unwrap_or(false),
-            "lock_reason": self.lock_reason,
-            "locked_by": locked_by,
-            "locked_at": locked_at,
-            "tags": tags,
-        }))
+        Some(BlacklistRow {
+            uuid: self.uuid.clone(),
+            is_locked: self.is_locked.unwrap_or(false),
+            lock_reason: self.lock_reason.clone(),
+            locked_by: self.locked_by.as_ref().and_then(bson_i64),
+            locked_at,
+            tags,
+        })
     }
 }
 
-pub async fn migrate(mongo_db: &Database, client: &CoralClient) -> Result<usize> {
+pub async fn migrate(mongo_db: &Database, sink: &Sink) -> Result<usize> {
     let collection = mongo_db.collection::<MongoBlacklistPlayer>("blacklist");
     let mut cursor = collection.find(doc! {}).await?;
 
@@ -132,8 +134,8 @@ pub async fn migrate(mongo_db: &Database, client: &CoralClient) -> Result<usize>
             }
         };
 
-        match player.to_payload() {
-            Some(payload) => batch.push(payload),
+        match player.to_row() {
+            Some(row) => batch.push(row),
             None => {
                 skipped += 1;
                 continue;
@@ -141,24 +143,18 @@ pub async fn migrate(mongo_db: &Database, client: &CoralClient) -> Result<usize>
         }
 
         if batch.len() >= BATCH_SIZE {
-            let result = client
-                .post(&json!({"type": "blacklist", "data": batch}))
-                .await?;
-            let errs = result["errors"].as_u64().unwrap_or(0);
-            count += batch.len() - errs as usize;
-            errors += errs as usize;
+            let errs = sink.insert_blacklist(&batch).await;
+            count += batch.len() - errs;
+            errors += errs;
             batch.clear();
             info!("  {count} players migrated ({errors} errors, {skipped} skipped)");
         }
     }
 
     if !batch.is_empty() {
-        let result = client
-            .post(&json!({"type": "blacklist", "data": batch}))
-            .await?;
-        let errs = result["errors"].as_u64().unwrap_or(0);
-        count += batch.len() - errs as usize;
-        errors += errs as usize;
+        let errs = sink.insert_blacklist(&batch).await;
+        count += batch.len() - errs;
+        errors += errs;
     }
 
     if errors > 0 {
