@@ -90,6 +90,19 @@ pub async fn get_guild(
         }
         None => fetch_auto(&state, &identifier).await?,
     };
+    if let Some(guild) = &guild {
+        if let Some(guild_id) = guild["_id"].as_str() {
+            let db = state.db.clone();
+            let guild_id = guild_id.to_string();
+            let raw = guild.clone();
+            tokio::spawn(async move {
+                let _ = database::GuildCacheRepository::new(db.pool())
+                    .store_snapshot(&guild_id, &raw)
+                    .await;
+            });
+        }
+    }
+
     Ok(Json(
         guild.map(|g| build_response(&g, player_uuid.as_deref())),
     ))

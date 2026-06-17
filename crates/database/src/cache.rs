@@ -456,6 +456,8 @@ pub fn calculate_delta(old: &Value, new: &Value) -> Option<Value> {
     }
 }
 
+const DELTA_REMOVED: &str = "$removed";
+
 fn calculate_object_delta(
     old: &Map<String, Value>,
     new: &Map<String, Value>,
@@ -473,6 +475,14 @@ fn calculate_object_delta(
             }
         }
     }
+    let removed: Vec<Value> = old
+        .keys()
+        .filter(|key| !new.contains_key(key.as_str()))
+        .map(|key| Value::String(key.clone()))
+        .collect();
+    if !removed.is_empty() {
+        delta.insert(DELTA_REMOVED.to_string(), Value::Array(removed));
+    }
     delta
 }
 
@@ -480,6 +490,16 @@ pub fn deep_merge_mut(base: &mut Value, delta: &Value) {
     match (base, delta) {
         (Value::Object(base_map), Value::Object(delta_map)) => {
             for (key, delta_value) in delta_map {
+                if key == DELTA_REMOVED {
+                    if let Value::Array(removed) = delta_value {
+                        for entry in removed {
+                            if let Value::String(removed_key) = entry {
+                                base_map.remove(removed_key);
+                            }
+                        }
+                    }
+                    continue;
+                }
                 match base_map.get_mut(key) {
                     Some(base_value) => deep_merge_mut(base_value, delta_value),
                     None => {
@@ -543,5 +563,25 @@ mod tests {
         let deltas = vec![json!({"kills": 105}), json!({"kills": 110, "deaths": 51})];
         let result = reconstruct(&baseline, &deltas);
         assert_eq!(result, json!({"kills": 110, "deaths": 51}));
+    }
+
+    #[test]
+    fn test_delta_removal_roundtrip() {
+        let old = json!({"a": 1, "b": 2, "c": 3});
+        let new = json!({"a": 1, "c": 3});
+        let delta = calculate_delta(&old, &new).unwrap();
+        let mut reconstructed = old.clone();
+        deep_merge_mut(&mut reconstructed, &delta);
+        assert_eq!(reconstructed, new);
+    }
+
+    #[test]
+    fn test_delta_nested_removal_roundtrip() {
+        let old = json!({"members": {"u1": {"exp": {"d1": 5, "d2": 7}}, "u2": {"exp": {"d1": 3}}}});
+        let new = json!({"members": {"u1": {"exp": {"d2": 7, "d3": 9}}}});
+        let delta = calculate_delta(&old, &new).unwrap();
+        let mut reconstructed = old.clone();
+        deep_merge_mut(&mut reconstructed, &delta);
+        assert_eq!(reconstructed, new);
     }
 }

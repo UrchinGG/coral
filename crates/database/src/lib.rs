@@ -4,6 +4,7 @@ mod blacklist;
 mod cache;
 mod delta;
 mod developer_keys;
+mod guild_cache;
 mod guild_config;
 mod members;
 mod periods;
@@ -19,6 +20,7 @@ pub use blacklist::{AddOutcome, BlacklistRepository, LockState, OverwriteOutcome
 pub use cache::{CacheRepository, SnapshotResult, calculate_delta, reconstruct};
 pub use delta::session_delta;
 pub use developer_keys::{DeveloperKey, DeveloperKeyRepository, permissions};
+pub use guild_cache::GuildCacheRepository;
 pub use guild_config::{GuildConfig, GuildConfigRepository, GuildRoleRule};
 pub use members::{Member, MemberRepository};
 pub use periods::Period;
