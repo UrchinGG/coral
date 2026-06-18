@@ -68,7 +68,13 @@ async fn init_state() -> Result<AppState> {
     let hypixel = env::var("HYPIXEL_API_KEY")
         .ok()
         .filter(|k| !k.is_empty())
-        .map(|key| HypixelClient::new(key, redis.connection()));
+        .and_then(|key| match HypixelClient::new(key, redis.connection()) {
+            Ok(client) => Some(client),
+            Err(e) => {
+                tracing::error!("Hypixel client init failed: {e}");
+                None
+            }
+        });
     if hypixel.is_none() {
         tracing::warn!("HYPIXEL_API_KEY unset - Hypixel-backed endpoints will return 503");
     }
