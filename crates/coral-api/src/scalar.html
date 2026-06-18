@@ -3,17 +3,18 @@
 <head>
     <title>Coral API Reference</title>
     <meta charset="utf-8"/>
-    <meta
-            name="viewport"
-            content="width=device-width, initial-scale=1"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
 </head>
 <body>
-
-<script
-        id="api-reference"
-        type="application/json">
-    $spec
-</script>
+<div id="app"></div>
 <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+<script>
+    const title = 'Coral API Reference'
+    Scalar.createApiReference('#app', {
+        content: $spec,
+        metaData: { title },
+        setPageTitle: () => title,
+    })
+</script>
 </body>
 </html>
