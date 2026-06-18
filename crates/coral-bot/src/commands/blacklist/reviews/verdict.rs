@@ -320,16 +320,16 @@ pub async fn handle_approve(
     let will_confirm =
         !media_urls.is_empty() && CONFIRMABLE_TAGS.contains(&player_tag_type.as_str());
     let stored_type = if will_confirm {
-        "confirmed_cheater"
+        "confirmed_cheater".to_string()
     } else {
-        &player_tag_type
+        player_tag_type.clone()
     };
 
-    let blocking = vec![stored_type.to_string()];
+    let blocking = vec![stored_type.clone()];
     let outcome = repo
         .add_event(
             &player_uuid,
-            stored_type,
+            &stored_type,
             &player_reason,
             false,
             None,
@@ -350,13 +350,20 @@ pub async fn handle_approve(
         }
     };
 
+    let guild_id = component.guild_id.map(|g| g.get()).unwrap_or(0);
+    let review_url = format!(
+        "https://discord.com/channels/{}/{}",
+        guild_id,
+        component.channel_id.get(),
+    );
+    let reviewer_names: Vec<String> = futures::future::join_all(
+        reviewed_by
+            .iter()
+            .map(|&id| super::super::channel::get_username(ctx, id as u64)),
+    )
+    .await;
+
     if will_confirm {
-        let guild_id = component.guild_id.map(|g| g.get()).unwrap_or(0);
-        let review_thread_url = format!(
-            "https://discord.com/channels/{}/{}",
-            guild_id,
-            component.channel_id.get(),
-        );
         if let Err(e) = super::super::evidence::create_evidence_from_review(
             ctx,
             data,
@@ -364,7 +371,8 @@ pub async fn handle_approve(
             &player_username,
             &player_reason,
             &media_urls,
-            Some(&review_thread_url),
+            Some(&review_url),
+            &reviewer_names,
         )
         .await
         {
@@ -380,6 +388,7 @@ pub async fn handle_approve(
                 tag_id,
                 added_by: submitter_id as i64,
                 silent: false,
+                review_url: Some(review_url.clone()),
             })
             .await;
     }
@@ -404,6 +413,8 @@ pub async fn handle_approve(
     }
 
     state.players[player_index].status = PlayerStatus::Approved;
+    state.players[player_index].tag_type = stored_type.clone();
+    state.players[player_index].reviewer_names = reviewer_names;
     state.players[player_index].accept_votes.clear();
     state.players[player_index].reject_votes.clear();
 
@@ -419,7 +430,7 @@ pub async fn handle_approve(
         discord_id,
         is_staff,
         &state.players[player_index],
-        Some(stored_type),
+        Some(stored_type.as_str()),
         all_resolved.then_some(&state),
     );
     let face = verdict_face(data, &state.players[player_index].uuid).await;

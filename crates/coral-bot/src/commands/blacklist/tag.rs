@@ -422,10 +422,7 @@ async fn run_view(ctx: &Context, command: &CommandInteraction, data: &Data) -> R
         .iter()
         .filter(|t| !t.hide_username.unwrap_or(false))
         .filter_map(|t| t.author);
-    let reviewers = player_tags
-        .iter()
-        .flat_map(|t| t.reviewed_by.iter().flatten().copied());
-    let resolved_names = resolve_names(&ctx.http, adders.chain(reviewers)).await;
+    let resolved_names = resolve_names(&ctx.http, adders).await;
 
     let header = format!(
         "## {} Tagged User{}\nIGN - `{}`\n",
@@ -447,20 +444,6 @@ async fn run_view(ctx: &Context, command: &CommandInteraction, data: &Data) -> R
             None => format!("> -# **\\- <t:{ts}:R>**"),
         };
 
-        let reviewed_line = tag.reviewed_by.as_ref().map(|ids| {
-            let formatted: Vec<String> = ids
-                .iter()
-                .map(|id| {
-                    let name = resolved_names
-                        .get(id)
-                        .cloned()
-                        .unwrap_or_else(|| id.to_string());
-                    format!("`@{name}`")
-                })
-                .collect();
-            format!("> -# **\\- Reviewed by {}**", formatted.join(", "))
-        });
-
         let tag_type = tag.tag_type.as_deref().unwrap_or("");
         let indicator = evidence_indicator(tag_type, evidence_url.is_some());
 
@@ -469,7 +452,7 @@ async fn run_view(ctx: &Context, command: &CommandInteraction, data: &Data) -> R
             &format_tag_detail(tag),
             &indicator,
             Some(&added_line),
-            reviewed_line.as_deref(),
+            None,
             false,
         ));
     }
@@ -635,6 +618,7 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
                     tag_id: new_tag.id,
                     added_by: discord_id as i64,
                     silent: false,
+                    review_url: None,
                 })
                 .await;
 
@@ -1150,7 +1134,12 @@ async fn build_manage_main(
     let active = active?;
     let username = username.ok().flatten().unwrap_or_else(|| uuid.to_string());
     let dashed_uuid = format_uuid_dashed(uuid);
-    let names = resolve_names(&ctx.http, active.iter().filter_map(|t| t.author)).await;
+    let evidence_url = super::evidence::evidence_thread_url(data, uuid);
+    let adders = active.iter().filter_map(|t| t.author);
+    let reviewers = active
+        .iter()
+        .flat_map(|t| t.reviewed_by.iter().flatten().copied());
+    let names = resolve_names(&ctx.http, adders.chain(reviewers)).await;
 
     let mut parts: Vec<CreateContainerComponent> = vec![face_section(vec![format!(
         "## {} Manage Tags\nIGN - `{}`",
@@ -1181,13 +1170,27 @@ async fn build_manage_main(
             }
             None => format!("> -# **\\- <t:{ts}:R>**"),
         };
+        let reviewed_line = tag
+            .reviewed_by
+            .as_ref()
+            .filter(|ids| !ids.is_empty())
+            .map(|ids| {
+                let formatted: Vec<String> = ids
+                    .iter()
+                    .map(|id| {
+                        let name = names.get(id).map(|s| s.as_str()).unwrap_or("unknown");
+                        format!("`@{name}`")
+                    })
+                    .collect();
+                format!("> -# **\\- Reviewed by {}**", formatted.join(", "))
+            });
         parts.push(CreateContainerComponent::TextDisplay(
             CreateTextDisplay::new(format_tag_block(
                 tag_type,
                 &format_tag_detail(tag),
                 "",
                 Some(&added_line),
-                None,
+                reviewed_line.as_deref(),
                 false,
             )),
         ));
@@ -1217,8 +1220,12 @@ async fn build_manage_main(
     parts.push(CreateContainerComponent::Separator(CreateSeparator::new(
         true,
     )));
+    let mut footer = format!("-# UUID: {dashed_uuid}");
+    if let Some(url) = &evidence_url {
+        footer.push_str(&format!(" | [Evidence]({url})"));
+    }
     parts.push(CreateContainerComponent::TextDisplay(
-        CreateTextDisplay::new(format!("-# UUID: {dashed_uuid}")),
+        CreateTextDisplay::new(footer),
     ));
     parts.push(CreateContainerComponent::ActionRow(
         CreateActionRow::buttons(vec![
@@ -1472,6 +1479,7 @@ async fn manage_place_tag(
                     tag_id: new_tag.id,
                     added_by: discord_id as i64,
                     silent: true,
+                    review_url: None,
                 })
                 .await;
             Ok(ManagePlaceOutcome::Added)

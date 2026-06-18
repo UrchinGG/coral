@@ -162,6 +162,7 @@ pub async fn add_tag(
             tag_id: tag.id,
             added_by: member.0.discord_id,
             silent: false,
+            review_url: None,
         })
         .await;
 

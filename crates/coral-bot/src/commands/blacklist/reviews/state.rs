@@ -16,6 +16,7 @@ pub struct PlayerEntry {
     pub evidence: Vec<Evidence>,
     pub accept_votes: Vec<u64>,
     pub reject_votes: Vec<u64>,
+    pub reviewer_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -113,11 +114,6 @@ pub fn parse_state_from_message(message: &Message) -> Option<SubmissionState> {
                 && line.contains("reopened")
         })
     });
-
-    let players: Vec<_> = players
-        .into_iter()
-        .filter(|p| !p.tag_type.is_empty())
-        .collect();
 
     Some(SubmissionState {
         submitter_id,
@@ -227,6 +223,10 @@ fn process_text_into_player(player: &mut PlayerEntry, content: &str) {
                 VoteSide::Accept => player.accept_votes = voters,
                 VoteSide::Reject => player.reject_votes = voters,
             }
+        } else if trimmed.starts_with("> -#") {
+            if let Some(names) = parse_reviewed_line(trimmed) {
+                player.reviewer_names = names;
+            }
         } else if trimmed.starts_with('>') {
             if player.reason.is_empty() {
                 if let Some(reason) = trimmed.strip_prefix("> ") {
@@ -246,7 +246,7 @@ pub fn is_player_entry(text: &str) -> bool {
 }
 
 fn is_tag_type_line(text: &str) -> bool {
-    text.starts_with("**") && text.ends_with("**") && text.contains('>')
+    parse_tag_type_line(text).is_some()
 }
 
 fn parse_player_ign(text: &str) -> Option<String> {
@@ -256,9 +256,18 @@ fn parse_player_ign(text: &str) -> Option<String> {
 }
 
 fn parse_tag_type_line(text: &str) -> Option<&'static str> {
-    let inner = text.strip_prefix("**")?.strip_suffix("**")?;
+    let inner = text.trim().strip_prefix("**")?.split("**").next()?;
     let display = inner.split('>').next_back()?.trim();
     lookup_tag_name_from_display(display)
+}
+
+fn parse_reviewed_line(text: &str) -> Option<Vec<String>> {
+    text.contains("Reviewed by ").then(|| {
+        text.split('`')
+            .filter(|s| s.starts_with('@'))
+            .map(|s| s.trim_start_matches('@').to_string())
+            .collect()
+    })
 }
 
 pub enum VoteSide {
@@ -294,6 +303,7 @@ fn new_player_entry(username: String, tag_type: &str) -> PlayerEntry {
         evidence: Vec::new(),
         accept_votes: Vec::new(),
         reject_votes: Vec::new(),
+        reviewer_names: Vec::new(),
     }
 }
 

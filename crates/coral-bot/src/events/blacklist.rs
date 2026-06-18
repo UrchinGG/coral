@@ -44,6 +44,7 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
             uuid,
             tag_id,
             silent,
+            review_url,
             ..
         } => {
             let tag = fetch_event(&repo, tag_id, "TagAdded").await?;
@@ -52,7 +53,17 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
             }
             let all_tags = repo.get_active_tags(&uuid).await.unwrap_or_default();
             let name = resolve_name(&cache, &uuid).await;
-            channel::post_new_tag(ctx, data, &uuid, &name, &tag, &all_tags, silent).await;
+            channel::post_new_tag(
+                ctx,
+                data,
+                &uuid,
+                &name,
+                &tag,
+                &all_tags,
+                silent,
+                review_url.as_deref(),
+            )
+            .await;
         }
 
         BlacklistEvent::TagOverwritten {
@@ -78,8 +89,10 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
                 overwritten_by as u64,
             )
             .await;
-            channel::post_overwritten_tag(ctx, data, &uuid, &name, &new_tag, &all_tags, silent)
-                .await;
+            channel::post_overwritten_tag(
+                ctx, data, &uuid, &name, &new_tag, &all_tags, silent, None,
+            )
+            .await;
         }
 
         BlacklistEvent::TagRemoved {

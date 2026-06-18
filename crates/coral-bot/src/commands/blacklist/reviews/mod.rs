@@ -233,6 +233,9 @@ async fn fetch_replaced(
     let repo = database::BlacklistRepository::new(data.db.pool());
     let mut map = HashMap::new();
     for player in &state.players {
+        if player.status != PlayerStatus::Pending {
+            continue;
+        }
         let Ok(tags) = repo.get_active_tags(&player.uuid).await else {
             continue;
         };
@@ -264,6 +267,7 @@ async fn update_builder(
 ) -> Result<()> {
     let existing_urls = gallery_url_map(message);
     let replaced = fetch_replaced(ctx, data, state).await;
+    let submitter = super::channel::get_username(ctx, state.submitter_id).await;
     let faces = player_face_attachments(data, state).await;
 
     let mut attachments = EditAttachments::new();
@@ -282,6 +286,7 @@ async fn update_builder(
             state,
             &existing_urls,
             &replaced,
+            &submitter,
         ))
         .attachments(attachments);
     ctx.http
@@ -323,6 +328,7 @@ async fn update_builder_with_files(
 ) -> Result<()> {
     let existing_urls = gallery_url_map(message);
     let replaced = fetch_replaced(ctx, data, state).await;
+    let submitter = super::channel::get_username(ctx, state.submitter_id).await;
     let faces = player_face_attachments(data, state).await;
 
     let mut attachments = EditAttachments::new();
@@ -347,6 +353,7 @@ async fn update_builder_with_files(
             state,
             &existing_urls,
             &replaced,
+            &submitter,
         ))
         .attachments(attachments);
     ctx.http
@@ -373,6 +380,7 @@ async fn update_builder_keep_media(
             _ => None,
         })
         .collect();
+    let submitter = super::channel::get_username(ctx, state.submitter_id).await;
     let faces = player_face_attachments(data, state).await;
 
     let mut attachments = EditAttachments::new();
@@ -393,6 +401,7 @@ async fn update_builder_keep_media(
             state,
             &existing_urls,
             &replaced,
+            &submitter,
         ))
         .attachments(attachments);
     ctx.http
@@ -478,6 +487,7 @@ pub async fn create_submission(
         evidence: Vec::new(),
         accept_votes: Vec::new(),
         reject_votes: Vec::new(),
+        reviewer_names: Vec::new(),
     };
 
     let state = SubmissionState {
@@ -491,6 +501,7 @@ pub async fn create_submission(
     };
 
     let replaced = fetch_replaced(ctx, data, &state).await;
+    let submitter = super::channel::get_username(ctx, submitter_id).await;
     let faces = player_face_attachments(data, &state).await;
     let mut message = CreateMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
@@ -498,6 +509,7 @@ pub async fn create_submission(
             &state,
             &HashMap::new(),
             &replaced,
+            &submitter,
         ));
     for f in faces {
         message = message.add_file(f);

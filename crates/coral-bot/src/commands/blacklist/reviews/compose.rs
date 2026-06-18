@@ -208,6 +208,7 @@ pub async fn handle_addplayer_reason_modal(
         evidence: Vec::new(),
         accept_votes: Vec::new(),
         reject_votes: Vec::new(),
+        reviewer_names: Vec::new(),
     });
 
     update_builder(ctx, data, channel_id, &builder_msg, &state).await?;

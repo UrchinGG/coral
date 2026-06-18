@@ -38,6 +38,7 @@ pub fn build_review_message(
     state: &SubmissionState,
     existing_urls: &HashMap<String, String>,
     replaced: &HashMap<String, ReplacedTag>,
+    submitter_name: &str,
 ) -> Vec<CreateComponent<'static>> {
     let id = state.submitter_id;
 
@@ -63,7 +64,10 @@ pub fn build_review_message(
             parts.push(text(summary));
         }
 
-        build_player_card(&mut parts, player, replaced.get(&player.uuid));
+        let repl = (player.status == PlayerStatus::Pending)
+            .then(|| replaced.get(&player.uuid))
+            .flatten();
+        build_player_card(&mut parts, player, repl, submitter_name);
 
         if state.submitted {
             build_submitted_controls(&mut parts, player, idx, id);
@@ -112,14 +116,25 @@ pub fn build_player_card(
     parts: &mut Vec<CreateContainerComponent<'static>>,
     player: &PlayerEntry,
     replaced: Option<&ReplacedTag>,
+    submitter_name: &str,
 ) {
     let indicator = evidence_indicator(&player.tag_type, !player.evidence.is_empty());
+    let added = format!("> -# **\\- Added by `@{submitter_name}`**");
+    let reviewed = (!player.reviewer_names.is_empty()).then(|| {
+        let names = player
+            .reviewer_names
+            .iter()
+            .map(|n| format!("`@{n}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("> -# **\\- Reviewed by {names}**")
+    });
     let proposed = format_tag_block(
         &player.tag_type,
         &sanitize_reason(&player.reason),
         &indicator,
-        None,
-        None,
+        Some(&added),
+        reviewed.as_deref(),
         false,
     );
     let uuid_line = format!(

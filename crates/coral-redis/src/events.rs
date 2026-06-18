@@ -15,6 +15,8 @@ pub enum BlacklistEvent {
         added_by: i64,
         #[serde(default)]
         silent: bool,
+        #[serde(default)]
+        review_url: Option<String>,
     },
     TagOverwritten {
         uuid: String,

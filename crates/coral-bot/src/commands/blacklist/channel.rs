@@ -286,6 +286,28 @@ pub fn format_tag_block(
     lines.join("\n")
 }
 
+pub async fn format_reviewed_line(ctx: &Context, reviewed_by: Option<&[i64]>) -> Option<String> {
+    let ids = reviewed_by.filter(|ids| !ids.is_empty())?;
+    let names = futures::future::join_all(
+        ids.iter()
+            .map(|&id| async move { format!("`@{}`", get_username(ctx, id as u64).await) }),
+    )
+    .await;
+    Some(format!("> -# **\\- Reviewed by {}**", names.join(", ")))
+}
+
+fn tag_footer(dashed_uuid: &str, review_url: Option<&str>, evidence_url: Option<&str>) -> String {
+    let mut footer = format!("-# UUID: {dashed_uuid}");
+    if let Some(url) = review_url {
+        footer.push_str(&format!(" | [Review]({url})"));
+    }
+    if let Some(url) = evidence_url {
+        footer.push_str(&format!(" | [Evidence]({url})"));
+    }
+    footer
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn post_new_tag(
     ctx: &Context,
     data: &Data,
@@ -294,8 +316,19 @@ pub async fn post_new_tag(
     tag: &PlayerEvent,
     all_tags: &[PlayerEvent],
     silent: bool,
+    review_url: Option<&str>,
 ) -> Option<MessageId> {
-    post_tag_to_log(ctx, data, uuid, name, tag, "New Tag", EMOTE_ADDTAG).await;
+    post_tag_to_log(
+        ctx,
+        data,
+        uuid,
+        name,
+        tag,
+        "New Tag",
+        EMOTE_ADDTAG,
+        review_url,
+    )
+    .await;
     if silent {
         return None;
     }
@@ -309,10 +342,12 @@ pub async fn post_new_tag(
         "New Tag",
         EMOTE_ADDTAG,
         &watchers,
+        review_url,
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn post_overwritten_tag(
     ctx: &Context,
     data: &Data,
@@ -321,8 +356,19 @@ pub async fn post_overwritten_tag(
     tag: &PlayerEvent,
     all_tags: &[PlayerEvent],
     silent: bool,
+    review_url: Option<&str>,
 ) -> Option<MessageId> {
-    post_tag_to_log(ctx, data, uuid, name, tag, "Tag Overwritten", EMOTE_EDITTAG).await;
+    post_tag_to_log(
+        ctx,
+        data,
+        uuid,
+        name,
+        tag,
+        "Tag Overwritten",
+        EMOTE_EDITTAG,
+        review_url,
+    )
+    .await;
     if silent {
         return None;
     }
@@ -336,6 +382,7 @@ pub async fn post_overwritten_tag(
         "Tag Overwritten",
         EMOTE_EDITTAG,
         &watchers,
+        review_url,
     )
     .await
 }
@@ -610,6 +657,7 @@ async fn post_key_change(
     send_to_mod_channel(ctx, data, container, vec![]).await;
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn post_tag_to_log(
     ctx: &Context,
     data: &Data,
@@ -618,9 +666,12 @@ async fn post_tag_to_log(
     tag: &PlayerEvent,
     title: &str,
     emote: &str,
+    review_url: Option<&str>,
 ) {
     let dashed_uuid = format_uuid_dashed(uuid);
     let added_line = format_added_line(ctx, tag).await;
+    let reviewed_line = format_reviewed_line(ctx, tag.reviewed_by.as_deref()).await;
+    let evidence_url = evidence_thread_url(data, uuid);
     let face = face_attachment(data, uuid).await;
 
     let block = format_tag_block(
@@ -628,7 +679,7 @@ async fn post_tag_to_log(
         &format_tag_detail(tag),
         "",
         Some(&added_line),
-        None,
+        reviewed_line.as_deref(),
         false,
     );
 
@@ -636,7 +687,7 @@ async fn post_tag_to_log(
         face_section(vec![
             format!("## {emote} {title}\nIGN - `{name}`\n"),
             block,
-            format!("-# UUID: {dashed_uuid}"),
+            tag_footer(&dashed_uuid, review_url, evidence_url.as_deref()),
         ]),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
     ]);
@@ -661,6 +712,7 @@ async fn send_to_mod_channel(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn post_to_blacklist_channel(
     ctx: &Context,
     data: &Data,
@@ -670,6 +722,7 @@ async fn post_to_blacklist_channel(
     title: &str,
     emote: &str,
     mentions: &[UserId],
+    review_url: Option<&str>,
 ) -> Option<MessageId> {
     let channel_id = data.blacklist_channel_id?;
     let dashed_uuid = format_uuid_dashed(uuid);
@@ -680,17 +733,6 @@ async fn post_to_blacklist_channel(
     let mut tag_texts = vec![];
     for tag in all_tags {
         let added_line = format_added_line(ctx, tag).await;
-        let reviewed_line = match &tag.reviewed_by {
-            Some(ids) if !ids.is_empty() => {
-                let names: Vec<String> =
-                    futures::future::join_all(ids.iter().map(|&id| async move {
-                        format!("`@{}`", get_username(ctx, id as u64).await)
-                    }))
-                    .await;
-                Some(format!("> -# **\\- Reviewed by {}**", names.join(", ")))
-            }
-            _ => None,
-        };
         let tag_type = tag.tag_type.as_deref().unwrap_or("");
         let indicator = evidence_indicator(tag_type, evidence_url.is_some());
 
@@ -699,15 +741,12 @@ async fn post_to_blacklist_channel(
             &format_tag_detail(tag),
             &indicator,
             Some(&added_line),
-            reviewed_line.as_deref(),
+            None,
             false,
         ));
     }
 
-    let mut footer = format!("-# UUID: {dashed_uuid}");
-    if let Some(url) = &evidence_url {
-        footer.push_str(&format!(" | [Evidence]({url})"));
-    }
+    let footer = tag_footer(&dashed_uuid, review_url, evidence_url.as_deref());
 
     let header = format!("## {} {}\nIGN - `{}`\n", emote, title, name);
     let first_tag = tag_texts.first().cloned().unwrap_or_default();

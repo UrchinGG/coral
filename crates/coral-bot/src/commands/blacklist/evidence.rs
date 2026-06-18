@@ -5,7 +5,7 @@ use blacklist::{EMOTE_EVIDENCE, EMOTE_NO_EVIDENCE, lookup as lookup_tag};
 use database::BlacklistRepository;
 use serenity::all::*;
 
-use super::channel::{format_added_line, format_tag_block};
+use super::channel::{format_added_line, format_reviewed_line, format_tag_block};
 use super::reviews;
 use super::tag::get_rank;
 use crate::framework::{AccessRank, Data};
@@ -206,7 +206,17 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
 
     let reason = tag.reason.clone().unwrap_or_default();
     let added_line = format_added_line(ctx, tag).await;
-    run_staff_confirm(ctx, command, data, &player_info, &reason, Some(&added_line)).await
+    let reviewed_line = format_reviewed_line(ctx, tag.reviewed_by.as_deref()).await;
+    run_staff_confirm(
+        ctx,
+        command,
+        data,
+        &player_info,
+        &reason,
+        Some(&added_line),
+        reviewed_line.as_deref(),
+    )
+    .await
 }
 
 async fn run_member_confirm(
@@ -256,6 +266,7 @@ async fn run_staff_confirm(
     player_info: &crate::api::ResolveResponse,
     reason: &str,
     added_line: Option<&str>,
+    reviewed_line: Option<&str>,
 ) -> Result<()> {
     let Some(forum_id) = data.evidence_forum_id else {
         return crate::interact::send_deferred_error(
@@ -277,6 +288,7 @@ async fn run_staff_confirm(
         &player_info.uuid,
         reason,
         added_line,
+        reviewed_line,
         &[],
         None,
         &HashMap::new(),
@@ -346,6 +358,7 @@ struct EvidenceState {
     uuid: String,
     reason: String,
     added_line: Option<String>,
+    reviewed_line: Option<String>,
     evidence: Vec<EvidenceItem>,
     review_url: Option<String>,
 }
@@ -434,11 +447,13 @@ fn url_extension(url: &str) -> &str {
         .unwrap_or("png")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_evidence_message(
     username: &str,
     uuid: &str,
     reason: &str,
     added_line: Option<&str>,
+    reviewed_line: Option<&str>,
     evidence: &[EvidenceItem],
     review_thread_url: Option<&str>,
     gallery_urls: &HashMap<String, String>,
@@ -450,7 +465,7 @@ fn build_evidence_message(
         &sanitize_reason(reason),
         "",
         added_line,
-        None,
+        reviewed_line,
         false,
     );
 
@@ -652,6 +667,7 @@ fn parse_state_from_message(message: &Message) -> Option<EvidenceState> {
         uuid: String::new(),
         reason: String::new(),
         added_line: None,
+        reviewed_line: None,
         evidence: Vec::new(),
         review_url: None,
     };
@@ -712,7 +728,9 @@ fn ingest_text(state: &mut EvidenceState, content: &str) {
         } else if let Some(rest) = trimmed.strip_prefix("UUID: `") {
             state.uuid = rest.trim_end_matches('`').replace('-', "");
         } else if let Some(rest) = trimmed.strip_prefix("> -# ") {
-            if rest.starts_with("**\\-") && state.added_line.is_none() {
+            if rest.contains("Reviewed by ") {
+                state.reviewed_line = Some(trimmed.to_string());
+            } else if rest.starts_with("**\\-") && state.added_line.is_none() {
                 state.added_line = Some(trimmed.to_string());
             }
         } else if state.reason.is_empty() {
@@ -907,6 +925,7 @@ pub async fn handle_media_modal(
         &state.uuid,
         &state.reason,
         state.added_line.as_deref(),
+        state.reviewed_line.as_deref(),
         &state.evidence,
         state.review_url.as_deref(),
         &urls,
@@ -1011,6 +1030,7 @@ fn evidence_op_view(
         &state.uuid,
         &state.reason,
         state.added_line.as_deref(),
+        state.reviewed_line.as_deref(),
         &state.evidence,
         state.review_url.as_deref(),
         urls,
@@ -1331,6 +1351,7 @@ pub async fn create_evidence_from_review(
     reason: &str,
     media_urls: &[String],
     review_thread_url: Option<&str>,
+    reviewer_names: &[String],
 ) -> Result<()> {
     let Some(forum_id) = data.evidence_forum_id else {
         anyhow::bail!("Evidence forum channel not configured");
@@ -1350,11 +1371,20 @@ pub async fn create_evidence_from_review(
     let thread_title = format!("{} | {}", username, format_uuid_dashed(uuid));
     let no_urls = HashMap::new();
     let added_line = evidence_added_line(ctx, data, uuid).await;
+    let reviewed_line = (!reviewer_names.is_empty()).then(|| {
+        let names = reviewer_names
+            .iter()
+            .map(|n| format!("`@{n}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("> -# **\\- Reviewed by {names}**")
+    });
     let initial_components = build_evidence_message(
         username,
         uuid,
         reason,
         added_line.as_deref(),
+        reviewed_line.as_deref(),
         &[],
         review_thread_url,
         &no_urls,
@@ -1396,6 +1426,7 @@ pub async fn create_evidence_from_review(
                 uuid,
                 reason,
                 added_line.as_deref(),
+                reviewed_line.as_deref(),
                 &evidence,
                 review_thread_url,
                 &no_urls,
