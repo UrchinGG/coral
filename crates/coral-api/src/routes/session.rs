@@ -114,7 +114,9 @@ pub struct SnapshotDataResponse {
 macro_rules! period_handler {
     ($name:ident, $period:ident, $path:literal) => {
         #[utoipa::path(
-            get, path = $path, params(PlayerQuery),
+            get, path = $path,
+            description = "Returns the change in a player's stats since the start of the period, compared against the latest snapshot.",
+            params(PlayerQuery),
             responses((status = 200, body = SessionDeltaResponse), (status = 404, body = crate::error::ErrorResponse)),
             tag = "Player",
             security(("api_key" = []))
@@ -136,6 +138,7 @@ period_handler!(session_yearly, Yearly, "/v3/player/sessions/yearly");
 #[utoipa::path(
     get,
     path = "/v3/player/sessions/custom",
+    description = "Returns the change in a player's stats since a starting point that you specify. Provide exactly one of `duration` (for example `48h`, `10d`, or `2w`), `from` (a Unix millisecond timestamp or RFC 3339 string), or `marker` (the name of a saved marker). The `marker` form requires account ownership or the `All Sessions` permission.",
     params(CustomSessionQuery),
     responses(
         (status = 200, body = SessionDeltaResponse),
@@ -229,6 +232,7 @@ fn parse_duration(s: &str) -> Option<Duration> {
 #[utoipa::path(
     get,
     path = "/v3/player/sessions/markers",
+    description = "Lists the session markers saved for a player. Requires account ownership or the `All Sessions` permission.",
     params(PlayerQuery),
     responses(
         (status = 200, body = MarkerListResponse),
@@ -265,6 +269,7 @@ pub async fn list_markers(
 #[utoipa::path(
     post,
     path = "/v3/player/sessions/markers",
+    description = "Saves the current snapshot as a named marker. When the name is omitted, it defaults to today's date. Requires account ownership or the `All Sessions` permission.",
     params(PlayerQuery),
     request_body = CreateMarkerRequest,
     responses(
@@ -305,6 +310,7 @@ pub async fn create_marker(
 #[utoipa::path(
     patch,
     path = "/v3/player/sessions/markers/{name}",
+    description = "Renames a saved marker. Requires account ownership or the `All Sessions` permission.",
     params(("name" = String, Path, description = "Current marker name"), PlayerQuery),
     request_body = RenameMarkerRequest,
     responses(
@@ -346,6 +352,7 @@ pub async fn rename_marker(
 #[utoipa::path(
     delete,
     path = "/v3/player/sessions/markers/{name}",
+    description = "Deletes a saved marker. Requires account ownership or the `All Sessions` permission.",
     params(("name" = String, Path, description = "Marker name"), PlayerQuery),
     responses(
         (status = 200, body = SuccessResponse),
@@ -384,6 +391,7 @@ pub async fn delete_marker(
 #[utoipa::path(
     get,
     path = "/v3/player/sessions/snapshots",
+    description = "Lists a player's snapshot timestamps, or returns a single snapshot in full when `at` is provided. Use `before` and `after` to bound the list; each accepts a Unix millisecond timestamp or an RFC 3339 string. Requires account ownership or the `All Sessions` permission.",
     params(SnapshotQuery),
     responses(
         (status = 200, body = SnapshotListResponse),

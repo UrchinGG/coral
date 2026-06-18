@@ -18,7 +18,7 @@ use serenity::all::*;
 use database::{CacheRepository, Period, SessionMarker};
 use render::TagIcon;
 
-use crate::api::{GuildResponse, TagInfo};
+use crate::api::TagInfo;
 use crate::framework::Data;
 use render::SessionType;
 
@@ -177,18 +177,6 @@ pub fn extract_tag_icons(tags: &[TagInfo]) -> Vec<TagIcon> {
 pub(crate) fn looks_like_uuid(s: &str) -> bool {
     let s = s.replace('-', "");
     s.len() == 32 && s.chars().all(|c| c.is_ascii_hexdigit())
-}
-
-pub(crate) fn to_guild_info(guild: &GuildResponse) -> GuildInfo {
-    let player = guild.player.as_ref();
-    GuildInfo {
-        name: Some(guild.name.clone()),
-        tag: guild.tag.clone(),
-        tag_color: guild.tag_color.clone(),
-        rank: player.and_then(|p| p.rank.clone()),
-        joined: player.and_then(|p| p.joined),
-        weekly_gexp: player.and_then(|p| p.weekly_gexp),
-    }
 }
 
 pub use crate::interact::send_deferred_error;

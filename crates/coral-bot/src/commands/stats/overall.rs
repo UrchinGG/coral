@@ -249,7 +249,7 @@ async fn fetch_player_data<G: GameStats>(
             let cache_repo = CacheRepository::new(data.db.pool());
             let (api, guild, skin, history) = tokio::join!(
                 data.api.get_player_stats(player),
-                data.api.get_guild(uuid, Some("player")),
+                data.api.get_guild_by_player(uuid),
                 data.skin_provider
                     .fetch(uuid, super::SKIN_RENDER_WIDTH, super::SKIN_RENDER_HEIGHT,),
                 cache_repo.get_all_snapshots_mapped(uuid, G::extract_winstreak_snapshot),
@@ -261,7 +261,7 @@ async fn fetch_player_data<G: GameStats>(
             } else {
                 let cache_repo = CacheRepository::new(data.db.pool());
                 let (guild, skin, history) = tokio::join!(
-                    data.api.get_guild(&resp.uuid, Some("player")),
+                    data.api.get_guild_by_player(&resp.uuid),
                     fetch_skin(data, &resp.uuid, resp.skin_url.as_deref(), resp.slim),
                     cache_repo.get_all_snapshots_mapped(&resp.uuid, G::extract_winstreak_snapshot),
                 );
@@ -276,7 +276,7 @@ async fn fetch_player_data<G: GameStats>(
                 .map_err(map_api_error)?;
             let cache_repo = CacheRepository::new(data.db.pool());
             let (guild, skin, history) = tokio::join!(
-                data.api.get_guild(&resp.uuid, Some("player")),
+                data.api.get_guild_by_player(&resp.uuid),
                 fetch_skin(data, &resp.uuid, resp.skin_url.as_deref(), resp.slim),
                 cache_repo.get_all_snapshots_mapped(&resp.uuid, G::extract_winstreak_snapshot),
             );
@@ -290,7 +290,7 @@ async fn fetch_player_data<G: GameStats>(
     let guild_info = guild_result
         .ok()
         .flatten()
-        .map(|g| super::to_guild_info(&g));
+        .map(|g| hypixel::GuildInfo::from_guild(&g, &resp.uuid));
     let stats = G::extract_stats(&username, &hypixel_data, guild_info)
         .ok_or_else(|| StatsError::NoStats(username.clone()))?;
     let snapshots = history_result.ok().unwrap_or_default();

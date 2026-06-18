@@ -85,7 +85,7 @@ impl CoralApiClient {
         } else {
             "name"
         };
-        let suffix = if allow_cache { "&fallback=cache" } else { "" };
+        let suffix = if allow_cache { "&max_cache_age=0" } else { "" };
         self.get(&format!(
             "{}/v3/player/profile?{}={}{}",
             self.base_url, param, identifier, suffix

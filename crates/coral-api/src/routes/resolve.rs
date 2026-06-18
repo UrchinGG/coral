@@ -1,9 +1,12 @@
 use axum::extract::{Path, State};
 use axum::routing::get;
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use serde::Serialize;
 use utoipa::ToSchema;
 
+use database::permissions;
+
+use crate::auth::DeveloperKeyAuth;
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -20,6 +23,7 @@ pub fn router() -> Router<AppState> {
 #[utoipa::path(
     get,
     path = "/v3/resolve/{identifier}",
+    description = "Resolves a UUID or username to the canonical UUID and username through Mojang. Requires the `Player Data` permission or an Admin key.",
     params(
         ("identifier" = String, Path, description = "Player UUID or username")
     ),
@@ -35,8 +39,12 @@ pub fn router() -> Router<AppState> {
 )]
 pub async fn resolve_player(
     State(state): State<AppState>,
+    dev_auth: Option<Extension<DeveloperKeyAuth>>,
     Path(identifier): Path<String>,
 ) -> Result<Json<ResolveResponse>, ApiError> {
+    if let Some(Extension(ref dev)) = dev_auth {
+        dev.require(permissions::PLAYER_DATA)?;
+    }
     let id = state.mojang.resolve(&identifier).await?;
     Ok(Json(ResolveResponse {
         uuid: id.uuid,

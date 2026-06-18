@@ -6,6 +6,7 @@ use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Extension, Json, Router};
+use chrono::{Duration, Utc};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -14,7 +15,7 @@ use database::{BlacklistRepository, CacheRepository, permissions};
 
 use crate::{
     auth::DeveloperKeyAuth,
-    cache::SNAPSHOT_SOURCE,
+    cache::{SNAPSHOT_SOURCE, parse_cache_age},
     error::{ApiError, ErrorResponse},
     responses::{PlayerStatsResponse, PlayerTagsResponse, TagResponse},
     state::AppState,
@@ -25,7 +26,34 @@ pub(crate) struct PlayerQuery {
     pub uuid: Option<String>,
     pub name: Option<String>,
     #[serde(default)]
-    pub fallback: Option<String>,
+    pub max_cache_age: Option<String>,
+}
+
+pub(crate) async fn resolve_player_data(
+    state: &AppState,
+    uuid: &str,
+    max_cache_age: Option<Duration>,
+) -> Result<(Option<Value>, bool), ApiError> {
+    let cache = CacheRepository::new(state.db.pool());
+
+    if let Some(max_age) = max_cache_age {
+        if let Some(ts) = cache.get_latest_timestamp(uuid).await? {
+            if Utc::now() - ts <= max_age {
+                if let Some(snapshot) = cache.get_latest_snapshot(uuid).await? {
+                    return Ok((Some(snapshot), true));
+                }
+            }
+        }
+    }
+
+    match state.require_hypixel()?.get_player(uuid).await {
+        Ok(data) => Ok((data, false)),
+        Err(err) if max_cache_age.is_some() => match cache.get_latest_snapshot(uuid).await? {
+            Some(snapshot) => Ok((Some(snapshot), true)),
+            None => Err(err.into()),
+        },
+        Err(err) => Err(err.into()),
+    }
 }
 
 pub fn public_router() -> Router<AppState> {
@@ -102,6 +130,7 @@ fn spawn_cache_update(state: &AppState, uuid: &str, data: &Value, username: &str
 #[utoipa::path(
     get,
     path = "/v3/player/tags",
+    description = "Returns the blacklist tags currently active on a player.",
     params(
         ("uuid" = Option<String>, Query, description = "Player UUID"),
         ("name" = Option<String>, Query, description = "Player username"),
@@ -133,9 +162,11 @@ pub async fn player_tags(
 #[utoipa::path(
     get,
     path = "/v3/player/profile",
+    description = "Returns a player's full Hypixel profile, including their blacklist tags and skin metadata. Set `max_cache_age` (for example `5m`, `1h`, or a number of seconds) to serve a stored snapshot within that age instead of calling Hypixel, and to fall back to the latest snapshot when Hypixel is unreachable. Responses served from a snapshot are marked `stale`. Requires the `Player Data` permission or an Admin key.",
     params(
         ("uuid" = Option<String>, Query, description = "Player UUID"),
         ("name" = Option<String>, Query, description = "Player username"),
+        ("max_cache_age" = Option<String>, Query, description = "Accept a stored snapshot up to this age (e.g. `5m`, `1h`, `30s`)"),
     ),
     responses(
         (status = 200, description = "Player profile retrieved", body = PlayerStatsResponse),
@@ -156,36 +187,24 @@ pub async fn player_stats(
     if let Some(Extension(ref dev)) = dev_auth {
         dev.require(permissions::PLAYER_DATA)?;
     }
+    let max_cache_age = query
+        .max_cache_age
+        .as_deref()
+        .map(parse_cache_age)
+        .transpose()?;
     let identifier = extract_identifier(&query)?;
     let (uuid, username_hint) = resolve_identifier(&state, identifier).await?;
     let repo = BlacklistRepository::new(state.db.pool());
-    let hypixel = state.require_hypixel()?;
     let (player_result, tags, profile) = tokio::join!(
-        hypixel.get_player(&uuid),
+        resolve_player_data(&state, &uuid, max_cache_age),
         repo.get_active_tags(&uuid),
         state.mojang.get_profile(&uuid),
     );
+    let (player_data, stale) = player_result?;
     let tags = tags?;
     let (skin_url, slim) = match profile.ok() {
         Some(p) => (p.skin_url, p.slim),
         None => (None, false),
-    };
-
-    let allow_cache_fallback = query.fallback.as_deref() == Some("cache");
-    let (player_data, stale) = match player_result {
-        Ok(data) => (data, false),
-        Err(err) if allow_cache_fallback => {
-            match CacheRepository::new(state.db.pool())
-                .get_latest_snapshot(&uuid)
-                .await
-                .ok()
-                .flatten()
-            {
-                Some(cached) => (Some(cached), true),
-                None => return Err(err.into()),
-            }
-        }
-        Err(err) => return Err(err.into()),
     };
 
     let username = resolve_username(username_hint, &player_data, &uuid);
@@ -210,6 +229,7 @@ pub async fn player_stats(
 #[utoipa::path(
     get,
     path = "/v3/player/skin",
+    description = "Renders a player's full skin as a PNG. Requires the `Player Data` permission or an Admin key.",
     params(
         ("uuid" = Option<String>, Query, description = "Player UUID"),
         ("name" = Option<String>, Query, description = "Player username"),
@@ -257,6 +277,7 @@ pub async fn player_skin(
 #[utoipa::path(
     get,
     path = "/v3/player/face",
+    description = "Renders a player's face as a PNG. Requires the `Player Data` permission or an Admin key.",
     params(
         ("uuid" = Option<String>, Query, description = "Player UUID"),
         ("name" = Option<String>, Query, description = "Player username"),
@@ -301,6 +322,7 @@ pub async fn player_face(
 #[utoipa::path(
     get,
     path = "/v3/player/body",
+    description = "Renders a player's full body as a PNG. Requires the `Player Data` permission or an Admin key.",
     params(
         ("uuid" = Option<String>, Query, description = "Player UUID"),
         ("name" = Option<String>, Query, description = "Player username"),

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use axum::Router;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use tokio::net::TcpListener;
@@ -139,9 +139,24 @@ fn parse_starfish_config() -> Option<StarfishConfig> {
 }
 
 fn build_router(state: AppState) -> Router {
+    let api = openapi::ApiDoc::openapi();
     Router::new()
         .route("/health", get(health_check))
-        .merge(Scalar::with_url("/", openapi::ApiDoc::openapi()))
+        .route(
+            "/openapi.json",
+            get({
+                let api = api.clone();
+                move || async move { axum::Json(api) }
+            }),
+        )
+        .route(
+            "/llms.txt",
+            get({
+                let body = openapi::llms_txt(&api);
+                move || async move { ([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], body) }
+            }),
+        )
+        .merge(Scalar::with_url("/", api))
         .nest("/v3", routes::router(state.clone()))
         .nest("/api/v1/starfish", routes::starfish::router(state.clone()))
         .with_state(state)

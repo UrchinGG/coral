@@ -30,6 +30,7 @@ pub fn router() -> Router<AppState> {
 #[utoipa::path(
     post,
     path = "/v3/players",
+    description = "Looks up blacklist tags for up to 100 players in a single request. Only UUIDs are accepted; usernames are not resolved, and malformed entries are skipped.",
     request_body = BatchRequest,
     responses(
         (status = 200, description = "Batch lookup completed", body = BatchResponse),

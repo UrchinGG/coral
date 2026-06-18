@@ -61,6 +61,7 @@ fn mode_key(mode: Mode) -> &'static str {
 #[utoipa::path(
     get,
     path = "/v3/player/winstreaks",
+    description = "Reconstructs a player's Bedwars winstreak history for each mode from stored snapshots. An entry marked `approximate` was inferred where the snapshot history contains a gap.",
     params(session::PlayerQuery),
     responses(
         (status = 200, body = WinstreakResponse),

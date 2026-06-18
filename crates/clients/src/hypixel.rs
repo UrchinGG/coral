@@ -95,6 +95,34 @@ impl HypixelClient {
         Ok(response.guild)
     }
 
+    pub async fn get_guild_by_id(&self, id: &str) -> Result<Option<Value>, ClientError> {
+        let cache_key = format!("cache:hg:id:{}", id);
+
+        if let Some(cached) = self.cache_get(&cache_key).await {
+            return Ok(cached);
+        }
+
+        let url = format!("{}/guild?id={}", HYPIXEL_API_BASE, id);
+
+        let response: HypixelResponse = self
+            .http
+            .get(&url)
+            .header("API-Key", &self.key)
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        if !response.success {
+            if let Some(cause) = response.cause {
+                return Err(ClientError::HypixelApi(cause));
+            }
+        }
+
+        self.cache_set(&cache_key, &response.guild).await;
+        Ok(response.guild)
+    }
+
     pub async fn get_guild_by_name(&self, name: &str) -> Result<Option<Value>, ClientError> {
         let cache_key = format!("cache:hg:name:{}", name.to_lowercase());
 

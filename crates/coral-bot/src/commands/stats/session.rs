@@ -1078,7 +1078,7 @@ async fn precompute_session<G: GameStats>(
     let guild_info = guild_result
         .ok()
         .flatten()
-        .map(|guild| super::to_guild_info(&guild));
+        .map(|guild| hypixel::GuildInfo::from_guild(&guild, &uuid));
     let skin_image = skin_result.map(|skin| skin.data);
     let current_stats = G::extract_stats(&username, &hypixel_data, guild_info.clone())
         .ok_or_else(|| StatsError::NoStats(username.clone()))?;
@@ -1133,7 +1133,7 @@ async fn fetch_player(
 ) -> Result<
     (
         crate::api::PlayerStatsResponse,
-        Result<Option<crate::api::GuildResponse>, crate::api::ApiError>,
+        Result<Option<serde_json::Value>, crate::api::ApiError>,
         Option<clients::SkinImage>,
     ),
     StatsError,
@@ -1142,7 +1142,7 @@ async fn fetch_player(
         Some(uuid) => {
             let (api, guild, skin) = tokio::join!(
                 data.api.get_player_stats(player),
-                data.api.get_guild(uuid, Some("player")),
+                data.api.get_guild_by_player(uuid),
                 data.skin_provider
                     .fetch(uuid, super::SKIN_RENDER_WIDTH, super::SKIN_RENDER_HEIGHT,),
             );
@@ -1151,7 +1151,7 @@ async fn fetch_player(
                 return Ok((resp, guild, skin));
             }
             let (guild, skin) = tokio::join!(
-                data.api.get_guild(&resp.uuid, Some("player")),
+                data.api.get_guild_by_player(&resp.uuid),
                 fetch_skin(data, &resp.uuid, resp.skin_url.as_deref(), resp.slim),
             );
             Ok((resp, guild, skin))
@@ -1163,7 +1163,7 @@ async fn fetch_player(
                 .await
                 .map_err(map_api_error)?;
             let (guild, skin) = tokio::join!(
-                data.api.get_guild(&resp.uuid, Some("player")),
+                data.api.get_guild_by_player(&resp.uuid),
                 fetch_skin(data, &resp.uuid, resp.skin_url.as_deref(), resp.slim),
             );
             Ok((resp, guild, skin))

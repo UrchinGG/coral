@@ -113,6 +113,7 @@ async fn enforce_tag_limit(state: &AppState, member: &database::Member) -> Resul
 
 #[utoipa::path(
     post, path = "/v3/tags",
+    description = "Adds a blacklist tag to a player. The tag types you may apply depend on your rank, which also determines whether `hide_username` is honored.",
     params(("uuid" = String, Query)),
     request_body = AddTagBody,
     responses(
@@ -172,6 +173,7 @@ pub async fn add_tag(
 
 #[utoipa::path(
     delete, path = "/v3/tags",
+    description = "Removes a tag of the given type from a player. Removing a tag created by someone else, or an older tag, requires a higher rank.",
     params(("uuid" = String, Query)),
     request_body = RemoveTagBody,
     responses(
@@ -220,6 +222,7 @@ pub async fn remove_tag(
 
 #[utoipa::path(
     patch, path = "/v3/tags",
+    description = "Overwrites an active tag, replacing its type, its reason, or both. The `confirmed_cheater` type cannot be set through this endpoint; it is granted only through the review system.",
     params(("uuid" = String, Query)),
     request_body = UpdateTagBody,
     responses(
@@ -285,6 +288,7 @@ pub async fn update_tag(
 
 #[utoipa::path(
     post, path = "/v3/player/lock",
+    description = "Locks a player so that no tag can be added or modified until the lock is lifted. Requires the Moderator rank.",
     params(("uuid" = String, Query)),
     request_body = LockRequest,
     responses(
@@ -327,6 +331,7 @@ pub async fn lock_player(
 
 #[utoipa::path(
     delete, path = "/v3/player/lock",
+    description = "Lifts a player lock. Requires the Moderator rank.",
     params(("uuid" = String, Query)),
     responses(
         (status = 204, description = "Player unlocked"),

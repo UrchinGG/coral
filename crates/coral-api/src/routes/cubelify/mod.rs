@@ -28,6 +28,7 @@ pub fn router(_state: AppState) -> Router<AppState> {
 #[utoipa::path(
     get,
     path = "/v3/cubelify",
+    description = "Returns a player's blacklist tags in the format expected by the Cubelify overlay: a score and a styled list. Authenticate with a personal key passed in the `key` query parameter. Errors are also returned with a 200 status and an error tag, so that the overlay can display them inline.",
     params(CubelifyQuery),
     responses(
         (status = 200, description = "Cubelify data", body = CubelifyResponse),

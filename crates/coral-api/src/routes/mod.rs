@@ -8,7 +8,6 @@ use crate::{
 
 pub mod batch;
 pub mod cubelify;
-pub mod guild;
 pub mod hypixel;
 pub mod player;
 pub mod resolve;
@@ -32,7 +31,6 @@ pub fn router(state: AppState) -> Router<AppState> {
 
     let internal = Router::new()
         .merge(player::internal_router())
-        .merge(guild::router())
         .merge(hypixel::router())
         .merge(resolve::router())
         .merge(verify::router())

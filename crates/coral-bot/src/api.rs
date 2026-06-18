@@ -43,23 +43,8 @@ pub struct TagInfo {
 }
 
 #[derive(Deserialize)]
-#[allow(dead_code)]
-pub struct GuildResponse {
-    pub name: String,
-    pub tag: Option<String>,
-    pub tag_color: Option<String>,
-    pub level: u32,
-    pub members: usize,
-    pub experience: u64,
-    pub created: Option<i64>,
-    pub player: Option<GuildMemberInfo>,
-}
-
-#[derive(Deserialize)]
-pub struct GuildMemberInfo {
-    pub rank: Option<String>,
-    pub joined: Option<i64>,
-    pub weekly_gexp: Option<u64>,
+struct GuildEnvelope {
+    guild: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -105,7 +90,7 @@ impl CoralApiClient {
         } else {
             "name"
         };
-        let suffix = if allow_cache { "&fallback=cache" } else { "" };
+        let suffix = if allow_cache { "&max_cache_age=0" } else { "" };
         self.get(&format!(
             "{}/v3/player/profile?{}={}{}",
             self.base_url, param, identifier, suffix
@@ -113,16 +98,22 @@ impl CoralApiClient {
         .await
     }
 
-    pub async fn get_guild(
+    pub async fn get_guild_by_player(
         &self,
-        identifier: &str,
-        by: Option<&str>,
-    ) -> Result<Option<GuildResponse>, ApiError> {
-        let url = match by {
-            Some(by) => format!("{}/v3/guild/{}?by={}", self.base_url, identifier, by),
-            None => format!("{}/v3/guild/{}", self.base_url, identifier),
-        };
-        self.get(&url).await
+        uuid: &str,
+    ) -> Result<Option<serde_json::Value>, ApiError> {
+        let url = format!("{}/v3/hypixel/guild", self.base_url);
+        let env: GuildEnvelope = self.get_query(&url, &[("player", uuid)]).await?;
+        Ok(env.guild)
+    }
+
+    pub async fn get_guild_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<serde_json::Value>, ApiError> {
+        let url = format!("{}/v3/hypixel/guild", self.base_url);
+        let env: GuildEnvelope = self.get_query(&url, &[("name", name)]).await?;
+        Ok(env.guild)
     }
 
     pub async fn resolve(&self, identifier: &str) -> Result<ResolveResponse, ApiError> {
@@ -144,6 +135,21 @@ impl CoralApiClient {
         let response = self
             .http
             .get(url)
+            .header("X-API-Key", &self.api_key)
+            .send()
+            .await?;
+        Self::parse_response(response).await
+    }
+
+    async fn get_query<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        params: &[(&str, &str)],
+    ) -> Result<T, ApiError> {
+        let response = self
+            .http
+            .get(url)
+            .query(params)
             .header("X-API-Key", &self.api_key)
             .send()
             .await?;
