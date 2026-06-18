@@ -17,6 +17,8 @@ use clients::{HypixelClient, LocalSkinProvider, MojangClient, SkinProvider};
 use coral_redis::RedisPool;
 use database::Database;
 
+const SCALAR_HTML: &str = include_str!("scalar.html");
+
 mod auth;
 mod cache;
 mod discord;
@@ -156,7 +158,7 @@ fn build_router(state: AppState) -> Router {
                 move || async move { ([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], body) }
             }),
         )
-        .merge(Scalar::with_url("/", api))
+        .merge(Scalar::with_url("/", api).custom_html(SCALAR_HTML))
         .nest("/v3", routes::router(state.clone()))
         .nest("/api/v1/starfish", routes::starfish::router(state.clone()))
         .with_state(state)
