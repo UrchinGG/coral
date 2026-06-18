@@ -2,10 +2,14 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { SearchSuggest } from "@/components/common/SearchSuggest";
 
+export default function Page() {
+  notFound();
+}
 
-export default function Home() {
+export function Home() {
   const error = (() => {
     if (typeof window === "undefined") return undefined;
     const e = new URLSearchParams(window.location.search).get("e");

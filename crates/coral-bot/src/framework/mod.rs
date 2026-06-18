@@ -104,6 +104,7 @@ impl Handler {
             commands::admin::manage::register(),
             commands::admin::strike::register(),
             commands::blacklist::evidence::register(),
+            commands::blacklist::guild::register(),
             commands::blacklist::watch::register(),
         ]
         .into_iter()
@@ -142,6 +143,7 @@ impl Handler {
             "manage" => commands::admin::manage::run(ctx, command, &self.data).await,
             "strike" => commands::admin::strike::run(ctx, command, &self.data).await,
             "confirm" => commands::blacklist::evidence::run(ctx, command, &self.data).await,
+            "guild" => commands::blacklist::guild::run(ctx, command, &self.data).await,
             "watch" => commands::blacklist::watch::run(ctx, command, &self.data).await,
             _ => Ok(()),
         }
@@ -235,6 +237,9 @@ impl Handler {
             "info_taggers" => {
                 commands::admin::info::handle_taggers(ctx, component, &self.data).await
             }
+            _ if id.starts_with("guild_pg:") => {
+                commands::blacklist::guild::handle_page(ctx, component, &self.data).await
+            }
             _ if id.starts_with("info_page:") => {
                 commands::admin::info::handle_page(ctx, component, &self.data).await
             }
@@ -242,6 +247,21 @@ impl Handler {
                 commands::user::help::handle_help_button(ctx, component, &self.data).await
             }
             "help_back" => commands::user::help::handle_help_back(ctx, component, &self.data).await,
+            "guild_notifs" => {
+                commands::user::guild_notifs::handle_open(ctx, component, &self.data).await
+            }
+            "gn_account" => {
+                commands::user::guild_notifs::handle_account(ctx, component, &self.data).await
+            }
+            "gn_tags" => {
+                commands::user::guild_notifs::handle_tags(ctx, component, &self.data).await
+            }
+            "gn_stop" => {
+                commands::user::guild_notifs::handle_stop(ctx, component, &self.data).await
+            }
+            "gn_back" => {
+                commands::user::guild_notifs::handle_back(ctx, component, &self.data).await
+            }
             _ if id.starts_with("dashboard_accounts_back:") => {
                 commands::admin::accounts_panel::handle_dashboard_accounts_back(
                     ctx, component, &self.data,

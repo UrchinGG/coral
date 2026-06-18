@@ -6,7 +6,8 @@ use crate::{
     utils::{separator, text},
 };
 
-const CUBELIFY_GIF: &str = "https://cdn.discordapp.com/attachments/1269030478464159744/1332913802059972669/urchin-instructions.gif";
+const CUBELIFY_GIF: &[u8] = include_bytes!("../../../assets/coral_instructions.gif");
+const CUBELIFY_GIF_NAME: &str = "coral_instructions.gif";
 
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("help").description("Setup guide and frequently asked questions")
@@ -25,6 +26,7 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
             CreateInteractionResponse::Message(
                 CreateInteractionResponseMessage::new()
                     .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
+                    .add_file(CreateAttachment::bytes(CUBELIFY_GIF, CUBELIFY_GIF_NAME))
                     .components(components),
             ),
         )
@@ -49,6 +51,7 @@ pub async fn handle_help_button(
             CreateInteractionResponse::UpdateMessage(
                 CreateInteractionResponseMessage::new()
                     .flags(MessageFlags::IS_COMPONENTS_V2)
+                    .add_file(CreateAttachment::bytes(CUBELIFY_GIF, CUBELIFY_GIF_NAME))
                     .components(components),
             ),
         )
@@ -76,9 +79,9 @@ fn build_help_view(api_key: Option<&str>, from_dashboard: bool) -> Vec<CreateCom
     parts.push(text(
         "### How to add Urchin to Cubelify\n\
          1. Run `/dashboard` to register and get your API key\n\
-         2. Open the **settings menu** in Cubelify\n\
-         3. Enable **custom anti-sniper** and paste the URL below\n\
-         4. Go to your **column settings**\n\
+         2. Open the **Settings** menu in Cubelify and navigate to **Integrations**\n\
+         3. Under **Custom**,paste the URL below\n\
+         4. Go to the **Columns** page\n\
          5. Add the **Custom Anti-Sniper Tags** column to your overlay",
     ));
     match api_key {
@@ -92,7 +95,7 @@ fn build_help_view(api_key: Option<&str>, from_dashboard: bool) -> Vec<CreateCom
 
     parts.push(CreateContainerComponent::MediaGallery(
         CreateMediaGallery::new(vec![CreateMediaGalleryItem::new(
-            CreateUnfurledMediaItem::new(CUBELIFY_GIF),
+            CreateUnfurledMediaItem::new(format!("attachment://{CUBELIFY_GIF_NAME}")),
         )]),
     ));
     parts.push(separator());
@@ -103,7 +106,7 @@ fn build_help_view(api_key: Option<&str>, from_dashboard: bool) -> Vec<CreateCom
 
     parts.push(text(
         "<:sniper:1459106167270932618> **Sniper**\n\
-         -# Used for cheating snipers. Check the tooltip date — if it's old, they may no longer be active.\n\
+         -# Used for cheating snipers. Check the tooltip date; if it's old, they may no longer be active.\n\
          <:blatantcheater:1459106183196577812> **Blatant Cheater**\n\
          -# Obvious cheats that would be impossible on a vanilla client, like scaffold, speedmine, or autoblock.\n\
          <:closetcheater:1459106337039323136> **Closet Cheater**\n\
@@ -119,11 +122,11 @@ fn build_help_view(api_key: Option<&str>, from_dashboard: bool) -> Vec<CreateCom
     parts.push(text(
         "### FAQ\n\
          **How do I find my API key?**\n\
-         -# Run `/dashboard` — a key is generated automatically when you first open it.\n\
+         -# Run `/dashboard`. A key is generated automatically when you first open it.\n\
          **What's a developer key?**\n\
          -# A separate key that can be granted access to private endpoints, for development purposes. Open a ticket in our server to request one.\n\
          **How do I report a cheater?**\n\
-         -# Use the `/tag` command with their username and the appropriate tag type. Make sure you read the rules before attempting to report or tag any account."
+         -# Use the `/tag add` command with their username and the appropriate tag type. Make sure you read the rules before attempting to report or tag any account."
     ));
 
     if from_dashboard {

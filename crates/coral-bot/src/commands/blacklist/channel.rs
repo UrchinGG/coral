@@ -5,7 +5,7 @@ use blacklist::{
     EMOTE_ADDTAG, EMOTE_EDITTAG, EMOTE_EVIDENCE, EMOTE_NO_EVIDENCE, EMOTE_REMOVETAG, EMOTE_TAG,
     lookup as lookup_tag,
 };
-use database::{BlacklistRepository, CacheRepository, PlayerEvent};
+use database::{BlacklistRepository, CacheRepository, GuildSubscriptionRepository, PlayerEvent};
 
 use super::evidence::evidence_thread_url;
 
@@ -299,7 +299,18 @@ pub async fn post_new_tag(
     if silent {
         return None;
     }
-    post_to_blacklist_channel(ctx, data, uuid, name, all_tags, "New Tag", EMOTE_ADDTAG).await
+    let watchers = guild_watchers(data, uuid, tag.tag_type.as_deref()).await;
+    post_to_blacklist_channel(
+        ctx,
+        data,
+        uuid,
+        name,
+        all_tags,
+        "New Tag",
+        EMOTE_ADDTAG,
+        &watchers,
+    )
+    .await
 }
 
 pub async fn post_overwritten_tag(
@@ -315,6 +326,7 @@ pub async fn post_overwritten_tag(
     if silent {
         return None;
     }
+    let watchers = guild_watchers(data, uuid, tag.tag_type.as_deref()).await;
     post_to_blacklist_channel(
         ctx,
         data,
@@ -323,8 +335,29 @@ pub async fn post_overwritten_tag(
         all_tags,
         "Tag Overwritten",
         EMOTE_EDITTAG,
+        &watchers,
     )
     .await
+}
+
+async fn guild_watchers(data: &Data, uuid: &str, tag_type: Option<&str>) -> Vec<UserId> {
+    let Some(tag_type) = tag_type else {
+        return Vec::new();
+    };
+    let Ok(Some(raw)) = data.api.get_guild_by_player(uuid).await else {
+        return Vec::new();
+    };
+    let Some(guild_id) = raw["_id"].as_str() else {
+        return Vec::new();
+    };
+    GuildSubscriptionRepository::new(data.db.pool())
+        .subscribers_for(guild_id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|s| s.tag_types.is_empty() || s.tag_types.iter().any(|t| t == tag_type))
+        .map(|s| UserId::new(s.discord_id as u64))
+        .collect()
 }
 
 pub async fn post_tag_removed(
@@ -384,6 +417,7 @@ pub async fn post_tag_removed(
         channel_id,
         make_container(pub_footer),
         vec![public_face],
+        &[],
     )
     .await;
 }
@@ -619,7 +653,7 @@ async fn send_to_mod_channel(
     let Some(channel_id) = data.mod_channel_id else {
         return;
     };
-    if send_container(ctx, channel_id, container, files)
+    if send_container(ctx, channel_id, container, files, &[])
         .await
         .is_none()
     {
@@ -635,6 +669,7 @@ async fn post_to_blacklist_channel(
     all_tags: &[PlayerEvent],
     title: &str,
     emote: &str,
+    mentions: &[UserId],
 ) -> Option<MessageId> {
     let channel_id = data.blacklist_channel_id?;
     let dashed_uuid = format_uuid_dashed(uuid);
@@ -686,11 +721,28 @@ async fn post_to_blacklist_channel(
     parts.push(CreateContainerComponent::TextDisplay(
         CreateTextDisplay::new(footer),
     ));
+    if !mentions.is_empty() {
+        let pings = mentions
+            .iter()
+            .map(|u| format!("<@{}>", u.get()))
+            .collect::<Vec<_>>()
+            .join(" ");
+        parts.push(CreateContainerComponent::TextDisplay(
+            CreateTextDisplay::new(pings),
+        ));
+    }
     parts.push(CreateContainerComponent::Separator(CreateSeparator::new(
         true,
     )));
 
-    send_container(ctx, channel_id, CreateContainer::new(parts), vec![face]).await
+    send_container(
+        ctx,
+        channel_id,
+        CreateContainer::new(parts),
+        vec![face],
+        mentions,
+    )
+    .await
 }
 
 async fn send_container(
@@ -698,6 +750,7 @@ async fn send_container(
     channel_id: ChannelId,
     container: CreateContainer<'static>,
     files: Vec<CreateAttachment<'static>>,
+    mentions: &[UserId],
 ) -> Option<MessageId> {
     match ctx
         .http
@@ -706,7 +759,8 @@ async fn send_container(
             files,
             &CreateMessage::new()
                 .flags(MessageFlags::IS_COMPONENTS_V2)
-                .components(vec![CreateComponent::Container(container)]),
+                .components(vec![CreateComponent::Container(container)])
+                .allowed_mentions(CreateAllowedMentions::new().users(mentions.to_vec())),
         )
         .await
     {

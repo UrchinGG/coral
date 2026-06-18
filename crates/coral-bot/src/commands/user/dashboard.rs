@@ -293,6 +293,9 @@ pub(crate) async fn build_dashboard_view(
             CreateButton::new("help_button")
                 .label("Help & Setup Guide")
                 .style(ButtonStyle::Secondary),
+            CreateButton::new("guild_notifs")
+                .label("Guild Notifications")
+                .style(ButtonStyle::Secondary),
         ]),
     ));
 

@@ -7,6 +7,7 @@ mod developer_keys;
 mod guild_cache;
 mod guild_config;
 mod guild_current;
+mod guild_subscriptions;
 mod members;
 mod periods;
 mod plugin_registry;
@@ -24,6 +25,7 @@ pub use developer_keys::{DeveloperKey, DeveloperKeyRepository, permissions};
 pub use guild_cache::GuildCacheRepository;
 pub use guild_config::{GuildConfig, GuildConfigRepository, GuildRoleRule};
 pub use guild_current::GuildCurrentRepository;
+pub use guild_subscriptions::{GuildSubscription, GuildSubscriptionRepository};
 pub use members::{Member, MemberRepository};
 pub use periods::Period;
 pub use plugin_registry::{

@@ -46,6 +46,23 @@ impl<'a> CacheRepository<'a> {
         Ok(count)
     }
 
+    pub async fn usernames(
+        &self,
+        uuids: &[String],
+    ) -> Result<std::collections::HashMap<String, String>, sqlx::Error> {
+        let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT DISTINCT ON (uuid) uuid, username FROM player_snapshots
+             WHERE uuid = ANY($1) ORDER BY uuid, timestamp DESC",
+        )
+        .bind(uuids)
+        .fetch_all(self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(uuid, name)| name.map(|name| (uuid, name)))
+            .collect())
+    }
+
     async fn register_player(&self, uuid: &str) -> Result<(), sqlx::Error> {
         sqlx::query("INSERT INTO players (uuid) VALUES ($1) ON CONFLICT DO NOTHING")
             .bind(uuid)
