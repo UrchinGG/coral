@@ -8,6 +8,7 @@ use crate::{
 
 pub mod batch;
 pub mod cubelify;
+pub mod guild;
 pub mod hypixel;
 pub mod player;
 pub mod resolve;
@@ -23,6 +24,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .merge(batch::router())
         .merge(tags::router())
         .merge(session::router())
+        .merge(guild::router())
         .merge(winstreaks::router())
         .route_layer(middleware::from_fn_with_state(
             state.clone(),

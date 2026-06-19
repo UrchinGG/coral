@@ -215,7 +215,7 @@ async fn delta_response(
     }))
 }
 
-fn parse_duration(s: &str) -> Option<Duration> {
+pub(crate) fn parse_duration(s: &str) -> Option<Duration> {
     let (digits, unit) = s.split_at(s.len().checked_sub(1)?);
     let n: i64 = digits.parse().ok()?;
     if n <= 0 {
@@ -477,7 +477,7 @@ async fn require_owner(
     Ok(())
 }
 
-fn parse_timestamp(s: &str) -> Result<DateTime<Utc>, ApiError> {
+pub(crate) fn parse_timestamp(s: &str) -> Result<DateTime<Utc>, ApiError> {
     if let Ok(millis) = s.parse::<i64>() {
         return DateTime::from_timestamp_millis(millis)
             .ok_or_else(|| ApiError::BadRequest("invalid timestamp".into()));

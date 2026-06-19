@@ -7,6 +7,7 @@ use crate::{
     routes::{
         batch::{BatchRequest, BatchResponse},
         cubelify::CubelifyQuery,
+        guild::{GuildSessionResponse, GuildSnapshotDataResponse, GuildSnapshotListResponse},
         resolve::ResolveResponse,
         session::*,
         tags::{AddTagBody, LockRequest, RemoveTagBody, UpdateTagBody, UuidQuery},
@@ -34,6 +35,12 @@ use crate::{
         crate::routes::session::rename_marker,
         crate::routes::session::delete_marker,
         crate::routes::session::list_snapshots,
+        crate::routes::guild::guild_daily,
+        crate::routes::guild::guild_weekly,
+        crate::routes::guild::guild_monthly,
+        crate::routes::guild::guild_yearly,
+        crate::routes::guild::guild_custom,
+        crate::routes::guild::guild_snapshots,
         crate::routes::winstreaks::player_winstreaks,
 
         crate::routes::tags::add_tag,
@@ -61,6 +68,7 @@ use crate::{
             MarkerResponse, MarkerListResponse,
             CreateMarkerRequest, RenameMarkerRequest,
             SnapshotListResponse, SnapshotDataResponse,
+            GuildSessionResponse, GuildSnapshotListResponse, GuildSnapshotDataResponse,
             WinstreakResponse, StreakEntry,
             AddTagBody, RemoveTagBody, UpdateTagBody, LockRequest, UuidQuery,
             PlayerStatsResponse,
@@ -71,6 +79,7 @@ use crate::{
     tags(
         (name = "Cubelify", description = "Blacklist data formatted for the Cubelify overlay."),
         (name = "Player", description = "Hypixel player data, including tags, sessions, markers, winstreaks, and batch lookups."),
+        (name = "Guild", description = "Historical guild snapshots and session deltas for guilds you are a member of."),
         (name = "Blacklist", description = "Blacklist write operations: adding, removing, and overwriting tags, and locking players."),
         (name = "Internal", description = "Privileged endpoints that require a developer permission or an Admin key."),
         (name = "Hypixel", description = "Unmodified passthrough to the Hypixel API."),

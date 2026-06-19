@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -58,6 +59,105 @@ impl<'a> GuildCacheRepository<'a> {
         guild_id: &str,
         at: DateTime<Utc>,
     ) -> Result<Option<Value>, sqlx::Error> {
+        Ok(self
+            .reconstruct_at(guild_id, at)
+            .await?
+            .map(|keyed| array_members(&keyed)))
+    }
+
+    pub async fn get_current_keyed(&self, guild_id: &str) -> Result<Option<Value>, sqlx::Error> {
+        self.reconstruct_at(guild_id, Utc::now()).await
+    }
+
+    pub async fn get_at_keyed(
+        &self,
+        guild_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<Option<Value>, sqlx::Error> {
+        self.reconstruct_at(guild_id, at).await
+    }
+
+    pub async fn list_snapshot_timestamps(
+        &self,
+        guild_id: &str,
+        before: Option<DateTime<Utc>>,
+        after: Option<DateTime<Utc>>,
+    ) -> Result<Vec<DateTime<Utc>>, sqlx::Error> {
+        sqlx::query_as::<_, (DateTime<Utc>,)>(
+            "SELECT timestamp FROM guild_snapshots
+             WHERE guild_id = $1
+               AND ($2::timestamptz IS NULL OR timestamp < $2)
+               AND ($3::timestamptz IS NULL OR timestamp > $3)
+             ORDER BY timestamp ASC",
+        )
+        .bind(guild_id)
+        .bind(before)
+        .bind(after)
+        .fetch_all(self.pool)
+        .await
+        .map(|rows| rows.into_iter().map(|r| r.0).collect())
+    }
+
+    pub async fn member_gexp(
+        &self,
+        guild_id: &str,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<HashMap<String, BTreeMap<String, i64>>, sqlx::Error> {
+        let times = self
+            .list_snapshot_timestamps(guild_id, Some(to), Some(from))
+            .await?;
+
+        let mut picks: Vec<DateTime<Utc>> = Vec::new();
+        for &t in &times {
+            match picks.last() {
+                None => picks.push(t),
+                Some(&last) if (t - last).num_days() >= 6 => picks.push(t),
+                _ => {}
+            }
+        }
+        if let Some(&last) = times.last() {
+            if picks.last() != Some(&last) {
+                picks.push(last);
+            }
+        }
+
+        let from_date = from.format("%Y-%m-%d").to_string();
+        let to_date = to.format("%Y-%m-%d").to_string();
+
+        let mut out: HashMap<String, BTreeMap<String, i64>> = HashMap::new();
+        for t in picks {
+            let Some(snapshot) = self.reconstruct_at(guild_id, t).await? else {
+                continue;
+            };
+            let Some(members) = snapshot.get("members").and_then(Value::as_object) else {
+                continue;
+            };
+            for (uuid, member) in members {
+                let Some(history) = member.get("expHistory").and_then(Value::as_object) else {
+                    continue;
+                };
+                for (date, gexp) in history {
+                    if date.as_str() < from_date.as_str() || date.as_str() > to_date.as_str() {
+                        continue;
+                    }
+                    let day = out
+                        .entry(uuid.clone())
+                        .or_default()
+                        .entry(date.clone())
+                        .or_insert(0);
+                    *day = (*day).max(gexp.as_i64().unwrap_or(0));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    async fn reconstruct_at(
+        &self,
+        guild_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<Option<Value>, sqlx::Error> {
         let baseline: Option<GuildSnapshotRow> = sqlx::query_as(
             "SELECT is_baseline, data, timestamp FROM guild_snapshots
              WHERE guild_id = $1 AND is_baseline = true AND timestamp <= $2
@@ -69,12 +169,21 @@ impl<'a> GuildCacheRepository<'a> {
         .await?;
 
         let Some(baseline) = baseline else {
-            return Ok(None);
+            let first: Option<GuildSnapshotRow> = sqlx::query_as(
+                "SELECT is_baseline, data, timestamp FROM guild_snapshots
+                 WHERE guild_id = $1 AND is_baseline = true AND timestamp > $2
+                 ORDER BY timestamp ASC LIMIT 1",
+            )
+            .bind(guild_id)
+            .bind(at)
+            .fetch_optional(self.pool)
+            .await?;
+            return Ok(first.map(|f| f.data));
         };
         let (reconstructed, _) = self
             .reconstruct(guild_id, baseline.timestamp, baseline.data, at)
             .await?;
-        Ok(Some(array_members(&reconstructed)))
+        Ok(Some(reconstructed))
     }
 
     async fn latest_baseline(

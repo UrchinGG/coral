@@ -52,6 +52,19 @@ impl<'a> AccountRepository<'a> {
         .await
     }
 
+    pub async fn list_uuids(&self, discord_id: i64) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT uuid FROM members WHERE discord_id = $1 AND uuid IS NOT NULL
+             UNION
+             SELECT ma.uuid FROM minecraft_accounts ma
+             JOIN members m ON m.id = ma.member_id
+             WHERE m.discord_id = $1",
+        )
+        .bind(discord_id)
+        .fetch_all(self.pool)
+        .await
+    }
+
     pub async fn is_owned_by(&self, uuid: &str, discord_id: i64) -> Result<bool, sqlx::Error> {
         let row: Option<(bool,)> = sqlx::query_as(
             "SELECT EXISTS(
