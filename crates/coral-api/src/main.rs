@@ -24,6 +24,7 @@ mod cache;
 mod discord;
 mod error;
 mod openapi;
+mod reqlog;
 mod responses;
 mod routes;
 mod state;
@@ -37,7 +38,10 @@ async fn main() -> Result<()> {
     if state.starfish.is_some() {
         spawn_starfish_cleanup(state.db.clone());
     }
-    serve(build_router(state)).await
+    reqlog::spawn_partition_maintenance(state.db.clone());
+    let (log_tx, log_rx) = reqlog::channel();
+    reqlog::spawn_writer(state.db.clone(), log_rx);
+    serve(build_router(state, log_tx)).await
 }
 
 fn spawn_starfish_cleanup(db: std::sync::Arc<database::Database>) {
@@ -146,7 +150,7 @@ fn parse_starfish_config() -> Option<StarfishConfig> {
     Some(config)
 }
 
-fn build_router(state: AppState) -> Router {
+fn build_router(state: AppState, log_tx: reqlog::LogSender) -> Router {
     let api = openapi::ApiDoc::openapi();
     Router::new()
         .route("/health", get(health_check))
@@ -167,6 +171,10 @@ fn build_router(state: AppState) -> Router {
         .merge(Scalar::with_url("/", api).custom_html(SCALAR_HTML))
         .nest("/v3", routes::router(state.clone()))
         .nest("/api/v1/starfish", routes::starfish::router(state.clone()))
+        .layer(axum::middleware::from_fn_with_state(
+            log_tx,
+            reqlog::log_requests,
+        ))
         .with_state(state)
 }
 
