@@ -182,6 +182,14 @@ fn thread_id(channel_id: GenericChannelId) -> ThreadId {
     ThreadId::new(channel_id.get())
 }
 
+pub(crate) fn reset_thread_votes(data: &Data, thread_id: u64) {
+    data.pending_review_votes.lock().unwrap().remove(&thread_id);
+    data.vote_messages
+        .lock()
+        .unwrap()
+        .retain(|(t, _, _), _| *t != thread_id);
+}
+
 fn attachment_id_from_cdn_url(url: &str) -> Option<AttachmentId> {
     let path = url.split("/attachments/").nth(1)?;
     let id_str = path.split('/').nth(1)?;

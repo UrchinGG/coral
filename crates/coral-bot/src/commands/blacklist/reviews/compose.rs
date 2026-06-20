@@ -436,6 +436,7 @@ pub async fn handle_edit_submitted(
 
     state.submitted = false;
     state.reopened = true;
+    reset_thread_votes(data, component.channel_id.get());
     component
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
