@@ -102,6 +102,7 @@ async fn init_data() -> Result<Data> {
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0),
         info_cache: Arc::new(Mutex::new(Default::default())),
+        review_locks: Arc::new(Mutex::new(HashMap::new())),
     })
 }
 

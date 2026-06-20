@@ -113,6 +113,7 @@ fn record_player_vote(
 
 fn cleanup_review_votes(data: &Data, thread_id: u64) {
     data.pending_review_votes.lock().unwrap().remove(&thread_id);
+    data.review_locks.lock().unwrap().remove(&thread_id);
     data.vote_messages
         .lock()
         .unwrap()

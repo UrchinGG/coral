@@ -58,6 +58,7 @@ pub struct Data {
     pub vote_messages: Arc<Mutex<HashMap<(u64, usize, u64), u64>>>,
     pub started_at: i64,
     pub info_cache: Arc<Mutex<commands::admin::info::InfoCache>>,
+    pub review_locks: Arc<Mutex<HashMap<u64, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
 impl Data {
@@ -68,6 +69,15 @@ impl Data {
     pub fn evidence_thread_for(&self, uuid: &str) -> Option<ThreadId> {
         let key = uuid.replace('-', "");
         self.evidence_threads.read().unwrap().get(&key).copied()
+    }
+
+    pub fn review_lock(&self, thread_id: u64) -> Arc<tokio::sync::Mutex<()>> {
+        self.review_locks
+            .lock()
+            .unwrap()
+            .entry(thread_id)
+            .or_default()
+            .clone()
     }
 }
 
@@ -216,6 +226,17 @@ impl Handler {
         component: &ComponentInteraction,
         id: &str,
     ) -> anyhow::Result<()> {
+        let _review_guard = if id.starts_with("review_") {
+            Some(
+                self.data
+                    .review_lock(component.channel_id.get())
+                    .lock_owned()
+                    .await,
+            )
+        } else {
+            None
+        };
+
         match id {
             "regenerate_key" => {
                 commands::user::dashboard::handle_regenerate_key(ctx, component, &self.data).await
@@ -489,6 +510,16 @@ impl Handler {
 
     async fn handle_modal(&self, ctx: &Context, modal: &ModalInteraction) -> anyhow::Result<()> {
         let id = modal.data.custom_id.as_str();
+        let _review_guard = if id.starts_with("review_") {
+            Some(
+                self.data
+                    .review_lock(modal.channel_id.get())
+                    .lock_owned()
+                    .await,
+            )
+        } else {
+            None
+        };
 
         match id {
             _ if id.starts_with("session_rename_modal:") => {
