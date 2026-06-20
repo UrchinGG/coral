@@ -114,6 +114,7 @@ impl HypixelClient {
                 .header("API-Key", &self.key)
                 .send()
                 .await?;
+            self.record_egress(!response.status().is_success()).await;
 
             if response.status() == StatusCode::TOO_MANY_REQUESTS {
                 let retry = header_i64(&response, "retry-after").unwrap_or(DEFAULT_RETRY_SECS);
@@ -147,6 +148,30 @@ impl HypixelClient {
             Some(cause) => Err(ClientError::HypixelApi(cause.clone())),
             None => Ok(()),
         }
+    }
+
+    async fn record_egress(&self, is_error: bool) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let key = format!("hp:hist:{}", now / 86_400);
+        let minute = (now % 86_400) / 60;
+        let mut pipe = redis::pipe();
+        pipe.cmd("HINCRBY")
+            .arg(&key)
+            .arg(format!("t{minute}"))
+            .arg(1)
+            .ignore();
+        if is_error {
+            pipe.cmd("HINCRBY")
+                .arg(&key)
+                .arg(format!("e{minute}"))
+                .arg(1)
+                .ignore();
+        }
+        pipe.cmd("EXPIRE").arg(&key).arg(15 * 86_400).ignore();
+        let _: Result<(), _> = pipe.query_async(&mut self.redis.clone()).await;
     }
 
     async fn cache_get(&self, key: &str) -> Option<Option<Value>> {

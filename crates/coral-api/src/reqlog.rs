@@ -16,8 +16,11 @@ pub struct LogEntry {
     key_kind: &'static str,
     method: String,
     path: String,
+    query: Option<String>,
+    user_agent: Option<String>,
     status: i16,
     latency_ms: i32,
+    error: Option<String>,
 }
 
 pub type LogSender = mpsc::Sender<LogEntry>;
@@ -32,13 +35,23 @@ pub async fn log_requests(State(tx): State<LogSender>, req: Request, next: Next)
         return next.run(req).await;
     }
     let method = req.method().as_str().to_owned();
+    let query = req.uri().query().map(str::to_owned);
     let ip = client_ip(&req);
+    let user_agent = req
+        .headers()
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.chars().take(256).collect());
     let key = extract_key(&req);
     let key_kind = if key.is_some() { "key" } else { "none" };
     let key_prefix = key.map(|k| k.chars().take(8).collect());
     let start = Instant::now();
 
     let res = next.run(req).await;
+    let status = res.status().as_u16() as i16;
+    let latency_ms = start.elapsed().as_millis().min(i32::MAX as u128) as i32;
+
+    let (res, error) = capture_error(res, status).await;
 
     let _ = tx.try_send(LogEntry {
         ts: Utc::now(),
@@ -47,10 +60,31 @@ pub async fn log_requests(State(tx): State<LogSender>, req: Request, next: Next)
         key_kind,
         method,
         path,
-        status: res.status().as_u16() as i16,
-        latency_ms: start.elapsed().as_millis().min(i32::MAX as u128) as i32,
+        query,
+        user_agent,
+        status,
+        latency_ms,
+        error,
     });
     res
+}
+
+async fn capture_error(res: Response, status: i16) -> (Response, Option<String>) {
+    if status < 400 {
+        return (res, None);
+    }
+    let (parts, body) = res.into_parts();
+    match axum::body::to_bytes(body, 1_048_576).await {
+        Ok(bytes) => {
+            let error = (!bytes.is_empty())
+                .then(|| String::from_utf8_lossy(&bytes).chars().take(2000).collect());
+            (
+                Response::from_parts(parts, axum::body::Body::from(bytes)),
+                error,
+            )
+        }
+        Err(_) => (Response::from_parts(parts, axum::body::Body::empty()), None),
+    }
 }
 
 fn client_ip(req: &Request) -> Option<String> {
@@ -86,7 +120,7 @@ pub fn spawn_writer(db: Arc<Database>, mut rx: mpsc::Receiver<LogEntry>) {
 
 async fn insert_batch(pool: &PgPool, entries: &[LogEntry]) -> Result<(), sqlx::Error> {
     let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
-        "INSERT INTO api_request_log (ts, ip, key_prefix, key_kind, method, path, status, latency_ms) ",
+        "INSERT INTO api_request_log (ts, ip, key_prefix, key_kind, method, path, query, user_agent, status, latency_ms, error) ",
     );
     qb.push_values(entries, |mut b, e| {
         b.push_bind(e.ts)
@@ -95,8 +129,11 @@ async fn insert_batch(pool: &PgPool, entries: &[LogEntry]) -> Result<(), sqlx::E
             .push_bind(e.key_kind)
             .push_bind(e.method.clone())
             .push_bind(e.path.clone())
+            .push_bind(e.query.clone())
+            .push_bind(e.user_agent.clone())
             .push_bind(e.status)
-            .push_bind(e.latency_ms);
+            .push_bind(e.latency_ms)
+            .push_bind(e.error.clone());
     });
     qb.build().execute(pool).await?;
     Ok(())
