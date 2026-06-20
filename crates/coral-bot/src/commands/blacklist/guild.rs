@@ -5,7 +5,6 @@ use blacklist::lookup as lookup_tag;
 use clients::is_uuid;
 use database::{BlacklistRepository, CacheRepository, PlayerEvent};
 
-use super::channel::tag_label;
 use crate::{
     framework::Data,
     utils::{format_number, separator, text},
@@ -169,8 +168,10 @@ fn member_line(
         .min_by_key(|t| lookup_tag(t).map(|d| d.priority).unwrap_or(u8::MAX));
     match tag {
         Some(tag) => {
-            let emote = lookup_tag(tag).map(|d| d.emote).unwrap_or("");
-            format!("{emote} `{name}` {}", tag_label(tag))
+            let def = lookup_tag(tag);
+            let emote = def.map(|d| d.emote).unwrap_or("");
+            let display = def.map(|d| d.display_name).unwrap_or(tag);
+            format!("{emote} `{name}` **{display}**")
         }
         None => format!("`{name}`"),
     }
