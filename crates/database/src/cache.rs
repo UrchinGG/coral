@@ -5,7 +5,7 @@ use futures_util::TryStreamExt;
 use serde_json::{Map, Value};
 use sqlx::{FromRow, PgPool};
 
-const RECONSTRUCTION_THRESHOLD: Duration = Duration::from_millis(2);
+const RECONSTRUCTION_THRESHOLD: Duration = Duration::from_millis(10);
 
 pub enum SnapshotResult {
     Stored(i64),
