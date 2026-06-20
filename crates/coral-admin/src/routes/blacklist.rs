@@ -1,7 +1,7 @@
 use axum::{Json, Router, extract::*, routing::get};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, PgPool};
+use sqlx::{FromRow, PgPool, Postgres, QueryBuilder};
 
 use crate::state::AppState;
 
@@ -16,7 +16,34 @@ struct ListParams {
     limit: Option<i64>,
     offset: Option<i64>,
     search: Option<String>,
+    field: Option<String>,
     tag_type: Option<String>,
+    dir: Option<String>,
+}
+
+fn bl_filters(qb: &mut QueryBuilder<'_, Postgres>, p: &ListParams) {
+    qb.push(" WHERE at.kind = 'tag_set'");
+    if let Some(s) = p.search.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        match p.field.as_deref() {
+            Some("tagger") => match s.parse::<i64>() {
+                Ok(id) => {
+                    qb.push(" AND at.author = ").push_bind(id);
+                }
+                Err(_) => {
+                    qb.push(" AND false");
+                }
+            },
+            Some("reason") => {
+                qb.push(" AND at.reason ILIKE ").push_bind(format!("%{s}%"));
+            }
+            _ => {
+                qb.push(" AND at.uuid LIKE ").push_bind(format!("%{s}%"));
+            }
+        }
+    }
+    if let Some(t) = p.tag_type.as_deref().filter(|t| !t.is_empty()) {
+        qb.push(" AND at.tag_type = ").push_bind(t.to_string());
+    }
 }
 
 #[derive(Serialize)]
@@ -142,105 +169,39 @@ async fn fetch_players(
     limit: i64,
     offset: i64,
 ) -> (i64, Vec<PlayerListRow>) {
-    match (&params.search, &params.tag_type) {
-        (Some(search), Some(tag_type)) => {
-            let pattern = format!("%{search}%");
-            let count_sql = format!(
-                "WITH {ACTIVE_TAGS_CTE}
-                 SELECT COUNT(DISTINCT at.uuid) FROM active_tags at
-                 WHERE at.uuid LIKE $1 AND at.tag_type = $2 AND at.kind = 'tag_set'"
-            );
-            let list_sql = format!(
-                "WITH {ACTIVE_TAGS_CTE}
-                 SELECT MAX(at.id) AS id, at.uuid FROM active_tags at
-                 WHERE at.uuid LIKE $1 AND at.tag_type = $2 AND at.kind = 'tag_set'
-                 GROUP BY at.uuid
-                 ORDER BY MAX(at.ts) DESC LIMIT $3 OFFSET $4"
-            );
-            let total = sqlx::query_scalar(&count_sql)
-                .bind(&pattern)
-                .bind(tag_type)
-                .fetch_one(pool)
-                .await
-                .unwrap_or(0);
-            let players = sqlx::query_as(&list_sql)
-                .bind(&pattern)
-                .bind(tag_type)
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(pool)
-                .await
-                .unwrap_or_default();
-            (total, players)
-        }
-        (Some(search), None) => {
-            let pattern = format!("%{search}%");
-            let total = sqlx::query_scalar(
-                "SELECT COUNT(DISTINCT uuid) FROM player_events WHERE uuid LIKE $1",
-            )
-            .bind(&pattern)
-            .fetch_one(pool)
-            .await
-            .unwrap_or(0);
-            let players = sqlx::query_as(
-                "SELECT MAX(id) AS id, uuid FROM player_events
-                 WHERE uuid LIKE $1
-                 GROUP BY uuid
-                 ORDER BY MAX(ts) DESC LIMIT $2 OFFSET $3",
-            )
-            .bind(&pattern)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
-            (total, players)
-        }
-        (None, Some(tag_type)) => {
-            let count_sql = format!(
-                "WITH {ACTIVE_TAGS_CTE}
-                 SELECT COUNT(DISTINCT at.uuid) FROM active_tags at
-                 WHERE at.tag_type = $1 AND at.kind = 'tag_set'"
-            );
-            let list_sql = format!(
-                "WITH {ACTIVE_TAGS_CTE}
-                 SELECT MAX(at.id) AS id, at.uuid FROM active_tags at
-                 WHERE at.tag_type = $1 AND at.kind = 'tag_set'
-                 GROUP BY at.uuid
-                 ORDER BY MAX(at.ts) DESC LIMIT $2 OFFSET $3"
-            );
-            let total = sqlx::query_scalar(&count_sql)
-                .bind(tag_type)
-                .fetch_one(pool)
-                .await
-                .unwrap_or(0);
-            let players = sqlx::query_as(&list_sql)
-                .bind(tag_type)
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(pool)
-                .await
-                .unwrap_or_default();
-            (total, players)
-        }
-        (None, None) => {
-            let total = sqlx::query_scalar("SELECT COUNT(DISTINCT uuid) FROM player_events")
-                .fetch_one(pool)
-                .await
-                .unwrap_or(0);
-            let players = sqlx::query_as(
-                "SELECT MAX(id) AS id, uuid FROM player_events
-                 GROUP BY uuid
-                 ORDER BY MAX(ts) DESC LIMIT $1 OFFSET $2",
-            )
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
-            (total, players)
-        }
-    }
+    let dir = if params.dir.as_deref() == Some("asc") {
+        "ASC"
+    } else {
+        "DESC"
+    };
+
+    let mut count = QueryBuilder::<Postgres>::new(format!(
+        "WITH {ACTIVE_TAGS_CTE} SELECT COUNT(DISTINCT at.uuid) FROM active_tags at"
+    ));
+    bl_filters(&mut count, params);
+    let total = count
+        .build_query_scalar()
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+    let mut q = QueryBuilder::<Postgres>::new(format!(
+        "WITH {ACTIVE_TAGS_CTE} SELECT MAX(at.id) AS id, at.uuid FROM active_tags at"
+    ));
+    bl_filters(&mut q, params);
+    q.push(format!(
+        " GROUP BY at.uuid ORDER BY MAX(at.ts) {dir} LIMIT "
+    ))
+    .push_bind(limit)
+    .push(" OFFSET ")
+    .push_bind(offset);
+    let players = q
+        .build_query_as::<PlayerListRow>()
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+    (total, players)
 }
 
 async fn fetch_tags_for(pool: &PgPool, uuids: &[String]) -> Vec<Tag> {

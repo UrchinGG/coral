@@ -58,12 +58,12 @@ jobs:
         run: tar -xf /srv/coral/overrides/coral-overrides.tar -C .
 
       - name: Build coral images
-        run: docker compose build coral-api coral-bot coral-sync coral-web
+        run: docker compose --profile admin build coral-api coral-bot coral-sync coral-web coral-admin
 
       - name: Tag + push to local registry
         run: |
           PROJECT=$(basename "$GITHUB_WORKSPACE")
-          for svc in coral-api coral-bot coral-sync coral-web; do
+          for svc in coral-api coral-bot coral-sync coral-web coral-admin; do
             docker tag "${PROJECT}-${svc}:latest" "${REGISTRY}/${svc}:latest"
             docker push "${REGISTRY}/${svc}:latest"
           done
@@ -79,7 +79,7 @@ jobs:
           ssh debian@coral-vm.tailde25ae.ts.net <<'REMOTE'
             set -e
             cd ~/coral-r730
-            docker compose pull coral-api coral-bot coral-sync coral-web
+            docker compose pull coral-api coral-bot coral-sync coral-web coral-admin
           REMOTE
 
       - name: Roll coral-api (new replica → wait healthy → stop old)
@@ -113,12 +113,12 @@ jobs:
             docker stop "$OLD" && docker rm -f "$OLD"
           REMOTE
 
-      - name: Update bot, sync, web
+      - name: Update bot, sync, web, admin
         run: |
           ssh debian@coral-vm.tailde25ae.ts.net <<'REMOTE'
             set -e
             cd ~/coral-r730
-            docker compose up -d --wait --wait-timeout 120 coral-bot coral-sync coral-web
+            docker compose up -d --wait --wait-timeout 120 coral-bot coral-sync coral-web coral-admin
             docker image prune -f
           REMOTE
 

@@ -1,7 +1,7 @@
 use axum::{Json, Router, extract::*, routing::get};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
+use sqlx::{FromRow, Postgres, QueryBuilder};
 
 use crate::state::AppState;
 
@@ -16,6 +16,38 @@ struct ListParams {
     limit: Option<i64>,
     offset: Option<i64>,
     search: Option<String>,
+    sort: Option<String>,
+    dir: Option<String>,
+    rank: Option<i16>,
+    locked: Option<bool>,
+    haskey: Option<bool>,
+}
+
+fn apply_filters(qb: &mut QueryBuilder<'_, Postgres>, p: &ListParams) {
+    let mut sep = " WHERE ";
+    if let Some(s) = p.search.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let pattern = format!("%{s}%");
+        qb.push(sep)
+            .push("(discord_id::text LIKE ")
+            .push_bind(pattern.clone())
+            .push(" OR uuid LIKE ")
+            .push_bind(pattern)
+            .push(")");
+        sep = " AND ";
+    }
+    if let Some(rank) = p.rank {
+        qb.push(sep).push("access_level >= ").push_bind(rank);
+        sep = " AND ";
+    }
+    if p.locked.unwrap_or(false) {
+        qb.push(sep).push("key_locked = true");
+        sep = " AND ";
+    }
+    if p.haskey.unwrap_or(false) {
+        qb.push(sep).push("api_key IS NOT NULL");
+        sep = " AND ";
+    }
+    let _ = sep;
 }
 
 #[derive(Serialize)]
@@ -31,12 +63,11 @@ struct Summary {
     uuid: Option<String>,
     join_date: DateTime<Utc>,
     request_count: i64,
-    is_admin: bool,
-    is_mod: bool,
-    is_private: bool,
-    is_beta: bool,
+    access_level: i16,
     key_locked: bool,
     has_api_key: bool,
+    #[sqlx(default)]
+    is_owner: bool,
 }
 
 #[derive(Serialize)]
@@ -55,14 +86,13 @@ struct MemberRow {
     api_key_preview: Option<String>,
     join_date: DateTime<Utc>,
     request_count: i64,
-    is_admin: bool,
-    is_mod: bool,
-    is_private: bool,
-    is_beta: bool,
+    access_level: i16,
     key_locked: bool,
     config: serde_json::Value,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    #[sqlx(default)]
+    is_owner: bool,
 }
 
 #[derive(Serialize, FromRow)]
@@ -82,56 +112,47 @@ async fn list(
     State(state): State<AppState>,
     Query(params): Query<ListParams>,
 ) -> Json<ListResponse> {
-    let limit = params.limit.unwrap_or(50).min(200);
-    let offset = params.offset.unwrap_or(0);
+    let limit = params.limit.unwrap_or(50).clamp(1, 200);
+    let offset = params.offset.unwrap_or(0).max(0);
     let pool = state.db.pool();
 
-    let (total, members) = match params.search {
-        Some(ref search) => {
-            let pattern = format!("%{search}%");
-            let total = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM members WHERE discord_id::text LIKE $1 OR uuid LIKE $1",
-            )
-            .bind(&pattern)
-            .fetch_one(pool)
-            .await
-            .unwrap_or(0);
-            let members = sqlx::query_as::<_, Summary>(
-                r#"SELECT id, discord_id, uuid, join_date, request_count,
-                          is_admin, is_mod, is_private, is_beta, key_locked,
-                          api_key IS NOT NULL as has_api_key
-                   FROM members
-                   WHERE discord_id::text LIKE $1 OR uuid LIKE $1
-                   ORDER BY id DESC LIMIT $2 OFFSET $3"#,
-            )
-            .bind(&pattern)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
-            (total, members)
-        }
-        None => {
-            let total = sqlx::query_scalar("SELECT COUNT(*) FROM members")
-                .fetch_one(pool)
-                .await
-                .unwrap_or(0);
-            let members = sqlx::query_as::<_, Summary>(
-                r#"SELECT id, discord_id, uuid, join_date, request_count,
-                          is_admin, is_mod, is_private, is_beta, key_locked,
-                          api_key IS NOT NULL as has_api_key
-                   FROM members
-                   ORDER BY id DESC LIMIT $1 OFFSET $2"#,
-            )
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
-            (total, members)
-        }
+    let order = match params.sort.as_deref() {
+        Some("requests") => "request_count",
+        Some("joined") => "join_date",
+        Some("access") => "access_level",
+        _ => "id",
     };
+    let dir = if params.dir.as_deref() == Some("asc") {
+        "ASC"
+    } else {
+        "DESC"
+    };
+
+    let mut count = QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM members");
+    apply_filters(&mut count, &params);
+    let total = count
+        .build_query_scalar()
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+    let mut q = QueryBuilder::<Postgres>::new(
+        "SELECT id, discord_id, uuid, join_date, request_count, access_level, key_locked,
+                api_key IS NOT NULL as has_api_key FROM members",
+    );
+    apply_filters(&mut q, &params);
+    q.push(format!(" ORDER BY {order} {dir} LIMIT "))
+        .push_bind(limit)
+        .push(" OFFSET ")
+        .push_bind(offset);
+    let mut members = q
+        .build_query_as::<Summary>()
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+    for m in &mut members {
+        m.is_owner = state.owner_ids.contains(&m.discord_id);
+    }
 
     Json(ListResponse { total, members })
 }
@@ -141,7 +162,7 @@ async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> Json<Opti
 
     let member = sqlx::query_as::<_, MemberRow>(
         r#"SELECT id, discord_id, uuid, LEFT(api_key, 8) as api_key_preview,
-                  join_date, request_count, is_admin, is_mod, is_private, is_beta,
+                  join_date, request_count, access_level,
                   key_locked, config, created_at, updated_at
            FROM members WHERE id = $1"#,
     )
@@ -151,9 +172,10 @@ async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> Json<Opti
     .ok()
     .flatten();
 
-    let Some(member) = member else {
+    let Some(mut member) = member else {
         return Json(None);
     };
+    member.is_owner = state.owner_ids.contains(&member.discord_id);
 
     let ips = sqlx::query_as::<_, IpRecord>(
         r#"SELECT ip_address::text, first_seen, last_seen
