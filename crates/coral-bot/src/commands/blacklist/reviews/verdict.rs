@@ -280,7 +280,10 @@ pub async fn handle_approve(
         return send_vote_error(ctx, component, "Invalid tag type in submission").await;
     }
 
-    let repo = BlacklistRepository::new(data.db.pool());
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await?;
+
     let reviewed_by: Vec<i64> = if is_staff {
         vec![discord_id as i64]
     } else {
@@ -290,30 +293,11 @@ pub async fn handle_approve(
             .map(|&id| id as i64)
             .collect()
     };
-
-    let existing_tags = repo.get_active_tags(&player_uuid).await?;
-    let new_priority = lookup_tag(&player_tag_type)
-        .map(|d| d.priority)
-        .unwrap_or(0);
-    if let Some(conflict) = existing_tags.iter().find(|t| {
-        lookup_tag(t.tag_type.as_deref().unwrap_or(""))
-            .map(|d| d.priority)
-            .unwrap_or(0)
-            == new_priority
-    }) {
-        repo.remove_event(
-            &player_uuid,
-            conflict.tag_type.as_deref().unwrap_or(""),
-            Some(discord_id as i64),
-        )
-        .await?;
-    }
-
-    let reviewed_by_slice = if reviewed_by.is_empty() {
-        None
-    } else {
-        Some(reviewed_by.as_slice())
-    };
+    let accurate_ids: Vec<i64> = state.players[player_index]
+        .accept_votes
+        .iter()
+        .map(|&id| id as i64)
+        .collect();
     let will_confirm =
         !media_urls.is_empty() && CONFIRMABLE_TAGS.contains(&player_tag_type.as_str());
     let stored_type = if will_confirm {
@@ -321,9 +305,52 @@ pub async fn handle_approve(
     } else {
         player_tag_type.clone()
     };
+    let reviewer_names: Vec<String> = futures::future::join_all(
+        reviewed_by
+            .iter()
+            .map(|&id| super::super::channel::get_username(ctx, id as u64)),
+    )
+    .await;
 
+    state.players[player_index].status = PlayerStatus::Approved;
+    state.players[player_index].tag_type = stored_type.clone();
+    state.players[player_index].reviewer_names = reviewer_names.clone();
+    state.players[player_index].accept_votes.clear();
+    state.players[player_index].reject_votes.clear();
+
+    update_builder(ctx, data, component.channel_id, &message, &state).await?;
+
+    let repo = BlacklistRepository::new(data.db.pool());
+    let new_priority = lookup_tag(&player_tag_type)
+        .map(|d| d.priority)
+        .unwrap_or(0);
+    if let Ok(existing) = repo.get_active_tags(&player_uuid).await {
+        if let Some(conflict) = existing.iter().find(|t| {
+            t.tag_type.as_deref() != Some(stored_type.as_str())
+                && lookup_tag(t.tag_type.as_deref().unwrap_or(""))
+                    .map(|d| d.priority)
+                    .unwrap_or(0)
+                    == new_priority
+        }) {
+            let _ = repo
+                .remove_event(
+                    &player_uuid,
+                    conflict.tag_type.as_deref().unwrap_or(""),
+                    Some(discord_id as i64),
+                )
+                .await;
+        }
+    }
+
+    let guild_id = component.guild_id.map(|g| g.get()).unwrap_or(0);
+    let review_url = format!(
+        "https://discord.com/channels/{}/{}",
+        guild_id,
+        component.channel_id.get(),
+    );
+    let reviewed_by_slice = (!reviewed_by.is_empty()).then_some(reviewed_by.as_slice());
     let blocking = vec![stored_type.clone()];
-    let outcome = repo
+    match repo
         .add_event(
             &player_uuid,
             &stored_type,
@@ -334,60 +361,41 @@ pub async fn handle_approve(
             Some(submitter_id as i64),
             &blocking,
         )
-        .await?;
-    let tag_id = match outcome {
-        database::AddOutcome::Inserted(id) => id,
-        database::AddOutcome::Conflict(_) => {
-            return send_vote_error(
-                ctx,
-                component,
-                "Could not apply tag — a conflicting tag was added concurrently",
-            )
-            .await;
-        }
-    };
-
-    let guild_id = component.guild_id.map(|g| g.get()).unwrap_or(0);
-    let review_url = format!(
-        "https://discord.com/channels/{}/{}",
-        guild_id,
-        component.channel_id.get(),
-    );
-    let reviewer_names: Vec<String> = futures::future::join_all(
-        reviewed_by
-            .iter()
-            .map(|&id| super::super::channel::get_username(ctx, id as u64)),
-    )
-    .await;
-
-    if will_confirm {
-        if let Err(e) = super::super::evidence::create_evidence_from_review(
-            ctx,
-            data,
-            &player_uuid,
-            &player_username,
-            &player_reason,
-            &media_urls,
-            Some(&review_url),
-            &reviewer_names,
-        )
         .await
-        {
-            tracing::error!("Failed to create evidence post: {e:#}");
+    {
+        Ok(database::AddOutcome::Inserted(tag_id)) => {
+            if will_confirm {
+                if let Err(e) = super::super::evidence::create_evidence_from_review(
+                    ctx,
+                    data,
+                    &player_uuid,
+                    &player_username,
+                    &player_reason,
+                    &media_urls,
+                    Some(&review_url),
+                    &reviewer_names,
+                )
+                .await
+                {
+                    tracing::error!("Failed to create evidence post: {e:#}");
+                }
+            }
+            data.event_publisher
+                .publish(&BlacklistEvent::TagAdded {
+                    uuid: player_uuid.clone(),
+                    tag_id,
+                    added_by: submitter_id as i64,
+                    silent: false,
+                    review_url: Some(review_url.clone()),
+                })
+                .await;
         }
-    }
-
-    let tags = repo.get_active_tags(&player_uuid).await?;
-    if tags.iter().any(|t| t.id == tag_id) {
-        data.event_publisher
-            .publish(&BlacklistEvent::TagAdded {
-                uuid: player_uuid.clone(),
-                tag_id,
-                added_by: submitter_id as i64,
-                silent: false,
-                review_url: Some(review_url.clone()),
-            })
-            .await;
+        Ok(database::AddOutcome::Conflict(_)) => {
+            tracing::warn!("Approved review for {player_uuid}: {stored_type} already present");
+        }
+        Err(e) => {
+            tracing::error!("Failed to apply approved tag for {player_uuid}: {e:#}");
+        }
     }
 
     let member_repo = MemberRepository::new(data.db.pool());
@@ -397,28 +405,11 @@ pub async fn handle_approve(
     {
         tracing::error!("Failed to increment accepted tags for {submitter_id}: {e}");
     }
-
-    let accurate_ids: Vec<i64> = state.players[player_index]
-        .accept_votes
-        .iter()
-        .map(|&id| id as i64)
-        .collect();
     if !accurate_ids.is_empty() {
         if let Err(e) = member_repo.increment_accurate_verdicts(&accurate_ids).await {
             tracing::error!("Failed to increment accurate verdicts: {e}");
         }
     }
-
-    state.players[player_index].status = PlayerStatus::Approved;
-    state.players[player_index].tag_type = stored_type.clone();
-    state.players[player_index].reviewer_names = reviewer_names;
-    state.players[player_index].accept_votes.clear();
-    state.players[player_index].reject_votes.clear();
-
-    component
-        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
-        .await?;
-    update_builder(ctx, data, component.channel_id, &message, &state).await?;
 
     let all_resolved =
         finalize_thread_if_resolved(ctx, data, thread_id(component.channel_id), &state).await?;
@@ -557,24 +548,11 @@ pub async fn handle_reject(
         return Ok(());
     }
 
-    let member_repo = MemberRepository::new(data.db.pool());
-    if let Err(e) = member_repo
-        .increment_rejected_tags(submitter_id as i64)
-        .await
-    {
-        tracing::error!("Failed to increment rejected tags for {submitter_id}: {e}");
-    }
-
     let accurate_ids: Vec<i64> = state.players[player_index]
         .reject_votes
         .iter()
         .map(|&id| id as i64)
         .collect();
-    if !accurate_ids.is_empty() {
-        if let Err(e) = member_repo.increment_accurate_verdicts(&accurate_ids).await {
-            tracing::error!("Failed to increment accurate verdicts: {e}");
-        }
-    }
 
     state.players[player_index].status = PlayerStatus::Rejected;
     state.players[player_index].accept_votes.clear();
@@ -584,6 +562,19 @@ pub async fn handle_reject(
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
     update_builder(ctx, data, component.channel_id, &message, &state).await?;
+
+    let member_repo = MemberRepository::new(data.db.pool());
+    if let Err(e) = member_repo
+        .increment_rejected_tags(submitter_id as i64)
+        .await
+    {
+        tracing::error!("Failed to increment rejected tags for {submitter_id}: {e}");
+    }
+    if !accurate_ids.is_empty() {
+        if let Err(e) = member_repo.increment_accurate_verdicts(&accurate_ids).await {
+            tracing::error!("Failed to increment accurate verdicts: {e}");
+        }
+    }
 
     let all_resolved =
         finalize_thread_if_resolved(ctx, data, thread_id(component.channel_id), &state).await?;
@@ -645,24 +636,11 @@ pub async fn handle_reject_modal(
         return Ok(());
     }
 
-    let member_repo = MemberRepository::new(data.db.pool());
-    if let Err(e) = member_repo
-        .increment_rejected_tags(submitter_id as i64)
-        .await
-    {
-        tracing::error!("Failed to increment rejected tags for {submitter_id}: {e}");
-    }
-
     let accurate_ids: Vec<i64> = state.players[player_index]
         .reject_votes
         .iter()
         .map(|&id| id as i64)
         .collect();
-    if !accurate_ids.is_empty() {
-        if let Err(e) = member_repo.increment_accurate_verdicts(&accurate_ids).await {
-            tracing::error!("Failed to increment accurate verdicts: {e}");
-        }
-    }
 
     state.players[player_index].status = PlayerStatus::Rejected;
     state.players[player_index].review_note = Some(reason.clone());
@@ -670,6 +648,19 @@ pub async fn handle_reject_modal(
     state.players[player_index].reject_votes.clear();
 
     update_builder(ctx, data, channel_id, &builder_msg, &state).await?;
+
+    let member_repo = MemberRepository::new(data.db.pool());
+    if let Err(e) = member_repo
+        .increment_rejected_tags(submitter_id as i64)
+        .await
+    {
+        tracing::error!("Failed to increment rejected tags for {submitter_id}: {e}");
+    }
+    if !accurate_ids.is_empty() {
+        if let Err(e) = member_repo.increment_accurate_verdicts(&accurate_ids).await {
+            tracing::error!("Failed to increment accurate verdicts: {e}");
+        }
+    }
 
     let all_resolved =
         finalize_thread_if_resolved(ctx, data, thread_id(modal.channel_id), &state).await?;
