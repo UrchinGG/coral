@@ -115,7 +115,7 @@ macro_rules! period_handler {
     ($name:ident, $period:ident, $path:literal) => {
         #[utoipa::path(
             get, path = $path,
-            description = "Returns the change in a player's stats since the start of the period, compared against the latest snapshot.",
+            description = "Returns the change in a player's stats since the start of the period: the latest snapshot diffed against the most recent snapshot at or before the period's reset. The `delta` is a recursive diff — unchanged fields are omitted, a changed numeric stat is the bare difference (new minus old, e.g. `50` or `-3`), and a field that appeared, disappeared, or changed non-numerically is `{ \"old\": <previous or null>, \"new\": <current or null> }`, with `old` null for a stat absent from the baseline snapshot. A player not snapshotted near the period's reset (e.g. one returning after a long absence) is diffed against an older, possibly partial snapshot, which can surface lifetime totals as `{ \"old\": null, \"new\": <total> }`.",
             params(PlayerQuery),
             responses((status = 200, body = SessionDeltaResponse), (status = 404, body = crate::error::ErrorResponse)),
             tag = "Player",
@@ -138,7 +138,7 @@ period_handler!(session_yearly, Yearly, "/v3/player/sessions/yearly");
 #[utoipa::path(
     get,
     path = "/v3/player/sessions/custom",
-    description = "Returns the change in a player's stats since a starting point that you specify. Provide exactly one of `duration` (for example `48h`, `10d`, or `2w`), `from` (a Unix millisecond timestamp or RFC 3339 string), or `marker` (the name of a saved marker). The `marker` form requires account ownership or the `All Sessions` permission.",
+    description = "Returns the change in a player's stats since a starting point that you specify: the latest snapshot diffed against the most recent snapshot at or before that point. Provide exactly one of `duration` (for example `48h`, `10d`, or `2w`), `from` (a Unix millisecond timestamp or RFC 3339 string), or `marker` (the name of a saved marker). The `marker` form requires account ownership or the `All Sessions` permission. The `delta` is a recursive diff — unchanged fields are omitted, a changed numeric stat is the bare difference (new minus old, e.g. `50` or `-3`), and a field that appeared, disappeared, or changed non-numerically is `{ \"old\": <previous or null>, \"new\": <current or null> }`, with `old` null for a stat absent from the baseline snapshot.",
     params(CustomSessionQuery),
     responses(
         (status = 200, body = SessionDeltaResponse),
