@@ -33,6 +33,8 @@ pub fn router() -> Router<AppState> {
 #[derive(Serialize, ToSchema)]
 pub struct WinstreakResponse {
     pub uuid: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub displayname: Option<String>,
     #[schema(value_type = HashMap<String, Vec<StreakEntry>>)]
     pub modes: HashMap<String, Vec<StreakEntry>>,
 }
@@ -98,5 +100,10 @@ pub async fn player_winstreaks(
         })
         .collect();
 
-    Ok(Json(WinstreakResponse { uuid, modes }))
+    let displayname = player::cached_display_name(&state, &uuid).await;
+    Ok(Json(WinstreakResponse {
+        uuid,
+        displayname,
+        modes,
+    }))
 }

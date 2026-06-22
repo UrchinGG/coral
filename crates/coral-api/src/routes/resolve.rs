@@ -8,12 +8,15 @@ use database::permissions;
 
 use crate::auth::DeveloperKeyAuth;
 use crate::error::ApiError;
+use crate::routes::player::player_display_name;
 use crate::state::AppState;
 
 #[derive(Serialize, ToSchema)]
 pub struct ResolveResponse {
     pub uuid: String,
     pub username: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub displayname: Option<String>,
 }
 
 pub fn router() -> Router<AppState> {
@@ -46,8 +49,10 @@ pub async fn resolve_player(
         dev.require(permissions::PLAYER_DATA)?;
     }
     let id = state.mojang.resolve(&identifier).await?;
+    let displayname = player_display_name(&state, &id.uuid).await;
     Ok(Json(ResolveResponse {
         uuid: id.uuid,
         username: id.username,
+        displayname,
     }))
 }

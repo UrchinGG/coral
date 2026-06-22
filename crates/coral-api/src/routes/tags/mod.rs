@@ -5,21 +5,25 @@ use axum::{Extension, Json, Router};
 use serde::Deserialize;
 use utoipa::ToSchema;
 
-use clients::normalize_uuid;
 use coral_redis::{BlacklistEvent, RateLimitResult};
 use database::{TagOp, TagOpError};
 
 use crate::{
-    auth::AuthenticatedMember, cache::refresh_player_cache, error::ApiError,
-    responses::TagResponse, state::AppState,
+    auth::AuthenticatedMember,
+    cache::refresh_player_cache,
+    error::ApiError,
+    responses::TagResponse,
+    routes::player::{pick_identifier, resolve_identifier},
+    state::AppState,
 };
 
 const MAX_REASON_LENGTH: usize = 500;
-const MAX_UUID_LENGTH: usize = 36;
 
 #[derive(Deserialize, ToSchema)]
-pub(crate) struct UuidQuery {
-    pub uuid: String,
+pub(crate) struct TargetQuery {
+    pub player: Option<String>,
+    pub uuid: Option<String>,
+    pub name: Option<String>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -62,11 +66,13 @@ pub fn mod_router() -> Router<AppState> {
     Router::new().route("/player/lock", post(lock_player).delete(unlock_player))
 }
 
-fn validate_uuid(uuid: &str) -> Result<String, ApiError> {
-    if uuid.len() > MAX_UUID_LENGTH {
-        return Err(ApiError::BadRequest("uuid too long".into()));
-    }
-    Ok(normalize_uuid(uuid))
+async fn resolve_target(state: &AppState, query: &TargetQuery) -> Result<String, ApiError> {
+    let identifier = pick_identifier(
+        query.player.as_deref(),
+        query.uuid.as_deref(),
+        query.name.as_deref(),
+    )?;
+    Ok(resolve_identifier(state, identifier).await?.0)
 }
 
 fn validate_reason(reason: &str) -> Result<(), ApiError> {
@@ -114,7 +120,7 @@ async fn enforce_tag_limit(state: &AppState, member: &database::Member) -> Resul
 #[utoipa::path(
     post, path = "/v3/tags",
     description = "Adds a blacklist tag to a player. The tag types you may apply depend on your rank, which also determines whether `hide_username` is honored.",
-    params(("uuid" = String, Query)),
+    params(("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID")),
     request_body = AddTagBody,
     responses(
         (status = 201, description = "Tag added", body = TagResponse),
@@ -127,7 +133,7 @@ async fn enforce_tag_limit(state: &AppState, member: &database::Member) -> Resul
 pub async fn add_tag(
     State(state): State<AppState>,
     Extension(member): Extension<AuthenticatedMember>,
-    Query(query): Query<UuidQuery>,
+    Query(query): Query<TargetQuery>,
     Json(body): Json<AddTagBody>,
 ) -> Result<(StatusCode, Json<TagResponse>), ApiError> {
     if member.0.tagging_disabled {
@@ -138,7 +144,7 @@ pub async fn add_tag(
     enforce_tag_limit(&state, &member.0).await?;
     validate_reason(&body.reason)?;
 
-    let uuid = validate_uuid(&query.uuid)?;
+    let uuid = resolve_target(&state, &query).await?;
     let ops = TagOp::new(state.db.pool());
 
     let tag = ops
@@ -175,7 +181,7 @@ pub async fn add_tag(
 #[utoipa::path(
     delete, path = "/v3/tags",
     description = "Removes a tag of the given type from a player. Removing a tag created by someone else, or an older tag, requires a higher rank.",
-    params(("uuid" = String, Query)),
+    params(("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID")),
     request_body = RemoveTagBody,
     responses(
         (status = 204, description = "Tag removed"),
@@ -187,12 +193,12 @@ pub async fn add_tag(
 pub async fn remove_tag(
     State(state): State<AppState>,
     Extension(member): Extension<AuthenticatedMember>,
-    Query(query): Query<UuidQuery>,
+    Query(query): Query<TargetQuery>,
     Json(body): Json<RemoveTagBody>,
 ) -> Result<StatusCode, ApiError> {
     enforce_tag_limit(&state, &member.0).await?;
 
-    let uuid = validate_uuid(&query.uuid)?;
+    let uuid = resolve_target(&state, &query).await?;
     let ops = TagOp::new(state.db.pool());
 
     let tag = ops
@@ -224,7 +230,7 @@ pub async fn remove_tag(
 #[utoipa::path(
     patch, path = "/v3/tags",
     description = "Overwrites an active tag, replacing its type, its reason, or both. The `confirmed_cheater` type cannot be set through this endpoint; it is granted only through the review system.",
-    params(("uuid" = String, Query)),
+    params(("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID")),
     request_body = UpdateTagBody,
     responses(
         (status = 200, description = "Tag updated", body = TagResponse),
@@ -236,7 +242,7 @@ pub async fn remove_tag(
 pub async fn update_tag(
     State(state): State<AppState>,
     Extension(member): Extension<AuthenticatedMember>,
-    Query(query): Query<UuidQuery>,
+    Query(query): Query<TargetQuery>,
     Json(body): Json<UpdateTagBody>,
 ) -> Result<Json<TagResponse>, ApiError> {
     if member.0.tagging_disabled {
@@ -252,7 +258,7 @@ pub async fn update_tag(
     validate_reason(&body.new_reason)?;
     enforce_tag_limit(&state, &member.0).await?;
 
-    let uuid = validate_uuid(&query.uuid)?;
+    let uuid = resolve_target(&state, &query).await?;
     let ops = TagOp::new(state.db.pool());
 
     let (old_tag, new_tag) = ops
@@ -290,7 +296,7 @@ pub async fn update_tag(
 #[utoipa::path(
     post, path = "/v3/player/lock",
     description = "Locks a player so that no tag can be added or modified until the lock is lifted. Requires the Moderator rank.",
-    params(("uuid" = String, Query)),
+    params(("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID")),
     request_body = LockRequest,
     responses(
         (status = 204, description = "Player locked"),
@@ -301,12 +307,12 @@ pub async fn update_tag(
 pub async fn lock_player(
     State(state): State<AppState>,
     Extension(member): Extension<AuthenticatedMember>,
-    Query(query): Query<UuidQuery>,
+    Query(query): Query<TargetQuery>,
     Json(req): Json<LockRequest>,
 ) -> Result<StatusCode, ApiError> {
     validate_reason(&req.reason)?;
 
-    let uuid = validate_uuid(&query.uuid)?;
+    let uuid = resolve_target(&state, &query).await?;
     let ops = TagOp::new(state.db.pool());
 
     ops.lock_player(
@@ -333,7 +339,7 @@ pub async fn lock_player(
 #[utoipa::path(
     delete, path = "/v3/player/lock",
     description = "Lifts a player lock. Requires the Moderator rank.",
-    params(("uuid" = String, Query)),
+    params(("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID")),
     responses(
         (status = 204, description = "Player unlocked"),
         (status = 403, body = crate::error::ErrorResponse),
@@ -343,9 +349,9 @@ pub async fn lock_player(
 pub async fn unlock_player(
     State(state): State<AppState>,
     Extension(member): Extension<AuthenticatedMember>,
-    Query(query): Query<UuidQuery>,
+    Query(query): Query<TargetQuery>,
 ) -> Result<StatusCode, ApiError> {
-    let uuid = validate_uuid(&query.uuid)?;
+    let uuid = resolve_target(&state, &query).await?;
 
     TagOp::new(state.db.pool())
         .unlock_player(&uuid, member.0.discord_id, member.0.access_level)

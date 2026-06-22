@@ -1,10 +1,16 @@
+use std::collections::HashMap;
+
 use serde::Serialize;
 use utoipa::ToSchema;
+
+use crate::discord::DiscordResolver;
 
 #[derive(Serialize, ToSchema)]
 pub struct PlayerStatsResponse {
     pub uuid: String,
     pub username: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub displayname: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<serde_json::Value>)]
     pub hypixel: Option<serde_json::Value>,
@@ -19,6 +25,8 @@ pub struct PlayerStatsResponse {
 #[derive(Serialize, ToSchema)]
 pub struct PlayerTagsResponse {
     pub uuid: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub displayname: Option<String>,
     pub tags: Vec<TagResponse>,
 }
 
@@ -27,6 +35,8 @@ pub struct TagResponse {
     pub tag_type: String,
     pub reason: String,
     pub added_by: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub added_by_username: Option<String>,
     pub added_on: i64,
     pub hide_username: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -82,9 +92,33 @@ impl TagResponse {
             tag_type: tag.tag_type.clone().unwrap_or_default(),
             reason: tag.reason.clone().unwrap_or_default(),
             added_by: tag.author.unwrap_or(0),
+            added_by_username: None,
             added_on: tag.ts.timestamp_millis(),
             hide_username: tag.hide_username.unwrap_or(false),
             expires_at: tag.expires_at.map(|t| t.timestamp_millis()),
         }
     }
+}
+
+pub async fn tag_responses(
+    tags: &[database::PlayerEvent],
+    discord: &DiscordResolver,
+    names: &mut HashMap<i64, Option<String>>,
+) -> Vec<TagResponse> {
+    let mut out = Vec::with_capacity(tags.len());
+    for tag in tags {
+        let mut resp = TagResponse::from_db(tag);
+        if let Some(author) = tag.author.filter(|_| !tag.hide_username.unwrap_or(false)) {
+            resp.added_by_username = match names.get(&author) {
+                Some(name) => name.clone(),
+                None => {
+                    let name = discord.resolve_username(author as u64).await;
+                    names.insert(author, name.clone());
+                    name
+                }
+            };
+        }
+        out.push(resp);
+    }
+    out
 }

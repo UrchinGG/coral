@@ -15,10 +15,11 @@ use crate::{
     state::AppState,
 };
 
-use super::player::{resolve_identifier, resolve_player_data};
+use super::player::{pick_identifier, resolve_identifier, resolve_player_data};
 
 #[derive(Deserialize)]
 pub(crate) struct PlayerQuery {
+    pub player: Option<String>,
     pub uuid: Option<String>,
     pub name: Option<String>,
     #[serde(default)]
@@ -64,10 +65,9 @@ pub fn router() -> Router<AppState> {
 #[utoipa::path(
     get,
     path = "/v3/hypixel/player",
-    description = "Returns Hypixel's player payload unchanged, wrapped in a `player` field. Look up a player by `uuid` or `name`. Set `max_cache_age` (for example `5m`, `1h`, or a number of seconds) to serve a stored snapshot within that age instead of calling Hypixel, and to fall back to the latest snapshot when Hypixel is unreachable; such responses set `stale` to true. Use `/v3/player/profile` instead unless you specifically require the unmodified response. Requires the `Hypixel` permission or an Admin key.",
+    description = "Returns Hypixel's player payload unchanged, wrapped in a `player` field. Look up a player by `player`. Set `max_cache_age` (for example `5m`, `1h`, or a number of seconds) to serve a stored snapshot within that age instead of calling Hypixel, and to fall back to the latest snapshot when Hypixel is unreachable; such responses set `stale` to true. Use `/v3/player/profile` instead unless you specifically require the unmodified response. Requires the `Hypixel` permission or an Admin key.",
     params(
-        ("uuid" = Option<String>, Query, description = "Player UUID"),
-        ("name" = Option<String>, Query, description = "Player username"),
+        ("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID"),
         ("max_cache_age" = Option<String>, Query, description = "Accept a stored snapshot up to this age (e.g. `5m`, `1h`, `30s`)"),
     ),
     responses(
@@ -93,11 +93,11 @@ pub async fn player(
         .as_deref()
         .map(parse_cache_age)
         .transpose()?;
-    let identifier = query
-        .uuid
-        .as_deref()
-        .or(query.name.as_deref())
-        .ok_or_else(|| ApiError::BadRequest("query parameter 'uuid' or 'name' required".into()))?;
+    let identifier = pick_identifier(
+        query.player.as_deref(),
+        query.uuid.as_deref(),
+        query.name.as_deref(),
+    )?;
     let (uuid, username_hint) = resolve_identifier(&state, identifier).await?;
     let (data, stale) = resolve_player_data(&state, &uuid, max_cache_age).await?;
 

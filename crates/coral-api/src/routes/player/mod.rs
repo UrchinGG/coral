@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Cursor;
 
 use axum::body::Body;
@@ -12,17 +13,19 @@ use serde_json::Value;
 
 use clients::{is_uuid, normalize_uuid};
 use database::{BlacklistRepository, CacheRepository, permissions};
+use hypixel::extract_rank_prefix;
 
 use crate::{
     auth::DeveloperKeyAuth,
-    cache::{SNAPSHOT_SOURCE, parse_cache_age},
+    cache::{SNAPSHOT_SOURCE, parse_cache_age, refresh_player_cache},
     error::{ApiError, ErrorResponse},
-    responses::{PlayerStatsResponse, PlayerTagsResponse, TagResponse},
+    responses::{PlayerStatsResponse, PlayerTagsResponse, tag_responses},
     state::AppState,
 };
 
 #[derive(Deserialize)]
 pub(crate) struct PlayerQuery {
+    pub player: Option<String>,
     pub uuid: Option<String>,
     pub name: Option<String>,
     #[serde(default)]
@@ -62,6 +65,7 @@ pub fn public_router() -> Router<AppState> {
 
 #[derive(Deserialize)]
 pub(crate) struct FaceQuery {
+    pub player: Option<String>,
     pub uuid: Option<String>,
     pub name: Option<String>,
     pub size: Option<u32>,
@@ -69,6 +73,7 @@ pub(crate) struct FaceQuery {
 
 #[derive(Deserialize)]
 pub(crate) struct BodyQuery {
+    pub player: Option<String>,
     pub uuid: Option<String>,
     pub name: Option<String>,
     pub width: Option<u32>,
@@ -95,12 +100,56 @@ pub async fn resolve_identifier(
     }
 }
 
-fn extract_identifier(query: &PlayerQuery) -> Result<&str, ApiError> {
-    query
-        .uuid
-        .as_deref()
-        .or(query.name.as_deref())
-        .ok_or_else(|| ApiError::BadRequest("query parameter 'uuid' or 'name' required".into()))
+pub(crate) fn pick_identifier<'a>(
+    player: Option<&'a str>,
+    uuid: Option<&'a str>,
+    name: Option<&'a str>,
+) -> Result<&'a str, ApiError> {
+    player
+        .or(uuid)
+        .or(name)
+        .ok_or_else(|| ApiError::BadRequest("query parameter 'player' required".into()))
+}
+
+pub(crate) trait PlayerTarget {
+    fn identifier(&self) -> Result<&str, ApiError>;
+}
+
+macro_rules! player_target {
+    ($($t:ty),+ $(,)?) => {$(
+        impl PlayerTarget for $t {
+            fn identifier(&self) -> Result<&str, ApiError> {
+                pick_identifier(self.player.as_deref(), self.uuid.as_deref(), self.name.as_deref())
+            }
+        }
+    )+};
+}
+
+player_target!(PlayerQuery, FaceQuery, BodyQuery);
+
+pub(crate) fn format_display_name(player: &Value) -> Option<String> {
+    let name = player.get("displayname").and_then(Value::as_str)?;
+    Some(format!(
+        "{}{name}",
+        extract_rank_prefix(player).unwrap_or_default()
+    ))
+}
+
+pub(crate) async fn player_display_name(state: &AppState, uuid: &str) -> Option<String> {
+    refresh_player_cache(state, uuid, None)
+        .await
+        .as_ref()
+        .and_then(format_display_name)
+}
+
+pub(crate) async fn cached_display_name(state: &AppState, uuid: &str) -> Option<String> {
+    CacheRepository::new(state.db.pool())
+        .get_latest_snapshot(uuid)
+        .await
+        .ok()
+        .flatten()
+        .as_ref()
+        .and_then(format_display_name)
 }
 
 fn resolve_username(hint: Option<String>, player_data: &Option<Value>, uuid: &str) -> String {
@@ -130,10 +179,9 @@ fn spawn_cache_update(state: &AppState, uuid: &str, data: &Value, username: &str
 #[utoipa::path(
     get,
     path = "/v3/player/tags",
-    description = "Returns the blacklist tags currently active on a player.",
+    description = "Returns the blacklist tags currently active on a player, plus their formatted Hypixel display name.",
     params(
-        ("uuid" = Option<String>, Query, description = "Player UUID"),
-        ("name" = Option<String>, Query, description = "Player username"),
+        ("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID"),
     ),
     responses(
         (status = 200, description = "Player tags retrieved", body = PlayerTagsResponse),
@@ -148,14 +196,17 @@ pub async fn player_tags(
     State(state): State<AppState>,
     Query(query): Query<PlayerQuery>,
 ) -> Result<Json<PlayerTagsResponse>, ApiError> {
-    let identifier = extract_identifier(&query)?;
+    let identifier = query.identifier()?;
     let (uuid, _) = resolve_identifier(&state, identifier).await?;
     let tags = BlacklistRepository::new(state.db.pool())
         .get_active_tags(&uuid)
         .await?;
+    let tags = tag_responses(&tags, &state.discord, &mut HashMap::new()).await;
+    let displayname = player_display_name(&state, &uuid).await;
     Ok(Json(PlayerTagsResponse {
         uuid,
-        tags: tags.iter().map(TagResponse::from_db).collect(),
+        displayname,
+        tags,
     }))
 }
 
@@ -164,8 +215,7 @@ pub async fn player_tags(
     path = "/v3/player/profile",
     description = "Returns a player's full Hypixel profile, including their blacklist tags and skin metadata. Set `max_cache_age` (for example `5m`, `1h`, or a number of seconds) to serve a stored snapshot within that age instead of calling Hypixel, and to fall back to the latest snapshot when Hypixel is unreachable. Responses served from a snapshot are marked `stale`. Requires the `Player Data` permission or an Admin key.",
     params(
-        ("uuid" = Option<String>, Query, description = "Player UUID"),
-        ("name" = Option<String>, Query, description = "Player username"),
+        ("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID"),
         ("max_cache_age" = Option<String>, Query, description = "Accept a stored snapshot up to this age (e.g. `5m`, `1h`, `30s`)"),
     ),
     responses(
@@ -192,7 +242,7 @@ pub async fn player_stats(
         .as_deref()
         .map(parse_cache_age)
         .transpose()?;
-    let identifier = extract_identifier(&query)?;
+    let identifier = query.identifier()?;
     let (uuid, username_hint) = resolve_identifier(&state, identifier).await?;
     let repo = BlacklistRepository::new(state.db.pool());
     let (player_result, tags, profile) = tokio::join!(
@@ -215,11 +265,14 @@ pub async fn player_stats(
         }
     }
 
+    let displayname = player_data.as_ref().and_then(format_display_name);
+    let tags = tag_responses(&tags, &state.discord, &mut HashMap::new()).await;
     Ok(Json(PlayerStatsResponse {
         uuid,
         username,
+        displayname,
         hypixel: player_data,
-        tags: tags.iter().map(TagResponse::from_db).collect(),
+        tags,
         skin_url,
         slim,
         stale,
@@ -231,8 +284,7 @@ pub async fn player_stats(
     path = "/v3/player/skin",
     description = "Renders a player's full skin as a PNG. Requires the `Player Data` permission or an Admin key.",
     params(
-        ("uuid" = Option<String>, Query, description = "Player UUID"),
-        ("name" = Option<String>, Query, description = "Player username"),
+        ("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID"),
     ),
     responses(
         (status = 200, description = "Player skin PNG", content_type = "image/png"),
@@ -256,7 +308,7 @@ pub async fn player_skin(
         .skin_provider
         .as_ref()
         .ok_or_else(|| ApiError::Internal("skin rendering unavailable".into()))?;
-    let identifier = extract_identifier(&query)?;
+    let identifier = query.identifier()?;
     let (uuid, _) = resolve_identifier(&state, identifier).await?;
     let skin = provider
         .fetch(&uuid, 400, 600)
@@ -279,8 +331,7 @@ pub async fn player_skin(
     path = "/v3/player/face",
     description = "Renders a player's face as a PNG. Requires the `Player Data` permission or an Admin key.",
     params(
-        ("uuid" = Option<String>, Query, description = "Player UUID"),
-        ("name" = Option<String>, Query, description = "Player username"),
+        ("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID"),
         ("size" = Option<u32>, Query, description = "Face size in pixels (default 128, max 512)"),
     ),
     responses(
@@ -305,11 +356,7 @@ pub async fn player_face(
         .skin_provider
         .as_ref()
         .ok_or_else(|| ApiError::Internal("skin rendering unavailable".into()))?;
-    let identifier = query
-        .uuid
-        .as_deref()
-        .or(query.name.as_deref())
-        .ok_or_else(|| ApiError::BadRequest("query parameter 'uuid' or 'name' required".into()))?;
+    let identifier = query.identifier()?;
     let (uuid, _) = resolve_identifier(&state, identifier).await?;
     let size = query.size.unwrap_or(128).clamp(8, 512);
     let png = provider
@@ -324,8 +371,7 @@ pub async fn player_face(
     path = "/v3/player/body",
     description = "Renders a player's full body as a PNG. Requires the `Player Data` permission or an Admin key.",
     params(
-        ("uuid" = Option<String>, Query, description = "Player UUID"),
-        ("name" = Option<String>, Query, description = "Player username"),
+        ("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID"),
         ("width" = Option<u32>, Query, description = "Output width (default 400)"),
         ("height" = Option<u32>, Query, description = "Output height (default 600)"),
     ),
@@ -351,11 +397,7 @@ pub async fn player_body(
         .skin_provider
         .as_ref()
         .ok_or_else(|| ApiError::Internal("skin rendering unavailable".into()))?;
-    let identifier = query
-        .uuid
-        .as_deref()
-        .or(query.name.as_deref())
-        .ok_or_else(|| ApiError::BadRequest("query parameter 'uuid' or 'name' required".into()))?;
+    let identifier = query.identifier()?;
     let (uuid, _) = resolve_identifier(&state, identifier).await?;
     let w = query.width.unwrap_or(400).clamp(32, 2048);
     let h = query.height.unwrap_or(600).clamp(32, 2048);

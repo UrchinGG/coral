@@ -1,5 +1,6 @@
 use chrono::Duration;
 use database::CacheRepository;
+use serde_json::Value;
 
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -32,14 +33,15 @@ pub fn parse_cache_age(raw: &str) -> Result<Duration, ApiError> {
     }
 }
 
-pub async fn refresh_player_cache(state: &AppState, uuid: &str, username: Option<&str>) {
-    let Some(hypixel) = state.hypixel.as_deref() else {
-        return;
-    };
-    let Ok(Some(data)) = hypixel.get_player(uuid).await else {
-        return;
-    };
+pub async fn refresh_player_cache(
+    state: &AppState,
+    uuid: &str,
+    username: Option<&str>,
+) -> Option<Value> {
+    let hypixel = state.hypixel.as_deref()?;
+    let data = hypixel.get_player(uuid).await.ok()??;
     let _ = CacheRepository::new(state.db.pool())
         .store_snapshot(uuid, &data, None, Some(SNAPSHOT_SOURCE), username)
         .await;
+    Some(data)
 }

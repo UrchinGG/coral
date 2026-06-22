@@ -75,6 +75,8 @@ pub struct RenameMarkerRequest {
 #[derive(Serialize, ToSchema)]
 pub struct SessionDeltaResponse {
     pub uuid: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub displayname: Option<String>,
     pub from: i64,
     pub from_readable: String,
     #[schema(value_type = Value)]
@@ -94,18 +96,24 @@ pub struct MarkerResponse {
 #[derive(Serialize, ToSchema)]
 pub struct MarkerListResponse {
     pub uuid: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub displayname: Option<String>,
     pub markers: Vec<MarkerResponse>,
 }
 
 #[derive(Serialize, ToSchema)]
 pub struct SnapshotListResponse {
     pub uuid: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub displayname: Option<String>,
     pub snapshots: Vec<i64>,
 }
 
 #[derive(Serialize, ToSchema)]
 pub struct SnapshotDataResponse {
     pub uuid: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub displayname: Option<String>,
     pub timestamp: i64,
     #[schema(value_type = Value)]
     pub data: Value,
@@ -115,7 +123,7 @@ macro_rules! period_handler {
     ($name:ident, $period:ident, $path:literal) => {
         #[utoipa::path(
             get, path = $path,
-            description = "Returns the change in a player's stats since the start of the period: the latest snapshot diffed against the most recent snapshot at or before the period's reset. The `delta` is a recursive diff — unchanged fields are omitted, a changed numeric stat is the bare difference (new minus old, e.g. `50` or `-3`), and a field that appeared, disappeared, or changed non-numerically is `{ \"old\": <previous or null>, \"new\": <current or null> }`, with `old` null for a stat absent from the baseline snapshot. A player not snapshotted near the period's reset (e.g. one returning after a long absence) is diffed against an older, possibly partial snapshot, which can surface lifetime totals as `{ \"old\": null, \"new\": <total> }`.",
+            description = "Returns the change in a player's stats since the start of the period: the latest snapshot diffed against the most recent snapshot at or before the period's reset. The `delta` is a recursive diff: unchanged fields are omitted, a changed numeric stat is the bare difference (new minus old, e.g. `50` or `-3`), and a field that appeared, disappeared, or changed non-numerically is `{ \"old\": <previous or null>, \"new\": <current or null> }`, with `old` null for a stat absent from the baseline snapshot. A player not snapshotted near the period's reset (e.g. one returning after a long absence) is diffed against an older, possibly partial snapshot, which can surface lifetime totals as `{ \"old\": null, \"new\": <total> }`.",
             params(PlayerQuery),
             responses((status = 200, body = SessionDeltaResponse), (status = 404, body = crate::error::ErrorResponse)),
             tag = "Player",
@@ -138,7 +146,7 @@ period_handler!(session_yearly, Yearly, "/v3/player/sessions/yearly");
 #[utoipa::path(
     get,
     path = "/v3/player/sessions/custom",
-    description = "Returns the change in a player's stats since a starting point that you specify: the latest snapshot diffed against the most recent snapshot at or before that point. Provide exactly one of `duration` (for example `48h`, `10d`, or `2w`), `from` (a Unix millisecond timestamp or RFC 3339 string), or `marker` (the name of a saved marker). The `marker` form requires account ownership or the `All Sessions` permission. The `delta` is a recursive diff — unchanged fields are omitted, a changed numeric stat is the bare difference (new minus old, e.g. `50` or `-3`), and a field that appeared, disappeared, or changed non-numerically is `{ \"old\": <previous or null>, \"new\": <current or null> }`, with `old` null for a stat absent from the baseline snapshot.",
+    description = "Returns the change in a player's stats since a starting point that you specify: the latest snapshot diffed against the most recent snapshot at or before that point. Provide exactly one of `duration` (for example `48h`, `10d`, or `2w`), `from` (a Unix millisecond timestamp or RFC 3339 string), or `marker` (the name of a saved marker). The `marker` form requires account ownership or the `All Sessions` permission. The `delta` is a recursive diff: unchanged fields are omitted, a changed numeric stat is the bare difference (new minus old, e.g. `50` or `-3`), and a field that appeared, disappeared, or changed non-numerically is `{ \"old\": <previous or null>, \"new\": <current or null> }`, with `old` null for a stat absent from the baseline snapshot.",
     params(CustomSessionQuery),
     responses(
         (status = 200, body = SessionDeltaResponse),
@@ -205,10 +213,12 @@ async fn delta_response(
         .await?
         .ok_or_else(|| ApiError::NotFound("no current data".into()))?;
 
+    let displayname = player::format_display_name(&current);
     let delta = session_delta(&snapshot, &current).unwrap_or(Value::Object(Map::new()));
 
     Ok(Json(SessionDeltaResponse {
         uuid,
+        displayname,
         from: from.timestamp_millis(),
         from_readable: from.format("%b %d, %Y %H:%M UTC").to_string(),
         delta,
@@ -260,8 +270,10 @@ pub async fn list_markers(
         .list(&uuid, member.0.discord_id)
         .await?;
 
+    let displayname = player::cached_display_name(&state, &uuid).await;
     Ok(Json(MarkerListResponse {
         uuid,
+        displayname,
         markers: markers.iter().map(to_marker_response).collect(),
     }))
 }
@@ -425,6 +437,7 @@ pub async fn list_snapshots(
             .ok_or_else(|| ApiError::NotFound("no snapshot data for this player".into()))?;
         return Ok(Json(serde_json::json!({
             "uuid": uuid,
+            "displayname": player::format_display_name(&data),
             "timestamp": ts.timestamp_millis(),
             "readable": ts.format("%b %d, %Y %H:%M UTC").to_string(),
             "data": data,
@@ -454,8 +467,9 @@ pub async fn list_snapshots(
         })
         .collect();
 
+    let displayname = player::cached_display_name(&state, &uuid).await;
     Ok(Json(
-        serde_json::json!({ "uuid": uuid, "snapshots": snapshots }),
+        serde_json::json!({ "uuid": uuid, "displayname": displayname, "snapshots": snapshots }),
     ))
 }
 

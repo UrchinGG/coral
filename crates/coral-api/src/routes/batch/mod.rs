@@ -9,7 +9,12 @@ use utoipa::ToSchema;
 use clients::{is_uuid, normalize_uuid};
 use database::BlacklistRepository;
 
-use crate::{error::ApiError, responses::TagResponse, state::AppState};
+use crate::{
+    cache::refresh_player_cache,
+    error::ApiError,
+    responses::{TagResponse, tag_responses},
+    state::AppState,
+};
 
 const MAX_BATCH_SIZE: usize = 100;
 
@@ -30,7 +35,7 @@ pub fn router() -> Router<AppState> {
 #[utoipa::path(
     post,
     path = "/v3/players",
-    description = "Looks up blacklist tags for up to 100 players in a single request. Only UUIDs are accepted; usernames are not resolved, and malformed entries are skipped.",
+    description = "Looks up blacklist tags for up to 100 players in a single request. Only UUIDs are accepted; usernames are not resolved, and malformed entries are skipped. Each queried player also triggers a background snapshot refresh to help saturate the player cache.",
     request_body = BatchRequest,
     responses(
         (status = 200, description = "Batch lookup completed", body = BatchResponse),
@@ -59,13 +64,23 @@ pub async fn batch_lookup(
         .map(|u| normalize_uuid(u))
         .collect();
 
-    let players = BlacklistRepository::new(state.db.pool())
+    for uuid in &uuids {
+        let (state, uuid) = (state.clone(), uuid.clone());
+        tokio::spawn(async move {
+            refresh_player_cache(&state, &uuid, None).await;
+        });
+    }
+
+    let batch = BlacklistRepository::new(state.db.pool())
         .get_players_batch(&uuids)
         .await
-        .map_err(|e| ApiError::Internal(format!("batch lookup failed: {e}")))?
-        .into_iter()
-        .map(|(uuid, tags)| (uuid, tags.iter().map(TagResponse::from_db).collect()))
-        .collect();
+        .map_err(|e| ApiError::Internal(format!("batch lookup failed: {e}")))?;
+
+    let mut names = HashMap::new();
+    let mut players = HashMap::new();
+    for (uuid, tags) in batch {
+        players.insert(uuid, tag_responses(&tags, &state.discord, &mut names).await);
+    }
 
     Ok(Json(BatchResponse { players }))
 }
