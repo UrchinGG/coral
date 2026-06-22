@@ -16,14 +16,26 @@ use crate::{
     state::AppState,
 };
 
-const MODES: [Mode; 7] = [
-    Mode::Overall,
-    Mode::Solos,
-    Mode::Doubles,
-    Mode::Threes,
-    Mode::Fours,
-    Mode::FourVFour,
-    Mode::Core,
+const MODE_GROUPS: [(&str, &[Mode]); 7] = [
+    (
+        "overall",
+        &[
+            Mode::Solos,
+            Mode::Doubles,
+            Mode::Threes,
+            Mode::Fours,
+            Mode::FourVFour,
+        ],
+    ),
+    (
+        "core",
+        &[Mode::Solos, Mode::Doubles, Mode::Threes, Mode::Fours],
+    ),
+    ("solos", &[Mode::Solos]),
+    ("doubles", &[Mode::Doubles]),
+    ("threes", &[Mode::Threes]),
+    ("fours", &[Mode::Fours]),
+    ("4v4", &[Mode::FourVFour]),
 ];
 
 pub fn router() -> Router<AppState> {
@@ -45,19 +57,6 @@ pub struct StreakEntry {
     pub approximate: bool,
     pub timestamp: i64,
     pub readable: String,
-}
-
-fn mode_key(mode: Mode) -> &'static str {
-    match mode {
-        Mode::Overall => "overall",
-        Mode::Core => "core",
-        Mode::Solos => "solos",
-        Mode::Doubles => "doubles",
-        Mode::Threes => "threes",
-        Mode::Fours => "fours",
-        Mode::FourVFour => "4v4",
-        _ => "other",
-    }
 }
 
 #[utoipa::path(
@@ -82,11 +81,10 @@ pub async fn player_winstreaks(
         .get_all_snapshots_mapped(&uuid, extract_winstreak_snapshot)
         .await?;
 
-    let modes = MODES
-        .iter()
-        .map(|&mode| {
-            let history = winstreaks::calculate(&snapshots, &[mode]);
-            let streaks = history
+    let modes = MODE_GROUPS
+        .into_iter()
+        .map(|(key, group)| {
+            let streaks = winstreaks::calculate(&snapshots, group)
                 .streaks
                 .into_iter()
                 .map(|s| StreakEntry {
@@ -96,7 +94,7 @@ pub async fn player_winstreaks(
                     readable: s.timestamp.format("%b %d, %Y %H:%M UTC").to_string(),
                 })
                 .collect();
-            (mode_key(mode).to_string(), streaks)
+            (key.to_string(), streaks)
         })
         .collect();
 
