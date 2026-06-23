@@ -6,7 +6,7 @@ use futures_util::TryStreamExt;
 use serde_json::{Map, Value};
 use sqlx::{FromRow, PgPool};
 
-use crate::cache::{calculate_delta, deep_merge_mut};
+use crate::cache::{calculate_delta, deep_merge_mut, with_millis_tolerance};
 
 const RECONSTRUCTION_THRESHOLD: Duration = Duration::from_millis(2);
 
@@ -158,6 +158,7 @@ impl<'a> GuildCacheRepository<'a> {
         guild_id: &str,
         at: DateTime<Utc>,
     ) -> Result<Option<Value>, sqlx::Error> {
+        let at = with_millis_tolerance(at);
         let baseline: Option<GuildSnapshotRow> = sqlx::query_as(
             "SELECT is_baseline, data, timestamp FROM guild_snapshots
              WHERE guild_id = $1 AND is_baseline = true AND timestamp <= $2

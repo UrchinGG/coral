@@ -116,6 +116,7 @@ impl<'a> CacheRepository<'a> {
         uuid: &str,
         timestamp: DateTime<Utc>,
     ) -> Result<Option<Value>, sqlx::Error> {
+        let timestamp = with_millis_tolerance(timestamp);
         let baseline: Option<SnapshotRow> = sqlx::query_as(
             "SELECT id, is_baseline, data, timestamp FROM player_snapshots
              WHERE uuid = $1 AND is_baseline = true AND timestamp <= $2
@@ -456,6 +457,10 @@ impl<'a> CacheRepository<'a> {
         }
         Ok((current, merge_time))
     }
+}
+
+pub(crate) fn with_millis_tolerance(at: DateTime<Utc>) -> DateTime<Utc> {
+    at + chrono::Duration::milliseconds(1)
 }
 
 pub fn calculate_delta(old: &Value, new: &Value) -> Option<Value> {
