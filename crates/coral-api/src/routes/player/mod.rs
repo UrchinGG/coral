@@ -37,6 +37,7 @@ pub(crate) async fn resolve_player_data(
     uuid: &str,
     max_cache_age: Option<Duration>,
 ) -> Result<(Option<Value>, bool), ApiError> {
+    crate::cache::spawn_guild_refresh(state, uuid);
     let cache = CacheRepository::new(state.db.pool());
 
     if let Some(max_age) = max_cache_age {

@@ -46,6 +46,16 @@ impl<'a> CacheRepository<'a> {
         Ok(count)
     }
 
+    pub async fn unregistered(&self, uuids: &[String]) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar::<_, String>(
+            "SELECT u FROM UNNEST($1::text[]) AS u
+             WHERE NOT EXISTS (SELECT 1 FROM players WHERE uuid = u)",
+        )
+        .bind(uuids)
+        .fetch_all(self.pool)
+        .await
+    }
+
     pub async fn usernames(
         &self,
         uuids: &[String],

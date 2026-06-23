@@ -4,7 +4,10 @@ use anyhow::Result;
 use chrono::Utc;
 use serenity::all::*;
 
-use database::{BlacklistRepository, CacheRepository, MemberRepository, Period};
+use database::{
+    BlacklistRepository, CacheRepository, GuildCacheRepository, GuildCurrentRepository,
+    MemberRepository, Period,
+};
 
 use crate::{
     framework::Data,
@@ -122,8 +125,21 @@ async fn build_statistics(ctx: &Context, data: &Data) -> Vec<CreateComponent<'st
     let members = MemberRepository::new(pool);
     let blacklist = BlacklistRepository::new(pool);
     let cache = CacheRepository::new(pool);
+    let guild_cache = GuildCacheRepository::new(pool);
+    let guilds = GuildCurrentRepository::new(pool);
 
-    let (registered, requests, tags, breakdown, snapshots, tracked, storage) = tokio::join!(
+    let (
+        registered,
+        requests,
+        tags,
+        breakdown,
+        snapshots,
+        tracked,
+        storage,
+        guild_snapshots,
+        guilds_tracked,
+        guild_storage,
+    ) = tokio::join!(
         members.count(),
         members.total_requests(),
         blacklist.count_active_tags(),
@@ -131,6 +147,9 @@ async fn build_statistics(ctx: &Context, data: &Data) -> Vec<CreateComponent<'st
         cache.count_snapshots(),
         cache.count_unique_players(),
         cache.storage_bytes(),
+        guild_cache.count_snapshots(),
+        guilds.count_guilds(),
+        guild_cache.storage_bytes(),
     );
 
     let tag_lines: Vec<String> = breakdown
@@ -187,7 +206,14 @@ async fn build_statistics(ctx: &Context, data: &Data) -> Vec<CreateComponent<'st
         )),
         separator(),
         text(format!(
-            "### Cache | `{}`\n**{}** players tracked\n**{}** snapshots",
+            "### Guild Cache | `{}`\n**{}** guilds tracked\n**{}** snapshots",
+            bytes(guild_storage.unwrap_or(0)),
+            format_number(guilds_tracked.unwrap_or(0) as u64),
+            format_number(guild_snapshots.unwrap_or(0) as u64),
+        )),
+        separator(),
+        text(format!(
+            "### Player Cache | `{}`\n**{}** players tracked\n**{}** snapshots",
             bytes(storage.unwrap_or(0)),
             format_number(tracked.unwrap_or(0) as u64),
             format_number(snapshots.unwrap_or(0) as u64),

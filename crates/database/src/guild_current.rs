@@ -69,4 +69,25 @@ impl<'a> GuildCurrentRepository<'a> {
             .fetch_optional(self.pool)
             .await
     }
+
+    pub async fn count_guilds(&self) -> Result<i64, sqlx::Error> {
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM guild_current")
+            .fetch_one(self.pool)
+            .await?;
+        Ok(count)
+    }
+
+    pub async fn stale_guilds_with_member(
+        &self,
+        uuid: &str,
+        cutoff: DateTime<Utc>,
+    ) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar::<_, String>(
+            "SELECT guild_id FROM guild_current WHERE raw @> $1 AND updated_at < $2",
+        )
+        .bind(json!({ "members": [{ "uuid": uuid }] }))
+        .bind(cutoff)
+        .fetch_all(self.pool)
+        .await
+    }
 }

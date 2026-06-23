@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use clients::{ClientError, is_uuid, normalize_uuid};
-use database::{CacheRepository, GuildCacheRepository, GuildCurrentRepository, permissions};
+use database::{CacheRepository, GuildCurrentRepository, permissions};
 
 use crate::{
     auth::DeveloperKeyAuth,
@@ -200,15 +200,10 @@ pub async fn guild(
 
     if !stale {
         if let Some(raw) = data.clone() {
-            if let Some(guild_id) = raw["_id"].as_str().map(String::from) {
-                let pool = state.db.pool().clone();
-                tokio::spawn(async move {
-                    let _ = GuildCacheRepository::new(&pool)
-                        .store_snapshot(&guild_id, &raw)
-                        .await;
-                    let _ = GuildCurrentRepository::new(&pool).upsert(&raw).await;
-                });
-            }
+            let state = state.clone();
+            tokio::spawn(async move {
+                crate::cache::cache_guild(&state, &raw).await;
+            });
         }
     }
 

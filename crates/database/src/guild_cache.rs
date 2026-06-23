@@ -50,6 +50,23 @@ impl<'a> GuildCacheRepository<'a> {
         }
     }
 
+    pub async fn count_snapshots(&self) -> Result<i64, sqlx::Error> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT reltuples::bigint FROM pg_class WHERE relname = 'guild_snapshots'",
+        )
+        .fetch_one(self.pool)
+        .await?;
+        Ok(count)
+    }
+
+    pub async fn storage_bytes(&self) -> Result<i64, sqlx::Error> {
+        let (size,): (i64,) =
+            sqlx::query_as("SELECT pg_total_relation_size('guild_snapshots')::bigint")
+                .fetch_one(self.pool)
+                .await?;
+        Ok(size)
+    }
+
     pub async fn get_current(&self, guild_id: &str) -> Result<Option<Value>, sqlx::Error> {
         self.get_at(guild_id, Utc::now()).await
     }
