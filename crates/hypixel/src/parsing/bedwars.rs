@@ -131,6 +131,20 @@ pub struct SlumberInfo {
     pub doublers: u64,
 }
 
+#[derive(Clone, Default)]
+pub struct CosmeticSlot {
+    pub active: Option<String>,
+    pub favorites: Vec<String>,
+    pub unlocked: Vec<String>,
+}
+
+#[derive(Clone, Default)]
+pub struct Cosmetics {
+    pub scheme: CosmeticSlot,
+    pub star: CosmeticSlot,
+    pub bracket: CosmeticSlot,
+}
+
 #[derive(Clone)]
 pub struct Stats {
     pub username: String,
@@ -145,6 +159,7 @@ pub struct Stats {
     pub first_login: Option<i64>,
     pub guild: GuildInfo,
     pub slumber: SlumberInfo,
+    pub cosmetics: Cosmetics,
     pub overall: ModeStats,
     pub solos: ModeStats,
     pub doubles: ModeStats,
@@ -282,6 +297,32 @@ pub fn extract(username: &str, player: &Value, guild: Option<GuildInfo>) -> Opti
         })
         .unwrap_or_default();
 
+    let active = |key: &str| bw.get(key).and_then(|v| v.as_str()).map(str::to_string);
+    let favorites = |key: &str| {
+        bw.get("favorites")
+            .and_then(|f| f.get(key))
+            .and_then(|a| a.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+            .unwrap_or_default()
+    };
+    let unlocked = |prefix: &str| {
+        bw.get("packages")
+            .and_then(|p| p.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str())
+                    .filter(|s| s.starts_with(prefix))
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let slot = |active_key: &str, kind: &str, prefix: &str| CosmeticSlot {
+        active: active(active_key),
+        favorites: favorites(kind),
+        unlocked: unlocked(prefix),
+    };
+
     Some(Stats {
         username: username.to_string(),
         display_name,
@@ -305,6 +346,11 @@ pub fn extract(username: &str, player: &Value, guild: Option<GuildInfo>) -> Opti
         first_login: player.get("firstLogin").and_then(|v| v.as_i64()),
         guild: guild.unwrap_or_default(),
         slumber,
+        cosmetics: Cosmetics {
+            scheme: slot("active_prestige_scheme", "prestige_scheme", "prestige_scheme_"),
+            star: slot("active_star", "star", "star_"),
+            bracket: slot("active_prestige_bracket", "prestige_bracket", "prestige_bracket_"),
+        },
         overall: extract_mode_stats(bw, ""),
         solos: extract_mode_stats(bw, "eight_one_"),
         doubles: extract_mode_stats(bw, "eight_two_"),

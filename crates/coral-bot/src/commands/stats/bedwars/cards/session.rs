@@ -3,10 +3,11 @@ use image::DynamicImage;
 use mctext::{MCText, NamedColor};
 
 use hypixel::{
-    BedwarsPlayerStats, Mode, SessionStats, color_code, combined_mode_name, level_progress,
+    BedwarsPlayerStats, Cosmetics, Mode, SessionStats, color_code, combined_mode_name,
+    level_progress,
 };
 
-use super::prestiges::{build_prestige_text, prestige_colors, prestige_star};
+use super::prestiges::{prestige_accent, render_prestige, resolve_cosmetics};
 use render::canvas::{
     Align, BOX_BACKGROUND, CANVAS_BACKGROUND, Canvas, DrawContext, Image, RgbaImage, RoundedRect,
     Shape, TextBlock, TextBox,
@@ -117,7 +118,7 @@ pub fn render_session(
         .draw(
             0,
             LEVEL_Y as i32,
-            &LevelSection::new(current.experience, stars_gained),
+            &LevelSection::new(current.experience, stars_gained, &current.cosmetics),
         )
         .draw(
             col_x(0) as i32,
@@ -748,40 +749,31 @@ impl Shape for HeaderSection<'_> {
 struct LevelSection {
     current_exp: u64,
     stars_gained: f64,
+    cosmetics: Cosmetics,
 }
 
 impl LevelSection {
-    fn new(current_exp: u64, stars_gained: f64) -> Self {
+    fn new(current_exp: u64, stars_gained: f64, cosmetics: &Cosmetics) -> Self {
         Self {
             current_exp,
             stars_gained,
+            cosmetics: resolve_cosmetics(cosmetics),
         }
     }
 
     fn current_level_text(&self) -> MCText {
         let level = hypixel::calculate_level(self.current_exp) as u32;
-        let star = prestige_star(level);
-        build_prestige_text(&format!("[{}{}]", level, star), prestige_colors(level))
+        render_prestige(level, &self.cosmetics)
     }
 
     fn stars_gained_text(&self) -> MCText {
         let level = hypixel::calculate_level(self.current_exp) as u32;
-        let star = prestige_star(level);
-        let colors = prestige_colors(level);
+        let (star_color, star) = prestige_accent(level, &self.cosmetics);
 
         let s = format!("+{:.2}", self.stars_gained);
         let value = s.strip_suffix(".00").unwrap_or(&s);
-        let num_color = if colors.len() > 6 {
-            colors[1]
-        } else {
-            colors[0]
-        };
-        let star_color = colors[colors.len() - 2];
 
-        MCText::parse(&format!(
-            "\u{00a7}{}{}\u{00a7}{}{}",
-            num_color, value, star_color, star
-        ))
+        MCText::parse(&format!("\u{00a7}f{}\u{00a7}{}{}", value, star_color, star))
     }
 
     fn progress_bar_text(&self) -> MCText {

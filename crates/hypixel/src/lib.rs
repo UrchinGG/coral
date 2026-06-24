@@ -8,7 +8,8 @@ pub use player::*;
 pub use stats::*;
 
 pub use parsing::bedwars::{
-    GuildInfo, Mode, ModeStats, SlumberInfo, Stats as BedwarsPlayerStats, WinstreakModeData,
+    CosmeticSlot, Cosmetics, GuildInfo, Mode, ModeStats, SlumberInfo, Stats as BedwarsPlayerStats,
+    WinstreakModeData,
     WinstreakSnapshot, calculate_level, combined_mode_name, experience_for_level,
     extract as extract_bedwars_stats, extract_winstreak_snapshot, level_progress, ratio,
 };

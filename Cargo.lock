@@ -752,6 +752,7 @@ dependencies = [
  "hypixel",
  "image",
  "mctext",
+ "rand 0.8.5",
  "render",
  "reqwest",
  "serde",

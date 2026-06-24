@@ -2,11 +2,11 @@ use image::{DynamicImage, RgbaImage};
 use mctext::{MCText, NamedColor};
 
 use hypixel::{
-    BedwarsPlayerStats, Mode, ModeStats, SlumberInfo, StreakSource, WinstreakHistory, color_code,
-    combined_mode_name, level_progress,
+    BedwarsPlayerStats, Cosmetics, Mode, ModeStats, SlumberInfo, StreakSource, WinstreakHistory,
+    color_code, combined_mode_name, level_progress,
 };
 
-use super::prestiges::{build_prestige_text, prestige_colors, prestige_star};
+use super::prestiges::{render_prestige, resolve_cosmetics};
 use render::canvas::{
     Align, BOX_BACKGROUND, CANVAS_BACKGROUND, Canvas, DrawContext, Image, RoundedRect, Shape,
     TextBlock, TextBox,
@@ -648,27 +648,21 @@ impl Shape for HeaderSection<'_> {
 
 struct LevelSection<'a> {
     stats: &'a BedwarsPlayerStats,
+    cosmetics: Cosmetics,
 }
 
 impl<'a> LevelSection<'a> {
     fn new(stats: &'a BedwarsPlayerStats) -> Self {
-        Self { stats }
+        let cosmetics = resolve_cosmetics(&stats.cosmetics);
+        Self { stats, cosmetics }
     }
 
     fn current_star_text(&self) -> MCText {
-        let star = prestige_star(self.stats.level);
-        build_prestige_text(
-            &format!("[{}{}]", self.stats.level, star),
-            prestige_colors(self.stats.level),
-        )
+        render_prestige(self.stats.level, &self.cosmetics)
     }
 
     fn next_star_text(&self) -> MCText {
-        let star = prestige_star(self.stats.level);
-        build_prestige_text(
-            &format!("[{}{}]", self.stats.level + 1, star),
-            prestige_colors(self.stats.level + 1),
-        )
+        render_prestige(self.stats.level + 1, &self.cosmetics)
     }
 
     fn progress_bar_text(&self) -> MCText {
