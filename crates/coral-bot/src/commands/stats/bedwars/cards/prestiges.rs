@@ -119,7 +119,12 @@ pub fn resolve_cosmetics(cosmetics: &Cosmetics) -> Cosmetics {
     let brackets: Vec<String> = BRACKETS.iter().map(|(id, _)| id.to_string()).collect();
 
     Cosmetics {
-        scheme: resolve_slot(&cosmetics.scheme, "prestige_scheme_", &all_schemes, &mut rng),
+        scheme: resolve_slot(
+            &cosmetics.scheme,
+            "prestige_scheme_",
+            &all_schemes,
+            &mut rng,
+        ),
         star: resolve_slot(&cosmetics.star, "star_", &stars, &mut rng),
         bracket: resolve_slot(&cosmetics.bracket, "prestige_bracket_", &brackets, &mut rng),
     }
@@ -140,9 +145,10 @@ fn resolve_slot(
                 .collect::<Vec<_>>()
                 .choose(rng)
                 .map(|id| id.to_string()),
-            "random_favorite_cosmetic" => {
-                slot.favorites.choose(rng).map(|name| format!("{prefix}{name}"))
-            }
+            "random_favorite_cosmetic" => slot
+                .favorites
+                .choose(rng)
+                .map(|name| format!("{prefix}{name}")),
             _ => Some(id.to_string()),
         };
         pick.unwrap_or_else(|| id.to_string())
@@ -211,15 +217,24 @@ static BRACKETS: &[(&str, (&str, &str))] = &[
     ("prestige_bracket_curly", ("{", "}")),
     ("prestige_bracket_angled", ("<", ">")),
     ("prestige_bracket_parenthesis", ("(", ")")),
-    ("prestige_bracket_double_angle_quotation_mark", ("\u{ab}", "\u{bb}")),
+    (
+        "prestige_bracket_double_angle_quotation_mark",
+        ("\u{ab}", "\u{bb}"),
+    ),
 ];
 
 fn star_by_id(id: &str) -> Option<&'static str> {
-    STARS.iter().find(|(name, _)| *name == id).map(|(_, glyph)| *glyph)
+    STARS
+        .iter()
+        .find(|(name, _)| *name == id)
+        .map(|(_, glyph)| *glyph)
 }
 
 fn bracket_by_id(id: &str) -> Option<(&'static str, &'static str)> {
-    BRACKETS.iter().find(|(name, _)| *name == id).map(|(_, chars)| *chars)
+    BRACKETS
+        .iter()
+        .find(|(name, _)| *name == id)
+        .map(|(_, chars)| *chars)
 }
 
 #[rustfmt::skip]

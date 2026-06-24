@@ -302,7 +302,11 @@ pub fn extract(username: &str, player: &Value, guild: Option<GuildInfo>) -> Opti
         bw.get("favorites")
             .and_then(|f| f.get(key))
             .and_then(|a| a.as_array())
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
             .unwrap_or_default()
     };
     let unlocked = |prefix: &str| {
@@ -347,9 +351,17 @@ pub fn extract(username: &str, player: &Value, guild: Option<GuildInfo>) -> Opti
         guild: guild.unwrap_or_default(),
         slumber,
         cosmetics: Cosmetics {
-            scheme: slot("active_prestige_scheme", "prestige_scheme", "prestige_scheme_"),
+            scheme: slot(
+                "active_prestige_scheme",
+                "prestige_scheme",
+                "prestige_scheme_",
+            ),
             star: slot("active_star", "star", "star_"),
-            bracket: slot("active_prestige_bracket", "prestige_bracket", "prestige_bracket_"),
+            bracket: slot(
+                "active_prestige_bracket",
+                "prestige_bracket",
+                "prestige_bracket_",
+            ),
         },
         overall: extract_mode_stats(bw, ""),
         solos: extract_mode_stats(bw, "eight_one_"),

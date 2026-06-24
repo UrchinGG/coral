@@ -31,6 +31,17 @@ pub fn calculate(
         };
     }
 
+    let aggregated: Vec<Mode> = if modes.len() > 1 {
+        modes
+            .iter()
+            .copied()
+            .filter(|m| *m != Mode::FourVFour)
+            .collect()
+    } else {
+        modes.to_vec()
+    };
+    let modes = aggregated.as_slice();
+
     let mut streaks = Vec::new();
     let mut streak_start: Option<usize> = None;
     let mut peak_api_ws: Option<u64> = None;
