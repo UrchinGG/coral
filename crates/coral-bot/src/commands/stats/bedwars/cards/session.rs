@@ -7,7 +7,7 @@ use hypixel::{
     level_progress,
 };
 
-use super::prestiges::{prestige_accent, render_prestige, resolve_cosmetics};
+use super::prestiges::{render_prestige, resolve_cosmetics};
 use render::canvas::{
     Align, BOX_BACKGROUND, CANVAS_BACKGROUND, Canvas, DrawContext, Image, RgbaImage, RoundedRect,
     Shape, TextBlock, TextBox,
@@ -767,13 +767,10 @@ impl LevelSection {
     }
 
     fn stars_gained_text(&self) -> MCText {
-        let level = hypixel::calculate_level(self.current_exp) as u32;
-        let (star_color, star) = prestige_accent(level, &self.cosmetics);
-
         let s = format!("+{:.2}", self.stars_gained);
         let value = s.strip_suffix(".00").unwrap_or(&s);
 
-        MCText::parse(&format!("\u{00a7}f{}\u{00a7}{}{}", value, star_color, star))
+        MCText::new().span(value).color(NamedColor::Gray).build()
     }
 
     fn progress_bar_text(&self) -> MCText {

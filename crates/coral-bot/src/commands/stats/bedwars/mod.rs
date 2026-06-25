@@ -89,7 +89,7 @@ impl GameStats for Bedwars {
     type ModeSelection = Vec<Mode>;
     type WinstreakSnapshot = WinstreakSnapshot;
 
-    const GAME_NAME: &'static str = "Bedwars";
+    const GAME_NAME: &'static str = "Bed Wars";
     const ATTACHMENT_NAME: &'static str = "bedwars.png";
     const OVERALL_MODE_ID: &'static str = "bedwars_mode";
     const SESSION_MODE_ID: &'static str = "session_mode";
@@ -205,7 +205,7 @@ impl GameStats for Bedwars {
 
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("bedwars")
-        .description("View a player's Bedwars stats")
+        .description("View a player's Bed Wars stats")
         .add_option(CreateCommandOption::new(
             CommandOptionType::String,
             "player",

@@ -26,7 +26,7 @@ pub fn render_prestiges() -> RgbaImage {
         .scale(3.5)
         .align_x(Align::Left)
         .align_y(Align::Center)
-        .push(MCText::parse("§6\u{272B} Bedwars Prestiges 100-10000"));
+        .push(MCText::parse("§6\u{272B} Bed Wars Prestiges 100-10000"));
 
     Canvas::new(IMAGE_WIDTH, IMAGE_HEIGHT)
         .background(CANVAS_BACKGROUND)
@@ -157,22 +157,6 @@ fn resolve_slot(
         active,
         ..Default::default()
     }
-}
-
-pub fn prestige_accent(level: u32, cosmetics: &Cosmetics) -> (&'static str, &'static str) {
-    let scheme = cosmetics
-        .scheme
-        .active
-        .as_deref()
-        .and_then(scheme_by_name)
-        .unwrap_or_else(|| scheme_for_level(level));
-    let star = cosmetics
-        .star
-        .active
-        .as_deref()
-        .and_then(star_by_id)
-        .unwrap_or_else(|| star_for_level(level));
-    (scheme.icon, star)
 }
 
 fn push_colored(text: &mut String, color: &str, content: &str) {
