@@ -439,6 +439,16 @@ impl Handler {
             _ if id.starts_with("manage_sf_revoke:") => {
                 commands::admin::manage::handle_sf_revoke(ctx, component, &self.data).await
             }
+            _ if id.starts_with("manage_show_key:") => {
+                commands::admin::manage::handle_show_key(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("manage_show_dev_key:") => {
+                commands::admin::manage::handle_show_dev_key(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("manage_toggle_name_updates:") => {
+                commands::admin::manage::handle_toggle_name_updates(ctx, component, &self.data)
+                    .await
+            }
             _ if id.starts_with("review_add_replay:") => {
                 commands::blacklist::reviews::handle_add_replay(ctx, component, &self.data).await
             }

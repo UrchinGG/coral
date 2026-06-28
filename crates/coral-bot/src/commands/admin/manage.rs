@@ -147,7 +147,17 @@ pub(crate) async fn build_main_view(
             m.join_date.timestamp()
         )));
 
-        let mut key_buttons = vec![if m.key_locked {
+        let mut key_buttons = vec![];
+
+        if invoker_rank >= AccessRank::Owner && m.api_key.is_some() {
+            key_buttons.push(
+                CreateButton::new(format!("manage_show_key:{target_id}"))
+                    .label("Show Key")
+                    .style(ButtonStyle::Secondary),
+            );
+        }
+
+        key_buttons.push(if m.key_locked {
             CreateButton::new(format!("manage_unlock:{target_id}"))
                 .label("Unlock")
                 .style(ButtonStyle::Success)
@@ -157,7 +167,7 @@ pub(crate) async fn build_main_view(
                 .label("Lock")
                 .style(ButtonStyle::Danger)
                 .disabled(!can_modify)
-        }];
+        });
 
         if invoker_rank >= AccessRank::Helper && can_modify {
             let (label, style) = if m.tagging_disabled {
@@ -177,7 +187,7 @@ pub(crate) async fn build_main_view(
         ));
         parts.push(separator());
 
-        let dev_key = if invoker_rank >= AccessRank::Admin {
+        let dev_key = if invoker_rank >= AccessRank::Owner {
             DeveloperKeyRepository::new(data.db.pool())
                 .get_by_member_id(m.id)
                 .await
@@ -207,28 +217,36 @@ pub(crate) async fn build_main_view(
                     format_number(dk.rate_limit as u64),
                 )));
 
-                let lock_button = if dk.locked {
-                    CreateButton::new(format!("manage_unlock_dev:{target_id}"))
-                        .label("Unlock")
-                        .style(ButtonStyle::Success)
-                        .disabled(!can_modify)
-                } else {
-                    CreateButton::new(format!("manage_lock_dev:{target_id}"))
-                        .label("Lock")
-                        .style(ButtonStyle::Danger)
-                        .disabled(!can_modify)
-                };
-                let delete_button = CreateButton::new(format!("manage_delete_dev:{target_id}"))
-                    .label("Delete")
-                    .style(ButtonStyle::Danger)
-                    .disabled(!can_modify);
-                let rate_limit_button =
-                    CreateButton::new(format!("manage_dev_rate_limit:{target_id}"))
-                        .label("Rate Limit")
-                        .style(ButtonStyle::Secondary)
-                        .disabled(!can_modify);
+                let mut dev_buttons = vec![
+                    CreateButton::new(format!("manage_show_dev_key:{target_id}"))
+                        .label("Show Key")
+                        .style(ButtonStyle::Secondary),
+                ];
+
+                if can_modify {
+                    let lock_button = if dk.locked {
+                        CreateButton::new(format!("manage_unlock_dev:{target_id}"))
+                            .label("Unlock")
+                            .style(ButtonStyle::Success)
+                    } else {
+                        CreateButton::new(format!("manage_lock_dev:{target_id}"))
+                            .label("Lock")
+                            .style(ButtonStyle::Danger)
+                    };
+                    dev_buttons.push(lock_button);
+                    dev_buttons.push(
+                        CreateButton::new(format!("manage_delete_dev:{target_id}"))
+                            .label("Delete")
+                            .style(ButtonStyle::Danger),
+                    );
+                    dev_buttons.push(
+                        CreateButton::new(format!("manage_dev_rate_limit:{target_id}"))
+                            .label("Rate Limit")
+                            .style(ButtonStyle::Secondary),
+                    );
+                }
                 parts.push(CreateContainerComponent::ActionRow(
-                    CreateActionRow::buttons(vec![lock_button, delete_button, rate_limit_button]),
+                    CreateActionRow::buttons(dev_buttons),
                 ));
 
                 let perm_options: Vec<_> = permissions::ALL
@@ -319,6 +337,39 @@ pub(crate) async fn build_main_view(
                     CreateActionRow::buttons(buttons),
                 ));
             }
+        }
+
+        if invoker_rank >= AccessRank::Owner {
+            let pause_name_updates = m
+                .config
+                .get("pause_name_updates")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            parts.push(separator());
+            parts.push(text(format!(
+                "### Sync Settings\nDisplay name updates: **{}**",
+                if pause_name_updates {
+                    "Paused"
+                } else {
+                    "Active"
+                }
+            )));
+            parts.push(CreateContainerComponent::ActionRow(
+                CreateActionRow::buttons(vec![
+                    CreateButton::new(format!("manage_toggle_name_updates:{target_id}"))
+                        .label(if pause_name_updates {
+                            "Resume Updates"
+                        } else {
+                            "Pause Updates"
+                        })
+                        .style(if pause_name_updates {
+                            ButtonStyle::Success
+                        } else {
+                            ButtonStyle::Danger
+                        }),
+                ]),
+            ));
         }
     }
 
@@ -965,5 +1016,128 @@ pub async fn handle_sf_revoke(
         repo.delete_user_refresh_tokens(user.id).await.ok();
     }
 
+    refresh_main(ctx, component, data, invoker_rank, target_id).await
+}
+
+pub async fn handle_show_key(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let target_id = interact::parse_id(&component.data.custom_id)
+        .ok_or_else(|| anyhow!("Invalid button ID"))?;
+    let invoker_id = component.user.id.get();
+    let (invoker_rank, target, _) = fetch_context(data, invoker_id, target_id).await?;
+
+    if invoker_rank < AccessRank::Owner {
+        return interact::send_component_error(ctx, component, "Error", "Owner only").await;
+    }
+    let Some(m) = target else {
+        return interact::send_component_error(ctx, component, "Error", "User is not registered")
+            .await;
+    };
+    let Some(key) = m.api_key else {
+        return interact::send_component_error(ctx, component, "Error", "No personal key").await;
+    };
+
+    let container = CreateComponent::Container(
+        CreateContainer::new(vec![
+            text(format!("## Personal API Key\n\n||{}||", key)),
+            separator(),
+            text("-# Click to copy or select the key manually"),
+        ])
+        .accent_color(0x2F3136),
+    );
+
+    component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
+                    .components(vec![container]),
+            ),
+        )
+        .await?;
+    Ok(())
+}
+
+pub async fn handle_show_dev_key(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let target_id = interact::parse_id(&component.data.custom_id)
+        .ok_or_else(|| anyhow!("Invalid button ID"))?;
+    let invoker_id = component.user.id.get();
+    let (invoker_rank, target, _) = fetch_context(data, invoker_id, target_id).await?;
+
+    if invoker_rank < AccessRank::Owner {
+        return interact::send_component_error(ctx, component, "Error", "Owner only").await;
+    }
+    let Some(m) = target else {
+        return interact::send_component_error(ctx, component, "Error", "User is not registered")
+            .await;
+    };
+
+    let dev_key = DeveloperKeyRepository::new(data.db.pool())
+        .get_by_member_id(m.id)
+        .await?;
+    let Some(dk) = dev_key else {
+        return interact::send_component_error(ctx, component, "Error", "No dev key").await;
+    };
+
+    let container = CreateComponent::Container(
+        CreateContainer::new(vec![
+            text(format!("## Developer API Key\n\n||{}||", dk.api_key)),
+            separator(),
+            text("-# Click to copy or select the key manually"),
+        ])
+        .accent_color(0x2F3136),
+    );
+
+    component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
+                    .components(vec![container]),
+            ),
+        )
+        .await?;
+    Ok(())
+}
+
+pub async fn handle_toggle_name_updates(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let target_id = interact::parse_id(&component.data.custom_id)
+        .ok_or_else(|| anyhow!("Invalid button ID"))?;
+    let invoker_id = component.user.id.get();
+    let (invoker_rank, _, _) = fetch_context(data, invoker_id, target_id).await?;
+
+    if invoker_rank < AccessRank::Owner {
+        return interact::send_component_error(ctx, component, "Error", "Owner only").await;
+    }
+
+    let repo = MemberRepository::new(data.db.pool());
+    let member = repo
+        .get_by_discord_id(target_id as i64)
+        .await?
+        .ok_or_else(|| anyhow!("User not registered"))?;
+
+    let pause_name_updates = member
+        .config
+        .get("pause_name_updates")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let mut new_config = member.config.clone();
+    new_config["pause_name_updates"] = serde_json::Value::Bool(!pause_name_updates);
+
+    repo.update_config(member.discord_id, &new_config).await?;
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }
