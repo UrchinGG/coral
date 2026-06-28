@@ -415,13 +415,12 @@ pub(crate) async fn sync_member(
     preserve_custom: bool,
 ) -> Result<bool> {
     let tags = active_tags(data, uuid).await;
-    let access = MemberRepository::new(data.db.pool())
+    let member_db = MemberRepository::new(data.db.pool())
         .get_by_discord_id(member.user.id.get() as i64)
         .await
         .ok()
-        .flatten()
-        .map(|m| m.access_level)
-        .unwrap_or(0);
+        .flatten();
+    let access = member_db.as_ref().map(|m| m.access_level).unwrap_or(0);
     let template_ctx = build_template_context(hypixel_data, member, &tags, access);
 
     let mut roles: Vec<RoleId> = member.roles.iter().copied().collect();
@@ -449,13 +448,19 @@ pub(crate) async fn sync_member(
 
     let roles_changed = roles != original_roles;
 
+    let pause_name_updates = member_db
+        .as_ref()
+        .and_then(|m| m.config.get("pause_name_updates"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     let bypass_role = std::env::var("NICKNAME_BYPASS_ROLE_ID")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .map(RoleId::new);
     let nickname_bypassed = bypass_role.is_some_and(|r| member.roles.contains(&r));
 
-    let nickname = if nickname_bypassed {
+    let nickname = if nickname_bypassed || pause_name_updates {
         None
     } else {
         config.nickname_template.as_ref().and_then(|template| {
