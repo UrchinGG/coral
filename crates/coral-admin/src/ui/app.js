@@ -360,7 +360,7 @@ function renderSnapshotsList(main) {
                     <tr class="clickable" onclick="navigate('snapshots', ${s.id})">
                         <td><span class="baseline-indicator ${s.is_baseline ? "is-baseline" : "is-delta"}"></span>${s.is_baseline ? "Baseline" : "Delta"}</td>
                         <td>${formatUuid(s.uuid)}</td>
-                        <td>${s.username || '<span class="text-muted">-</span>'}</td>
+                        <td>${s.username ? esc(s.username) : '<span class="text-muted">-</span>'}</td>
                         <td>${s.source || "-"}</td>
                         <td>${formatDate(s.timestamp)}</td>
                     </tr>
@@ -472,7 +472,7 @@ function renderDiagnostics(main) {
                     (p) => `
                     <tr>
                         <td>${formatUuid(p.uuid)}</td>
-                        <td>${p.username || '<span class="text-muted">-</span>'}</td>
+                        <td>${p.username ? esc(p.username) : '<span class="text-muted">-</span>'}</td>
                         <td>${p.baseline_count}</td>
                         <td>${p.delta_count}</td>
                         <td>${p.delta_chain_length}</td>
@@ -650,7 +650,7 @@ function renderBlacklistDetail(main) {
                     ? `
                     <div class="detail-item">
                         <label>Lock Reason</label>
-                        <div class="value">${player.lock_reason}</div>
+                        <div class="value">${esc(player.lock_reason)}</div>
                     </div>
                 `
                     : ""
@@ -668,7 +668,7 @@ function renderBlacklistDetail(main) {
                     (t) => `
                     <div class="tag-card">
                         <div class="tag-type">${renderTagBadge(t.tag_type)}</div>
-                        <div class="tag-reason">${t.reason}</div>
+                        <div class="tag-reason">${esc(t.reason)}</div>
                         <div class="tag-meta">
                             Added by ${t.added_by} on ${formatDate(t.added_on)}
                             ${t.hide_username ? " • Username hidden" : ""}
@@ -692,7 +692,7 @@ function renderBlacklistDetail(main) {
                     (t) => `
                     <div class="tag-card" style="opacity: 0.6">
                         <div class="tag-type">${renderTagBadge(t.tag_type)}</div>
-                        <div class="tag-reason">${t.reason}</div>
+                        <div class="tag-reason">${esc(t.reason)}</div>
                         <div class="tag-meta">
                             Added by ${t.added_by} on ${formatDate(t.added_on)}<br>
                             Removed by ${t.removed_by} on ${formatDate(t.removed_on)}
@@ -725,7 +725,7 @@ function renderSnapshotDetail(main) {
                 </div>
                 <div class="detail-item">
                     <label>Username</label>
-                    <div class="value">${s.username || "-"}</div>
+                    <div class="value">${s.username ? esc(s.username) : "-"}</div>
                 </div>
                 <div class="detail-item">
                     <label>Source</label>
