@@ -212,11 +212,7 @@ pub(crate) async fn build_dashboard_view(
         ),
     )));
 
-    let personal_limit = match member.access_level {
-        4.. => 3000,
-        2..=3 => 1200,
-        _ => 600,
-    };
+    let personal_limit = 600;
     parts.push(text(format!(
         "-# {} · {} requests · {personal_limit} req/5min · Registered <t:{}:D>",
         rank.label(),

@@ -2,7 +2,7 @@ use axum::Router;
 use axum::middleware;
 
 use crate::{
-    auth::{allow_internal_or_auth, require_internal_or_admin, require_moderator},
+    auth::{allow_internal_or_auth, require_internal_or_developer, require_moderator},
     state::AppState,
 };
 
@@ -38,7 +38,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .merge(verify::router())
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
-            require_internal_or_admin,
+            require_internal_or_developer,
         ));
 
     let moderator =

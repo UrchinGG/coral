@@ -38,7 +38,7 @@ enum AuthResult {
     Developer(Member, i64),
 }
 
-pub async fn require_internal_or_admin(
+pub async fn require_internal_or_developer(
     State(state): State<AppState>,
     mut request: Request,
     next: Next,
@@ -51,12 +51,7 @@ pub async fn require_internal_or_admin(
     }
 
     match authenticate_key(&state, &api_key).await? {
-        AuthResult::Personal(member) => {
-            if AccessRank::from_level(member.access_level) < AccessRank::Admin {
-                return Err(StatusCode::FORBIDDEN);
-            }
-            request.extensions_mut().insert(AuthenticatedMember(member));
-        }
+        AuthResult::Personal(_) => return Err(StatusCode::FORBIDDEN),
         AuthResult::Developer(member, permissions) => {
             request.extensions_mut().insert(AuthenticatedMember(member));
             request

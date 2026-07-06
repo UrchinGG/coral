@@ -439,7 +439,9 @@ fn access_level_options(
         (AccessRank::Admin, "Admin", "Administrator access"),
     ]
     .into_iter()
-    .filter(|(rank, _, _)| *rank < invoker_rank)
+    .filter(|(rank, _, _)| {
+        *rank < invoker_rank && (*rank < AccessRank::Helper || invoker_rank >= AccessRank::Admin)
+    })
     .map(|(rank, label, desc)| {
         CreateSelectMenuOption::new(label, rank.to_level().to_string())
             .description(desc)
@@ -525,6 +527,19 @@ pub async fn handle_access_select(
     }
 
     let new_rank = AccessRank::from_level(new_level);
+
+    if (new_rank >= AccessRank::Helper || target_rank >= AccessRank::Helper)
+        && invoker_rank < AccessRank::Admin
+    {
+        return interact::send_component_error(
+            ctx,
+            component,
+            "Error",
+            "Only admins can manage staff (Helper/Moderator) permissions",
+        )
+        .await;
+    }
+
     if new_rank >= invoker_rank {
         return interact::send_component_error(
             ctx,
