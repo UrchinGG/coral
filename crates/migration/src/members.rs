@@ -1,7 +1,6 @@
 use anyhow::Result;
 use mongodb::{Database, bson::doc};
 use serde::Deserialize;
-use serde_json::json;
 use tracing::{info, warn};
 
 use crate::sink::{MemberRow, Sink};
@@ -14,9 +13,11 @@ struct MongoMember {
     uuid: Option<String>,
     join_date: Option<String>,
     request_count: Option<i64>,
-    config: Option<serde_json::Value>,
     key_locked: Option<bool>,
     minecraft_accounts: Option<Vec<String>>,
+    is_admin: Option<bool>,
+    is_mod: Option<bool>,
+    private: Option<bool>,
 }
 
 impl MongoMember {
@@ -28,6 +29,15 @@ impl MongoMember {
         }
     }
 
+    fn access_level(&self) -> i16 {
+        match (self.is_admin, self.is_mod, self.private) {
+            (Some(true), _, _) => 4,
+            (_, Some(true), _) => 3,
+            (_, _, Some(true)) => 1,
+            _ => 0,
+        }
+    }
+
     fn to_row(&self) -> Option<MemberRow> {
         Some(MemberRow {
             discord_id: self.discord_id_i64()?,
@@ -35,7 +45,7 @@ impl MongoMember {
             join_date: self.join_date.clone(),
             request_count: self.request_count.unwrap_or(0),
             tagging_disabled: self.key_locked.unwrap_or(false),
-            config: self.config.clone().unwrap_or_else(|| json!({})),
+            access_level: self.access_level(),
             minecraft_accounts: self.minecraft_accounts.clone().unwrap_or_default(),
         })
     }

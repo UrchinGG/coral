@@ -9,10 +9,12 @@ path = "src/main.rs"
 
 [dependencies]
 database.workspace = true
+hypixel.workspace = true
 mongodb.workspace = true
 sqlx.workspace = true
 uuid.workspace = true
 tokio.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true

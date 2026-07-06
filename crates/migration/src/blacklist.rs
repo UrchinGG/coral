@@ -33,7 +33,7 @@ struct MongoTag {
     hide_username: Option<bool>,
 }
 
-fn bson_i64(val: &mongodb::bson::Bson) -> Option<i64> {
+pub(crate) fn bson_i64(val: &mongodb::bson::Bson) -> Option<i64> {
     use mongodb::bson::Bson;
     match val {
         Bson::Int64(n) => Some(*n),
@@ -94,7 +94,7 @@ impl MongoBlacklistPlayer {
             .filter_map(map_tag)
             .collect();
 
-        if tags.is_empty() {
+        if tags.is_empty() && !self.is_locked.unwrap_or(false) {
             return None;
         }
 

@@ -1,6 +1,5 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 use sqlx::PgPool;
 use tracing::warn;
 
@@ -10,7 +9,7 @@ pub struct MemberRow {
     pub join_date: Option<String>,
     pub request_count: i64,
     pub tagging_disabled: bool,
-    pub config: Value,
+    pub access_level: i16,
     pub minecraft_accounts: Vec<String>,
 }
 
@@ -47,6 +46,60 @@ impl Sink {
         Ok(())
     }
 
+    pub async fn reset_members_preserving_api_keys(&self) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM minecraft_accounts")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "UPDATE members SET uuid = NULL, request_count = 0,
+                                 tagging_disabled = false, key_locked = false,
+                                 accepted_tags = 0, rejected_tags = 0, accurate_verdicts = 0,
+                                 config = '{}'::jsonb,
+                                 access_level = CASE WHEN access_level >= 5 THEN access_level ELSE 0 END",
+        )
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn wipe_guild_subscriptions(&self) -> Result<()> {
+        sqlx::query("DELETE FROM guild_subscriptions")
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn resolve_guild_id_by_name(&self, name: &str) -> Result<Option<String>> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT guild_id FROM guild_current WHERE LOWER(name) = LOWER($1) LIMIT 1",
+        )
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    pub async fn insert_guild_subscriptions(&self, rows: &[(String, i64)]) -> usize {
+        let mut errors = 0;
+        for (guild_id, discord_id) in rows {
+            let res = sqlx::query(
+                "INSERT INTO guild_subscriptions (guild_id, discord_id, tag_types)
+                 VALUES ($1, $2, '{}') ON CONFLICT (guild_id, discord_id) DO NOTHING",
+            )
+            .bind(guild_id)
+            .bind(discord_id)
+            .execute(&self.pool)
+            .await;
+            if let Err(e) = res {
+                warn!("Failed to insert guild subscription ({guild_id}, {discord_id}): {e}");
+                errors += 1;
+            }
+        }
+        errors
+    }
+
     pub async fn insert_members(&self, rows: &[MemberRow]) -> usize {
         let mut errors = 0;
         for row in rows {
@@ -75,19 +128,20 @@ impl Sink {
 
         let (member_id,): (i64,) = sqlx::query_as(
             r#"
-            INSERT INTO members (discord_id, uuid, api_key, join_date, request_count, tagging_disabled, config)
+            INSERT INTO members (discord_id, uuid, api_key, join_date, request_count, tagging_disabled, access_level)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (discord_id) DO UPDATE SET
                 uuid = EXCLUDED.uuid,
+                join_date = EXCLUDED.join_date,
                 request_count = EXCLUDED.request_count,
                 tagging_disabled = EXCLUDED.tagging_disabled,
-                config = EXCLUDED.config
+                access_level = GREATEST(members.access_level, EXCLUDED.access_level)
             RETURNING id
             "#,
         )
         .bind(m.discord_id).bind(&m.uuid).bind(&api_key)
         .bind(join_date).bind(m.request_count)
-        .bind(m.tagging_disabled).bind(&m.config)
+        .bind(m.tagging_disabled).bind(m.access_level)
         .fetch_one(&self.pool).await?;
 
         for uuid in &m.minecraft_accounts {
