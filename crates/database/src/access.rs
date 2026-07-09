@@ -1,7 +1,6 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AccessRank {
     Default = 0,
-    Trusted = 1,
     Helper = 2,
     Moderator = 3,
     Admin = 4,
@@ -15,7 +14,6 @@ impl AccessRank {
             4 => Self::Admin,
             3 => Self::Moderator,
             2 => Self::Helper,
-            1 => Self::Trusted,
             _ => Self::Default,
         }
     }
@@ -30,7 +28,6 @@ impl AccessRank {
             Self::Admin => "Admin",
             Self::Moderator => "Moderator",
             Self::Helper => "Helper",
-            Self::Trusted => "Trusted",
             Self::Default => "Default",
         }
     }

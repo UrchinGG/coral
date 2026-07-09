@@ -108,7 +108,10 @@ fn map_op_error(e: TagOpError) -> ApiError {
 async fn enforce_tag_limit(state: &AppState, member: &database::Member) -> Result<(), ApiError> {
     match state
         .rate_limiter
-        .check_tag_limit(member.discord_id, member.access_level)
+        .check_tag_limit(
+            member.discord_id,
+            database::standing::effective_level(member),
+        )
         .await
     {
         Ok(RateLimitResult::Allowed { .. }) => Ok(()),
@@ -153,7 +156,7 @@ pub async fn add_tag(
             &body.tag_type,
             &body.reason,
             member.0.discord_id,
-            member.0.access_level,
+            database::standing::effective_level(&member.0),
             body.hide_username,
             None,
             None,
@@ -268,7 +271,7 @@ pub async fn update_tag(
             &body.new_type,
             &body.new_reason,
             member.0.discord_id,
-            member.0.access_level,
+            database::standing::effective_level(&member.0),
             body.hide_username,
         )
         .await

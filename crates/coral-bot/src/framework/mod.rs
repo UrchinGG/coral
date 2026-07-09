@@ -54,7 +54,7 @@ pub struct Data {
     pub evidence_threads: Arc<RwLock<HashMap<String, ThreadId>>>,
     pub sync_cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
     pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
-    pub vote_min_rank: AccessRank,
+    pub trusted_role_id: Option<RoleId>,
     pub vote_messages: Arc<Mutex<HashMap<(u64, usize, u64), u64>>>,
     pub started_at: i64,
     pub info_cache: Arc<Mutex<commands::admin::info::InfoCache>>,
@@ -411,6 +411,10 @@ impl Handler {
             _ if id.starts_with("manage_remove_strike:") => {
                 commands::admin::manage::handle_remove_strike(ctx, component, &self.data).await
             }
+            _ if id.starts_with("strike_tag_author:") => {
+                commands::admin::strike::handle_strike_author_button(ctx, component, &self.data)
+                    .await
+            }
             _ if id.starts_with("manage_register:") => {
                 commands::admin::manage::handle_register_button(ctx, component, &self.data).await
             }
@@ -534,6 +538,9 @@ impl Handler {
         match id {
             _ if id.starts_with("session_rename_modal:") => {
                 commands::stats::bedwars::handle_rename_modal(ctx, modal, &self.data).await
+            }
+            _ if id.starts_with("strike_author_modal:") => {
+                commands::admin::strike::handle_strike_author_modal(ctx, modal, &self.data).await
             }
             _ if id.starts_with("session_duels_rename_modal:") => {
                 commands::stats::duels::handle_rename_modal(ctx, modal, &self.data).await

@@ -11,6 +11,7 @@ pub struct MemberRow {
     pub tagging_disabled: bool,
     pub access_level: i16,
     pub minecraft_accounts: Vec<String>,
+    pub grandfather_standing: bool,
 }
 
 pub struct TagRow {
@@ -55,7 +56,9 @@ impl Sink {
             "UPDATE members SET uuid = NULL, request_count = 0,
                                  tagging_disabled = false, key_locked = false,
                                  accepted_tags = 0, rejected_tags = 0, accurate_verdicts = 0,
-                                 config = '{}'::jsonb,
+                                 incorrect_verdicts = 0, bonus_verdicts = 0,
+                                 vote_granted = false, tag_granted = false,
+                                 config = '{}'::jsonb, strikes = '[]'::jsonb,
                                  access_level = CASE WHEN access_level >= 5 THEN access_level ELSE 0 END",
         )
         .execute(&mut *tx)
@@ -152,6 +155,15 @@ impl Sink {
             .bind(uuid)
             .execute(&self.pool)
             .await;
+        }
+
+        if m.grandfather_standing {
+            sqlx::query(
+                "UPDATE members SET vote_granted = true, tag_granted = true WHERE discord_id = $1",
+            )
+            .bind(m.discord_id)
+            .execute(&self.pool)
+            .await?;
         }
 
         Ok(())

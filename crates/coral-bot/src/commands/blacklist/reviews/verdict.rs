@@ -16,6 +16,53 @@ async fn send_in_thread(
     let _ = ctx.http.send_message(channel_id, files, msg).await;
 }
 
+fn can_vote(rank: crate::framework::AccessRank, member: Option<&database::Member>) -> bool {
+    rank >= crate::framework::AccessRank::Helper
+        || member.is_some_and(|m| database::standing::evaluate(m).can_vote)
+}
+
+async fn settle_verdict(
+    ctx: &Context,
+    data: &Data,
+    submitter_id: u64,
+    accepted: bool,
+    winning_votes: &[u64],
+    losing_votes: &[u64],
+    staff_resolved: bool,
+) {
+    let repo = MemberRepository::new(data.db.pool());
+    let submitter = submitter_id as i64;
+    let result = if accepted {
+        repo.increment_accepted_tags(submitter).await
+    } else {
+        repo.increment_rejected_tags(submitter).await
+    };
+    if let Err(e) = result {
+        tracing::error!("Failed to update submitter counters for {submitter_id}: {e}");
+    }
+
+    let winners: Vec<i64> = winning_votes.iter().map(|&id| id as i64).collect();
+    let losers: Vec<i64> = losing_votes.iter().map(|&id| id as i64).collect();
+    if let Err(e) = repo.increment_accurate_verdicts(&winners).await {
+        tracing::error!("Failed to increment accurate verdicts: {e}");
+    }
+    if let Err(e) = repo.increment_incorrect_verdicts(&losers).await {
+        tracing::error!("Failed to increment incorrect verdicts: {e}");
+    }
+    if staff_resolved && !winners.is_empty() && !losers.is_empty() {
+        if let Err(e) = repo.increment_bonus_verdicts(&winners).await {
+            tracing::error!("Failed to increment bonus verdicts: {e}");
+        }
+    }
+
+    for id in std::iter::once(submitter_id)
+        .chain(winning_votes.iter().copied())
+        .chain(losing_votes.iter().copied())
+    {
+        crate::utils::standing::refresh_and_sync(ctx, data, id).await;
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn announce_vote(
     ctx: &Context,
@@ -175,9 +222,9 @@ pub async fn handle_approve(
 ) -> Result<()> {
     let (player_index, submitter_id) = parse_component_ids(&component.data.custom_id);
     let discord_id = component.user.id.get();
-    let rank = super::super::tag::get_rank(data, discord_id).await?;
+    let (rank, member) = super::super::tag::get_rank_and_member(data, discord_id).await?;
 
-    if rank < data.vote_min_rank {
+    if !can_vote(rank, member.as_ref()) {
         return send_vote_error(
             ctx,
             component,
@@ -293,11 +340,8 @@ pub async fn handle_approve(
             .map(|&id| id as i64)
             .collect()
     };
-    let accurate_ids: Vec<i64> = state.players[player_index]
-        .accept_votes
-        .iter()
-        .map(|&id| id as i64)
-        .collect();
+    let winning_votes = state.players[player_index].accept_votes.clone();
+    let losing_votes = state.players[player_index].reject_votes.clone();
     let will_confirm =
         !media_urls.is_empty() && CONFIRMABLE_TAGS.contains(&player_tag_type.as_str());
     let stored_type = if will_confirm {
@@ -398,18 +442,16 @@ pub async fn handle_approve(
         }
     }
 
-    let member_repo = MemberRepository::new(data.db.pool());
-    if let Err(e) = member_repo
-        .increment_accepted_tags(submitter_id as i64)
-        .await
-    {
-        tracing::error!("Failed to increment accepted tags for {submitter_id}: {e}");
-    }
-    if !accurate_ids.is_empty() {
-        if let Err(e) = member_repo.increment_accurate_verdicts(&accurate_ids).await {
-            tracing::error!("Failed to increment accurate verdicts: {e}");
-        }
-    }
+    settle_verdict(
+        ctx,
+        data,
+        submitter_id,
+        true,
+        &winning_votes,
+        &losing_votes,
+        is_staff,
+    )
+    .await;
 
     let all_resolved =
         finalize_thread_if_resolved(ctx, data, thread_id(component.channel_id), &state).await?;
@@ -436,9 +478,9 @@ pub async fn handle_reject(
 ) -> Result<()> {
     let (player_index, submitter_id) = parse_component_ids(&component.data.custom_id);
     let discord_id = component.user.id.get();
-    let rank = super::super::tag::get_rank(data, discord_id).await?;
+    let (rank, member) = super::super::tag::get_rank_and_member(data, discord_id).await?;
 
-    if rank < data.vote_min_rank {
+    if !can_vote(rank, member.as_ref()) {
         return send_vote_error(
             ctx,
             component,
@@ -548,11 +590,8 @@ pub async fn handle_reject(
         return Ok(());
     }
 
-    let accurate_ids: Vec<i64> = state.players[player_index]
-        .reject_votes
-        .iter()
-        .map(|&id| id as i64)
-        .collect();
+    let winning_votes = state.players[player_index].reject_votes.clone();
+    let losing_votes = state.players[player_index].accept_votes.clone();
 
     state.players[player_index].status = PlayerStatus::Rejected;
     state.players[player_index].accept_votes.clear();
@@ -563,18 +602,16 @@ pub async fn handle_reject(
         .await?;
     update_builder(ctx, data, component.channel_id, &message, &state).await?;
 
-    let member_repo = MemberRepository::new(data.db.pool());
-    if let Err(e) = member_repo
-        .increment_rejected_tags(submitter_id as i64)
-        .await
-    {
-        tracing::error!("Failed to increment rejected tags for {submitter_id}: {e}");
-    }
-    if !accurate_ids.is_empty() {
-        if let Err(e) = member_repo.increment_accurate_verdicts(&accurate_ids).await {
-            tracing::error!("Failed to increment accurate verdicts: {e}");
-        }
-    }
+    settle_verdict(
+        ctx,
+        data,
+        submitter_id,
+        false,
+        &winning_votes,
+        &losing_votes,
+        false,
+    )
+    .await;
 
     let all_resolved =
         finalize_thread_if_resolved(ctx, data, thread_id(component.channel_id), &state).await?;
@@ -636,11 +673,8 @@ pub async fn handle_reject_modal(
         return Ok(());
     }
 
-    let accurate_ids: Vec<i64> = state.players[player_index]
-        .reject_votes
-        .iter()
-        .map(|&id| id as i64)
-        .collect();
+    let winning_votes = state.players[player_index].reject_votes.clone();
+    let losing_votes = state.players[player_index].accept_votes.clone();
 
     state.players[player_index].status = PlayerStatus::Rejected;
     state.players[player_index].review_note = Some(reason.clone());
@@ -649,18 +683,16 @@ pub async fn handle_reject_modal(
 
     update_builder(ctx, data, channel_id, &builder_msg, &state).await?;
 
-    let member_repo = MemberRepository::new(data.db.pool());
-    if let Err(e) = member_repo
-        .increment_rejected_tags(submitter_id as i64)
-        .await
-    {
-        tracing::error!("Failed to increment rejected tags for {submitter_id}: {e}");
-    }
-    if !accurate_ids.is_empty() {
-        if let Err(e) = member_repo.increment_accurate_verdicts(&accurate_ids).await {
-            tracing::error!("Failed to increment accurate verdicts: {e}");
-        }
-    }
+    settle_verdict(
+        ctx,
+        data,
+        submitter_id,
+        false,
+        &winning_votes,
+        &losing_votes,
+        true,
+    )
+    .await;
 
     let all_resolved =
         finalize_thread_if_resolved(ctx, data, thread_id(modal.channel_id), &state).await?;

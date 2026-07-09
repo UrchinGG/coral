@@ -7,7 +7,7 @@ use serenity::all::*;
 
 use super::channel::{format_added_line, format_reviewed_line, format_tag_block};
 use super::reviews;
-use super::tag::get_rank;
+use super::tag::{get_rank, get_rank_and_member};
 use crate::framework::{AccessRank, Data};
 use crate::utils::{format_uuid_dashed, sanitize_reason, separator, text};
 use coral_redis::BlacklistEvent;
@@ -119,8 +119,12 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     command.defer_ephemeral(&ctx.http).await?;
 
     let discord_id = command.user.id.get();
-    let rank = get_rank(data, discord_id).await?;
-    if rank < AccessRank::Trusted {
+    let (rank, member) = get_rank_and_member(data, discord_id).await?;
+    let can_confirm = rank >= AccessRank::Helper
+        || member
+            .as_ref()
+            .is_some_and(|m| database::standing::evaluate(m).can_tag);
+    if !can_confirm {
         return crate::interact::send_deferred_error(
             ctx,
             command,

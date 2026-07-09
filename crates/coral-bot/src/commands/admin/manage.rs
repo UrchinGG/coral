@@ -292,19 +292,32 @@ pub(crate) async fn build_main_view(
             .await
             .unwrap_or(0);
 
+        let standing = database::standing::evaluate(m);
+        let tier = if m.access_level >= AccessRank::Helper.to_level() {
+            "staff"
+        } else if standing.can_tag {
+            "trusted"
+        } else if standing.can_vote {
+            "reviewer"
+        } else {
+            "submitter"
+        };
         parts.push(text(format!(
             "Added **{}** tags to the blacklist\n\
              **{}** accepted tag reviews · **{}** rejected\n\
-             **{}** accurate verdicts",
-            total_tags, m.accepted_tags, m.rejected_tags, m.accurate_verdicts
+             **{}** accurate verdicts · **{}** inaccurate · **{}** bonus\n\
+             Standing: **{tier}** (vote: {}, tag: {})",
+            total_tags,
+            m.accepted_tags,
+            m.rejected_tags,
+            m.accurate_verdicts,
+            m.incorrect_verdicts,
+            m.bonus_verdicts,
+            standing.can_vote,
+            standing.can_tag,
         )));
 
-        let strikes = m
-            .config
-            .get("strikes")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
+        let strikes = m.strikes.as_array().cloned().unwrap_or_default();
         if strikes.is_empty() {
             parts.push(text("-# No strikes"));
         } else {
@@ -433,7 +446,6 @@ fn access_level_options(
 ) -> Vec<CreateSelectMenuOption<'static>> {
     [
         (AccessRank::Default, "Default", "Default access"),
-        (AccessRank::Trusted, "Trusted", "Trusted access"),
         (AccessRank::Helper, "Helper", "Helper access"),
         (AccessRank::Moderator, "Moderator", "Moderator access"),
         (AccessRank::Admin, "Admin", "Administrator access"),
@@ -781,6 +793,7 @@ pub async fn handle_remove_strike(
     MemberRepository::new(data.db.pool())
         .remove_strike(target_id as i64, strike_index)
         .await?;
+    crate::utils::standing::refresh_and_sync(ctx, data, target_id).await;
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }
 

@@ -6,7 +6,7 @@ const WINDOW_MINUTES: i64 = 30;
 
 pub fn can_add(tag_type: &str, level: i16) -> bool {
     match tag_type {
-        "sniper" => true,
+        "sniper" => level >= 0,
         "blatant_cheater" | "closet_cheater" => level >= MEMBER,
         "replays_needed" => level >= HELPER,
         "caution" => level >= MODERATOR,

@@ -13,6 +13,7 @@ mod periods;
 mod plugin_registry;
 mod pool;
 mod sessions;
+pub mod standing;
 pub mod starfish;
 mod tag_ops;
 

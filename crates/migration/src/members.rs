@@ -30,10 +30,9 @@ impl MongoMember {
     }
 
     fn access_level(&self) -> i16 {
-        match (self.is_admin, self.is_mod, self.private) {
-            (Some(true), _, _) => 4,
-            (_, Some(true), _) => 3,
-            (_, _, Some(true)) => 1,
+        match (self.is_admin, self.is_mod) {
+            (Some(true), _) => 4,
+            (_, Some(true)) => 3,
             _ => 0,
         }
     }
@@ -47,6 +46,7 @@ impl MongoMember {
             tagging_disabled: self.key_locked.unwrap_or(false),
             access_level: self.access_level(),
             minecraft_accounts: self.minecraft_accounts.clone().unwrap_or_default(),
+            grandfather_standing: self.private.unwrap_or(false),
         })
     }
 }

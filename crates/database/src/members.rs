@@ -16,8 +16,17 @@ pub struct Member {
     pub accepted_tags: i64,
     pub rejected_tags: i64,
     pub accurate_verdicts: i64,
+    pub incorrect_verdicts: i64,
+    pub bonus_verdicts: i64,
+    pub vote_granted: bool,
+    pub tag_granted: bool,
     pub config: Value,
+    pub strikes: Value,
 }
+
+const COLUMNS: &str = "id, discord_id, uuid, api_key, join_date, request_count, access_level, \
+    key_locked, tagging_disabled, accepted_tags, rejected_tags, accurate_verdicts, \
+    incorrect_verdicts, bonus_verdicts, vote_granted, tag_granted, config, strikes";
 
 pub struct MemberRepository<'a> {
     pool: &'a PgPool,
@@ -29,22 +38,16 @@ impl<'a> MemberRepository<'a> {
     }
 
     pub async fn get_by_id(&self, id: i64) -> Result<Option<Member>, sqlx::Error> {
-        sqlx::query_as(
-            "SELECT id, discord_id, uuid, api_key, join_date, request_count,
-                    access_level, key_locked, tagging_disabled, accepted_tags, rejected_tags, accurate_verdicts, config
-             FROM members WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_optional(self.pool)
-        .await
+        sqlx::query_as(&format!("SELECT {COLUMNS} FROM members WHERE id = $1"))
+            .bind(id)
+            .fetch_optional(self.pool)
+            .await
     }
 
     pub async fn get_by_discord_id(&self, discord_id: i64) -> Result<Option<Member>, sqlx::Error> {
-        sqlx::query_as(
-            "SELECT id, discord_id, uuid, api_key, join_date, request_count,
-                    access_level, key_locked, tagging_disabled, accepted_tags, rejected_tags, accurate_verdicts, config
-             FROM members WHERE discord_id = $1",
-        )
+        sqlx::query_as(&format!(
+            "SELECT {COLUMNS} FROM members WHERE discord_id = $1"
+        ))
         .bind(discord_id)
         .fetch_optional(self.pool)
         .await
@@ -54,34 +57,27 @@ impl<'a> MemberRepository<'a> {
         &self,
         discord_ids: &[i64],
     ) -> Result<Vec<Member>, sqlx::Error> {
-        sqlx::query_as(
-            "SELECT id, discord_id, uuid, api_key, join_date, request_count,
-                    access_level, key_locked, tagging_disabled, accepted_tags, rejected_tags, accurate_verdicts, config
-             FROM members WHERE discord_id = ANY($1) AND uuid IS NOT NULL",
-        )
+        sqlx::query_as(&format!(
+            "SELECT {COLUMNS} FROM members WHERE discord_id = ANY($1) AND uuid IS NOT NULL"
+        ))
         .bind(discord_ids)
         .fetch_all(self.pool)
         .await
     }
 
     pub async fn get_by_api_key(&self, api_key: &str) -> Result<Option<Member>, sqlx::Error> {
-        sqlx::query_as(
-            "SELECT id, discord_id, uuid, api_key, join_date, request_count,
-                    access_level, key_locked, tagging_disabled, accepted_tags, rejected_tags, accurate_verdicts, config
-             FROM members WHERE api_key = $1",
-        )
-        .bind(api_key)
-        .fetch_optional(self.pool)
-        .await
+        sqlx::query_as(&format!("SELECT {COLUMNS} FROM members WHERE api_key = $1"))
+            .bind(api_key)
+            .fetch_optional(self.pool)
+            .await
     }
 
     pub async fn create(&self, discord_id: i64) -> Result<Member, sqlx::Error> {
-        sqlx::query_as(
+        sqlx::query_as(&format!(
             "INSERT INTO members (discord_id) VALUES ($1)
              ON CONFLICT (discord_id) DO UPDATE SET discord_id = EXCLUDED.discord_id
-             RETURNING id, discord_id, uuid, api_key, join_date, request_count,
-                       access_level, key_locked, tagging_disabled, accepted_tags, rejected_tags, accurate_verdicts, config",
-        )
+             RETURNING {COLUMNS}"
+        ))
         .bind(discord_id)
         .fetch_one(self.pool)
         .await
@@ -202,6 +198,55 @@ impl<'a> MemberRepository<'a> {
         Ok(())
     }
 
+    pub async fn increment_incorrect_verdicts(
+        &self,
+        discord_ids: &[i64],
+    ) -> Result<(), sqlx::Error> {
+        if discord_ids.is_empty() {
+            return Ok(());
+        }
+        sqlx::query("UPDATE members SET incorrect_verdicts = incorrect_verdicts + 1 WHERE discord_id = ANY($1)")
+            .bind(discord_ids)
+            .execute(self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn increment_bonus_verdicts(&self, discord_ids: &[i64]) -> Result<(), sqlx::Error> {
+        if discord_ids.is_empty() {
+            return Ok(());
+        }
+        sqlx::query(
+            "UPDATE members SET bonus_verdicts = bonus_verdicts + 1 WHERE discord_id = ANY($1)",
+        )
+        .bind(discord_ids)
+        .execute(self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn set_vote_granted(
+        &self,
+        discord_id: i64,
+        granted: bool,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE members SET vote_granted = $2 WHERE discord_id = $1")
+            .bind(discord_id)
+            .bind(granted)
+            .execute(self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_tag_granted(&self, discord_id: i64, granted: bool) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE members SET tag_granted = $2 WHERE discord_id = $1")
+            .bind(discord_id)
+            .bind(granted)
+            .execute(self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn add_strike(
         &self,
         discord_id: i64,
@@ -213,29 +258,21 @@ impl<'a> MemberRepository<'a> {
             "struck_by": struck_by,
             "timestamp": Utc::now().to_rfc3339(),
         });
-        sqlx::query(
-            "UPDATE members SET config = jsonb_set(
-                config, '{strikes}', COALESCE(config->'strikes', '[]'::jsonb) || $2::jsonb
-            ) WHERE discord_id = $1",
-        )
-        .bind(discord_id)
-        .bind(strike)
-        .execute(self.pool)
-        .await
-        .map(|r| r.rows_affected() > 0)
+        sqlx::query("UPDATE members SET strikes = strikes || $2::jsonb WHERE discord_id = $1")
+            .bind(discord_id)
+            .bind(strike)
+            .execute(self.pool)
+            .await
+            .map(|r| r.rows_affected() > 0)
     }
 
     pub async fn remove_strike(&self, discord_id: i64, index: usize) -> Result<bool, sqlx::Error> {
-        sqlx::query(
-            "UPDATE members SET config = jsonb_set(
-                config, '{strikes}', (config->'strikes') - $2::int
-            ) WHERE discord_id = $1",
-        )
-        .bind(discord_id)
-        .bind(index as i32)
-        .execute(self.pool)
-        .await
-        .map(|r| r.rows_affected() > 0)
+        sqlx::query("UPDATE members SET strikes = strikes - $2::int WHERE discord_id = $1")
+            .bind(discord_id)
+            .bind(index as i32)
+            .execute(self.pool)
+            .await
+            .map(|r| r.rows_affected() > 0)
     }
 
     pub async fn count(&self) -> Result<i64, sqlx::Error> {

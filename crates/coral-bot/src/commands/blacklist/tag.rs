@@ -265,7 +265,7 @@ pub(super) async fn get_rank(data: &Data, discord_id: u64) -> Result<AccessRank>
     Ok(AccessRank::of(data, discord_id, member.as_ref()))
 }
 
-async fn get_rank_and_member(
+pub(super) async fn get_rank_and_member(
     data: &Data,
     discord_id: u64,
 ) -> Result<(AccessRank, Option<database::Member>)> {
@@ -553,8 +553,8 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         .await;
     }
 
-    let needs_review =
-        rank == AccessRank::Default && super::reviews::REVIEW_TAGS.contains(&tag_type);
+    let effective = database::standing::effective_level(&member);
+    let needs_review = effective < 1 && super::reviews::REVIEW_TAGS.contains(&tag_type);
 
     let player_info = match data.api.resolve(player).await {
         Ok(info) => info,
@@ -604,7 +604,7 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
             tag_type,
             reason,
             discord_id as i64,
-            rank.to_level(),
+            effective,
             hide,
             None,
             None,
@@ -622,7 +622,7 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
                 })
                 .await;
 
-            let hint = if rank >= AccessRank::Trusted {
+            let hint = if effective >= 1 {
                 "-# You can remove this tag within 30 minutes using /tag remove."
             } else {
                 "-# You can overwrite or remove this tag within 30 minutes using /tag add and /tag remove."
@@ -766,7 +766,10 @@ pub async fn handle_overwrite_button(
 
     let uuid = &overwrite.uuid;
     let discord_id = component.user.id.get();
-    let rank = get_rank(data, discord_id).await?;
+    let (rank, member) = get_rank_and_member(data, discord_id).await?;
+    let effective = member
+        .as_ref()
+        .map_or(rank.to_level(), database::standing::effective_level);
 
     let cache = CacheRepository::new(data.db.pool());
     let player_name = cache
@@ -784,7 +787,7 @@ pub async fn handle_overwrite_button(
             &overwrite.tag_type,
             &overwrite.reason,
             discord_id as i64,
-            rank.to_level(),
+            effective,
             overwrite.hide,
         )
         .await
@@ -903,7 +906,7 @@ async fn run_remove(ctx: &Context, command: &CommandInteraction, data: &Data) ->
         true,
     );
 
-    let container = CreateContainer::new(vec![
+    let mut parts = vec![
         face_section(vec![
             format!(
                 "## {} Tag Removed\nIGN - `{}`\n",
@@ -913,8 +916,19 @@ async fn run_remove(ctx: &Context, command: &CommandInteraction, data: &Data) ->
             format!("-# UUID: {dashed_uuid}"),
         ]),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
-    ])
-    .accent_color(COLOR_ERROR);
+    ];
+    if rank >= AccessRank::Moderator {
+        if let Some(author) = tag.author.filter(|&a| a > 0 && a != discord_id as i64) {
+            parts.push(CreateContainerComponent::ActionRow(
+                CreateActionRow::buttons(vec![
+                    CreateButton::new(format!("strike_tag_author:{author}"))
+                        .label("Strike Author")
+                        .style(ButtonStyle::Danger),
+                ]),
+            ));
+        }
+    }
+    let container = CreateContainer::new(parts).accent_color(COLOR_ERROR);
 
     send_tag_response(ctx, command, data, &player_info.uuid, container).await?;
 
