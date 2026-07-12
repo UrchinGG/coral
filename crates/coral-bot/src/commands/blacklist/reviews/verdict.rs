@@ -21,6 +21,17 @@ fn can_vote(rank: crate::framework::AccessRank, member: Option<&database::Member
         || member.is_some_and(|m| database::standing::evaluate(m).can_vote)
 }
 
+fn vote_access_hint(member: Option<&database::Member>) -> &'static str {
+    let strikes = member.map_or(0, database::standing::strike_count);
+    if strikes >= database::standing::REVOKE_STRIKES {
+        "Voting is suspended while you have active strikes."
+    } else {
+        "You can't vote on tag reviews yet. Earn voting permissions by submitting tag reviews \
+         yourself. Voting will be automatically unlocked after a short while based on your \
+         performance."
+    }
+}
+
 async fn settle_verdict(
     ctx: &Context,
     data: &Data,
@@ -212,6 +223,17 @@ pub async fn handle_submit(
         tag_ids.push(id);
     }
     let _ = set_forum_tags(ctx, thread_id(component.channel_id), &tag_ids).await;
+
+    let notice = CreateMessage::new()
+        .flags(MessageFlags::IS_COMPONENTS_V2)
+        .components(vec![CreateComponent::Container(CreateContainer::new(
+            vec![text(
+                ">>> Vote on the validity of the above tags. If the player is not cheating, tag \
+                 reason does not accurately describe the cheats used, or both, then reject it \
+                 and explain what you'd change.",
+            )],
+        ))]);
+    send_in_thread(ctx, component.channel_id.into(), &notice, Vec::new()).await;
     Ok(())
 }
 
@@ -225,12 +247,7 @@ pub async fn handle_approve(
     let (rank, member) = super::super::tag::get_rank_and_member(data, discord_id).await?;
 
     if !can_vote(rank, member.as_ref()) {
-        return send_vote_error(
-            ctx,
-            component,
-            "You do not have permission to review submissions",
-        )
-        .await;
+        return send_vote_error(ctx, component, vote_access_hint(member.as_ref())).await;
     }
     if discord_id == submitter_id {
         return send_vote_error(ctx, component, "You cannot review your own submission").await;
@@ -481,12 +498,7 @@ pub async fn handle_reject(
     let (rank, member) = super::super::tag::get_rank_and_member(data, discord_id).await?;
 
     if !can_vote(rank, member.as_ref()) {
-        return send_vote_error(
-            ctx,
-            component,
-            "You do not have permission to review submissions",
-        )
-        .await;
+        return send_vote_error(ctx, component, vote_access_hint(member.as_ref())).await;
     }
     if discord_id == submitter_id {
         return send_vote_error(ctx, component, "You cannot review your own submission").await;
