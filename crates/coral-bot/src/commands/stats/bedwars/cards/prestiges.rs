@@ -109,6 +109,55 @@ pub fn render_prestige(level: u32, cosmetics: &Cosmetics) -> MCText {
     MCText::parse(&text)
 }
 
+pub fn prestige_color_codes() -> String {
+    (1..=(COLUMNS * ROWS))
+        .map(|n| {
+            let level = n * 100;
+            let name = pretty_scheme_name(scheme_for_level(level).name);
+            format!("{name} `{}`", prestige_code(level))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn pretty_scheme_name(name: &str) -> String {
+    name.split('_')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn prestige_code(level: u32) -> String {
+    let scheme = scheme_for_level(level);
+    let star = star_for_level(level);
+
+    let mut segments: Vec<(&str, String)> = vec![(scheme.open, "[".to_string())];
+    for (i, digit) in level.to_string().chars().enumerate() {
+        let color = scheme.digits.get(i).copied().unwrap_or(scheme.digits[3]);
+        segments.push((color, digit.to_string()));
+    }
+    segments.push((scheme.icon, star.to_string()));
+    segments.push((scheme.close, "]".to_string()));
+
+    let mut out = String::new();
+    let mut current = "";
+    for (color, content) in &segments {
+        if *color != current {
+            out.push('\u{00a7}');
+            out.push_str(color);
+            current = color;
+        }
+        out.push_str(content);
+    }
+    out
+}
+
 pub fn resolve_cosmetics(cosmetics: &Cosmetics) -> Cosmetics {
     let mut rng = rand::thread_rng();
     let all_schemes: Vec<String> = SCHEMES

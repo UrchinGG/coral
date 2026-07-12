@@ -258,6 +258,9 @@ impl Handler {
             "info_taggers" => {
                 commands::admin::info::handle_taggers(ctx, component, &self.data).await
             }
+            "prestige_color_codes" => {
+                commands::stats::prestiges::handle_color_codes(ctx, component, &self.data).await
+            }
             _ if id.starts_with("guild_pg:") => {
                 commands::blacklist::guild::handle_page(ctx, component, &self.data).await
             }
