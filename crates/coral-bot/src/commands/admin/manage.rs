@@ -274,15 +274,14 @@ pub(crate) async fn build_main_view(
             }
             None => {
                 parts.push(text("### Developer Key\nNone"));
-                if can_modify {
-                    parts.push(CreateContainerComponent::ActionRow(
-                        CreateActionRow::buttons(vec![
-                            CreateButton::new(format!("manage_create_dev:{target_id}"))
-                                .label("Create Dev Key")
-                                .style(ButtonStyle::Primary),
-                        ]),
-                    ));
-                }
+                parts.push(CreateContainerComponent::ActionRow(
+                    CreateActionRow::buttons(vec![
+                        CreateButton::new(format!("manage_create_dev:{target_id}"))
+                            .label("Create Dev Key")
+                            .style(ButtonStyle::Primary)
+                            .disabled(invoker_rank < AccessRank::Owner),
+                    ]),
+                ));
             }
         }
         parts.push(separator());
@@ -805,11 +804,10 @@ pub async fn handle_create_dev_key(
     let target_id = interact::parse_id(&component.data.custom_id)
         .ok_or_else(|| anyhow!("Invalid button ID"))?;
     let invoker_id = component.user.id.get();
-    let (invoker_rank, target, target_rank) = fetch_context(data, invoker_id, target_id).await?;
+    let (invoker_rank, target, _) = fetch_context(data, invoker_id, target_id).await?;
 
-    if !require_mod_over(invoker_rank, target_rank) {
-        return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
-            .await;
+    if invoker_rank < AccessRank::Owner {
+        return interact::send_component_error(ctx, component, "Error", "Owner only").await;
     }
     let Some(m) = target else {
         return interact::send_component_error(ctx, component, "Error", "User is not registered")
