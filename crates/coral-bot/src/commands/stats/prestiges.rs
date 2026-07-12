@@ -48,9 +48,9 @@ pub async fn handle_color_codes(
             CreateInteractionResponse::Message(
                 CreateInteractionResponseMessage::new()
                     .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
-                    .components(vec![CreateComponent::Container(CreateContainer::new(vec![
-                        text(body),
-                    ]))]),
+                    .components(vec![CreateComponent::Container(CreateContainer::new(
+                        vec![text(body)],
+                    ))]),
             ),
         )
         .await?;
