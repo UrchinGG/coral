@@ -12,6 +12,7 @@ members = [
     "crates/coral-admin",
     "crates/migration",
     "crates/mc-verify",
+    "crates/mc-proto",
     "crates/starfish-crypto",
     "crates/coral-sync",
 ]
@@ -77,10 +78,19 @@ database = { path = "crates/database" }
 coral-redis = { path = "crates/coral-redis" }
 render = { path = "crates/render" }
 starfish-crypto = { path = "crates/starfish-crypto" }
+mc-proto = { path = "crates/mc-proto" }
 
 # Crypto & encoding
 hex = "0.4"
 base64 = "0.22"
+
+# Minecraft protocol (mc-proto)
+bytes = "1"
+rand = "0.8"
+flate2 = "1.0"
+aes = "0.8"
+rsa = "0.9"
+sha1 = "0.10"
 
 # Optimize rendering pipeline in debug builds
 [profile.dev.package.image]

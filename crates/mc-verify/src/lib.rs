@@ -1,7 +1,6 @@
 mod auth;
 mod codes;
 mod connection;
-mod encryption;
 mod protocol;
 
 use std::sync::Arc;
@@ -50,7 +49,7 @@ impl VerifyServer {
         info!("generating RSA keypair...");
         let http = reqwest::Client::new();
         let state = Arc::new(ServerState {
-            key: encryption::ServerKey::generate(),
+            key: mc_proto::crypto::ServerKey::generate(),
             codes: codes::CodeStore::new(http.clone(), self.api_url, self.api_key),
             http,
             motd: DEFAULT_MOTD.into(),

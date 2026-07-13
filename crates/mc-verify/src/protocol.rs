@@ -85,12 +85,6 @@ pub fn write_string(buf: &mut Vec<u8>, s: &str) {
     buf.extend_from_slice(s.as_bytes());
 }
 
-pub fn read_uuid(cursor: &mut Cursor<&[u8]>) -> std::io::Result<u128> {
-    let mut bytes = [0u8; 16];
-    Read::read_exact(cursor, &mut bytes)?;
-    Ok(u128::from_be_bytes(bytes))
-}
-
 pub async fn read_packet<R: AsyncRead + Unpin>(reader: &mut R) -> std::io::Result<(i32, Vec<u8>)> {
     let length = read_varint(reader).await? as usize;
     if length > MAX_PACKET_SIZE {

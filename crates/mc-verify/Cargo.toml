@@ -10,6 +10,7 @@ name = "coral-verify"
 path = "src/main.rs"
 
 [dependencies]
+mc-proto.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
 serde.workspace = true
@@ -20,11 +21,8 @@ thiserror.workspace = true
 anyhow.workspace = true
 dotenvy.workspace = true
 tracing-subscriber.workspace = true
+base64.workspace = true
+rand.workspace = true
 
-base64 = "0.22"
-
-# Crypto
-rsa = "0.9"
-aes = "0.8"
-sha1 = "0.10"
-rand = "0.8"
+[dev-dependencies]
+tokio.workspace = true

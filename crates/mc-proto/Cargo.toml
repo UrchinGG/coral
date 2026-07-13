@@ -1,0 +1,17 @@
+[package]
+name = "mc-proto"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+rand.workspace = true
+tokio = { workspace = true }
+aes.workspace = true
+rsa.workspace = true
+sha1.workspace = true
+flate2.workspace = true

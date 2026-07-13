@@ -2514,19 +2514,32 @@ dependencies = [
 ]
 
 [[package]]
-name = "mc-verify"
+name = "mc-proto"
 version = "0.1.0"
 dependencies = [
  "aes",
+ "bytes",
+ "flate2",
+ "rand 0.8.5",
+ "rsa",
+ "sha1",
+ "thiserror 2.0.17",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "mc-verify"
+version = "0.1.0"
+dependencies = [
  "anyhow",
  "base64",
  "dotenvy",
+ "mc-proto",
  "rand 0.8.5",
  "reqwest",
- "rsa",
  "serde",
  "serde_json",
- "sha1",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
