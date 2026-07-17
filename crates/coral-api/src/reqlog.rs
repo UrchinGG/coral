@@ -9,9 +9,12 @@ use database::Database;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 use tokio::sync::mpsc;
 
+use crate::auth::RequestIdentity;
+
 pub struct LogEntry {
     ts: DateTime<Utc>,
     ip: Option<String>,
+    member_id: Option<i64>,
     key_prefix: Option<String>,
     key_kind: &'static str,
     method: String,
@@ -48,6 +51,10 @@ pub async fn log_requests(State(tx): State<LogSender>, req: Request, next: Next)
     let start = Instant::now();
 
     let res = next.run(req).await;
+    let member_id = res
+        .extensions()
+        .get::<RequestIdentity>()
+        .map(|i| i.member_id);
     let status = res.status().as_u16() as i16;
     let latency_ms = start.elapsed().as_millis().min(i32::MAX as u128) as i32;
 
@@ -56,6 +63,7 @@ pub async fn log_requests(State(tx): State<LogSender>, req: Request, next: Next)
     let _ = tx.try_send(LogEntry {
         ts: Utc::now(),
         ip,
+        member_id,
         key_prefix,
         key_kind,
         method,
@@ -120,11 +128,12 @@ pub fn spawn_writer(db: Arc<Database>, mut rx: mpsc::Receiver<LogEntry>) {
 
 async fn insert_batch(pool: &PgPool, entries: &[LogEntry]) -> Result<(), sqlx::Error> {
     let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
-        "INSERT INTO api_request_log (ts, ip, key_prefix, key_kind, method, path, query, user_agent, status, latency_ms, error) ",
+        "INSERT INTO api_request_log (ts, ip, member_id, key_prefix, key_kind, method, path, query, user_agent, status, latency_ms, error) ",
     );
     qb.push_values(entries, |mut b, e| {
         b.push_bind(e.ts)
             .push_bind(e.ip.clone())
+            .push_bind(e.member_id)
             .push_bind(e.key_prefix.clone())
             .push_bind(e.key_kind)
             .push_bind(e.method.clone())

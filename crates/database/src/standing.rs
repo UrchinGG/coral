@@ -41,6 +41,142 @@ pub fn evaluate(member: &Member) -> Standing {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct StandingExplanation {
+    pub can_vote: bool,
+    pub vote_reason: String,
+    pub can_tag: bool,
+    pub tag_reason: String,
+}
+
+pub fn explain(member: &Member) -> StandingExplanation {
+    let strikes = strike_count(member);
+    let (can_vote, vote_reason) = explain_vote(member, strikes);
+    let (can_tag, tag_reason) = explain_tag(member, strikes);
+    StandingExplanation {
+        can_vote,
+        vote_reason,
+        can_tag,
+        tag_reason,
+    }
+}
+
+fn explain_vote(member: &Member, strikes: usize) -> (bool, String) {
+    if strikes >= REVOKE_STRIKES {
+        return (
+            false,
+            format!("revoked — {strikes} strikes (≥{REVOKE_STRIKES} revokes standing)"),
+        );
+    }
+    let (approved, rejected) = (member.accepted_tags, member.rejected_tags);
+    if member.vote_granted {
+        if rejected == 0 {
+            (true, format!("kept — {approved} accepted, no rejections"))
+        } else if approved >= KEEP_RATIO * rejected {
+            (
+                true,
+                format!(
+                    "kept — {approved} accepted / {rejected} rejected (≥{KEEP_RATIO}:1 keep threshold)"
+                ),
+            )
+        } else {
+            (
+                false,
+                format!(
+                    "lost — {approved} accepted / {rejected} rejected (below {KEEP_RATIO}:1 keep threshold)"
+                ),
+            )
+        }
+    } else if rejected == 0 {
+        if approved >= VOTE_GRANT_APPROVALS {
+            (
+                true,
+                format!(
+                    "granted — {approved} accepted, no rejections (≥{VOTE_GRANT_APPROVALS} required)"
+                ),
+            )
+        } else {
+            (
+                false,
+                format!(
+                    "not yet — {approved}/{VOTE_GRANT_APPROVALS} accepted needed, no rejections"
+                ),
+            )
+        }
+    } else if approved >= EARN_RATIO * rejected {
+        (
+            true,
+            format!(
+                "granted — {approved} accepted / {rejected} rejected (≥{EARN_RATIO}:1 earn threshold)"
+            ),
+        )
+    } else {
+        (
+            false,
+            format!(
+                "not yet — {approved} accepted / {rejected} rejected (below {EARN_RATIO}:1 earn threshold)"
+            ),
+        )
+    }
+}
+
+fn explain_tag(member: &Member, strikes: usize) -> (bool, String) {
+    if strikes >= REVOKE_STRIKES {
+        return (
+            false,
+            format!("revoked — {strikes} strikes (≥{REVOKE_STRIKES} revokes standing)"),
+        );
+    }
+    let correct = member.accurate_verdicts + BONUS_WEIGHT * member.bonus_verdicts;
+    let incorrect = member.incorrect_verdicts;
+    if member.tag_granted {
+        if incorrect == 0 {
+            (
+                true,
+                format!("kept — {correct} correct, no incorrect verdicts"),
+            )
+        } else if correct >= KEEP_RATIO * incorrect {
+            (
+                true,
+                format!(
+                    "kept — {correct} correct / {incorrect} incorrect (≥{KEEP_RATIO}:1 keep threshold)"
+                ),
+            )
+        } else {
+            (
+                false,
+                format!(
+                    "lost — {correct} correct / {incorrect} incorrect (below {KEEP_RATIO}:1 keep threshold)"
+                ),
+            )
+        }
+    } else if strikes != 0 {
+        (
+            false,
+            format!("not yet — {strikes} strike(s) block a fresh grant"),
+        )
+    } else if correct < TAG_GRANT_CORRECT {
+        (
+            false,
+            format!("not yet — {correct}/{TAG_GRANT_CORRECT} correct verdicts needed"),
+        )
+    } else if incorrect == 0 || correct >= EARN_RATIO * incorrect {
+        (
+            true,
+            format!(
+                "granted — {correct} correct / {incorrect} incorrect (≥{TAG_GRANT_CORRECT} correct, ≥{EARN_RATIO}:1 earn threshold)"
+            ),
+        )
+    } else {
+        (
+            false,
+            format!(
+                "not yet — {correct} correct / {incorrect} incorrect (below {EARN_RATIO}:1 earn threshold)"
+            ),
+        )
+    }
+}
+
 pub async fn refresh(
     repo: &MemberRepository<'_>,
     discord_id: i64,
@@ -196,5 +332,79 @@ mod tests {
         assert_eq!(effective_level(&m), 1);
         m.access_level = 3;
         assert_eq!(effective_level(&m), 3);
+    }
+
+    #[test]
+    fn explain_matches_evaluate_across_scenarios() {
+        let scenarios: Vec<Box<dyn Fn(&mut Member)>> = vec![
+            Box::new(|m| {
+                m.accepted_tags = 4;
+            }),
+            Box::new(|m| {
+                m.accepted_tags = 5;
+            }),
+            Box::new(|m| {
+                m.vote_granted = true;
+                m.accepted_tags = 7;
+                m.rejected_tags = 1;
+            }),
+            Box::new(|m| {
+                m.vote_granted = true;
+                m.accepted_tags = 6;
+                m.rejected_tags = 1;
+            }),
+            Box::new(|m| {
+                m.accurate_verdicts = 15;
+            }),
+            Box::new(|m| {
+                m.accurate_verdicts = 14;
+            }),
+            Box::new(|m| {
+                m.tag_granted = true;
+                m.accurate_verdicts = 20;
+                m.incorrect_verdicts = 3;
+            }),
+        ];
+        for setup in scenarios {
+            let mut m = member(0, 0);
+            setup(&mut m);
+            let evaluated = evaluate(&m);
+            let explanation = explain(&m);
+            assert_eq!(evaluated.can_vote, explanation.can_vote);
+            assert_eq!(evaluated.can_tag, explanation.can_tag);
+            assert!(!explanation.vote_reason.is_empty());
+            assert!(!explanation.tag_reason.is_empty());
+        }
+    }
+
+    #[test]
+    fn explain_revoked_mentions_strike_count() {
+        let m = member(0, 2);
+        let explanation = explain(&m);
+        assert!(!explanation.can_vote);
+        assert!(!explanation.can_tag);
+        assert!(explanation.vote_reason.contains("2 strikes"));
+        assert!(explanation.tag_reason.contains("2 strikes"));
+    }
+
+    #[test]
+    fn explain_vote_kept_reason_shows_ratio() {
+        let mut m = member(0, 0);
+        m.vote_granted = true;
+        m.accepted_tags = 14;
+        m.rejected_tags = 2;
+        let explanation = explain(&m);
+        assert!(explanation.can_vote);
+        assert!(explanation.vote_reason.contains("14 accepted"));
+        assert!(explanation.vote_reason.contains("2 rejected"));
+    }
+
+    #[test]
+    fn explain_tag_not_yet_blocked_by_strike() {
+        let mut m = member(0, 1);
+        m.accurate_verdicts = 20;
+        let explanation = explain(&m);
+        assert!(!explanation.can_tag);
+        assert!(explanation.tag_reason.contains("strike"));
     }
 }

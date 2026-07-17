@@ -6,10 +6,14 @@ use axum::{Router, middleware};
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
-use crate::state::AppState;
+use crate::state::{AppState, OAuthConfig};
 
+mod audit;
 mod auth;
+mod identity;
 mod routes;
+mod serde_id;
+mod session;
 mod state;
 
 #[tokio::main]
@@ -21,6 +25,9 @@ async fn main() -> Result<()> {
 
     let db = database::Database::connect(&env::var("DATABASE_URL").expect("DATABASE_URL required"))
         .await?;
+    if let Err(e) = db.migrate().await {
+        tracing::warn!("Migration skipped: {e}");
+    }
 
     let owner_ids: HashSet<i64> = env::var("OWNER_IDS")
         .unwrap_or_default()
@@ -28,7 +35,7 @@ async fn main() -> Result<()> {
         .filter_map(|s| s.trim().parse().ok())
         .collect();
     if owner_ids.is_empty() {
-        tracing::warn!("OWNER_IDS is empty — every admin API request will be rejected");
+        tracing::warn!("OWNER_IDS is empty — every admin login will be rejected");
     }
 
     let redis = match env::var("REDIS_URL") {
@@ -41,8 +48,23 @@ async fn main() -> Result<()> {
         },
         Err(_) => None,
     };
-    let state = AppState::new(db, owner_ids, redis);
+
+    let oauth = OAuthConfig {
+        client_id: env::var("STARFISH_DISCORD_CLIENT_ID")
+            .expect("STARFISH_DISCORD_CLIENT_ID required"),
+        client_secret: env::var("STARFISH_DISCORD_CLIENT_SECRET")
+            .expect("STARFISH_DISCORD_CLIENT_SECRET required"),
+        base_url: env::var("ADMIN_BASE_URL").expect("ADMIN_BASE_URL required"),
+    };
+    let session_secret: [u8; 32] =
+        hex::decode(env::var("ADMIN_SESSION_SECRET").expect("ADMIN_SESSION_SECRET required"))
+            .expect("ADMIN_SESSION_SECRET must be valid hex")
+            .try_into()
+            .expect("ADMIN_SESSION_SECRET must be 32 bytes (64 hex chars)");
+
+    let state = AppState::new(db, owner_ids, redis, oauth, session_secret);
     let app = Router::new()
+        .merge(auth::router())
         .nest(
             "/api",
             routes::api_router().route_layer(middleware::from_fn_with_state(

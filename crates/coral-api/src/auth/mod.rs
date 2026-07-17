@@ -37,6 +37,19 @@ fn plugin_attest_pubkey() -> &'static VerifyingKey {
 #[derive(Clone)]
 pub struct AuthenticatedMember(pub Member);
 
+#[derive(Clone, Copy)]
+pub struct RequestIdentity {
+    pub member_id: i64,
+}
+
+impl From<&Member> for RequestIdentity {
+    fn from(member: &Member) -> Self {
+        Self {
+            member_id: member.id,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct SessionAuth {
     pub discord_id: i64,
@@ -78,13 +91,24 @@ pub async fn require_internal_or_developer(
         authorize_developer_or_internal(&state, &api_key, &mut request)
             .await
             .map_err(IntoResponse::into_response)?;
-        return Ok(next.run(request).await);
+    } else {
+        authorize_elevated_session(&state, &mut request)
+            .await
+            .map_err(IntoResponse::into_response)?;
     }
+    Ok(run_with_identity(request, next).await)
+}
 
-    authorize_elevated_session(&state, &mut request)
-        .await
-        .map_err(IntoResponse::into_response)?;
-    Ok(next.run(request).await)
+async fn run_with_identity(request: Request, next: Next) -> Response {
+    let identity = request
+        .extensions()
+        .get::<AuthenticatedMember>()
+        .map(|m| RequestIdentity::from(&m.0));
+    let mut response = next.run(request).await;
+    if let Some(identity) = identity {
+        response.extensions_mut().insert(identity);
+    }
+    response
 }
 
 async fn authorize_developer_or_internal(
@@ -147,7 +171,7 @@ pub async fn require_moderator(
         return Err(StatusCode::FORBIDDEN);
     }
     request.extensions_mut().insert(AuthenticatedMember(member));
-    Ok(next.run(request).await)
+    Ok(run_with_identity(request, next).await)
 }
 
 pub async fn allow_key_or_starfish_session(
@@ -159,13 +183,12 @@ pub async fn allow_key_or_starfish_session(
         authorize_with_key(&state, &api_key, &mut request)
             .await
             .map_err(IntoResponse::into_response)?;
-        return Ok(next.run(request).await);
+    } else {
+        authorize_with_session(&state, &mut request)
+            .await
+            .map_err(IntoResponse::into_response)?;
     }
-
-    authorize_with_session(&state, &mut request)
-        .await
-        .map_err(IntoResponse::into_response)?;
-    Ok(next.run(request).await)
+    Ok(run_with_identity(request, next).await)
 }
 
 async fn authorize_with_key(
@@ -447,9 +470,7 @@ async fn check_rate_limit(state: &AppState, api_key: &str, limit: i64) -> Result
     }
 }
 
-pub const PERSONAL_RATE_LIMIT: i64 = 600;
-pub const SESSION_RATE_LIMIT: i64 = 300;
-pub const SESSION_UUID_BUDGET: i64 = 2000;
+pub use coral_redis::{PERSONAL_RATE_LIMIT, SESSION_RATE_LIMIT, SESSION_UUID_BUDGET};
 
 fn is_internal_key(state: &AppState, api_key: &str) -> bool {
     state

@@ -1,11 +1,18 @@
-use axum::{Router, response::Html, routing::get};
+use axum::body::Body;
+use axum::http::{Uri, header};
+use axum::response::{IntoResponse, Response};
+use axum::{Router, http::StatusCode};
+use rust_embed::RustEmbed;
 
 use crate::state::AppState;
 
+mod actions;
 mod blacklist;
 mod guilds;
 mod members;
+mod overview;
 mod players;
+mod plugins;
 mod requests;
 mod resolve;
 
@@ -17,35 +24,43 @@ pub fn api_router() -> Router<AppState> {
         .nest("/guilds", guilds::router())
         .nest("/requests", requests::router())
         .nest("/resolve", resolve::router())
+        .nest("/plugins", plugins::router())
+        .nest("/actions", actions::router())
+        .nest("/overview", overview::router())
 }
+
+#[derive(RustEmbed)]
+#[folder = "ui/dist/"]
+struct Assets;
 
 pub fn ui_router() -> Router<AppState> {
-    Router::new()
-        .route("/", get(serve_ui))
-        .route("/style.css", get(serve_css))
-        .route("/app.js", get(serve_js))
+    Router::new().fallback(serve_asset)
 }
 
-async fn serve_ui() -> ([(&'static str, &'static str); 1], Html<&'static str>) {
-    (
-        [("cache-control", "no-store")],
-        Html(include_str!("../ui/index.html")),
-    )
+async fn serve_asset(uri: Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+    match Assets::get(path) {
+        Some(asset) => asset_response(path, asset),
+        None => match Assets::get("index.html") {
+            Some(asset) => asset_response("index.html", asset),
+            None => StatusCode::NOT_FOUND.into_response(),
+        },
+    }
 }
 
-async fn serve_css() -> ([(&'static str, &'static str); 2], &'static str) {
-    (
-        [("content-type", "text/css"), ("cache-control", "no-store")],
-        include_str!("../ui/style.css"),
-    )
-}
-
-async fn serve_js() -> ([(&'static str, &'static str); 2], &'static str) {
+fn asset_response(path: &str, asset: rust_embed::EmbeddedFile) -> Response {
+    let mime = asset.metadata.mimetype();
+    let cache_control = if path == "index.html" {
+        "no-store"
+    } else {
+        "public, max-age=31536000, immutable"
+    };
     (
         [
-            ("content-type", "application/javascript"),
-            ("cache-control", "no-store"),
+            (header::CONTENT_TYPE, mime.to_string()),
+            (header::CACHE_CONTROL, cache_control.to_string()),
         ],
-        include_str!("../ui/app.js"),
+        Body::from(asset.data),
     )
+        .into_response()
 }

@@ -65,8 +65,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgres://coral:coral@postgres:5432/coral
+      REDIS_URL: redis://redis:6379
+      ADMIN_BASE_URL: ${ADMIN_BASE_URL:-http://localhost:8080}
     ports:
       - "${ADMIN_PORT:-8080}:8080"
 

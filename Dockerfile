@@ -9,6 +9,17 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 RUN cargo chef prepare --recipe-path recipe.json
 
+FROM node:22-alpine AS admin-ui-deps
+WORKDIR /app
+COPY crates/coral-admin/ui/package.json crates/coral-admin/ui/package-lock.json ./
+RUN npm ci
+
+FROM node:22-alpine AS admin-ui-builder
+WORKDIR /app
+COPY --from=admin-ui-deps /app/node_modules ./node_modules
+COPY crates/coral-admin/ui/ ./
+RUN npm run build
+
 FROM chef AS builder
 RUN apt-get update && apt-get install -y \
     pkg-config libssl-dev clang mold \
@@ -25,6 +36,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY migrations ./migrations
+COPY --from=admin-ui-builder /app/dist ./crates/coral-admin/ui/dist
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \

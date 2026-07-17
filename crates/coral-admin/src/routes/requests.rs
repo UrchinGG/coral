@@ -1,9 +1,11 @@
 use axum::{Json, Router, extract::*, routing::get};
 use chrono::{DateTime, Utc};
+use coral_redis::{RateLimiter, SESSION_RATE_LIMIT, SESSION_UUID_BUDGET};
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Postgres, QueryBuilder};
 
+use crate::identity;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -14,6 +16,7 @@ pub fn router() -> Router<AppState> {
         .route("/hypixel-series", get(hypixel_series))
         .route("/paths", get(paths))
         .route("/ratelimits", get(ratelimits))
+        .route("/budgets", get(budgets))
 }
 
 #[derive(Deserialize)]
@@ -23,12 +26,95 @@ struct ListParams {
     to: Option<i64>,
     method: Option<String>,
     path: Option<String>,
-    status: Option<i16>,
+    path_exact: Option<bool>,
+    status: Option<String>,
     key_prefix: Option<String>,
     ip: Option<String>,
+    discord_id: Option<i64>,
+    caller: Option<String>,
+    error_contains: Option<String>,
     errors: Option<bool>,
     limit: Option<i64>,
     offset: Option<i64>,
+}
+
+fn parse_status_filter(input: &str) -> Option<(i16, i16)> {
+    let s = input.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if let Some((lo, hi)) = s.split_once('-') {
+        let lo: i16 = lo.trim().parse().ok()?;
+        let hi: i16 = hi.trim().parse().ok()?;
+        return Some((lo.min(hi), lo.max(hi)));
+    }
+    if s.len() == 3 && s.to_ascii_lowercase().ends_with("xx") {
+        let class: i16 = s[..1].parse().ok()?;
+        return Some((class * 100, class * 100 + 99));
+    }
+    let v: i16 = s.parse().ok()?;
+    Some((v, v))
+}
+
+#[derive(Default)]
+struct CallerMatch {
+    discord_ids: Vec<i64>,
+    uuid: Option<String>,
+    ip: Option<String>,
+}
+
+impl CallerMatch {
+    fn is_empty(&self) -> bool {
+        self.discord_ids.is_empty() && self.uuid.is_none() && self.ip.is_none()
+    }
+}
+
+async fn resolve_caller(state: &AppState, query: &str) -> CallerMatch {
+    let query = query.trim();
+    if query.is_empty() {
+        return CallerMatch::default();
+    }
+    if let Ok(id) = query.parse::<i64>() {
+        return CallerMatch {
+            discord_ids: vec![id],
+            uuid: None,
+            ip: None,
+        };
+    }
+    if clients::is_uuid(query) {
+        return CallerMatch {
+            discord_ids: vec![],
+            uuid: Some(clients::normalize_uuid(query)),
+            ip: None,
+        };
+    }
+    if query.parse::<std::net::IpAddr>().is_ok() {
+        return CallerMatch {
+            discord_ids: vec![],
+            uuid: None,
+            ip: Some(query.to_string()),
+        };
+    }
+
+    let discord_ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT discord_id FROM discord_username_cache WHERE username ILIKE $1 LIMIT 25",
+    )
+    .bind(format!("%{query}%"))
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap_or_default();
+
+    let uuid = if identity::looks_like_ign(query) {
+        identity::resolve_minecraft_uuid(state, query).await
+    } else {
+        None
+    };
+
+    CallerMatch {
+        discord_ids,
+        uuid,
+        ip: None,
+    }
 }
 
 #[derive(Serialize, FromRow)]
@@ -43,8 +129,13 @@ struct RequestRow {
     ip: Option<String>,
     user_agent: Option<String>,
     error: Option<String>,
+    #[serde(serialize_with = "crate::serde_id::discord_id_opt")]
     discord_id: Option<i64>,
     uuid: Option<String>,
+    #[sqlx(default)]
+    discord_username: Option<String>,
+    #[sqlx(default)]
+    minecraft_username: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -53,7 +144,7 @@ struct ListResponse {
     requests: Vec<RequestRow>,
 }
 
-fn filters(qb: &mut QueryBuilder<'_, Postgres>, p: &ListParams) {
+fn filters(qb: &mut QueryBuilder<'_, Postgres>, p: &ListParams, caller: &CallerMatch) {
     match (p.from, p.to) {
         (Some(from), Some(to)) => {
             qb.push(" WHERE l.ts >= to_timestamp(")
@@ -73,10 +164,27 @@ fn filters(qb: &mut QueryBuilder<'_, Postgres>, p: &ListParams) {
         qb.push(" AND l.method = ").push_bind(m.to_string());
     }
     if let Some(path) = p.path.as_deref().filter(|s| !s.is_empty()) {
-        qb.push(" AND l.path LIKE ").push_bind(format!("%{path}%"));
+        if p.path_exact.unwrap_or(false) {
+            qb.push(" AND l.path = ").push_bind(path.to_string());
+        } else {
+            qb.push(" AND l.path LIKE ").push_bind(format!("%{path}%"));
+        }
     }
-    if let Some(s) = p.status {
-        qb.push(" AND l.status = ").push_bind(s);
+    if let Some(status_input) = p.status.as_deref().filter(|s| !s.is_empty()) {
+        match parse_status_filter(status_input) {
+            Some((lo, hi)) if lo == hi => {
+                qb.push(" AND l.status = ").push_bind(lo);
+            }
+            Some((lo, hi)) => {
+                qb.push(" AND l.status BETWEEN ")
+                    .push_bind(lo)
+                    .push(" AND ")
+                    .push_bind(hi);
+            }
+            None => {
+                qb.push(" AND false");
+            }
+        }
     }
     if p.errors.unwrap_or(false) {
         qb.push(" AND l.status >= 400");
@@ -86,6 +194,34 @@ fn filters(qb: &mut QueryBuilder<'_, Postgres>, p: &ListParams) {
     }
     if let Some(ip) = p.ip.as_deref().filter(|s| !s.is_empty()) {
         qb.push(" AND l.ip = ").push_bind(ip.to_string());
+    }
+    if let Some(discord_id) = p.discord_id {
+        qb.push(" AND m.discord_id = ").push_bind(discord_id);
+    }
+    if let Some(q) = p.error_contains.as_deref().filter(|s| !s.trim().is_empty()) {
+        qb.push(" AND l.error ILIKE ").push_bind(format!("%{q}%"));
+    }
+    if p.caller.as_deref().is_some_and(|s| !s.trim().is_empty()) {
+        if caller.is_empty() {
+            qb.push(" AND false");
+        } else {
+            let mut sep = " AND (";
+            if !caller.discord_ids.is_empty() {
+                qb.push(sep)
+                    .push("m.discord_id = ANY(")
+                    .push_bind(caller.discord_ids.clone())
+                    .push(")");
+                sep = " OR ";
+            }
+            if let Some(uuid) = &caller.uuid {
+                qb.push(sep).push("m.uuid = ").push_bind(uuid.clone());
+                sep = " OR ";
+            }
+            if let Some(ip) = &caller.ip {
+                qb.push(sep).push("l.ip = ").push_bind(ip.clone());
+            }
+            qb.push(")");
+        }
     }
 }
 
@@ -97,8 +233,15 @@ async fn list(
     let limit = params.limit.unwrap_or(100).clamp(1, 500);
     let offset = params.offset.unwrap_or(0).max(0);
 
-    let mut count = QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM api_request_log l");
-    filters(&mut count, &params);
+    let caller = match params.caller.as_deref().map(str::trim) {
+        Some(q) if !q.is_empty() => resolve_caller(&state, q).await,
+        _ => CallerMatch::default(),
+    };
+
+    let mut count = QueryBuilder::<Postgres>::new(
+        "SELECT COUNT(*) FROM api_request_log l LEFT JOIN members m ON m.id = l.member_id",
+    );
+    filters(&mut count, &params, &caller);
     let total = count
         .build_query_scalar()
         .fetch_one(pool)
@@ -109,18 +252,29 @@ async fn list(
         "SELECT l.ts, l.method, l.path, l.query, l.status, l.latency_ms, l.key_prefix, l.ip,
                 l.user_agent, l.error, m.discord_id, m.uuid
          FROM api_request_log l
-         LEFT JOIN members m ON left(m.api_key, 8) = l.key_prefix",
+         LEFT JOIN members m ON m.id = l.member_id",
     );
-    filters(&mut q, &params);
+    filters(&mut q, &params, &caller);
     q.push(" ORDER BY l.ts DESC LIMIT ")
         .push_bind(limit)
         .push(" OFFSET ")
         .push_bind(offset);
-    let requests = q
+    let mut requests = q
         .build_query_as::<RequestRow>()
         .fetch_all(pool)
         .await
         .unwrap_or_default();
+
+    let discord_ids: Vec<i64> = requests.iter().filter_map(|r| r.discord_id).collect();
+    let uuids: Vec<String> = requests.iter().filter_map(|r| r.uuid.clone()).collect();
+    let names = identity::resolve(&state, &discord_ids, &uuids).await;
+    for r in &mut requests {
+        r.discord_username = r.discord_id.and_then(|id| names.discord.get(&id).cloned());
+        r.minecraft_username = r
+            .uuid
+            .as_ref()
+            .and_then(|u| names.minecraft.get(u).cloned());
+    }
 
     Json(ListResponse { total, requests })
 }
@@ -275,10 +429,17 @@ async fn paths(State(state): State<AppState>, Query(p): Query<HoursParam>) -> Js
 #[derive(Serialize, FromRow)]
 struct TopKey {
     key_prefix: Option<String>,
+    #[serde(serialize_with = "crate::serde_id::discord_id_opt")]
     discord_id: Option<i64>,
     uuid: Option<String>,
     count: i64,
     errors: i64,
+    rate_limited: i64,
+    forbidden: i64,
+    #[sqlx(default)]
+    discord_username: Option<String>,
+    #[sqlx(default)]
+    minecraft_username: Option<String>,
 }
 
 #[derive(Serialize, FromRow)]
@@ -287,6 +448,13 @@ struct TopPath {
     count: i64,
     errors: i64,
     avg_ms: Option<f64>,
+    p50_ms: Option<f64>,
+    p95_ms: Option<f64>,
+    p99_ms: Option<f64>,
+    status_2xx: i64,
+    status_3xx: i64,
+    status_4xx: i64,
+    status_5xx: i64,
 }
 
 #[derive(Serialize, FromRow)]
@@ -330,11 +498,13 @@ async fn stats(State(state): State<AppState>, Query(p): Query<HoursParam>) -> Js
     .await
     .unwrap_or_default();
 
-    let top_keys = sqlx::query_as::<_, TopKey>(
+    let mut top_keys = sqlx::query_as::<_, TopKey>(
         "SELECT l.key_prefix, m.discord_id, m.uuid, count(*) AS count,
-                count(*) FILTER (WHERE l.status >= 400) AS errors
+                count(*) FILTER (WHERE l.status >= 400) AS errors,
+                count(*) FILTER (WHERE l.status = 429) AS rate_limited,
+                count(*) FILTER (WHERE l.status = 403) AS forbidden
          FROM api_request_log l
-         LEFT JOIN members m ON left(m.api_key, 8) = l.key_prefix
+         LEFT JOIN members m ON m.id = l.member_id
          WHERE l.ts > now() - make_interval(hours => $1)
          GROUP BY l.key_prefix, m.discord_id, m.uuid ORDER BY count DESC LIMIT 15",
     )
@@ -343,10 +513,28 @@ async fn stats(State(state): State<AppState>, Query(p): Query<HoursParam>) -> Js
     .await
     .unwrap_or_default();
 
+    let discord_ids: Vec<i64> = top_keys.iter().filter_map(|k| k.discord_id).collect();
+    let uuids: Vec<String> = top_keys.iter().filter_map(|k| k.uuid.clone()).collect();
+    let names = identity::resolve(&state, &discord_ids, &uuids).await;
+    for k in &mut top_keys {
+        k.discord_username = k.discord_id.and_then(|id| names.discord.get(&id).cloned());
+        k.minecraft_username = k
+            .uuid
+            .as_ref()
+            .and_then(|u| names.minecraft.get(u).cloned());
+    }
+
     let top_paths = sqlx::query_as::<_, TopPath>(&format!(
         "SELECT {NORM_PATH} AS path, count(*) AS count,
                 count(*) FILTER (WHERE status >= 400) AS errors,
-                avg(latency_ms)::float8 AS avg_ms
+                avg(latency_ms)::float8 AS avg_ms,
+                percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms)::float8 AS p50_ms,
+                percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)::float8 AS p95_ms,
+                percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms)::float8 AS p99_ms,
+                count(*) FILTER (WHERE status BETWEEN 200 AND 299) AS status_2xx,
+                count(*) FILTER (WHERE status BETWEEN 300 AND 399) AS status_3xx,
+                count(*) FILTER (WHERE status BETWEEN 400 AND 499) AS status_4xx,
+                count(*) FILTER (WHERE status BETWEEN 500 AND 599) AS status_5xx
          FROM api_request_log
          WHERE ts > now() - make_interval(hours => $1)
          GROUP BY 1 ORDER BY count DESC LIMIT 15"
@@ -367,17 +555,27 @@ async fn stats(State(state): State<AppState>, Query(p): Query<HoursParam>) -> Js
     })
 }
 
-#[derive(Serialize, Default)]
-struct RateLimits {
-    available: bool,
-    capacity: i64,
-    used: i64,
-    headroom: i64,
+#[derive(Serialize, Default, Clone, Copy)]
+pub(crate) struct RateLimits {
+    pub(crate) available: bool,
+    pub(crate) capacity: i64,
+    pub(crate) used: i64,
+    pub(crate) headroom: i64,
+}
+
+impl RateLimits {
+    pub(crate) fn headroom_ratio(&self) -> Option<f64> {
+        (self.available && self.capacity > 0).then(|| self.headroom as f64 / self.capacity as f64)
+    }
 }
 
 async fn ratelimits(State(state): State<AppState>) -> Json<RateLimits> {
+    Json(hypixel_ratelimits(&state).await)
+}
+
+pub(crate) async fn hypixel_ratelimits(state: &AppState) -> RateLimits {
     let Some(redis) = state.redis.clone() else {
-        return Json(RateLimits::default());
+        return RateLimits::default();
     };
     let mut conn = redis.connection();
 
@@ -411,5 +609,131 @@ async fn ratelimits(State(state): State<AppState>) -> Json<RateLimits> {
         view.used += raw.clamp(0, limit.max(0));
     }
     view.headroom = view.capacity - view.used;
-    Json(view)
+    view
+}
+
+#[derive(Serialize)]
+struct BudgetRow {
+    #[serde(serialize_with = "crate::serde_id::discord_id")]
+    discord_id: i64,
+    discord_username: Option<String>,
+    kind: &'static str,
+    used: i64,
+    limit: i64,
+    utilization: f64,
+}
+
+async fn budgets(State(state): State<AppState>) -> Json<Vec<BudgetRow>> {
+    let Some(redis) = state.redis.clone() else {
+        return Json(vec![]);
+    };
+    let limiter = RateLimiter::new(redis);
+
+    let (session_usage, uuid_usage) = tokio::join!(
+        limiter.scan_budgets("sf:", SESSION_RATE_LIMIT),
+        limiter.scan_budgets("sfuuids:", SESSION_UUID_BUDGET),
+    );
+
+    let mut rows: Vec<BudgetRow> = session_usage
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|b| budget_row(b, "sf:", "session"))
+        .chain(
+            uuid_usage
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|b| budget_row(b, "sfuuids:", "uuid_batch")),
+        )
+        .collect();
+
+    let discord_ids: Vec<i64> = rows.iter().map(|r| r.discord_id).collect();
+    let names = identity::resolve_discord_usernames(&state, &discord_ids).await;
+    for row in &mut rows {
+        row.discord_username = names.get(&row.discord_id).cloned();
+    }
+
+    rows.sort_by(|a, b| b.utilization.partial_cmp(&a.utilization).unwrap());
+    Json(rows)
+}
+
+fn budget_row(
+    usage: coral_redis::BudgetUsage,
+    prefix: &str,
+    kind: &'static str,
+) -> Option<BudgetRow> {
+    let discord_id: i64 = usage.name.strip_prefix(prefix)?.parse().ok()?;
+    Some(BudgetRow {
+        discord_id,
+        discord_username: None,
+        kind,
+        used: usage.used,
+        limit: usage.limit,
+        utilization: usage.utilization(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_single_status_code() {
+        assert_eq!(parse_status_filter("429"), Some((429, 429)));
+        assert_eq!(parse_status_filter("200"), Some((200, 200)));
+    }
+
+    #[test]
+    fn parses_explicit_range() {
+        assert_eq!(parse_status_filter("400-499"), Some((400, 499)));
+        assert_eq!(parse_status_filter("500-599"), Some((500, 599)));
+    }
+
+    #[test]
+    fn normalizes_reversed_range() {
+        assert_eq!(parse_status_filter("499-400"), Some((400, 499)));
+    }
+
+    #[test]
+    fn parses_status_class_shorthand() {
+        assert_eq!(parse_status_filter("4xx"), Some((400, 499)));
+        assert_eq!(parse_status_filter("5xx"), Some((500, 599)));
+        assert_eq!(parse_status_filter("2XX"), Some((200, 299)));
+    }
+
+    #[test]
+    fn rejects_invalid_status_input() {
+        assert_eq!(parse_status_filter(""), None);
+        assert_eq!(parse_status_filter("  "), None);
+        assert_eq!(parse_status_filter("abc"), None);
+        assert_eq!(parse_status_filter("xx4"), None);
+    }
+
+    #[test]
+    fn caller_match_empty_detection() {
+        assert!(CallerMatch::default().is_empty());
+        assert!(
+            !CallerMatch {
+                discord_ids: vec![1],
+                uuid: None,
+                ip: None,
+            }
+            .is_empty()
+        );
+        assert!(
+            !CallerMatch {
+                discord_ids: vec![],
+                uuid: Some("abc".into()),
+                ip: None,
+            }
+            .is_empty()
+        );
+        assert!(
+            !CallerMatch {
+                discord_ids: vec![],
+                uuid: None,
+                ip: Some("1.2.3.4".into()),
+            }
+            .is_empty()
+        );
+    }
 }

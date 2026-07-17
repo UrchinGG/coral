@@ -109,7 +109,7 @@ pub async fn set_unlisted(
     Json(req): Json<UnlistRequest>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let repo = PluginRegistryRepository::new(state.db.pool());
-    let plugin = ensure_plugin_owner(&repo, &slug, caller.user.id).await?;
+    let plugin = ensure_plugin_owner_or_admin(&repo, &slug, &caller).await?;
     repo.set_unlisted(plugin.id, req.unlisted).await?;
     Ok(Json(OkResponse { ok: true }))
 }
@@ -154,7 +154,7 @@ pub async fn yank_release(
     Json(req): Json<YankRequest>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let repo = PluginRegistryRepository::new(state.db.pool());
-    let plugin = ensure_plugin_owner(&repo, &slug, caller.user.id).await?;
+    let plugin = ensure_plugin_owner_or_admin(&repo, &slug, &caller).await?;
     let reason = req
         .reason
         .unwrap_or_else(|| format!("yanked by {}", caller.user.id));
@@ -171,7 +171,7 @@ pub async fn unyank_release(
     Path((slug, version)): Path<(String, String)>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let repo = PluginRegistryRepository::new(state.db.pool());
-    let plugin = ensure_plugin_owner(&repo, &slug, caller.user.id).await?;
+    let plugin = ensure_plugin_owner_or_admin(&repo, &slug, &caller).await?;
     let ok = repo.unyank_release(plugin.id, &version).await?;
     if !ok {
         return Err(ApiError::NotFound(format!("release {version} not found")));
@@ -206,13 +206,15 @@ pub async fn delete_release(
     Path((slug, version)): Path<(String, String)>,
 ) -> Result<Json<OkResponse>, ApiError> {
     let repo = PluginRegistryRepository::new(state.db.pool());
-    let plugin = ensure_plugin_owner(&repo, &slug, caller.user.id).await?;
+    let plugin = ensure_plugin_owner_or_admin(&repo, &slug, &caller).await?;
 
-    let installs = repo.release_install_count(plugin.id, &version).await?;
-    if installs > 0 {
-        return Err(ApiError::Conflict(format!(
-            "release v{version} has {installs} active install(s) — unlist it instead"
-        )));
+    if !is_owner(caller.user.discord_id) {
+        let installs = repo.release_install_count(plugin.id, &version).await?;
+        if installs > 0 {
+            return Err(ApiError::Conflict(format!(
+                "release v{version} has {installs} active install(s) — unlist it instead"
+            )));
+        }
     }
 
     let ok = repo.delete_release(plugin.id, &version).await?;

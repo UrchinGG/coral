@@ -15,6 +15,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/coral-admin/ui/package-lock.json
+
+      - working-directory: crates/coral-admin/ui
+        run: npm ci
+      - working-directory: crates/coral-admin/ui
+        run: npm run build
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
