@@ -4,6 +4,7 @@ import { useAddTag, useLockPlayer, usePlayer, useRemoveTag, useUnlockPlayer } fr
 import { Badge } from "../components/Badge";
 import { ConfirmButton } from "../components/ConfirmButton";
 import { Identity } from "../components/Identity";
+import { Panel } from "../components/Panel";
 import { fmtDate } from "../format";
 
 const TAG_TYPES = ["sniper", "blatant_cheater", "closet_cheater", "confirmed_cheater", "replays_needed", "caution"];
@@ -32,12 +33,12 @@ export function PlayerDetail() {
   const { player: p, tags, tag_history } = player.data;
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6">
       <button onClick={() => navigate("/players")} className="w-fit text-sm text-gray-400 hover:text-white">
         ← Back to players
       </button>
 
-      <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+      <Panel>
         <div className="flex flex-wrap items-center gap-3">
           <Identity id={p.uuid} username={p.minecraft_username} kind="minecraft" />
           {p.is_locked && <Badge label="Locked" tone="danger" />}
@@ -54,7 +55,7 @@ export function PlayerDetail() {
           ) : (
             <span className="flex items-center gap-1">
               <input
-                className="w-48 rounded border border-white/10 bg-black/30 px-2 py-1 text-xs"
+                className="w-48 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-xs"
                 placeholder="Lock reason (optional)…"
                 value={lockReason}
                 onChange={(e) => setLockReason(e.target.value)}
@@ -68,13 +69,12 @@ export function PlayerDetail() {
             </span>
           )}
         </div>
-      </div>
+      </Panel>
 
-      <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-        <div className="mb-2 text-sm font-medium text-gray-300">Active tags ({tags.length})</div>
-        <div className="flex flex-col gap-2">
+      <Panel title={`Active tags (${tags.length})`}>
+        <div className="flex flex-col divide-y divide-white/5">
           {tags.map((t) => (
-            <div key={t.id} className="flex items-start justify-between gap-2 rounded border border-white/5 p-2 text-sm">
+            <div key={t.id} className="flex items-start justify-between gap-2 py-2 text-sm first:pt-0">
               <div>
                 <Badge label={t.tag_type} />
                 <div className="mt-1 text-xs text-gray-400">{t.reason}</div>
@@ -95,7 +95,7 @@ export function PlayerDetail() {
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <select
-            className="rounded border border-white/10 bg-black/30 px-2 py-1 text-xs"
+            className="rounded-md border border-white/10 bg-black/30 px-2 py-1 text-xs"
             value={tagType}
             onChange={(e) => setTagType(e.target.value)}
           >
@@ -106,7 +106,7 @@ export function PlayerDetail() {
             ))}
           </select>
           <input
-            className="flex-1 rounded border border-white/10 bg-black/30 px-2 py-1 text-xs"
+            className="flex-1 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-xs"
             placeholder="Reason…"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
@@ -118,14 +118,13 @@ export function PlayerDetail() {
             pending={addTag.isPending}
           />
         </div>
-      </div>
+      </Panel>
 
       {tag_history.length > 0 && (
-        <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-          <div className="mb-2 text-sm font-medium text-gray-300">Tag history ({tag_history.length} removed)</div>
-          <div className="flex flex-col gap-2">
+        <Panel title={`Tag history (${tag_history.length} removed)`}>
+          <div className="flex flex-col divide-y divide-white/5">
             {tag_history.map((t) => (
-              <div key={t.add_id} className="rounded border border-white/5 p-2 text-sm opacity-70">
+              <div key={t.add_id} className="py-2 text-sm opacity-70 first:pt-0">
                 <Badge label={t.tag_type} />
                 <div className="mt-1 text-xs text-gray-400">{t.reason}</div>
                 <div className="text-xs text-gray-500">
@@ -136,7 +135,7 @@ export function PlayerDetail() {
               </div>
             ))}
           </div>
-        </div>
+        </Panel>
       )}
     </div>
   );

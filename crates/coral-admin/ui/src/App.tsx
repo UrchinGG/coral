@@ -2,11 +2,11 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { useMe } from "./api/auth";
 import { AppShell } from "./layout/AppShell";
 import { Login } from "./layout/Login";
+import { Data } from "./pages/Data";
 import { Diagnostics } from "./pages/Diagnostics";
 import { MemberDetail } from "./pages/MemberDetail";
 import { Members } from "./pages/Members";
 import { Overview } from "./pages/Overview";
-import { Placeholder } from "./pages/Placeholder";
 import { PlayerDetail } from "./pages/PlayerDetail";
 import { Players } from "./pages/Players";
 import { PluginDetail } from "./pages/PluginDetail";
@@ -35,10 +35,7 @@ function App() {
           <Route path="/players/:uuid" element={<PlayerDetail />} />
           <Route path="/plugins" element={<Plugins />} />
           <Route path="/plugins/:slug" element={<PluginDetail />} />
-          <Route
-            path="/data"
-            element={<Placeholder title="Data" description="Player and guild snapshot browsers. Coming in a later phase." />}
-          />
+          <Route path="/data" element={<Data />} />
         </Route>
       </Routes>
     </BrowserRouter>

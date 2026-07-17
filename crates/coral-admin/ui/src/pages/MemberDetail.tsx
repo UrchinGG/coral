@@ -23,6 +23,7 @@ import { Badge } from "../components/Badge";
 import { ConfirmButton } from "../components/ConfirmButton";
 import { Identity } from "../components/Identity";
 import { MemberActivityPanel } from "../components/MemberActivityPanel";
+import { Panel } from "../components/Panel";
 import { accessRankLabel, accessRankTone, fmtDate } from "../format";
 import { useToast } from "../components/Toast";
 
@@ -48,7 +49,7 @@ export function MemberDetail() {
   const m = member.data;
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6">
       <button onClick={() => navigate("/members")} className="w-fit text-sm text-gray-400 hover:text-white">
         ← Back to members
       </button>
@@ -75,12 +76,12 @@ export function MemberDetail() {
 
 function Header({ member }: { member: MemberDetailType }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+    <Panel>
       <div className="flex flex-wrap items-center gap-3">
         <Identity id={member.discord_id} username={member.discord_username} />
         {member.uuid && <Identity id={member.uuid} username={member.minecraft_username} kind="minecraft" />}
         {member.is_owner ? (
-          <Badge label="Owner" tone="danger" />
+          <Badge label="Owner" tone="accent" />
         ) : (
           member.access_level > 0 && <Badge label={accessRankLabel(member.access_level)} tone={accessRankTone(member.access_level)} />
         )}
@@ -90,7 +91,7 @@ function Header({ member }: { member: MemberDetailType }) {
       <div className="mt-2 text-xs text-gray-500">
         Joined {fmtDate(member.join_date)} · {member.request_count.toLocaleString()} requests · API key {member.api_key_preview ? `${member.api_key_preview}…` : "none"}
       </div>
-    </div>
+    </Panel>
   );
 }
 
@@ -105,7 +106,7 @@ function ActionBar({ member }: { member: MemberDetailType }) {
   const [level, setLevel] = useState(String(member.access_level));
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-white/5 p-4">
+    <Panel className="flex flex-wrap items-center gap-2">
       {member.key_locked ? (
         <ConfirmButton label="Unlock key" onConfirm={() => unlock.mutate()} pending={unlock.isPending} />
       ) : (
@@ -115,7 +116,7 @@ function ActionBar({ member }: { member: MemberDetailType }) {
         <select
           value={level}
           onChange={(e) => setLevel(e.target.value)}
-          className="rounded border border-white/10 bg-black/30 px-2 py-1 text-xs"
+          className="rounded-md border border-white/10 bg-black/30 px-2 py-1 text-xs"
         >
           {[0, 2, 3, 4, 5].map((lvl) => (
             <option key={lvl} value={lvl}>
@@ -151,26 +152,21 @@ function ActionBar({ member }: { member: MemberDetailType }) {
         onConfirm={() => resetRateLimit.mutate()}
         pending={resetRateLimit.isPending}
       />
-    </div>
+    </Panel>
   );
 }
 
 function StandingPanel({ member }: { member: MemberDetailType }) {
   const s = member.standing;
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <div className="mb-2 text-sm font-medium text-gray-300">Standing</div>
+    <Panel title="Standing">
       <div className="flex flex-col gap-3 text-sm">
         <div>
-          <div className="flex items-center gap-2">
-            <Badge label={s.can_vote ? "Can vote" : "Cannot vote"} tone={s.can_vote ? "ok" : "default"} />
-          </div>
+          <Badge label={s.can_vote ? "Can vote" : "Cannot vote"} tone={s.can_vote ? "ok" : "default"} />
           <div className="mt-1 text-xs text-gray-400">{s.vote_reason}</div>
         </div>
         <div>
-          <div className="flex items-center gap-2">
-            <Badge label={s.can_tag ? "Can tag" : "Cannot tag"} tone={s.can_tag ? "ok" : "default"} />
-          </div>
+          <Badge label={s.can_tag ? "Can tag" : "Cannot tag"} tone={s.can_tag ? "ok" : "default"} />
           <div className="mt-1 text-xs text-gray-400">{s.tag_reason}</div>
         </div>
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-500">
@@ -182,7 +178,7 @@ function StandingPanel({ member }: { member: MemberDetailType }) {
           <span>Effective level: {accessRankLabel(s.effective_level)}</span>
         </div>
       </div>
-    </div>
+    </Panel>
   );
 }
 
@@ -192,11 +188,10 @@ function StrikesPanel({ member }: { member: MemberDetailType }) {
   const [reason, setReason] = useState("");
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <div className="mb-2 text-sm font-medium text-gray-300">Strikes ({member.strikes.length})</div>
-      <div className="flex flex-col gap-2">
+    <Panel title={`Strikes (${member.strikes.length})`}>
+      <div className="flex flex-col divide-y divide-white/5">
         {member.strikes.map((strike, i) => (
-          <div key={i} className="flex items-start justify-between gap-2 rounded border border-white/5 p-2 text-sm">
+          <div key={i} className="flex items-start justify-between gap-2 py-2 text-sm first:pt-0">
             <div>
               <div>{strike.reason}</div>
               <div className="text-xs text-gray-500">
@@ -215,7 +210,7 @@ function StrikesPanel({ member }: { member: MemberDetailType }) {
       </div>
       <div className="mt-3 flex gap-2">
         <input
-          className="flex-1 rounded border border-white/10 bg-black/30 px-2 py-1 text-sm"
+          className="flex-1 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-sm"
           placeholder="Strike reason…"
           value={reason}
           onChange={(e) => setReason(e.target.value)}
@@ -230,18 +225,17 @@ function StrikesPanel({ member }: { member: MemberDetailType }) {
           pending={addStrike.isPending}
         />
       </div>
-    </div>
+    </Panel>
   );
 }
 
 function AltAccountsPanel({ member }: { member: MemberDetailType }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <div className="mb-2 text-sm font-medium text-gray-300">Alt accounts ({member.alt_accounts.length})</div>
+    <Panel title={`Alt accounts (${member.alt_accounts.length})`}>
       {member.alt_accounts.length === 0 ? (
         <div className="text-sm text-gray-500">None linked.</div>
       ) : (
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1.5">
           {member.alt_accounts.map((a) => (
             <div key={a.uuid} className="flex items-center justify-between text-sm">
               <Identity id={a.uuid} username={a.minecraft_username} kind="minecraft" />
@@ -250,18 +244,17 @@ function AltAccountsPanel({ member }: { member: MemberDetailType }) {
           ))}
         </div>
       )}
-    </div>
+    </Panel>
   );
 }
 
 function IpHistoryPanel({ member }: { member: MemberDetailType }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <div className="mb-2 text-sm font-medium text-gray-300">IP history ({member.ips.length})</div>
+    <Panel title={`IP history (${member.ips.length})`}>
       {member.ips.length === 0 ? (
         <div className="text-sm text-gray-500">No IPs recorded.</div>
       ) : (
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1.5">
           {member.ips.map((ip) => (
             <div key={ip.ip_address} className="flex items-center justify-between text-sm">
               <span className="font-mono text-xs">{ip.ip_address}</span>
@@ -272,7 +265,7 @@ function IpHistoryPanel({ member }: { member: MemberDetailType }) {
           ))}
         </div>
       )}
-    </div>
+    </Panel>
   );
 }
 
@@ -288,12 +281,11 @@ function DevKeyPanel({ member }: { member: MemberDetailType }) {
 
   if (!member.dev_key) {
     return (
-      <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-        <div className="mb-2 text-sm font-medium text-gray-300">Developer key</div>
+      <Panel title="Developer key">
         <div className="mb-2 text-sm text-gray-500">No developer key issued.</div>
         <div className="flex gap-2">
           <input
-            className="flex-1 rounded border border-white/10 bg-black/30 px-2 py-1 text-sm"
+            className="flex-1 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-sm"
             placeholder="Label…"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
@@ -310,17 +302,13 @@ function DevKeyPanel({ member }: { member: MemberDetailType }) {
             pending={createDevKey.isPending}
           />
         </div>
-      </div>
+      </Panel>
     );
   }
 
   const key = member.dev_key;
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <div className="mb-2 flex items-center justify-between">
-        <div className="text-sm font-medium text-gray-300">Developer key — {key.label}</div>
-        {key.locked && <Badge label="Locked" tone="danger" />}
-      </div>
+    <Panel title={`Developer key — ${key.label}`} action={key.locked ? <Badge label="Locked" tone="danger" /> : undefined}>
       <div className="mb-2 text-xs text-gray-500">{key.request_count.toLocaleString()} requests</div>
       <div className="mb-3 flex flex-wrap gap-1">
         {DEV_KEY_PERMISSIONS.map((p) => {
@@ -329,7 +317,7 @@ function DevKeyPanel({ member }: { member: MemberDetailType }) {
             <button
               key={p.bit}
               onClick={() => setPermissions.mutate(has ? key.permissions & ~p.bit : key.permissions | p.bit)}
-              className={`rounded-full px-2 py-0.5 text-xs ${has ? "bg-ok/15 text-ok" : "bg-white/10 text-gray-400"}`}
+              className={`rounded-full px-2 py-0.5 text-xs ${has ? "bg-ok/15 text-ok" : "bg-white/8 text-gray-400"}`}
             >
               {p.label}
             </button>
@@ -346,7 +334,7 @@ function DevKeyPanel({ member }: { member: MemberDetailType }) {
         <span className="flex items-center gap-1">
           <input
             type="number"
-            className="w-20 rounded border border-white/10 bg-black/30 px-2 py-1 text-xs"
+            className="w-20 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-xs"
             value={rateLimitDraft}
             onChange={(e) => setRateLimitDraft(e.target.value)}
           />
@@ -358,7 +346,7 @@ function DevKeyPanel({ member }: { member: MemberDetailType }) {
         </span>
         <ConfirmButton label="Delete key" tone="danger" onConfirm={() => deleteDevKey.mutate()} pending={deleteDevKey.isPending} />
       </div>
-    </div>
+    </Panel>
   );
 }
 
@@ -369,16 +357,14 @@ function StarfishPanel({ member }: { member: MemberDetailType }) {
 
   if (!member.starfish) {
     return (
-      <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-        <div className="mb-2 text-sm font-medium text-gray-300">Starfish</div>
+      <Panel title="Starfish">
         <div className="text-sm text-gray-500">No Starfish account.</div>
-      </div>
+      </Panel>
     );
   }
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <div className="mb-2 text-sm font-medium text-gray-300">Starfish</div>
+    <Panel title="Starfish">
       <div className="mb-3 flex items-center gap-2 text-sm">
         <Badge label={member.starfish.license_status} tone={member.starfish.license_status === "active" ? "ok" : "default"} />
         {member.starfish.has_active_session && <Badge label="Active session" tone="ok" />}
@@ -387,7 +373,7 @@ function StarfishPanel({ member }: { member: MemberDetailType }) {
         <select
           value={status}
           onChange={(e) => setStatus(e.target.value)}
-          className="rounded border border-white/10 bg-black/30 px-2 py-1 text-xs"
+          className="rounded-md border border-white/10 bg-black/30 px-2 py-1 text-xs"
         >
           <option value="inactive">inactive</option>
           <option value="active">active</option>
@@ -406,44 +392,41 @@ function StarfishPanel({ member }: { member: MemberDetailType }) {
           pending={revokeSessions.isPending}
         />
       </div>
-    </div>
+    </Panel>
   );
 }
 
 function AuthoredTagsPanel({ member }: { member: MemberDetailType }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <div className="mb-2 text-sm font-medium text-gray-300">
-        Tag actions authored ({member.authored_tags.length})
-      </div>
+    <Panel title={`Tag actions authored (${member.authored_tags.length})`}>
       {member.authored_tags.length === 0 ? (
         <div className="text-sm text-gray-500">This member has not authored any tag actions.</div>
       ) : (
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-xs text-gray-500">
-              <th className="pb-1 font-normal">Target</th>
-              <th className="pb-1 font-normal">Action</th>
-              <th className="pb-1 font-normal">Reason</th>
-              <th className="pb-1 font-normal">When</th>
+            <tr className="text-left text-[11px] font-medium tracking-wide text-gray-500 uppercase">
+              <th className="border-b border-white/8 pb-2 font-medium">Target</th>
+              <th className="border-b border-white/8 pb-2 font-medium">Action</th>
+              <th className="border-b border-white/8 pb-2 font-medium">Reason</th>
+              <th className="border-b border-white/8 pb-2 font-medium">When</th>
             </tr>
           </thead>
           <tbody>
             {member.authored_tags.map((t) => (
-              <tr key={t.id} className="border-t border-white/5">
-                <td className="py-1.5">
+              <tr key={t.id} className="hover:bg-white/4">
+                <td className="border-b border-white/5 py-2">
                   <Identity id={t.uuid} username={t.minecraft_username} kind="minecraft" />
                 </td>
-                <td className="py-1.5">
+                <td className="border-b border-white/5 py-2">
                   <Badge label={t.kind === "tag_set" ? `+${t.tag_type}` : `-${t.tag_type}`} tone={t.kind === "tag_set" ? "warning" : "default"} />
                 </td>
-                <td className="py-1.5 text-xs text-gray-400">{t.reason ?? "—"}</td>
-                <td className="py-1.5 text-xs text-gray-500">{fmtDate(t.ts)}</td>
+                <td className="border-b border-white/5 py-2 text-xs text-gray-400">{t.reason ?? "—"}</td>
+                <td className="border-b border-white/5 py-2 text-xs text-gray-500">{fmtDate(t.ts)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
-    </div>
+    </Panel>
   );
 }

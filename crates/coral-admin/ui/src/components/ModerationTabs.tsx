@@ -7,13 +7,13 @@ export function ModerationTabs({ active }: { active: "members" | "players" }) {
     ["players", "Players"],
   ];
   return (
-    <div className="flex overflow-hidden rounded border border-white/10">
+    <div className="flex overflow-hidden rounded-md border border-white/8">
       {tabs.map(([value, label]) => (
         <button
           key={value}
           onClick={() => navigate(`/${value}`)}
-          className={`px-3 py-1.5 text-sm ${
-            value === active ? "bg-white/15 text-white" : "text-gray-400 hover:bg-white/5"
+          className={`px-3 py-1.5 text-xs font-medium ${
+            value === active ? "bg-accent/15 text-accent" : "text-gray-400 hover:bg-white/5"
           }`}
         >
           {label}

@@ -7,6 +7,7 @@ import { Badge } from "../components/Badge";
 import { DataTable } from "../components/DataTable";
 import { Identity } from "../components/Identity";
 import { ModerationTabs } from "../components/ModerationTabs";
+import { Panel } from "../components/Panel";
 import { RecentActivity } from "../components/RecentActivity";
 import { accessRankLabel, accessRankTone, fmtDate, fmtNum, fmtPercent } from "../format";
 
@@ -33,7 +34,7 @@ const COLUMNS: ColumnDef<MemberSummary, unknown>[] = [
     cell: ({ row }) => (
       <div className="flex flex-wrap gap-1">
         {row.original.is_owner ? (
-          <Badge label="Owner" tone="danger" />
+          <Badge label="Owner" tone="accent" />
         ) : (
           row.original.access_level > 0 && (
             <Badge label={accessRankLabel(row.original.access_level)} tone={accessRankTone(row.original.access_level)} />
@@ -90,25 +91,25 @@ export function Members() {
   };
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Members & Moderation</h1>
+        <h1 className="text-lg font-semibold text-gray-100">Members & Moderation</h1>
         <ModerationTabs active="members" />
       </div>
 
       <RecentActivity limit={15} />
 
-      <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-        <div className="mb-3 flex flex-wrap items-center gap-2">
+      <Panel>
+        <div className="mb-4 flex flex-wrap items-center gap-2">
           <input
-            className="w-64 rounded border border-white/10 bg-black/30 px-2 py-1 text-sm"
+            className="w-64 rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-xs"
             placeholder="Search Minecraft IGN, Discord username, or ID…"
             value={searchDraft}
             onChange={(e) => setSearchDraft(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && applySearch()}
           />
           <select
-            className="rounded border border-white/10 bg-black/30 px-2 py-1 text-sm"
+            className="rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-xs"
             value={filters.rank}
             onChange={(e) => {
               setFilters((f) => ({ ...f, rank: e.target.value }));
@@ -142,7 +143,7 @@ export function Members() {
             />
             Has key
           </label>
-          <button onClick={applySearch} className="rounded border border-white/10 px-3 py-1 text-xs hover:bg-white/10">
+          <button onClick={applySearch} className="rounded-md bg-accent/15 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/25">
             Search
           </button>
         </div>
@@ -152,26 +153,26 @@ export function Members() {
           onRowClick={(m) => navigate(`/members/${m.id}`)}
           emptyMessage="No members match"
         />
-        <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+        <div className="mt-4 flex items-center justify-between text-xs text-gray-500">
           <span>{total ? `${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${fmtNum(total)}` : "0 members"}</span>
           <div className="flex gap-2">
             <button
               disabled={offset === 0}
               onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-              className="rounded border border-white/10 px-2 py-1 disabled:opacity-40"
+              className="rounded-md border border-white/10 px-2 py-1 disabled:opacity-40"
             >
               Prev
             </button>
             <button
               disabled={offset + PAGE_SIZE >= total}
               onClick={() => setOffset(offset + PAGE_SIZE)}
-              className="rounded border border-white/10 px-2 py-1 disabled:opacity-40"
+              className="rounded-md border border-white/10 px-2 py-1 disabled:opacity-40"
             >
               Next
             </button>
           </div>
         </div>
-      </div>
+      </Panel>
     </div>
   );
 }

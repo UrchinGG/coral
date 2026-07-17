@@ -324,6 +324,7 @@ export type ReleaseView = {
 };
 
 export type ReviewView = {
+  user_id: number;
   discord_id: string | null;
   discord_username: string | null;
   stars: number;
@@ -363,4 +364,48 @@ export type PluginChangeRow = {
 export type OverviewResponse = {
   flags: Flag[];
   recent_plugin_changes: PluginChangeRow[];
+};
+
+export type PlayerSnapshotRow = {
+  uuid: string;
+  username: string | null;
+  last_snapshot_at: string | null;
+};
+
+export type PlayerSnapshotListResponse = {
+  players: PlayerSnapshotRow[];
+};
+
+export type PlayerSnapshotDetail = {
+  uuid: string;
+  username: string | null;
+  latest: unknown;
+  timestamps: string[];
+};
+
+export type GuildRow = {
+  guild_id: string;
+  name: string;
+  tag: string | null;
+  level: number;
+  member_count: number;
+  experience: number;
+  updated_at: string;
+};
+
+export type GuildListResponse = {
+  total: number;
+  guilds: GuildRow[];
+};
+
+export type GuildDetail = {
+  guild_id: string;
+  name: string | null;
+  current: unknown;
+  timestamps: string[];
+};
+
+export type ResolvedIds = {
+  uuids: Record<string, string>;
+  discord: Record<string, string>;
 };

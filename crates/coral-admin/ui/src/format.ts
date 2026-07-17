@@ -34,8 +34,15 @@ export function accessRankLabel(level: number): string {
   return "Default";
 }
 
-export function accessRankTone(level: number): "default" | "danger" | "warning" {
-  if (level >= 4) return "danger";
-  if (level >= 2) return "warning";
-  return "default";
+export function accessRankTone(level: number): "default" | "accent" {
+  return level >= 2 ? "accent" : "default";
+}
+
+export function prettyJson(value: unknown): string {
+  if (typeof value !== "string") return JSON.stringify(value, null, 2);
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return value;
+  }
 }

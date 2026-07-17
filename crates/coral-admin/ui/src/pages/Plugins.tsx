@@ -6,6 +6,7 @@ import type { PluginSummaryRow } from "../api/types";
 import { Badge } from "../components/Badge";
 import { DataTable } from "../components/DataTable";
 import { Identity } from "../components/Identity";
+import { Panel } from "../components/Panel";
 import { fmtDate, fmtNum } from "../format";
 
 const PAGE_SIZE = 50;
@@ -85,19 +86,19 @@ export function Plugins() {
   };
 
   return (
-    <div className="flex flex-col gap-5">
-      <h1 className="text-lg font-semibold">Plugins</h1>
+    <div className="flex flex-col gap-6">
+      <h1 className="text-lg font-semibold text-gray-100">Plugins</h1>
 
-      <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-        <div className="mb-3 flex flex-wrap items-center gap-2">
+      <Panel>
+        <div className="mb-4 flex flex-wrap items-center gap-2">
           <input
-            className="w-64 rounded border border-white/10 bg-black/30 px-2 py-1 text-sm"
+            className="w-64 rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-xs"
             placeholder="Search name, slug, or description…"
             value={searchDraft}
             onChange={(e) => setSearchDraft(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && applySearch()}
           />
-          <button onClick={applySearch} className="rounded border border-white/10 px-3 py-1 text-xs hover:bg-white/10">
+          <button onClick={applySearch} className="rounded-md bg-accent/15 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/25">
             Search
           </button>
         </div>
@@ -107,26 +108,26 @@ export function Plugins() {
           onRowClick={(p) => navigate(`/plugins/${p.slug}`)}
           emptyMessage="No plugins match"
         />
-        <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+        <div className="mt-4 flex items-center justify-between text-xs text-gray-500">
           <span>{total ? `${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${fmtNum(total)}` : "0 plugins"}</span>
           <div className="flex gap-2">
             <button
               disabled={offset === 0}
               onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-              className="rounded border border-white/10 px-2 py-1 disabled:opacity-40"
+              className="rounded-md border border-white/10 px-2 py-1 disabled:opacity-40"
             >
               Prev
             </button>
             <button
               disabled={offset + PAGE_SIZE >= total}
               onClick={() => setOffset(offset + PAGE_SIZE)}
-              className="rounded border border-white/10 px-2 py-1 disabled:opacity-40"
+              className="rounded-md border border-white/10 px-2 py-1 disabled:opacity-40"
             >
               Next
             </button>
           </div>
         </div>
-      </div>
+      </Panel>
     </div>
   );
 }

@@ -12,10 +12,12 @@ import {
   useStats,
 } from "../api/diagnostics";
 import type { Bucket, BudgetRow, RequestRow, TopKey, TopPath } from "../api/types";
-import { Card } from "../components/Card";
 import { DataTable } from "../components/DataTable";
+import { HealthSignal } from "../components/HealthSignal";
 import { Identity } from "../components/Identity";
+import { Panel } from "../components/Panel";
 import { RequestModal } from "../components/RequestModal";
+import { StatStrip, type Stat } from "../components/StatStrip";
 import { StatusBar } from "../components/StatusBar";
 import { TimeSeriesChart } from "../components/TimeSeriesChart";
 import { STATUS_COLORS, fmtDate, fmtMs, fmtNum, fmtPercent } from "../format";
@@ -65,6 +67,15 @@ function filtersFromParams(params: URLSearchParams): LogFilters {
   };
 }
 
+function computeHealth(hasData: boolean, errorRate: number, budgetPct: number) {
+  if (!hasData) return { level: "ok" as const, message: "No traffic recorded yet" };
+  if (errorRate > 0.1) return { level: "danger" as const, message: `Error rate elevated — ${fmtPercent(errorRate)}` };
+  if (budgetPct > 0.9) return { level: "danger" as const, message: `Hypixel budget nearly exhausted — ${fmtPercent(budgetPct)} used` };
+  if (errorRate > 0.03) return { level: "warning" as const, message: `Error rate slightly elevated — ${fmtPercent(errorRate)}` };
+  if (budgetPct > 0.7) return { level: "warning" as const, message: `Hypixel budget usage climbing — ${fmtPercent(budgetPct)}` };
+  return { level: "ok" as const, message: "All systems normal" };
+}
+
 const LOG_COLUMNS: ColumnDef<RequestRow, unknown>[] = [
   {
     header: "Time",
@@ -75,7 +86,7 @@ const LOG_COLUMNS: ColumnDef<RequestRow, unknown>[] = [
   {
     header: "Path",
     accessorKey: "path",
-    cell: (info) => <span className="block max-w-[200px] truncate font-mono text-xs">{info.getValue<string | null>() ?? "—"}</span>,
+    cell: (info) => <span className="block max-w-[220px] truncate font-mono text-xs">{info.getValue<string | null>() ?? "—"}</span>,
   },
   { header: "Status", accessorKey: "status", cell: (info) => info.getValue<number | null>() ?? "—" },
   {
@@ -151,8 +162,32 @@ export function Diagnostics() {
   const errorRate = stats.data && stats.data.total > 0 ? stats.data.errors / stats.data.total : 0;
   const rps = stats.data ? stats.data.total / (hours * 3600) : 0;
   const budgetUsagePct = rateLimits.data?.capacity ? rateLimits.data.used / rateLimits.data.capacity : 0;
+  const health = computeHealth(!!stats.data && stats.data.total > 0, errorRate, budgetUsagePct);
+
+  const percentiles = useMemo(() => weightedLatency(stats.data?.top_paths ?? []), [stats.data]);
 
   const activeFilterCount = FILTER_KEYS.filter((k) => searchParams.get(k)).length;
+
+  const stripStats: Stat[] = [
+    { label: "Requests", value: fmtNum(stats.data?.total ?? 0), sub: `${rps < 1 ? rps.toFixed(2) : Math.round(rps)}/s · ${hours}h` },
+    {
+      label: "Errors",
+      value: fmtPercent(errorRate),
+      sub: `${fmtNum(stats.data?.errors ?? 0)} total`,
+      tone: errorRate > 0.05 ? "danger" : "default",
+    },
+    {
+      label: "Avg latency",
+      value: fmtMs(stats.data?.avg_ms ?? null),
+      sub: percentiles ? `p95 ${fmtMs(percentiles.p95)} · p99 ${fmtMs(percentiles.p99)}` : "response time",
+    },
+    {
+      label: "Hypixel headroom",
+      value: rateLimits.data?.available ? fmtNum(rateLimits.data.headroom) : "—",
+      sub: rateLimits.data?.available ? `${fmtNum(rateLimits.data.used)} / ${fmtNum(rateLimits.data.capacity)} used` : "redis offline",
+      tone: budgetUsagePct > 0.85 ? "danger" : budgetUsagePct > 0.6 ? "warning" : "default",
+    },
+  ];
 
   const selectSlot = (bucket: Bucket, index: number, points: Bucket[]) => {
     const startMs = new Date(bucket.t).getTime();
@@ -167,96 +202,91 @@ export function Diagnostics() {
   };
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">API Diagnostics</h1>
-        <Segmented
-          value={hours}
-          options={WINDOWS}
-          onChange={(v) => setParams({ hours: String(v), offset: undefined })}
-        />
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Card label="Requests" value={fmtNum(stats.data?.total ?? 0)} sub={`${rps < 1 ? rps.toFixed(2) : Math.round(rps)}/s · ${hours}h`} />
-        <Card
-          label="Errors"
-          value={fmtPercent(errorRate)}
-          sub={`${fmtNum(stats.data?.errors ?? 0)} total`}
-          tone={errorRate > 0.05 ? "danger" : "default"}
-        />
-        <LatencyCard topPaths={stats.data?.top_paths ?? []} avgMs={stats.data?.avg_ms ?? null} />
-        <BudgetCard
-          available={rateLimits.data?.available ?? false}
-          headroom={rateLimits.data?.headroom ?? 0}
-          used={rateLimits.data?.used ?? 0}
-          capacity={rateLimits.data?.capacity ?? 0}
-          pct={budgetUsagePct}
-        />
-      </div>
-
-      <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <Segmented
-            value={mode}
-            options={[
-              ["incoming", "Incoming"],
-              ["endpoint", "Endpoint"],
-              ["hypixel", "Hypixel"],
-            ]}
-            onChange={(v) => setParams({ mode: v })}
-          />
-          {mode === "endpoint" && (
-            <select
-              className="rounded border border-white/10 bg-black/30 px-2 py-1 text-sm"
-              value={endpoint}
-              onChange={(e) => setParams({ endpoint: e.target.value })}
-            >
-              {(paths.data ?? []).map((p) => (
-                <option key={p.path ?? ""} value={p.path ?? ""}>
-                  {p.path ?? "(none)"} · {fmtNum(p.count)}
-                </option>
-              ))}
-            </select>
-          )}
+    <div className="flex flex-col gap-8">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold text-gray-100">API Diagnostics</h1>
+          <div className="mt-1.5">
+            <HealthSignal level={health.level} message={health.message} />
+          </div>
         </div>
+        <Segmented value={hours} options={WINDOWS} onChange={(v) => setParams({ hours: String(v), offset: undefined })} />
+      </div>
+
+      <StatStrip stats={stripStats} />
+
+      <Panel
+        title="Traffic"
+        action={
+          <div className="flex items-center gap-3">
+            <Segmented
+              value={mode}
+              options={[
+                ["incoming", "Incoming"],
+                ["endpoint", "Endpoint"],
+                ["hypixel", "Hypixel"],
+              ]}
+              onChange={(v) => setParams({ mode: v })}
+            />
+            {mode === "endpoint" && (
+              <select
+                className="rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-xs"
+                value={endpoint}
+                onChange={(e) => setParams({ endpoint: e.target.value })}
+              >
+                {(paths.data ?? []).map((p) => (
+                  <option key={p.path ?? ""} value={p.path ?? ""}>
+                    {p.path ?? "(none)"} · {fmtNum(p.count)}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        }
+      >
         <TimeSeriesChart
           points={series.data ?? []}
           hours={hours}
           totalLabel={mode === "hypixel" ? "Outgoing" : "Requests"}
           onSelect={mode === "hypixel" ? undefined : selectSlot}
         />
-      </div>
+      </Panel>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        <TopCallersPanel
-          keys={stats.data?.top_keys ?? []}
-          onSelectCaller={(f) => setFilters(f)}
-        />
-        <TopEndpointsPanel
-          paths={stats.data?.top_paths ?? []}
-          onSelectPath={(p) => setParams({ mode: "endpoint", endpoint: p })}
-        />
+        <TopCallersPanel keys={stats.data?.top_keys ?? []} onSelectCaller={(f) => setFilters(f)} />
+        <TopEndpointsPanel paths={stats.data?.top_paths ?? []} onSelectPath={(p) => setParams({ mode: "endpoint", endpoint: p })} />
       </div>
 
       <BudgetsPanel rows={budgets.data ?? []} onSelectCaller={(discordId) => setFilters({ discord_id: discordId })} />
 
-      <LogPanel
-        filters={filters}
-        activeFilterCount={activeFilterCount}
-        onApply={(f) => setFilters(f)}
-        onClear={clearFilters}
-        onClearOne={(key) => setFilters({ [key]: undefined } as Partial<LogFilters>)}
-        total={log.data?.total ?? 0}
-        requests={log.data?.requests ?? []}
-        offset={offset}
-        onOffsetChange={(o) => setParams({ offset: String(o) })}
-        onSelectRequest={setSelected}
-      />
+      <div>
+        <h2 className="mb-3 text-sm font-medium text-gray-400">Investigate — request log</h2>
+        <LogPanel
+          filters={filters}
+          activeFilterCount={activeFilterCount}
+          onApply={(f) => setFilters(f)}
+          onClear={clearFilters}
+          onClearOne={(key) => setFilters({ [key]: undefined } as Partial<LogFilters>)}
+          total={log.data?.total ?? 0}
+          requests={log.data?.requests ?? []}
+          offset={offset}
+          onOffsetChange={(o) => setParams({ offset: String(o) })}
+          onSelectRequest={setSelected}
+        />
+      </div>
 
       {selected && <RequestModal request={selected} onClose={() => setSelected(null)} />}
     </div>
   );
+}
+
+function weightedLatency(topPaths: TopPath[]) {
+  const withData = topPaths.filter((p) => p.p95_ms !== null);
+  if (withData.length === 0) return null;
+  const totalCount = withData.reduce((sum, p) => sum + p.count, 0);
+  const p95 = withData.reduce((sum, p) => sum + (p.p95_ms ?? 0) * p.count, 0) / totalCount;
+  const p99 = withData.reduce((sum, p) => sum + (p.p99_ms ?? 0) * p.count, 0) / totalCount;
+  return { p95, p99 };
 }
 
 function Segmented<T extends string | number>({
@@ -269,73 +299,16 @@ function Segmented<T extends string | number>({
   onChange: (v: T) => void;
 }) {
   return (
-    <div className="flex overflow-hidden rounded border border-white/10">
+    <div className="flex overflow-hidden rounded-md border border-white/8">
       {options.map(([v, label]) => (
         <button
           key={String(v)}
           onClick={() => onChange(v)}
-          className={`px-3 py-1.5 text-sm ${
-            v === value ? "bg-white/15 text-white" : "text-gray-400 hover:bg-white/5"
-          }`}
+          className={`px-3 py-1.5 text-xs font-medium ${v === value ? "bg-accent/15 text-accent" : "text-gray-400 hover:bg-white/5"}`}
         >
           {label}
         </button>
       ))}
-    </div>
-  );
-}
-
-function LatencyCard({ topPaths, avgMs }: { topPaths: TopPath[]; avgMs: number | null }) {
-  const weighted = useMemo(() => {
-    const withData = topPaths.filter((p) => p.p95_ms !== null);
-    if (withData.length === 0) return null;
-    const totalCount = withData.reduce((sum, p) => sum + p.count, 0);
-    const p95 = withData.reduce((sum, p) => sum + (p.p95_ms ?? 0) * p.count, 0) / totalCount;
-    const p99 = withData.reduce((sum, p) => sum + (p.p99_ms ?? 0) * p.count, 0) / totalCount;
-    return { p95, p99 };
-  }, [topPaths]);
-
-  return (
-    <Card
-      label="Avg latency"
-      value={fmtMs(avgMs)}
-      sub={weighted ? `p95 ${fmtMs(weighted.p95)} · p99 ${fmtMs(weighted.p99)}` : "response time"}
-    />
-  );
-}
-
-function BudgetCard({
-  available,
-  headroom,
-  used,
-  capacity,
-  pct,
-}: {
-  available: boolean;
-  headroom: number;
-  used: number;
-  capacity: number;
-  pct: number;
-}) {
-  return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <div className="text-xs uppercase tracking-wide text-gray-400">Hypixel headroom</div>
-      <div className="mt-1 text-2xl font-semibold">{available ? fmtNum(headroom) : "—"}</div>
-      {available ? (
-        <>
-          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-            <div
-              className={pct > 0.85 ? "h-full bg-danger" : pct > 0.6 ? "h-full bg-warning" : "h-full bg-ok"}
-              style={{ width: `${Math.min(100, pct * 100)}%` }}
-            />
-          </div>
-          <div className="mt-1 text-xs text-gray-500">
-            {fmtNum(used)} / {fmtNum(capacity)} used
-          </div>
-        </>
-      ) : (
-        <div className="mt-1 text-xs text-gray-500">redis offline</div>
-      )}
     </div>
   );
 }
@@ -348,33 +321,32 @@ function TopCallersPanel({
   onSelectCaller: (filters: Partial<LogFilters>) => void;
 }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <div className="mb-2 text-sm font-medium text-gray-300">Top callers</div>
+    <Panel title="Top callers">
       {keys.length === 0 ? (
         <div className="text-sm text-gray-500">No data</div>
       ) : (
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-xs text-gray-500">
-              <th className="pb-1 font-normal">Caller</th>
-              <th className="pb-1 text-right font-normal">Reqs</th>
-              <th className="pb-1 text-right font-normal">Err</th>
-              <th className="pb-1 text-right font-normal">429</th>
-              <th className="pb-1 text-right font-normal">403</th>
+            <tr className="text-left text-[11px] font-medium tracking-wide text-gray-500 uppercase">
+              <th className="pb-2 font-medium">Caller</th>
+              <th className="pb-2 text-right font-medium">Reqs</th>
+              <th className="pb-2 text-right font-medium">Err</th>
+              <th className="pb-2 text-right font-medium">429</th>
+              <th className="pb-2 text-right font-medium">403</th>
             </tr>
           </thead>
           <tbody>
             {keys.map((k) => (
               <tr
                 key={k.key_prefix ?? k.discord_id ?? Math.random()}
-                className="cursor-pointer border-t border-white/5 hover:bg-white/5"
+                className="cursor-pointer border-t border-white/5 hover:bg-white/4"
                 onClick={() =>
                   onSelectCaller(
                     k.discord_id ? { discord_id: k.discord_id } : k.key_prefix ? { key_prefix: k.key_prefix } : {},
                   )
                 }
               >
-                <td className="py-1.5">
+                <td className="py-2">
                   {k.discord_id ? (
                     <Identity id={k.discord_id} username={k.discord_username} />
                   ) : k.uuid ? (
@@ -383,7 +355,7 @@ function TopCallersPanel({
                     <span className="font-mono text-xs text-gray-400">{k.key_prefix ?? "none"}</span>
                   )}
                 </td>
-                <td className="text-right">{fmtNum(k.count)}</td>
+                <td className="text-right text-gray-300">{fmtNum(k.count)}</td>
                 <td className="text-right">
                   {k.errors > 0 ? <span className="text-danger">{fmtNum(k.errors)}</span> : <span className="text-gray-600">—</span>}
                 </td>
@@ -406,39 +378,38 @@ function TopCallersPanel({
           </tbody>
         </table>
       )}
-    </div>
+    </Panel>
   );
 }
 
 function TopEndpointsPanel({ paths, onSelectPath }: { paths: TopPath[]; onSelectPath: (path: string) => void }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <div className="mb-2 text-sm font-medium text-gray-300">Top endpoints</div>
+    <Panel title="Top endpoints">
       {paths.length === 0 ? (
         <div className="text-sm text-gray-500">No data</div>
       ) : (
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-xs text-gray-500">
-              <th className="pb-1 font-normal">Path</th>
-              <th className="pb-1 text-right font-normal">Reqs</th>
-              <th className="pb-1 text-right font-normal">p50/p95/p99</th>
-              <th className="pb-1 text-right font-normal">Status</th>
+            <tr className="text-left text-[11px] font-medium tracking-wide text-gray-500 uppercase">
+              <th className="pb-2 font-medium">Path</th>
+              <th className="pb-2 text-right font-medium">Reqs</th>
+              <th className="pb-2 text-right font-medium">p50/p95/p99</th>
+              <th className="pb-2 text-right font-medium">Status</th>
             </tr>
           </thead>
           <tbody>
             {paths.map((p) => (
               <tr
                 key={p.path ?? Math.random()}
-                className="cursor-pointer border-t border-white/5 hover:bg-white/5"
+                className="cursor-pointer border-t border-white/5 hover:bg-white/4"
                 onClick={() => p.path && onSelectPath(p.path)}
               >
-                <td className="max-w-[220px] truncate py-1.5 font-mono text-xs">{p.path ?? "—"}</td>
-                <td className="text-right">{fmtNum(p.count)}</td>
+                <td className="max-w-[220px] truncate py-2 font-mono text-xs">{p.path ?? "—"}</td>
+                <td className="text-right text-gray-300">{fmtNum(p.count)}</td>
                 <td className="text-right font-mono text-xs text-gray-400">
                   {fmtMs(p.p50_ms)} / {fmtMs(p.p95_ms)} / {fmtMs(p.p99_ms)}
                 </td>
-                <td className="py-1.5 text-right">
+                <td className="py-2 text-right">
                   <div className="ml-auto">
                     <StatusBar
                       counts={[
@@ -455,7 +426,7 @@ function TopEndpointsPanel({ paths, onSelectPath }: { paths: TopPath[]; onSelect
           </tbody>
         </table>
       )}
-    </div>
+    </Panel>
   );
 }
 
@@ -463,40 +434,38 @@ function BudgetsPanel({ rows, onSelectCaller }: { rows: BudgetRow[]; onSelectCal
   const active = rows.filter((r) => r.used > 0);
   if (active.length === 0) return null;
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <div className="mb-2 text-sm font-medium text-gray-300">Keyless auth budget utilization</div>
-      <div className="text-xs text-gray-500 mb-2">Session and batch-lookup rate limits, ranked by usage</div>
+    <Panel title="Keyless auth budget utilization" description="Session and batch-lookup rate limits, ranked by usage">
       <table className="w-full text-sm">
         <thead>
-          <tr className="text-left text-xs text-gray-500">
-            <th className="pb-1 font-normal">User</th>
-            <th className="pb-1 font-normal">Budget</th>
-            <th className="pb-1 text-right font-normal">Used / Limit</th>
-            <th className="pb-1 text-right font-normal">Utilization</th>
+          <tr className="text-left text-[11px] font-medium tracking-wide text-gray-500 uppercase">
+            <th className="pb-2 font-medium">User</th>
+            <th className="pb-2 font-medium">Budget</th>
+            <th className="pb-2 text-right font-medium">Used / Limit</th>
+            <th className="pb-2 text-right font-medium">Utilization</th>
           </tr>
         </thead>
         <tbody>
           {active.slice(0, 20).map((r) => (
             <tr
               key={`${r.kind}:${r.discord_id}`}
-              className="cursor-pointer border-t border-white/5 hover:bg-white/5"
+              className="cursor-pointer border-t border-white/5 hover:bg-white/4"
               onClick={() => onSelectCaller(r.discord_id)}
             >
-              <td className="py-1.5">
+              <td className="py-2">
                 <Identity id={r.discord_id} username={r.discord_username} />
               </td>
               <td className="text-gray-400">{r.kind === "session" ? "requests / 5min" : "uuids / 5min"}</td>
-              <td className="text-right font-mono text-xs">
+              <td className="text-right font-mono text-xs text-gray-300">
                 {fmtNum(r.used)} / {fmtNum(r.limit)}
               </td>
-              <td className={`text-right ${r.utilization > 0.85 ? "text-danger" : r.utilization > 0.6 ? "text-warning" : ""}`}>
+              <td className={`text-right ${r.utilization > 0.85 ? "text-danger" : r.utilization > 0.6 ? "text-warning" : "text-gray-300"}`}>
                 {fmtPercent(r.utilization)}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-    </div>
+    </Panel>
   );
 }
 
@@ -573,11 +542,10 @@ function LogPanel({
   };
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="text-sm font-medium text-gray-300">Recent requests</div>
+    <Panel>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <select
-          className="rounded border border-white/10 bg-black/30 px-2 py-1 text-xs"
+          className="rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-xs"
           value={draft.method}
           onChange={(e) => setDraft({ ...draft, method: e.target.value })}
         >
@@ -589,7 +557,7 @@ function LogPanel({
           ))}
         </select>
         <input
-          className="rounded border border-white/10 bg-black/30 px-2 py-1 text-xs"
+          className="rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-xs"
           placeholder="path…"
           value={draft.path}
           onChange={(e) => setDraft({ ...draft, path: e.target.value })}
@@ -604,21 +572,21 @@ function LogPanel({
           exact
         </label>
         <input
-          className="w-28 rounded border border-white/10 bg-black/30 px-2 py-1 text-xs"
+          className="w-28 rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-xs"
           placeholder="status: 429, 4xx…"
           value={draft.status}
           onChange={(e) => setDraft({ ...draft, status: e.target.value })}
           onKeyDown={(e) => e.key === "Enter" && applyDraft()}
         />
         <input
-          className="w-48 rounded border border-white/10 bg-black/30 px-2 py-1 text-xs"
+          className="w-48 rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-xs"
           placeholder="caller: name, ID, UUID, or IP"
           value={draft.caller}
           onChange={(e) => setDraft({ ...draft, caller: e.target.value })}
           onKeyDown={(e) => e.key === "Enter" && applyDraft()}
         />
         <input
-          className="w-40 rounded border border-white/10 bg-black/30 px-2 py-1 text-xs"
+          className="w-40 rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-xs"
           placeholder="error contains…"
           value={draft.error_contains}
           onChange={(e) => setDraft({ ...draft, error_contains: e.target.value })}
@@ -632,7 +600,7 @@ function LogPanel({
           />
           errors only
         </label>
-        <button onClick={applyDraft} className="rounded border border-white/10 px-3 py-1 text-xs hover:bg-white/10">
+        <button onClick={applyDraft} className="rounded-md bg-accent/15 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/25">
           Apply
         </button>
         {activeFilterCount > 0 && (
@@ -642,11 +610,11 @@ function LogPanel({
         )}
       </div>
       {chips.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-2">
+        <div className="mb-3 flex flex-wrap gap-2">
           {chips.map((c) => (
-            <span key={c.key} className="rounded-full bg-white/10 px-2 py-0.5 text-xs">
+            <span key={c.key} className="rounded-full bg-white/8 px-2 py-0.5 text-xs text-gray-300">
               {c.label}{" "}
-              <button onClick={() => clearChip(c.key)} className="text-gray-400 hover:text-white">
+              <button onClick={() => clearChip(c.key)} className="text-gray-500 hover:text-white">
                 ✕
               </button>
             </span>
@@ -662,25 +630,25 @@ function LogPanel({
           emptyMessage="No requests match"
         />
       </div>
-      <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+      <div className="mt-4 flex items-center justify-between text-xs text-gray-500">
         <span>{total ? `${offset + 1}–${Math.min(offset + LOG_PAGE_SIZE, total)} of ${fmtNum(total)}` : "0 requests"}</span>
         <div className="flex gap-2">
           <button
             disabled={offset === 0}
             onClick={() => onOffsetChange(Math.max(0, offset - LOG_PAGE_SIZE))}
-            className="rounded border border-white/10 px-2 py-1 disabled:opacity-40"
+            className="rounded-md border border-white/10 px-2 py-1 disabled:opacity-40"
           >
             Prev
           </button>
           <button
             disabled={offset + LOG_PAGE_SIZE >= total}
             onClick={() => onOffsetChange(offset + LOG_PAGE_SIZE)}
-            className="rounded border border-white/10 px-2 py-1 disabled:opacity-40"
+            className="rounded-md border border-white/10 px-2 py-1 disabled:opacity-40"
           >
             Next
           </button>
         </div>
       </div>
-    </div>
+    </Panel>
   );
 }

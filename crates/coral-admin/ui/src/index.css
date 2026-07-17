@@ -4,6 +4,7 @@
   --color-ok: #34d399;
   --color-warning: #fbbf24;
   --color-danger: #f87171;
+  --color-accent: #818cf8;
 }
 
 html,
@@ -14,7 +15,7 @@ body,
 
 body {
   margin: 0;
-  background-color: #0b0e14;
+  background-color: #0a0c11;
   color: #e5e7eb;
   font-family:
     system-ui,
@@ -22,4 +23,9 @@ body {
     "Segoe UI",
     Roboto,
     sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
 }

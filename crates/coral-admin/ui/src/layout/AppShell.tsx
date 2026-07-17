@@ -12,10 +12,10 @@ export function AppShell() {
   const location = useLocation();
 
   return (
-    <div className="flex min-h-screen bg-[#0b0e14] text-gray-200">
-      <aside className="flex w-56 flex-shrink-0 flex-col border-r border-white/10 p-4">
-        <div className="mb-6 px-2 text-lg font-semibold">Coral Admin</div>
-        <nav className="flex flex-col gap-1">
+    <div className="flex min-h-screen bg-[#0a0c11] text-gray-200">
+      <aside className="flex w-56 flex-shrink-0 flex-col border-r border-white/8 p-4">
+        <div className="mb-8 px-2 text-sm font-semibold tracking-wide text-gray-100">Coral Admin</div>
+        <nav className="flex flex-col gap-0.5">
           {NAV_ITEMS.map((item) => {
             const active = item.extraMatch.some((path) => location.pathname.startsWith(path));
             return (
@@ -24,8 +24,10 @@ export function AppShell() {
                 to={item.to}
                 end={item.end}
                 className={({ isActive }) =>
-                  `rounded px-3 py-2 text-sm ${
-                    isActive || active ? "bg-white/10 text-white" : "text-gray-400 hover:bg-white/5 hover:text-gray-200"
+                  `rounded-md px-3 py-2 text-sm transition-colors ${
+                    isActive || active
+                      ? "bg-accent/12 font-medium text-accent"
+                      : "text-gray-400 hover:bg-white/5 hover:text-gray-200"
                   }`
                 }
               >
@@ -35,12 +37,12 @@ export function AppShell() {
           })}
         </nav>
         <div className="mt-auto">
-          <a href="/auth/logout" className="block rounded px-3 py-2 text-sm text-gray-500 hover:bg-white/5 hover:text-gray-200">
+          <a href="/auth/logout" className="block rounded-md px-3 py-2 text-sm text-gray-500 hover:bg-white/5 hover:text-gray-300">
             Log out
           </a>
         </div>
       </aside>
-      <main className="min-w-0 flex-1 overflow-auto p-6">
+      <main className="min-w-0 flex-1 overflow-auto p-8">
         <Outlet />
       </main>
     </div>

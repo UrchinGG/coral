@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   useDeletePlugin,
   useDeleteRelease,
+  useDeleteReview,
   usePlugin,
   useSetDisabled,
   useSetOfficial,
@@ -14,6 +15,7 @@ import type { Plugin, ReleaseView, ReviewView } from "../api/types";
 import { Badge } from "../components/Badge";
 import { ConfirmButton } from "../components/ConfirmButton";
 import { Identity } from "../components/Identity";
+import { Panel } from "../components/Panel";
 import { fmtDate } from "../format";
 
 export function PluginDetail() {
@@ -32,14 +34,14 @@ export function PluginDetail() {
     plugin.data;
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6">
       <button onClick={() => navigate("/plugins")} className="w-fit text-sm text-gray-400 hover:text-white">
         ← Back to plugins
       </button>
 
-      <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+      <Panel>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-lg font-semibold">{p.display_name}</h1>
+          <h1 className="text-lg font-semibold text-gray-100">{p.display_name}</h1>
           <span className="font-mono text-xs text-gray-500">{p.slug}</span>
           {p.official && <Badge label="Official" tone="ok" />}
           {p.unlisted && <Badge label="Unlisted" tone="warning" />}
@@ -54,23 +56,23 @@ export function PluginDetail() {
             {installs_30d.toLocaleString()} installs (30d) / {installs_total.toLocaleString()} total
           </span>
           {p.homepage && (
-            <a href={p.homepage} target="_blank" rel="noreferrer" className="text-gray-400 hover:text-white">
+            <a href={p.homepage} target="_blank" rel="noreferrer" className="text-gray-400 hover:text-accent">
               Homepage ↗
             </a>
           )}
         </div>
         {p.disabled && p.disabled_reason && (
-          <div className="mt-2 rounded border border-danger/30 bg-danger/10 p-2 text-xs text-danger">
+          <div className="mt-3 rounded-md border border-danger/20 bg-danger/8 p-2 text-xs text-danger">
             Disabled: {p.disabled_reason}
           </div>
         )}
-      </div>
+      </Panel>
 
       <ActionBar plugin={p} onDeleted={() => navigate("/plugins")} />
 
       <ReleasesPanel slug={p.slug} releases={releases} />
 
-      <ReviewsPanel reviews={reviews} />
+      <ReviewsPanel slug={p.slug} reviews={reviews} />
     </div>
   );
 }
@@ -83,7 +85,7 @@ function ActionBar({ plugin, onDeleted }: { plugin: Plugin; onDeleted: () => voi
   const [disableReason, setDisableReason] = useState("");
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-white/5 p-4">
+    <Panel className="flex flex-wrap items-center gap-2">
       <ConfirmButton
         label={plugin.official ? "Unset official" : "Mark official"}
         onConfirm={() => setOfficial.mutate(!plugin.official)}
@@ -104,7 +106,7 @@ function ActionBar({ plugin, onDeleted }: { plugin: Plugin; onDeleted: () => voi
       ) : (
         <span className="flex items-center gap-1">
           <input
-            className="w-48 rounded border border-white/10 bg-black/30 px-2 py-1 text-xs"
+            className="w-48 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-xs"
             placeholder="Disable reason…"
             value={disableReason}
             onChange={(e) => setDisableReason(e.target.value)}
@@ -124,7 +126,7 @@ function ActionBar({ plugin, onDeleted }: { plugin: Plugin; onDeleted: () => voi
         onConfirm={() => deletePlugin.mutate(undefined, { onSuccess: onDeleted })}
         pending={deletePlugin.isPending}
       />
-    </div>
+    </Panel>
   );
 }
 
@@ -134,16 +136,15 @@ function ReleasesPanel({ slug, releases }: { slug: string; releases: ReleaseView
   const deleteRelease = useDeleteRelease(slug);
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <div className="mb-2 text-sm font-medium text-gray-300">Releases ({releases.length})</div>
+    <Panel title={`Releases (${releases.length})`}>
       {releases.length === 0 ? (
         <div className="text-sm text-gray-500">No releases.</div>
       ) : (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col divide-y divide-white/5">
           {releases.map((r) => (
-            <div key={r.id} className="rounded border border-white/5 p-2 text-sm">
+            <div key={r.id} className="py-2.5 text-sm first:pt-0">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium">v{r.version}</span>
+                <span className="font-medium text-gray-200">v{r.version}</span>
                 {r.yanked && <Badge label="Yanked" tone="danger" />}
                 <span className="text-xs text-gray-500">{fmtDate(r.created_at)}</span>
               </div>
@@ -179,27 +180,35 @@ function ReleasesPanel({ slug, releases }: { slug: string; releases: ReleaseView
           ))}
         </div>
       )}
-    </div>
+    </Panel>
   );
 }
 
-function ReviewsPanel({ reviews }: { reviews: ReviewView[] }) {
+function ReviewsPanel({ slug, reviews }: { slug: string; reviews: ReviewView[] }) {
+  const deleteReview = useDeleteReview(slug);
   if (reviews.length === 0) return null;
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <div className="mb-2 text-sm font-medium text-gray-300">Reviews ({reviews.length})</div>
-      <div className="flex flex-col gap-2">
-        {reviews.map((r, i) => (
-          <div key={i} className="rounded border border-white/5 p-2 text-sm">
-            <div className="flex items-center gap-2">
-              <Identity id={r.discord_id} username={r.discord_username} />
-              <span className="text-warning">{"★".repeat(r.stars)}</span>
-              <span className="text-xs text-gray-500">{fmtDate(r.updated_at)}</span>
+    <Panel title={`Reviews (${reviews.length})`}>
+      <div className="flex flex-col divide-y divide-white/5">
+        {reviews.map((r) => (
+          <div key={r.user_id} className="flex items-start justify-between gap-2 py-2.5 text-sm first:pt-0">
+            <div>
+              <div className="flex items-center gap-2">
+                <Identity id={r.discord_id} username={r.discord_username} />
+                <span className="text-warning">{"★".repeat(r.stars)}</span>
+                <span className="text-xs text-gray-500">{fmtDate(r.updated_at)}</span>
+              </div>
+              {r.review && <div className="mt-1 text-xs text-gray-400">{r.review}</div>}
             </div>
-            {r.review && <div className="mt-1 text-xs text-gray-400">{r.review}</div>}
+            <ConfirmButton
+              label="Delete"
+              tone="danger"
+              onConfirm={() => deleteReview.mutate(r.user_id)}
+              pending={deleteReview.isPending}
+            />
           </div>
         ))}
       </div>
-    </div>
+    </Panel>
   );
 }

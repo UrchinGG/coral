@@ -73,3 +73,10 @@ export function useDeleteRelease(slug: string) {
     invalidateKeys: pluginKeys(slug),
   });
 }
+
+export function useDeleteReview(slug: string) {
+  return useAdminMutation((userId: number) => apiDelete(`/plugins/${slug}/reviews/${userId}`), {
+    successMessage: "Review deleted",
+    invalidateKeys: pluginKeys(slug),
+  });
+}

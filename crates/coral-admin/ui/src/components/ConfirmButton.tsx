@@ -20,9 +20,7 @@ export function ConfirmButton({
   const [confirming, setConfirming] = useState(false);
 
   const toneClasses =
-    tone === "danger"
-      ? "border-danger/40 text-danger hover:bg-danger/10"
-      : "border-white/10 text-gray-200 hover:bg-white/10";
+    tone === "danger" ? "border-danger/30 text-danger hover:bg-danger/10" : "border-white/10 text-gray-300 hover:bg-white/8";
 
   if (confirming) {
     return (
@@ -33,13 +31,13 @@ export function ConfirmButton({
             onConfirm();
             setConfirming(false);
           }}
-          className="rounded border border-danger/40 bg-danger/10 px-2 py-1 text-xs text-danger disabled:opacity-50"
+          className="rounded-md border border-danger/30 bg-danger/10 px-2 py-1 text-xs font-medium text-danger disabled:opacity-50"
         >
           {pending ? "…" : confirmLabel}
         </button>
         <button
           onClick={() => setConfirming(false)}
-          className="rounded border border-white/10 px-2 py-1 text-xs text-gray-400 hover:bg-white/10"
+          className="rounded-md border border-white/10 px-2 py-1 text-xs text-gray-400 hover:bg-white/8"
         >
           Cancel
         </button>
@@ -51,7 +49,7 @@ export function ConfirmButton({
     <button
       disabled={disabled || pending}
       onClick={() => setConfirming(true)}
-      className={`rounded border px-2 py-1 text-xs disabled:opacity-40 ${toneClasses}`}
+      className={`rounded-md border px-2 py-1 text-xs disabled:opacity-40 ${toneClasses}`}
     >
       {label}
     </button>

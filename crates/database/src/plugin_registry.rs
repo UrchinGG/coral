@@ -571,6 +571,15 @@ impl<'a> PluginRegistryRepository<'a> {
         .await
     }
 
+    pub async fn delete_rating(&self, user_id: i64, plugin_id: i64) -> Result<bool, sqlx::Error> {
+        sqlx::query("DELETE FROM plugin_ratings WHERE user_id = $1 AND plugin_id = $2")
+            .bind(user_id)
+            .bind(plugin_id)
+            .execute(self.pool)
+            .await
+            .map(|r| r.rows_affected() > 0)
+    }
+
     pub async fn get_user_rating(
         &self,
         user_id: i64,
@@ -754,6 +763,75 @@ mod tests {
             .connect(&url)
             .await
             .ok()
+    }
+
+    async fn cleanup_rating_fixtures(pool: &PgPool, discord_id: i64, github_repo_id: i64) {
+        sqlx::query(
+            "DELETE FROM plugins WHERE github_repo_id = $1;
+             DELETE FROM starfish_users WHERE discord_id = $2",
+        )
+        .bind(github_repo_id)
+        .bind(discord_id)
+        .execute(pool)
+        .await
+        .ok();
+    }
+
+    #[tokio::test]
+    async fn delete_rating_removes_an_upserted_review() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let repo = PluginRegistryRepository::new(&pool);
+        let nonce = Utc::now().timestamp_nanos_opt().unwrap();
+        let discord_id = nonce;
+        let github_repo_id = nonce;
+        cleanup_rating_fixtures(&pool, discord_id, github_repo_id).await;
+
+        let (user_id,): (i64,) =
+            sqlx::query_as("INSERT INTO starfish_users (discord_id) VALUES ($1) RETURNING id")
+                .bind(discord_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let plugin = repo
+            .create_plugin(NewPlugin {
+                slug: &format!("test-plugin-{nonce}"),
+                owner_user_id: user_id,
+                repo: "test/repo",
+                github_repo_id,
+                display_name: "Test Plugin",
+                description: "fixture",
+                tags: &[],
+                homepage: None,
+            })
+            .await
+            .unwrap();
+
+        repo.upsert_rating(user_id, plugin.id, 5, Some("great plugin"))
+            .await
+            .unwrap();
+        assert!(
+            repo.get_user_rating(user_id, plugin.id)
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        let deleted = repo.delete_rating(user_id, plugin.id).await.unwrap();
+        assert!(deleted);
+        assert!(
+            repo.get_user_rating(user_id, plugin.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let deleted_again = repo.delete_rating(user_id, plugin.id).await.unwrap();
+        assert!(!deleted_again);
+
+        cleanup_rating_fixtures(&pool, discord_id, github_repo_id).await;
     }
 
     #[tokio::test]

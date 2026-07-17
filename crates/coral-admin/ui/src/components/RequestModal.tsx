@@ -1,15 +1,7 @@
 import type { ReactNode } from "react";
 import type { RequestRow } from "../api/types";
-import { fmtDate, fmtMs } from "../format";
+import { fmtDate, fmtMs, prettyJson } from "../format";
 import { Identity } from "./Identity";
-
-function prettyJson(s: string): string {
-  try {
-    return JSON.stringify(JSON.parse(s), null, 2);
-  } catch {
-    return s;
-  }
-}
 
 export function RequestModal({ request, onClose }: { request: RequestRow; onClose: () => void }) {
   const url = (request.path ?? "") + (request.query ? `?${request.query}` : "");

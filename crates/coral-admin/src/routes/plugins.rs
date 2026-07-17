@@ -26,6 +26,10 @@ pub fn router() -> Router<AppState> {
             "/{slug}/releases/{version}",
             axum::routing::delete(delete_release),
         )
+        .route(
+            "/{slug}/reviews/{user_id}",
+            axum::routing::delete(delete_review),
+        )
 }
 
 #[derive(Deserialize)]
@@ -126,6 +130,7 @@ impl From<PluginRelease> for ReleaseView {
 
 #[derive(Serialize)]
 struct ReviewView {
+    user_id: i64,
     #[serde(serialize_with = "crate::serde_id::discord_id_opt")]
     discord_id: Option<i64>,
     discord_username: Option<String>,
@@ -214,6 +219,7 @@ async fn detail(
         .map(|r| {
             let discord_id = reviewer_discord_ids.get(&r.user_id).copied();
             ReviewView {
+                user_id: r.user_id,
                 discord_username: discord_id.and_then(|id| names.get(&id).cloned()),
                 discord_id,
                 stars: r.stars,
@@ -422,6 +428,30 @@ async fn delete_release(
         "delete_release",
         &slug,
         json!({"version": version}),
+    )
+    .await;
+    Ok(Json(OkResponse { ok: true }))
+}
+
+async fn delete_review(
+    State(state): State<AppState>,
+    Extension(actor): Extension<AdminActor>,
+    Path((slug, user_id)): Path<(String, i64)>,
+) -> Result<Json<OkResponse>, StatusCode> {
+    let plugin = plugin_or_404(&state, &slug).await?;
+    let ok = PluginRegistryRepository::new(state.db.pool())
+        .delete_rating(user_id, plugin.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !ok {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    audit(
+        &state,
+        actor,
+        "delete_plugin_review",
+        &slug,
+        json!({"user_id": user_id}),
     )
     .await;
     Ok(Json(OkResponse { ok: true }))

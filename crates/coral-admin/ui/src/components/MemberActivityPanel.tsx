@@ -5,6 +5,7 @@ import type { RequestRow } from "../api/types";
 import { fmtDate, fmtMs } from "../format";
 import { ActivityLink } from "./ActivityLink";
 import { DataTable } from "./DataTable";
+import { Panel } from "./Panel";
 
 const COLUMNS: ColumnDef<RequestRow, unknown>[] = [
   { header: "Time", accessorKey: "ts", cell: (info) => <span className="whitespace-nowrap text-gray-500">{fmtDate(info.getValue<string>())}</span> },
@@ -23,15 +24,11 @@ export function MemberActivityPanel({ discordId }: { discordId: string }) {
   const log = useRequestLog({ hours, discord_id: discordId }, 0, 20);
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <div className="mb-2 flex items-center justify-between">
-        <div className="text-sm font-medium text-gray-300">Recent API activity (7d)</div>
-        <ActivityLink discordId={discordId} hours={168} label="Full diagnostics log →" />
-      </div>
+    <Panel title="Recent API activity (7d)" action={<ActivityLink discordId={discordId} hours={168} label="Full diagnostics log →" />}>
       <DataTable columns={COLUMNS} data={log.data?.requests ?? []} emptyMessage="No requests in this window" />
       {log.data && log.data.total > 20 && (
         <div className="mt-2 text-xs text-gray-500">{log.data.total.toLocaleString()} total in this window</div>
       )}
-    </div>
+    </Panel>
   );
 }

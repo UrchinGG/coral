@@ -1,6 +1,7 @@
 import { useRecentActions } from "../api/actions";
 import { fmtDate } from "../format";
 import { Identity } from "./Identity";
+import { Panel } from "./Panel";
 
 export function RecentActivity({ limit = 20 }: { limit?: number }) {
   const { data } = useRecentActions(limit);
@@ -9,22 +10,29 @@ export function RecentActivity({ limit = 20 }: { limit?: number }) {
   if (actions.length === 0) return null;
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <div className="mb-2 text-sm font-medium text-gray-300">Recent moderation activity</div>
+    <Panel title="Recent moderation activity">
       <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-[11px] font-medium tracking-wide text-gray-500 uppercase">
+            <th className="border-b border-white/8 pb-2 font-medium">Time</th>
+            <th className="border-b border-white/8 pb-2 font-medium">Actor</th>
+            <th className="border-b border-white/8 pb-2 font-medium">Action</th>
+            <th className="border-b border-white/8 pb-2 font-medium">Target</th>
+          </tr>
+        </thead>
         <tbody>
           {actions.map((a) => (
-            <tr key={a.id} className="border-t border-white/5">
-              <td className="py-1.5 whitespace-nowrap text-xs text-gray-500">{fmtDate(a.ts)}</td>
-              <td className="py-1.5">
+            <tr key={a.id} className="hover:bg-white/4">
+              <td className="border-b border-white/5 py-2 whitespace-nowrap text-xs text-gray-500">{fmtDate(a.ts)}</td>
+              <td className="border-b border-white/5 py-2">
                 <Identity id={a.actor} username={a.actor_username} />
               </td>
-              <td className="py-1.5 font-mono text-xs text-gray-300">{a.action}</td>
-              <td className="py-1.5 font-mono text-xs text-gray-500">{a.target}</td>
+              <td className="border-b border-white/5 py-2 font-mono text-xs text-gray-300">{a.action}</td>
+              <td className="border-b border-white/5 py-2 font-mono text-xs text-gray-500">{a.target}</td>
             </tr>
           ))}
         </tbody>
       </table>
-    </div>
+    </Panel>
   );
 }
