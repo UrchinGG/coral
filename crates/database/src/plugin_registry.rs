@@ -12,7 +12,6 @@ pub struct Plugin {
     pub display_name: String,
     pub description: String,
     pub tags: Vec<String>,
-    pub license: String,
     pub homepage: Option<String>,
     pub unlisted: bool,
     pub unlisted_at: Option<DateTime<Utc>>,
@@ -32,6 +31,7 @@ pub struct PluginRelease {
     pub git_sha: String,
     pub asset_url: String,
     pub asset_sha256: Vec<u8>,
+    pub content_sha256: Option<Vec<u8>>,
     pub asset_size: i32,
     pub manifest_json: serde_json::Value,
     pub changelog: Option<String>,
@@ -145,7 +145,6 @@ pub struct NewPlugin<'a> {
     pub display_name: &'a str,
     pub description: &'a str,
     pub tags: &'a [String],
-    pub license: &'a str,
     pub homepage: Option<&'a str>,
 }
 
@@ -155,6 +154,7 @@ pub struct NewRelease<'a> {
     pub git_sha: &'a str,
     pub asset_url: &'a str,
     pub asset_sha256: &'a [u8],
+    pub content_sha256: &'a [u8],
     pub asset_size: i32,
     pub body_cache: &'a [u8],
     pub readme_cache: Option<&'a str>,
@@ -186,8 +186,8 @@ impl<'a> PluginRegistryRepository<'a> {
 
     pub async fn create_plugin(&self, p: NewPlugin<'_>) -> Result<Plugin, sqlx::Error> {
         sqlx::query_as(
-            "INSERT INTO plugins (slug, owner_user_id, repo, github_repo_id, display_name, description, tags, license, homepage)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            "INSERT INTO plugins (slug, owner_user_id, repo, github_repo_id, display_name, description, tags, homepage)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              RETURNING *",
         )
         .bind(p.slug)
@@ -197,7 +197,6 @@ impl<'a> PluginRegistryRepository<'a> {
         .bind(p.display_name)
         .bind(p.description)
         .bind(p.tags)
-        .bind(p.license)
         .bind(p.homepage)
         .fetch_one(self.pool)
         .await
@@ -210,13 +209,12 @@ impl<'a> PluginRegistryRepository<'a> {
         display_name: &str,
         description: &str,
         tags: &[String],
-        license: &str,
         homepage: Option<&str>,
     ) -> Result<Plugin, sqlx::Error> {
         sqlx::query_as(
             "UPDATE plugins SET
                 repo = $2, display_name = $3, description = $4, tags = $5,
-                license = $6, homepage = $7, updated_at = NOW()
+                homepage = $6, updated_at = NOW()
              WHERE id = $1 RETURNING *",
         )
         .bind(plugin_id)
@@ -224,7 +222,6 @@ impl<'a> PluginRegistryRepository<'a> {
         .bind(display_name)
         .bind(description)
         .bind(tags)
-        .bind(license)
         .bind(homepage)
         .fetch_one(self.pool)
         .await
@@ -355,17 +352,18 @@ impl<'a> PluginRegistryRepository<'a> {
     pub async fn create_release(&self, r: NewRelease<'_>) -> Result<PluginRelease, sqlx::Error> {
         sqlx::query_as(
             "INSERT INTO plugin_releases
-                (plugin_id, version, git_sha, asset_url, asset_sha256, asset_size,
+                (plugin_id, version, git_sha, asset_url, asset_sha256, content_sha256, asset_size,
                  body_cache, readme_cache, manifest_json, changelog)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-             RETURNING id, plugin_id, version, git_sha, asset_url, asset_sha256, asset_size,
-                       manifest_json, changelog, yanked, yanked_at, yanked_reason, created_at",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             RETURNING id, plugin_id, version, git_sha, asset_url, asset_sha256, content_sha256,
+                       asset_size, manifest_json, changelog, yanked, yanked_at, yanked_reason, created_at",
         )
         .bind(r.plugin_id)
         .bind(r.version)
         .bind(r.git_sha)
         .bind(r.asset_url)
         .bind(r.asset_sha256)
+        .bind(r.content_sha256)
         .bind(r.asset_size)
         .bind(r.body_cache)
         .bind(r.readme_cache)
@@ -381,8 +379,8 @@ impl<'a> PluginRegistryRepository<'a> {
         version: &str,
     ) -> Result<Option<PluginRelease>, sqlx::Error> {
         sqlx::query_as(
-            "SELECT id, plugin_id, version, git_sha, asset_url, asset_sha256, asset_size,
-                    manifest_json, changelog, yanked, yanked_at, yanked_reason, created_at
+            "SELECT id, plugin_id, version, git_sha, asset_url, asset_sha256, content_sha256,
+                    asset_size, manifest_json, changelog, yanked, yanked_at, yanked_reason, created_at
              FROM plugin_releases WHERE plugin_id = $1 AND version = $2",
         )
         .bind(plugin_id)
@@ -396,8 +394,8 @@ impl<'a> PluginRegistryRepository<'a> {
         plugin_id: i64,
     ) -> Result<Option<PluginRelease>, sqlx::Error> {
         sqlx::query_as(
-            "SELECT id, plugin_id, version, git_sha, asset_url, asset_sha256, asset_size,
-                    manifest_json, changelog, yanked, yanked_at, yanked_reason, created_at
+            "SELECT id, plugin_id, version, git_sha, asset_url, asset_sha256, content_sha256,
+                    asset_size, manifest_json, changelog, yanked, yanked_at, yanked_reason, created_at
              FROM plugin_releases
              WHERE plugin_id = $1 AND NOT yanked
              ORDER BY created_at DESC LIMIT 1",
@@ -409,8 +407,8 @@ impl<'a> PluginRegistryRepository<'a> {
 
     pub async fn list_releases(&self, plugin_id: i64) -> Result<Vec<PluginRelease>, sqlx::Error> {
         sqlx::query_as(
-            "SELECT id, plugin_id, version, git_sha, asset_url, asset_sha256, asset_size,
-                    manifest_json, changelog, yanked, yanked_at, yanked_reason, created_at
+            "SELECT id, plugin_id, version, git_sha, asset_url, asset_sha256, content_sha256,
+                    asset_size, manifest_json, changelog, yanked, yanked_at, yanked_reason, created_at
              FROM plugin_releases
              WHERE plugin_id = $1
              ORDER BY created_at DESC",

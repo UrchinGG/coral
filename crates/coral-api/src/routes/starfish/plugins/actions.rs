@@ -43,7 +43,9 @@ pub async fn install_plugin(
     Ok(Json(InstallResponse {
         slug: plugin.slug.clone(),
         version: release.version.clone(),
+        official: plugin.official,
         asset_sha256: hex::encode(&release.asset_sha256),
+        content_sha256: release.content_sha256.as_deref().map(hex::encode),
         asset_size: release.asset_size,
         manifest: release.manifest_json,
         body_url: format!(

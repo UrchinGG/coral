@@ -1,6 +1,6 @@
 use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 
 const CACHE_TTL_SECS: u64 = 900;
@@ -22,6 +22,24 @@ impl DiscordResolver {
             http: Client::new(),
             token,
             redis,
+        }
+    }
+
+    pub async fn is_guild_member(&self, guild_id: u64, user_id: u64) -> Option<bool> {
+        let response = self
+            .http
+            .get(format!(
+                "https://discord.com/api/v10/guilds/{guild_id}/members/{user_id}"
+            ))
+            .header("Authorization", format!("Bot {}", self.token))
+            .send()
+            .await
+            .ok()?;
+
+        match response.status() {
+            StatusCode::OK => Some(true),
+            StatusCode::NOT_FOUND => Some(false),
+            _ => None,
         }
     }
 

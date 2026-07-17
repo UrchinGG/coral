@@ -34,8 +34,6 @@ pub struct PluginManifest {
     pub version: String,
     pub description: String,
     pub author: String,
-    #[serde(default = "default_license")]
-    pub license: String,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
@@ -57,10 +55,6 @@ pub enum Dependency {
         #[serde(default)]
         optional: bool,
     },
-}
-
-fn default_license() -> String {
-    "MIT".into()
 }
 
 pub struct ExtractedPlugin {

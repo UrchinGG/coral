@@ -2,7 +2,7 @@ use axum::Router;
 use axum::middleware;
 
 use crate::{
-    auth::{allow_internal_or_auth, require_internal_or_developer, require_moderator},
+    auth::{allow_key_or_starfish_session, require_internal_or_developer, require_moderator},
     state::AppState,
 };
 
@@ -28,7 +28,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .merge(winstreaks::router())
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
-            allow_internal_or_auth,
+            allow_key_or_starfish_session,
         ));
 
     let internal = Router::new()

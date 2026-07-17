@@ -6,6 +6,7 @@ use database::{NewPlugin, NewRelease, PluginRegistryRepository};
 use crate::{error::ApiError, state::AppState};
 
 use super::super::session_auth::AuthenticatedStarfishUser;
+use super::content_hash;
 use super::dto::{PublishRequest, PublishResponse};
 use super::github_api;
 use super::manifest::{self, ExtractedPlugin};
@@ -60,6 +61,7 @@ pub async fn publish_plugin(
     let zip_bytes = github_api::download_asset(&req.github_access_token, asset).await?;
     let asset_sha = manifest::sha256_bytes(&zip_bytes);
     verify_github_digest(asset, &asset_sha)?;
+    let content_sha = content_hash::compute_content_sha256(&zip_bytes)?;
 
     let ExtractedPlugin {
         manifest,
@@ -93,7 +95,6 @@ pub async fn publish_plugin(
                     &manifest.display_name,
                     &manifest.description,
                     &manifest.tags,
-                    &manifest.license,
                     manifest.homepage.as_deref(),
                 )
                 .await?
@@ -116,7 +117,6 @@ pub async fn publish_plugin(
                     display_name: &manifest.display_name,
                     description: &manifest.description,
                     tags: &manifest.tags,
-                    license: &manifest.license,
                     homepage: manifest.homepage.as_deref(),
                 })
                 .await?
@@ -141,6 +141,7 @@ pub async fn publish_plugin(
             git_sha: &release.target_commitish,
             asset_url: &asset.browser_download_url,
             asset_sha256: &asset_sha,
+            content_sha256: &content_sha,
             asset_size: asset.size,
             body_cache: &zip_bytes,
             readme_cache: readme.as_deref(),

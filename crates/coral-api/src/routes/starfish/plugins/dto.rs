@@ -37,7 +37,6 @@ pub struct PluginDetailDto {
     pub disabled: bool,
     pub disabled_reason: Option<String>,
     pub tags: Vec<String>,
-    pub license: String,
     pub homepage: Option<String>,
     pub repo_url: String,
     pub latest_release: ReleaseInfoDto,
@@ -49,6 +48,7 @@ pub struct PluginDetailDto {
     pub rating_count: i64,
     pub rating_bayesian: f32,
     pub user_rating: Option<i16>,
+    pub user_review: Option<String>,
     pub is_installed: bool,
     pub installed_version: Option<String>,
 }
@@ -118,10 +118,28 @@ pub struct BodyQuery {
 pub struct InstallResponse {
     pub slug: String,
     pub version: String,
+    pub official: bool,
     pub asset_sha256: String,
+    pub content_sha256: Option<String>,
     pub asset_size: i32,
     pub manifest: serde_json::Value,
     pub body_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AttestationInfoRequest {
+    pub slugs: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AttestationInfoResponse {
+    pub plugins: std::collections::HashMap<String, PluginAttestationInfoDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PluginAttestationInfoDto {
+    pub official: bool,
+    pub content_sha256: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

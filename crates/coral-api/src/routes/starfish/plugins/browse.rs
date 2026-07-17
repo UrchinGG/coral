@@ -102,10 +102,9 @@ pub async fn get_plugin(
     let (rating_mean, rating_count, rating_bayesian) = repo.plugin_rating_stats(plugin.id).await?;
     let (installs_30d, installs_total) = repo.plugin_install_counts(plugin.id).await?;
 
-    let user_rating = repo
-        .get_user_rating(caller.user.id, plugin.id)
-        .await?
-        .map(|r| r.stars);
+    let own_rating = repo.get_user_rating(caller.user.id, plugin.id).await?;
+    let user_rating = own_rating.as_ref().map(|r| r.stars);
+    let user_review = own_rating.and_then(|r| r.review);
     let install = repo.get_install(caller.user.id, plugin.id).await?;
     let installed_version = match &install {
         Some(i) => repo
@@ -135,7 +134,6 @@ pub async fn get_plugin(
         disabled: plugin.disabled,
         disabled_reason: plugin.disabled_reason,
         tags: plugin.tags,
-        license: plugin.license,
         homepage: plugin.homepage,
         repo_url,
         latest_release,
@@ -147,6 +145,7 @@ pub async fn get_plugin(
         rating_count,
         rating_bayesian,
         user_rating,
+        user_review,
         is_installed: install.is_some(),
         installed_version,
     }))

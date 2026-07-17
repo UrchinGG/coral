@@ -94,6 +94,7 @@ async fn init_state() -> Result<AppState> {
         }
     };
     let starfish = parse_starfish_config();
+    let home_guild_id = env::var("HOME_GUILD_ID").ok().and_then(|v| v.parse().ok());
 
     Ok(AppState::new(
         db,
@@ -104,6 +105,7 @@ async fn init_state() -> Result<AppState> {
         redis,
         env::var("DISCORD_TOKEN").ok(),
         starfish,
+        home_guild_id,
     ))
 }
 

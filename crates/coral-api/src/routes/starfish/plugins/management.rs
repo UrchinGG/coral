@@ -95,7 +95,6 @@ pub async fn patch_plugin(
             &display_name,
             &description,
             &tags,
-            &plugin.license,
             homepage.as_deref(),
         )
         .await?;

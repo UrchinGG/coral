@@ -1,5 +1,7 @@
 mod actions;
+mod attestation;
 mod browse;
+mod content_hash;
 mod dto;
 mod github_api;
 mod management;
@@ -20,6 +22,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/plugins", get(browse::list_plugins))
         .route("/plugins/disabled", get(browse::list_disabled))
         .route("/plugins/installed", get(actions::list_installed))
+        .route(
+            "/plugins/attestation-info",
+            post(attestation::attestation_info),
+        )
         .route("/plugins/mine", get(management::list_mine))
         .route("/plugins/publish", post(publish::publish_plugin))
         .route(

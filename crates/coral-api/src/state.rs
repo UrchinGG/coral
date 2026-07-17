@@ -29,6 +29,7 @@ pub struct AppState {
     pub rate_limiter: RateLimiter,
     pub discord: Arc<DiscordResolver>,
     pub starfish: Option<Arc<StarfishConfig>>,
+    pub home_guild_id: Option<u64>,
 }
 
 impl AppState {
@@ -41,6 +42,7 @@ impl AppState {
         redis: RedisPool,
         discord_token: Option<String>,
         starfish: Option<StarfishConfig>,
+        home_guild_id: Option<u64>,
     ) -> Self {
         Self {
             event_publisher: EventPublisher::new(redis.clone()),
@@ -56,6 +58,7 @@ impl AppState {
             internal_api_key,
             redis,
             starfish: starfish.map(Arc::new),
+            home_guild_id,
         }
     }
 

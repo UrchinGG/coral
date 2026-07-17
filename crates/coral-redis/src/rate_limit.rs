@@ -25,23 +25,34 @@ impl RateLimiter {
         api_key: &str,
         limit: i64,
     ) -> Result<RateLimitResult, redis::RedisError> {
+        self.check_and_record_weighted(api_key, limit, 1).await
+    }
+
+    pub async fn check_and_record_weighted(
+        &self,
+        api_key: &str,
+        limit: i64,
+        weight: i64,
+    ) -> Result<RateLimitResult, redis::RedisError> {
         let key = format!("{KEY_PREFIX}{api_key}");
         let now = chrono::Utc::now().timestamp();
         let mut conn = self.pool.connection();
 
-        redis::pipe()
-            .atomic()
+        let mut pipe = redis::pipe();
+        pipe.atomic()
             .cmd("ZREMRANGEBYSCORE")
             .arg(&key)
             .arg("-inf")
             .arg(now - WINDOW_SECS)
-            .ignore()
-            .cmd("ZADD")
-            .arg(&key)
-            .arg(now)
-            .arg(format!("{now}:{}", uuid::Uuid::new_v4()))
-            .ignore()
-            .cmd("EXPIRE")
+            .ignore();
+        for _ in 0..weight.max(1) {
+            pipe.cmd("ZADD")
+                .arg(&key)
+                .arg(now)
+                .arg(format!("{now}:{}", uuid::Uuid::new_v4()))
+                .ignore();
+        }
+        pipe.cmd("EXPIRE")
             .arg(&key)
             .arg(WINDOW_SECS + 10)
             .ignore()
