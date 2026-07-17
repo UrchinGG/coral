@@ -36,6 +36,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/plugins/{slug}/rate", post(actions::rate_plugin))
         .route("/plugins/{slug}/unlist", post(management::set_unlisted))
         .route("/plugins/{slug}/official", post(management::set_official))
+        .route("/plugins/{slug}/disable", post(management::set_disabled))
         .route(
             "/plugins/{slug}/releases/{version}",
             axum::routing::delete(management::delete_release),

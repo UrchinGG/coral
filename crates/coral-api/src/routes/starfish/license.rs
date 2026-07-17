@@ -4,19 +4,16 @@ use axum::{
     http::HeaderMap,
     routing::{get, post},
 };
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use database::{StarfishRepository, starfish::HwidComponents};
-use starfish_crypto::{
-    base64_encode, build_attestation_payload, ed25519_sign, encrypt_core_data, hash_for_attestation,
-};
+use database::starfish::HwidComponents;
 
 use crate::{error::ApiError, state::AppState};
 
 use super::{
-    auth::{SESSION_MAX_LIFETIME_DAYS, SESSION_SLIDING_HOURS, UnlockKey, fetch_discord_user},
-    rate_limit, require_starfish,
+    auth::{SESSION_MAX_LIFETIME_DAYS, SESSION_SLIDING_HOURS, UnlockKey, build_unlock_key},
+    rate_limit, require_starfish, resolve_discord_user,
+    session_auth::resolve_verified_session,
 };
 
 pub fn router() -> Router<AppState> {
@@ -58,38 +55,19 @@ async fn validate_session(
     let config = require_starfish(&state)?;
     super::auth::validate_hwid(&req.hwid)?;
     rate_limit(&state, &format!("sf:sess:{}", req.session_token), 30).await?;
-    let repo = StarfishRepository::new(state.db.pool());
+    let repo = database::StarfishRepository::new(state.db.pool());
 
-    let session = match repo.get_session_by_token(&req.session_token).await? {
-        Some(s) => s,
-        None => return Ok(failed_validation("invalid_session")),
+    let verified = match resolve_verified_session(
+        &repo,
+        &req.session_token,
+        &req.hwid,
+        &req.signature,
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(_) => return Ok(failed_validation("invalid_session")),
     };
-
-    if Utc::now() > session.expires_at {
-        return Ok(failed_validation("invalid_session"));
-    }
-
-    match repo.get_hwid_by_id(session.hwid_id).await? {
-        Some(h) if h.hwid_hash == req.hwid => {}
-        _ => return Ok(failed_validation("invalid_session")),
-    }
-
-    let user = repo
-        .get_user_by_id(session.user_id)
-        .await?
-        .ok_or_else(|| ApiError::Internal("Session references missing user".into()))?;
-
-    if user.license_status != "active" {
-        return Ok(failed_validation("invalid_session"));
-    }
-
-    let provided = hex::decode(&req.signature)
-        .ok()
-        .filter(|s| s.as_slice() == session.signature.as_slice());
-
-    if provided.is_none() {
-        return Ok(failed_validation("invalid_session"));
-    }
 
     repo.update_heartbeat_sliding(
         &req.session_token,
@@ -99,34 +77,20 @@ async fn validate_session(
     .await
     .ok();
 
-    let core_data = encrypt_core_data(&config.core_tables_bytes, &req.session_token, &req.hwid);
-    let core_data_encoded = base64_encode(&core_data);
-    let core_data_hash = hash_for_attestation(&core_data);
-    let issued_at_ts = session.issued_at.timestamp() as u64;
-    let expires_at_ts = session.expires_at.timestamp() as u64;
-    let attestation = build_attestation_payload(
+    let unlock_key = build_unlock_key(
+        &config,
         &req.session_token,
-        user.discord_id,
+        verified.user.discord_id,
         &req.hwid,
-        issued_at_ts,
-        expires_at_ts,
-        &core_data_hash,
+        verified.session.issued_at.timestamp() as u64,
+        verified.session.expires_at.timestamp() as u64,
+        &verified.session.signature,
+        None,
     );
-    let server_sig = ed25519_sign(&attestation, &config.signing_key);
 
     Ok(Json(ValidateResponse {
         valid: true,
-        unlock_key: Some(UnlockKey {
-            session_token: req.session_token.clone(),
-            core_data: core_data_encoded,
-            discord_id: user.discord_id,
-            hwid_hash: req.hwid,
-            issued_at: issued_at_ts,
-            expires_at: expires_at_ts,
-            signature: hex::encode(&session.signature),
-            server_signature: hex::encode(server_sig),
-            refresh_token: None,
-        }),
+        unlock_key: Some(unlock_key),
         reason: None,
     }))
 }
@@ -163,37 +127,15 @@ async fn heartbeat(
     require_starfish(&state)?;
     super::auth::validate_hwid(&req.hwid)?;
     rate_limit(&state, &format!("sf:sess:{}", req.session_token), 30).await?;
-    let repo = StarfishRepository::new(state.db.pool());
+    let repo = database::StarfishRepository::new(state.db.pool());
 
-    let session = match repo.get_session_by_token(&req.session_token).await? {
-        Some(s) => s,
-        None => return Ok(fail_heartbeat("invalid")),
-    };
-
-    if Utc::now() > session.expires_at {
-        return Ok(fail_heartbeat("invalid"));
-    }
-
-    match repo.get_hwid_by_id(session.hwid_id).await? {
-        Some(h) if h.hwid_hash == req.hwid => {}
-        _ => return Ok(fail_heartbeat("invalid")),
-    }
-
-    let provided = hex::decode(&req.signature)
-        .ok()
-        .filter(|s| s.as_slice() == session.signature.as_slice());
-
-    if provided.is_none() {
-        return Ok(fail_heartbeat("invalid"));
-    }
-
-    let user = repo
-        .get_user_by_id(session.user_id)
-        .await?
-        .ok_or_else(|| ApiError::Internal("Session references missing user".into()))?;
-
-    if user.license_status != "active" {
-        return Ok(fail_heartbeat("license_revoked"));
+    if let Err(e) =
+        resolve_verified_session(&repo, &req.session_token, &req.hwid, &req.signature).await
+    {
+        return Ok(fail_heartbeat(match e {
+            ApiError::Forbidden(_) => "license_revoked",
+            _ => "invalid",
+        }));
     }
 
     repo.update_heartbeat_sliding(
@@ -227,15 +169,7 @@ async fn check_license(
         .and_then(|s| s.strip_prefix("Bearer "))
         .ok_or_else(|| ApiError::Unauthorized("Invalid credentials".into()))?;
 
-    let discord_user = fetch_discord_user(token).await?;
-    let discord_id: i64 = discord_user
-        .id
-        .parse()
-        .map_err(|_| ApiError::Internal("Invalid Discord ID".into()))?;
-
-    let repo = StarfishRepository::new(state.db.pool());
-    let has_license = repo
-        .get_user_by_discord_id(discord_id)
+    let has_license = resolve_discord_user(&state, token)
         .await?
         .is_some_and(|u| u.license_status == "active");
 

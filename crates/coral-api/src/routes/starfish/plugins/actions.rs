@@ -46,7 +46,11 @@ pub async fn install_plugin(
         asset_sha256: hex::encode(&release.asset_sha256),
         asset_size: release.asset_size,
         manifest: release.manifest_json,
-        body_url: format!("/api/v1/starfish/plugins/{}/body", plugin.slug),
+        body_url: format!(
+            "{}/plugins/{}/body",
+            super::super::MOUNT_PREFIX,
+            plugin.slug
+        ),
     }))
 }
 

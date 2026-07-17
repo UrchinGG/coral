@@ -170,12 +170,6 @@ impl<'a> StarfishRepository<'a> {
             .map(|r| r.rows_affected() > 0)
     }
 
-    pub async fn list_users(&self) -> Result<Vec<StarfishUser>, sqlx::Error> {
-        sqlx::query_as("SELECT * FROM starfish_users ORDER BY created_at DESC")
-            .fetch_all(self.pool)
-            .await
-    }
-
     pub async fn link_github(
         &self,
         user_id: i64,

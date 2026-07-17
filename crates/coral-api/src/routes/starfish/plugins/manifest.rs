@@ -22,6 +22,7 @@ pub const TAG_ALLOWLIST: &[&str] = &[
 ];
 
 pub const MAX_TAGS_PER_PLUGIN: usize = 10;
+pub const MAX_DESCRIPTION_CHARS: usize = 8000;
 pub const MAX_ZIP_SIZE: u64 = 10 * 1024 * 1024;
 pub const MAX_FILE_UNCOMPRESSED: u64 = 5 * 1024 * 1024;
 
@@ -139,10 +140,10 @@ fn validate_manifest(m: &PluginManifest, expected_version: &str) -> Result<(), A
             "display_name must be 1-64 chars".into(),
         ));
     }
-    if m.description.trim().is_empty() || m.description.len() > 280 {
-        return Err(ApiError::BadRequest(
-            "description must be 1-280 chars".into(),
-        ));
+    if m.description.trim().is_empty() || m.description.len() > MAX_DESCRIPTION_CHARS {
+        return Err(ApiError::BadRequest(format!(
+            "description must be 1-{MAX_DESCRIPTION_CHARS} chars"
+        )));
     }
     if m.author.trim().is_empty() {
         return Err(ApiError::BadRequest("author is required".into()));

@@ -22,6 +22,9 @@ const DISCORD_USER_URL: &str = "https://discord.com/api/v10/users/@me";
 const HWID_LEN: usize = 64;
 pub const SESSION_SLIDING_HOURS: i64 = 2;
 pub const SESSION_MAX_LIFETIME_DAYS: i64 = 7;
+const HWID_FUZZY_MATCH_THRESHOLD: usize = 3;
+const HWID_MAX_CHANGES_PER_WINDOW: i64 = 2;
+const HWID_CHANGE_WINDOW_DAYS: i32 = 30;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -217,21 +220,15 @@ async fn poll_for_token(
     let stored = repo.get_device_code(&req.device_code).await?;
     let stored = match stored {
         Some(s) => s,
-        None => {
-            return Ok(Json(PollResponse::Error {
-                error: "authorization_pending".into(),
-            }));
-        }
+        None => return Ok(Json(PollResponse::Pending)),
     };
 
     if stored.client_hwid != req.hwid {
-        return Ok(Json(PollResponse::Error {
-            error: "authorization_pending".into(),
-        }));
+        return Ok(Json(PollResponse::Pending));
     }
     if Utc::now() > stored.expires_at {
         return Ok(Json(PollResponse::Error {
-            error: "authorization_pending".into(),
+            error: "expired".into(),
         }));
     }
 
@@ -354,6 +351,86 @@ pub async fn fetch_discord_user(access_token: &str) -> Result<DiscordUser, ApiEr
         .map_err(|e| ApiError::ExternalApi(format!("Failed to parse Discord response: {e}")))
 }
 
+pub fn build_unlock_key(
+    config: &StarfishConfig,
+    session_token: &str,
+    discord_id: i64,
+    hwid: &str,
+    issued_at_ts: u64,
+    expires_at_ts: u64,
+    signature: &[u8],
+    refresh_token: Option<String>,
+) -> UnlockKey {
+    let core_data = encrypt_core_data(&config.core_tables_bytes, session_token, hwid);
+    let core_data_hash = hash_for_attestation(&core_data);
+    let attestation = build_attestation_payload(
+        session_token,
+        discord_id,
+        hwid,
+        issued_at_ts,
+        expires_at_ts,
+        &core_data_hash,
+    );
+    let server_sig = ed25519_sign(&attestation, &config.signing_key);
+
+    UnlockKey {
+        session_token: session_token.to_string(),
+        core_data: base64_encode(&core_data),
+        discord_id,
+        hwid_hash: hwid.to_string(),
+        issued_at: issued_at_ts,
+        expires_at: expires_at_ts,
+        signature: hex::encode(signature),
+        server_signature: hex::encode(server_sig),
+        refresh_token,
+    }
+}
+
+async fn issue_new_session(
+    config: &StarfishConfig,
+    repo: &StarfishRepository<'_>,
+    user_id: i64,
+    discord_id: i64,
+    hwid_id: i64,
+    hwid: &str,
+    refresh_token: String,
+) -> Result<UnlockKey, ApiError> {
+    let session_token = generate_session_token();
+    let issued_at = Utc::now();
+    let expires_at = issued_at + Duration::hours(SESSION_SLIDING_HOURS);
+    let issued_at_ts = issued_at.timestamp() as u64;
+    let expires_at_ts = expires_at.timestamp() as u64;
+
+    let signature = sign_unlock_key(
+        discord_id,
+        hwid,
+        issued_at_ts,
+        expires_at_ts,
+        &config.hmac_secret,
+    );
+    let core_data = encrypt_core_data(&config.core_tables_bytes, &session_token, hwid);
+    repo.create_session(
+        user_id,
+        hwid_id,
+        &session_token,
+        &core_data,
+        expires_at,
+        &signature,
+    )
+    .await?;
+
+    Ok(build_unlock_key(
+        config,
+        &session_token,
+        discord_id,
+        hwid,
+        issued_at_ts,
+        expires_at_ts,
+        &signature,
+        Some(refresh_token),
+    ))
+}
+
 pub async fn create_session(
     config: &StarfishConfig,
     repo: &StarfishRepository<'_>,
@@ -372,58 +449,20 @@ pub async fn create_session(
     repo.delete_user_sessions(user.id).await?;
     repo.delete_user_refresh_tokens(user.id).await?;
 
-    let session_token = generate_session_token();
-    let core_data = encrypt_core_data(&config.core_tables_bytes, &session_token, hwid);
-    let issued_at = Utc::now();
-    let expires_at = issued_at + Duration::hours(SESSION_SLIDING_HOURS);
-
-    let signature = sign_unlock_key(
-        discord_id,
-        hwid,
-        issued_at.timestamp() as u64,
-        expires_at.timestamp() as u64,
-        &config.hmac_secret,
-    );
-
-    repo.create_session(
-        user.id,
-        hwid_record.id,
-        &session_token,
-        &core_data,
-        expires_at,
-        &signature,
-    )
-    .await?;
-
     let refresh_token = generate_refresh_token();
     repo.create_refresh_token(user.id, hwid_record.id, &hash_refresh_token(&refresh_token))
         .await?;
 
-    let core_data_encoded = base64_encode(&core_data);
-    let core_data_hash = hash_for_attestation(&core_data);
-    let issued_at_ts = issued_at.timestamp() as u64;
-    let expires_at_ts = expires_at.timestamp() as u64;
-    let attestation = build_attestation_payload(
-        &session_token,
+    issue_new_session(
+        config,
+        repo,
+        user.id,
         discord_id,
+        hwid_record.id,
         hwid,
-        issued_at_ts,
-        expires_at_ts,
-        &core_data_hash,
-    );
-    let server_sig = ed25519_sign(&attestation, &config.signing_key);
-
-    Ok(UnlockKey {
-        session_token,
-        core_data: core_data_encoded,
-        discord_id,
-        hwid_hash: hwid.to_string(),
-        issued_at: issued_at_ts,
-        expires_at: expires_at_ts,
-        signature: hex::encode(signature),
-        server_signature: hex::encode(server_sig),
-        refresh_token: Some(refresh_token),
-    })
+        refresh_token,
+    )
+    .await
 }
 
 #[derive(Deserialize)]
@@ -457,7 +496,9 @@ async fn refresh_session(
         let fuzzy_ok = repo
             .get_hwid_components(hwid_record.id)
             .await?
-            .is_some_and(|stored_c| req.hwid_components.match_count(&stored_c) >= 3);
+            .is_some_and(|stored_c| {
+                req.hwid_components.match_count(&stored_c) >= HWID_FUZZY_MATCH_THRESHOLD
+            });
         if !fuzzy_ok {
             return Err(ApiError::Unauthorized("hwid_mismatch".into()));
         }
@@ -475,61 +516,24 @@ async fn refresh_session(
 
     repo.delete_user_sessions(user.id).await?;
 
-    let session_token = generate_session_token();
-    let core_data = encrypt_core_data(&config.core_tables_bytes, &session_token, &req.hwid);
-    let issued_at = Utc::now();
-    let expires_at = issued_at + Duration::hours(SESSION_SLIDING_HOURS);
-
-    let signature = sign_unlock_key(
-        user.discord_id,
-        &req.hwid,
-        issued_at.timestamp() as u64,
-        expires_at.timestamp() as u64,
-        &config.hmac_secret,
-    );
-
-    repo.create_session(
-        user.id,
-        hwid_record.id,
-        &session_token,
-        &core_data,
-        expires_at,
-        &signature,
-    )
-    .await?;
-
     let new_refresh = generate_refresh_token();
     repo.rotate_refresh_token(&token_hash, &hash_refresh_token(&new_refresh))
         .await?;
 
-    let core_data_encoded = base64_encode(&core_data);
-    let core_data_hash = hash_for_attestation(&core_data);
-    let issued_at_ts = issued_at.timestamp() as u64;
-    let expires_at_ts = expires_at.timestamp() as u64;
-    let attestation = build_attestation_payload(
-        &session_token,
+    let unlock_key = issue_new_session(
+        &config,
+        &repo,
+        user.id,
         user.discord_id,
+        hwid_record.id,
         &req.hwid,
-        issued_at_ts,
-        expires_at_ts,
-        &core_data_hash,
-    );
-    let server_sig = ed25519_sign(&attestation, &config.signing_key);
+        new_refresh,
+    )
+    .await?;
 
-    Ok(Json(PollResponse::Complete {
-        unlock_key: UnlockKey {
-            session_token,
-            core_data: core_data_encoded,
-            discord_id: user.discord_id,
-            hwid_hash: req.hwid,
-            issued_at: issued_at_ts,
-            expires_at: expires_at_ts,
-            signature: hex::encode(signature),
-            server_signature: hex::encode(server_sig),
-            refresh_token: Some(new_refresh),
-        },
-    }))
+    Ok(Json(PollResponse::Complete { unlock_key }))
 }
+
 async fn handle_hwid_registration(
     repo: &StarfishRepository<'_>,
     user_id: i64,
@@ -542,17 +546,24 @@ async fn handle_hwid_registration(
         return Ok(existing);
     }
 
-    if let Some(fuzzy_match) = repo.find_fuzzy_hwid(user_id, components, 3).await? {
+    if let Some(fuzzy_match) = repo
+        .find_fuzzy_hwid(user_id, components, HWID_FUZZY_MATCH_THRESHOLD)
+        .await?
+    {
         repo.activate_hwid(user_id, fuzzy_match.id).await?;
         repo.store_hwid_components(fuzzy_match.id, components)
             .await?;
         return Ok(fuzzy_match);
     }
 
-    if repo.hwid_changes_since(user_id, 30).await? >= 2 {
-        return Err(ApiError::BadRequest(
-            "HWID change limit reached (2 per month)".into(),
-        ));
+    if repo
+        .hwid_changes_since(user_id, HWID_CHANGE_WINDOW_DAYS)
+        .await?
+        >= HWID_MAX_CHANGES_PER_WINDOW
+    {
+        return Err(ApiError::BadRequest(format!(
+            "HWID change limit reached ({HWID_MAX_CHANGES_PER_WINDOW} per {HWID_CHANGE_WINDOW_DAYS} days)"
+        )));
     }
 
     let old = repo.get_active_hwid(user_id).await?;

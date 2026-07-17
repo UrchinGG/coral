@@ -16,6 +16,8 @@ use crate::{
     state::{AppState, StarfishConfig},
 };
 
+pub const MOUNT_PREFIX: &str = "/api/v1/starfish";
+
 pub(crate) fn require_starfish(state: &AppState) -> Result<Arc<StarfishConfig>, ApiError> {
     state
         .starfish
@@ -52,6 +54,22 @@ pub(crate) fn require_owner(
     } else {
         Err(ApiError::Forbidden("owner_only".into()))
     }
+}
+
+pub(crate) async fn resolve_discord_user(
+    state: &AppState,
+    bearer_token: &str,
+) -> Result<Option<database::starfish::StarfishUser>, ApiError> {
+    let discord_user = auth::fetch_discord_user(bearer_token).await?;
+    let discord_id: i64 = discord_user
+        .id
+        .parse()
+        .map_err(|_| ApiError::Internal("Invalid Discord ID".into()))?;
+
+    database::StarfishRepository::new(state.db.pool())
+        .get_user_by_discord_id(discord_id)
+        .await
+        .map_err(Into::into)
 }
 
 pub fn router(state: AppState) -> Router<AppState> {

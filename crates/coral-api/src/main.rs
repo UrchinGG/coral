@@ -170,7 +170,10 @@ fn build_router(state: AppState, log_tx: reqlog::LogSender) -> Router {
         )
         .merge(Scalar::with_url("/", api).custom_html(SCALAR_HTML))
         .nest("/v3", routes::router(state.clone()))
-        .nest("/api/v1/starfish", routes::starfish::router(state.clone()))
+        .nest(
+            routes::starfish::MOUNT_PREFIX,
+            routes::starfish::router(state.clone()),
+        )
         .layer(axum::middleware::from_fn_with_state(
             log_tx,
             reqlog::log_requests,

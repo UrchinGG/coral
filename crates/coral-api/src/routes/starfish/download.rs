@@ -10,12 +10,12 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use database::StarfishRepository;
+use crate::{
+    error::ApiError,
+    state::{AppState, StarfishConfig},
+};
 
-use crate::error::ApiError;
-
-use super::{auth::fetch_discord_user, require_starfish};
-use crate::state::{AppState, StarfishConfig};
+use super::require_starfish;
 
 const GITHUB_API_URL: &str = "https://api.github.com";
 
@@ -141,14 +141,7 @@ async fn download_latest(
         .or(query.token.as_deref())
         .ok_or_else(|| ApiError::Unauthorized("Missing authorization".into()))?;
 
-    let discord_user = fetch_discord_user(discord_token).await?;
-    let discord_id: i64 = discord_user
-        .id
-        .parse()
-        .map_err(|_| ApiError::Internal("Invalid Discord ID".into()))?;
-
-    let repo = StarfishRepository::new(state.db.pool());
-    let user = repo.get_user_by_discord_id(discord_id).await?;
+    let user = super::resolve_discord_user(&state, discord_token).await?;
     match user.as_ref().map(|u| u.license_status.as_str()) {
         Some("active") => {}
         Some(_) => return Err(ApiError::Unauthorized("License required".into())),

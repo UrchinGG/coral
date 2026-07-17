@@ -3,7 +3,10 @@ use axum::middleware::Next;
 use axum::response::Response;
 use chrono::Utc;
 
-use database::{StarfishRepository, starfish::StarfishUser};
+use database::{
+    StarfishRepository,
+    starfish::{StarfishSession, StarfishUser},
+};
 
 use crate::{error::ApiError, state::AppState};
 
@@ -16,23 +19,19 @@ pub struct AuthenticatedStarfishUser {
     pub hwid: String,
 }
 
-pub async fn require_starfish_session(
-    State(state): State<AppState>,
-    mut request: Request,
-    next: Next,
-) -> Result<Response, ApiError> {
-    super::require_starfish(&state)?;
+pub struct VerifiedSession {
+    pub session: StarfishSession,
+    pub user: StarfishUser,
+}
 
-    let token = header(&request, "X-Starfish-Session")?;
-    let hwid = header(&request, "X-Starfish-HWID")?;
-    let signature = header(&request, "X-Starfish-Signature")?;
-
-    validate_hwid(&hwid)?;
-
-    let repo = StarfishRepository::new(state.db.pool());
-
+pub async fn resolve_verified_session(
+    repo: &StarfishRepository<'_>,
+    token: &str,
+    hwid: &str,
+    signature_hex: &str,
+) -> Result<VerifiedSession, ApiError> {
     let session = repo
-        .get_session_by_token(&token)
+        .get_session_by_token(token)
         .await?
         .ok_or_else(|| ApiError::Unauthorized("invalid_session".into()))?;
 
@@ -49,7 +48,7 @@ pub async fn require_starfish_session(
         return Err(ApiError::Unauthorized("invalid_session".into()));
     }
 
-    let expected_sig = hex::decode(&signature).ok();
+    let expected_sig = hex::decode(signature_hex).ok();
     if expected_sig.as_deref() != Some(session.signature.as_slice()) {
         return Err(ApiError::Unauthorized("invalid_session".into()));
     }
@@ -63,12 +62,31 @@ pub async fn require_starfish_session(
         return Err(ApiError::Forbidden("license_inactive".into()));
     }
 
+    Ok(VerifiedSession { session, user })
+}
+
+pub async fn require_starfish_session(
+    State(state): State<AppState>,
+    mut request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    super::require_starfish(&state)?;
+
+    let token = header(&request, "X-Starfish-Session")?;
+    let hwid = header(&request, "X-Starfish-HWID")?;
+    let signature = header(&request, "X-Starfish-Signature")?;
+
+    validate_hwid(&hwid)?;
+
+    let repo = StarfishRepository::new(state.db.pool());
+    let verified = resolve_verified_session(&repo, &token, &hwid, &signature).await?;
+
     repo.update_heartbeat_sliding(&token, SESSION_SLIDING_HOURS, SESSION_MAX_LIFETIME_DAYS)
         .await
         .ok();
 
     request.extensions_mut().insert(AuthenticatedStarfishUser {
-        user,
+        user: verified.user,
         session_token: token,
         hwid,
     });

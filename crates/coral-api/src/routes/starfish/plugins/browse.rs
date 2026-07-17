@@ -11,7 +11,7 @@ use database::{PluginRegistryRepository, PluginSortMode};
 
 use crate::{error::ApiError, state::AppState};
 
-use super::super::session_auth::AuthenticatedStarfishUser;
+use super::super::{is_owner, session_auth::AuthenticatedStarfishUser};
 use super::dto::{
     BodyQuery, DisabledEntryDto, DisabledQuery, DisabledResponse, PluginDetailDto, PluginListQuery,
     PluginListResponse, PluginSummaryDto, ReleaseInfoDto,
@@ -22,11 +22,13 @@ const MAX_LIMIT: i64 = 200;
 
 pub async fn list_plugins(
     State(state): State<AppState>,
+    Extension(caller): Extension<AuthenticatedStarfishUser>,
     Query(q): Query<PluginListQuery>,
 ) -> Result<Json<PluginListResponse>, ApiError> {
     let sort = parse_sort(q.sort.as_deref());
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let offset = q.offset.unwrap_or(0).max(0);
+    let include_hidden = is_owner(caller.user.discord_id);
 
     let repo = PluginRegistryRepository::new(state.db.pool());
     let (total, summaries) = repo
@@ -35,10 +37,20 @@ pub async fn list_plugins(
             q.tag.as_deref(),
             q.q.as_deref(),
             q.official,
+            include_hidden,
             limit,
             offset,
         )
         .await?;
+
+    let mut discord_names = std::collections::HashMap::new();
+    for id in summaries.iter().map(|s| s.owner_discord_id) {
+        if !discord_names.contains_key(&id) {
+            if let Some(name) = state.discord.resolve_username(id as u64).await {
+                discord_names.insert(id, name);
+            }
+        }
+    }
 
     let plugins = summaries
         .into_iter()
@@ -46,8 +58,13 @@ pub async fn list_plugins(
             slug: s.slug,
             display_name: s.display_name,
             description: s.description,
-            author: s.author,
+            author: discord_names
+                .get(&s.owner_discord_id)
+                .cloned()
+                .unwrap_or(s.author),
             official: s.official,
+            unlisted: s.unlisted,
+            disabled: s.disabled,
             tags: s.tags,
             latest_version: s.latest_version,
             updated_at: s.updated_at,
@@ -73,6 +90,7 @@ pub async fn get_plugin(
         .get_plugin_by_slug(&slug)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("plugin {slug} not found")))?;
+    ensure_visible(&plugin, &caller)?;
 
     let releases = repo.list_releases(plugin.id).await?;
     let latest = releases
@@ -99,10 +117,7 @@ pub async fn get_plugin(
         None => None,
     };
 
-    let readme = match &plugin.page_override {
-        Some(page) if !page.trim().is_empty() => Some(page.clone()),
-        _ => repo.get_release_readme(latest.id).await?,
-    };
+    let readme = repo.get_release_readme(latest.id).await?;
 
     let author = fetch_author(&state, plugin.owner_user_id).await;
     let repo_url = format!("https://github.com/{}", plugin.repo);
@@ -117,6 +132,8 @@ pub async fn get_plugin(
         author,
         official: plugin.official,
         unlisted: plugin.unlisted,
+        disabled: plugin.disabled,
+        disabled_reason: plugin.disabled_reason,
         tags: plugin.tags,
         license: plugin.license,
         homepage: plugin.homepage,
@@ -137,6 +154,7 @@ pub async fn get_plugin(
 
 pub async fn download_body(
     State(state): State<AppState>,
+    Extension(caller): Extension<AuthenticatedStarfishUser>,
     Path(slug): Path<String>,
     Query(q): Query<BodyQuery>,
 ) -> Result<Response, ApiError> {
@@ -146,6 +164,7 @@ pub async fn download_body(
         .get_plugin_by_slug(&slug)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("plugin {slug} not found")))?;
+    ensure_visible(&plugin, &caller)?;
 
     let release = match q.version {
         Some(ref v) => repo
@@ -210,6 +229,22 @@ pub async fn list_disabled(
     }))
 }
 
+fn ensure_visible(
+    plugin: &database::Plugin,
+    caller: &AuthenticatedStarfishUser,
+) -> Result<(), ApiError> {
+    let can_bypass = plugin.owner_user_id == caller.user.id || is_owner(caller.user.discord_id);
+    if plugin.disabled && !can_bypass {
+        return Err(ApiError::Forbidden(
+            plugin
+                .disabled_reason
+                .clone()
+                .unwrap_or_else(|| "plugin_disabled".into()),
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn release_to_dto(r: &database::PluginRelease) -> ReleaseInfoDto {
     ReleaseInfoDto {
         version: r.version.clone(),
@@ -234,11 +269,16 @@ fn parse_sort(s: Option<&str>) -> PluginSortMode {
 }
 
 async fn fetch_author(state: &AppState, owner_user_id: i64) -> String {
-    database::StarfishRepository::new(state.db.pool())
+    let user = database::StarfishRepository::new(state.db.pool())
         .get_user_by_id(owner_user_id)
         .await
         .ok()
-        .flatten()
-        .and_then(|u| u.github_username)
-        .unwrap_or_else(|| "unknown".into())
+        .flatten();
+    let Some(user) = user else {
+        return "unknown".into();
+    };
+    match state.discord.resolve_username(user.discord_id as u64).await {
+        Some(name) => name,
+        None => user.github_username.unwrap_or_else(|| "unknown".into()),
+    }
 }

@@ -14,7 +14,6 @@ pub struct Plugin {
     pub tags: Vec<String>,
     pub license: String,
     pub homepage: Option<String>,
-    pub page_override: Option<String>,
     pub unlisted: bool,
     pub unlisted_at: Option<DateTime<Utc>>,
     pub official: bool,
@@ -99,7 +98,10 @@ pub struct PluginSummary {
     pub display_name: String,
     pub description: String,
     pub author: String,
+    pub owner_discord_id: i64,
     pub official: bool,
+    pub unlisted: bool,
+    pub disabled: bool,
     pub tags: Vec<String>,
     pub latest_version: String,
     pub updated_at: DateTime<Utc>,
@@ -228,21 +230,6 @@ impl<'a> PluginRegistryRepository<'a> {
         .await
     }
 
-    pub async fn set_page_override(
-        &self,
-        plugin_id: i64,
-        page: Option<&str>,
-    ) -> Result<Plugin, sqlx::Error> {
-        sqlx::query_as(
-            "UPDATE plugins SET page_override = $2, updated_at = NOW()
-             WHERE id = $1 RETURNING *",
-        )
-        .bind(plugin_id)
-        .bind(page)
-        .fetch_one(self.pool)
-        .await
-    }
-
     pub async fn set_official(
         &self,
         plugin_id: i64,
@@ -329,16 +316,25 @@ impl<'a> PluginRegistryRepository<'a> {
             .await
     }
 
-    pub async fn set_plugin_disabled(&self, slug: &str, reason: &str) -> Result<bool, sqlx::Error> {
-        sqlx::query(
-            "UPDATE plugins SET disabled = true, disabled_reason = $2, disabled_at = NOW(), updated_at = NOW()
-             WHERE slug = $1",
+    pub async fn set_disabled(
+        &self,
+        plugin_id: i64,
+        disabled: bool,
+        reason: Option<&str>,
+    ) -> Result<Plugin, sqlx::Error> {
+        sqlx::query_as(
+            "UPDATE plugins SET
+                disabled = $2,
+                disabled_reason = CASE WHEN $2 THEN $3 ELSE NULL END,
+                disabled_at = CASE WHEN $2 THEN NOW() ELSE NULL END,
+                updated_at = NOW()
+             WHERE id = $1 RETURNING *",
         )
-        .bind(slug)
+        .bind(plugin_id)
+        .bind(disabled)
         .bind(reason)
-        .execute(self.pool)
+        .fetch_one(self.pool)
         .await
-        .map(|r| r.rows_affected() > 0)
     }
 
     pub async fn list_disabled_since(
@@ -616,12 +612,13 @@ impl<'a> PluginRegistryRepository<'a> {
         tag: Option<&str>,
         query: Option<&str>,
         official: Option<bool>,
+        include_hidden: bool,
         limit: i64,
         offset: i64,
     ) -> Result<(i64, Vec<PluginSummary>), sqlx::Error> {
         let (total,): (i64,) = sqlx::query_as(
             "SELECT COUNT(*)::bigint FROM plugins p
-             WHERE NOT p.disabled AND NOT p.unlisted
+             WHERE ($4::bool OR (NOT p.disabled AND NOT p.unlisted))
                AND ($1::text IS NULL OR $1 = ANY(p.tags))
                AND ($2::text IS NULL OR p.slug ILIKE '%' || $2 || '%' OR p.display_name ILIKE '%' || $2 || '%' OR p.description ILIKE '%' || $2 || '%')
                AND ($3::bool IS NULL OR p.official = $3)",
@@ -629,6 +626,7 @@ impl<'a> PluginRegistryRepository<'a> {
         .bind(tag)
         .bind(query)
         .bind(official)
+        .bind(include_hidden)
         .fetch_one(self.pool)
         .await?;
 
@@ -644,10 +642,12 @@ impl<'a> PluginRegistryRepository<'a> {
             WITH stats AS (
                 SELECT
                     p.id, p.slug, p.display_name, p.description, p.tags, p.official,
+                    p.unlisted, p.disabled,
                     p.updated_at, p.created_at,
                     COALESCE((
                         SELECT u.github_username FROM starfish_users u WHERE u.id = p.owner_user_id
                     ), 'unknown') AS author,
+                    (SELECT u.discord_id FROM starfish_users u WHERE u.id = p.owner_user_id) AS owner_discord_id,
                     COALESCE((
                         SELECT COUNT(*) FROM plugin_installs pi
                         WHERE pi.plugin_id = p.id AND pi.installed_at > NOW() - INTERVAL '30 days'
@@ -665,7 +665,7 @@ impl<'a> PluginRegistryRepository<'a> {
                     (SELECT MAX(created_at) FROM plugin_releases
                         WHERE plugin_id = p.id AND NOT yanked) AS last_released_at
                 FROM plugins p
-                WHERE NOT p.disabled AND NOT p.unlisted
+                WHERE ($6::bool OR (NOT p.disabled AND NOT p.unlisted))
                   AND ($1::text IS NULL OR $1 = ANY(p.tags))
                   AND ($2::text IS NULL OR p.slug ILIKE '%' || $2 || '%' OR p.display_name ILIKE '%' || $2 || '%' OR p.description ILIKE '%' || $2 || '%')
                   AND ($3::bool IS NULL OR p.official = $3)
@@ -685,7 +685,8 @@ impl<'a> PluginRegistryRepository<'a> {
                 FROM bayes b
             )
             SELECT
-                r.slug, r.display_name, r.description, r.author, r.official, r.tags,
+                r.slug, r.display_name, r.description, r.author, r.owner_discord_id, r.official,
+                r.unlisted, r.disabled, r.tags,
                 r.latest_version, r.updated_at,
                 r.installs_30d, r.installs_total,
                 r.rating_mean, r.rating_count, r.rating_bayesian::real AS rating_bayesian,
@@ -702,6 +703,7 @@ impl<'a> PluginRegistryRepository<'a> {
             .bind(official)
             .bind(limit)
             .bind(offset)
+            .bind(include_hidden)
             .fetch_all(self.pool)
             .await?;
 
@@ -739,5 +741,41 @@ impl<'a> PluginRegistryRepository<'a> {
         .fetch_one(self.pool)
         .await?;
         Ok(row)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn test_pool() -> Option<PgPool> {
+        dotenvy::dotenv().ok();
+        let url = std::env::var("DATABASE_URL").ok()?;
+        sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&url)
+            .await
+            .ok()
+    }
+
+    #[tokio::test]
+    async fn list_plugins_hidden_is_superset_of_visible() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let repo = PluginRegistryRepository::new(&pool);
+
+        let (visible_total, visible) = repo
+            .list_plugins(PluginSortMode::New, None, None, None, false, 200, 0)
+            .await
+            .expect("visible listing runs");
+        let (hidden_total, hidden) = repo
+            .list_plugins(PluginSortMode::New, None, None, None, true, 200, 0)
+            .await
+            .expect("hidden listing runs");
+
+        assert!(hidden_total >= visible_total);
+        assert!(hidden.len() >= visible.len());
+        assert!(visible.iter().all(|p| !p.disabled && !p.unlisted));
     }
 }
