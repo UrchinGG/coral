@@ -13,9 +13,34 @@ use axum::{
     routing::{get, post},
 };
 
+use database::PluginRegistryRepository;
+
 use crate::state::AppState;
 
 use super::session_auth::require_starfish_session;
+
+pub async fn backfill_release_content_hashes(db: std::sync::Arc<database::Database>) {
+    let repo = PluginRegistryRepository::new(db.pool());
+    let releases = match repo.list_releases_missing_content_hash().await {
+        Ok(releases) => releases,
+        Err(e) => {
+            tracing::warn!("content hash backfill query failed: {e}");
+            return;
+        }
+    };
+
+    for (release_id, zip_bytes) in releases {
+        match content_hash::compute_content_sha256(&zip_bytes) {
+            Ok(hash) => match repo.set_release_content_hash(release_id, &hash).await {
+                Ok(()) => tracing::info!("backfilled content hash for release {release_id}"),
+                Err(e) => {
+                    tracing::warn!("content hash backfill failed for release {release_id}: {e}")
+                }
+            },
+            Err(e) => tracing::warn!("content hash compute failed for release {release_id}: {e:?}"),
+        }
+    }
+}
 
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()

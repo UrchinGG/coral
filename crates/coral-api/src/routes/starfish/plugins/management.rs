@@ -17,7 +17,6 @@ pub struct PatchPluginRequest {
     pub display_name: Option<String>,
     pub description: Option<String>,
     pub homepage: Option<String>,
-    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -73,7 +72,6 @@ pub async fn patch_plugin(
         .description
         .unwrap_or_else(|| plugin.description.clone());
     let homepage = patch.homepage.or(plugin.homepage.clone());
-    let tags = patch.tags.unwrap_or_else(|| plugin.tags.clone());
 
     if display_name.trim().is_empty() || display_name.len() > MAX_DISPLAY_NAME_CHARS {
         return Err(ApiError::BadRequest(format!(
@@ -86,7 +84,6 @@ pub async fn patch_plugin(
             super::manifest::MAX_DESCRIPTION_CHARS
         )));
     }
-    validate_tags(&tags)?;
 
     let updated = repo
         .update_plugin_metadata(
@@ -94,7 +91,6 @@ pub async fn patch_plugin(
             &plugin.repo,
             &display_name,
             &description,
-            &tags,
             homepage.as_deref(),
         )
         .await?;
@@ -252,21 +248,4 @@ async fn ensure_plugin_owner_or_admin(
         return Err(ApiError::Forbidden("not_plugin_owner".into()));
     }
     Ok(plugin)
-}
-
-fn validate_tags(tags: &[String]) -> Result<(), ApiError> {
-    use super::manifest::{MAX_TAGS_PER_PLUGIN, TAG_ALLOWLIST};
-    if tags.len() > MAX_TAGS_PER_PLUGIN {
-        return Err(ApiError::BadRequest(format!(
-            "at most {MAX_TAGS_PER_PLUGIN} tags allowed"
-        )));
-    }
-    for tag in tags {
-        if !TAG_ALLOWLIST.contains(&tag.as_str()) {
-            return Err(ApiError::BadRequest(format!(
-                "tag '{tag}' is not in the allowlist"
-            )));
-        }
-    }
-    Ok(())
 }

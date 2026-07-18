@@ -271,7 +271,6 @@ export type PluginSummaryRow = {
   official: boolean;
   unlisted: boolean;
   disabled: boolean;
-  tags: string[];
   latest_version: string;
   updated_at: string;
   installs_30d: number;
@@ -296,7 +295,6 @@ export type Plugin = {
   github_repo_id: number;
   display_name: string;
   description: string;
-  tags: string[];
   homepage: string | null;
   unlisted: boolean;
   unlisted_at: string | null;

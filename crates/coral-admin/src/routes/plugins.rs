@@ -67,7 +67,7 @@ async fn list(
         .map(str::trim)
         .filter(|s| !s.is_empty());
     let (total, summaries) = repo
-        .list_plugins(PluginSortMode::New, None, search, None, true, limit, offset)
+        .list_plugins(PluginSortMode::New, search, None, true, limit, offset)
         .await
         .unwrap_or((0, vec![]));
 

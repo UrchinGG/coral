@@ -7,21 +7,6 @@ use sha2::{Digest, Sha256};
 
 use crate::error::ApiError;
 
-pub const TAG_ALLOWLIST: &[&str] = &[
-    "utility",
-    "visual",
-    "combat",
-    "bedwars",
-    "skywars",
-    "duels",
-    "hypixel",
-    "anti-ghost",
-    "chat",
-    "hud",
-    "dev",
-];
-
-pub const MAX_TAGS_PER_PLUGIN: usize = 10;
 pub const MAX_DESCRIPTION_CHARS: usize = 8000;
 pub const MAX_ZIP_SIZE: u64 = 10 * 1024 * 1024;
 pub const MAX_FILE_UNCOMPRESSED: u64 = 5 * 1024 * 1024;
@@ -34,8 +19,6 @@ pub struct PluginManifest {
     pub version: String,
     pub description: String,
     pub author: String,
-    #[serde(default)]
-    pub tags: Vec<String>,
     #[serde(default)]
     pub homepage: Option<String>,
     #[serde(default)]
@@ -141,18 +124,6 @@ fn validate_manifest(m: &PluginManifest, expected_version: &str) -> Result<(), A
     }
     if m.author.trim().is_empty() {
         return Err(ApiError::BadRequest("author is required".into()));
-    }
-    if m.tags.len() > MAX_TAGS_PER_PLUGIN {
-        return Err(ApiError::BadRequest(format!(
-            "at most {MAX_TAGS_PER_PLUGIN} tags allowed"
-        )));
-    }
-    for tag in &m.tags {
-        if !TAG_ALLOWLIST.contains(&tag.as_str()) {
-            return Err(ApiError::BadRequest(format!(
-                "tag '{tag}' is not in the allowlist"
-            )));
-        }
     }
     Ok(())
 }

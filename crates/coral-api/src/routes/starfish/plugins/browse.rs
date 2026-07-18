@@ -34,7 +34,6 @@ pub async fn list_plugins(
     let (total, summaries) = repo
         .list_plugins(
             sort,
-            q.tag.as_deref(),
             q.q.as_deref(),
             q.official,
             include_hidden,
@@ -65,7 +64,6 @@ pub async fn list_plugins(
             official: s.official,
             unlisted: s.unlisted,
             disabled: s.disabled,
-            tags: s.tags,
             latest_version: s.latest_version,
             updated_at: s.updated_at,
             installs_30d: s.installs_30d,
@@ -133,7 +131,6 @@ pub async fn get_plugin(
         unlisted: plugin.unlisted,
         disabled: plugin.disabled,
         disabled_reason: plugin.disabled_reason,
-        tags: plugin.tags,
         homepage: plugin.homepage,
         repo_url,
         latest_release,

@@ -94,7 +94,6 @@ pub async fn publish_plugin(
                     &repo.full_name,
                     &manifest.display_name,
                     &manifest.description,
-                    &manifest.tags,
                     manifest.homepage.as_deref(),
                 )
                 .await?
@@ -116,7 +115,6 @@ pub async fn publish_plugin(
                     github_repo_id: repo.id,
                     display_name: &manifest.display_name,
                     description: &manifest.description,
-                    tags: &manifest.tags,
                     homepage: manifest.homepage.as_deref(),
                 })
                 .await?

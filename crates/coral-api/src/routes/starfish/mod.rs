@@ -1,7 +1,7 @@
 pub mod auth;
 mod download;
 mod license;
-mod plugins;
+pub mod plugins;
 pub mod session_auth;
 mod users;
 

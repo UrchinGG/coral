@@ -11,7 +11,6 @@ pub struct Plugin {
     pub github_repo_id: i64,
     pub display_name: String,
     pub description: String,
-    pub tags: Vec<String>,
     pub homepage: Option<String>,
     pub unlisted: bool,
     pub unlisted_at: Option<DateTime<Utc>>,
@@ -54,7 +53,6 @@ pub struct OwnedPluginSummary {
     pub display_name: String,
     pub description: String,
     pub repo: String,
-    pub tags: Vec<String>,
     pub homepage: Option<String>,
     pub unlisted: bool,
     pub unlisted_at: Option<DateTime<Utc>>,
@@ -121,7 +119,6 @@ pub struct PluginSummary {
     pub official: bool,
     pub unlisted: bool,
     pub disabled: bool,
-    pub tags: Vec<String>,
     pub latest_version: String,
     pub updated_at: DateTime<Utc>,
     pub installs_30d: i64,
@@ -163,7 +160,6 @@ pub struct NewPlugin<'a> {
     pub github_repo_id: i64,
     pub display_name: &'a str,
     pub description: &'a str,
-    pub tags: &'a [String],
     pub homepage: Option<&'a str>,
 }
 
@@ -205,8 +201,8 @@ impl<'a> PluginRegistryRepository<'a> {
 
     pub async fn create_plugin(&self, p: NewPlugin<'_>) -> Result<Plugin, sqlx::Error> {
         sqlx::query_as(
-            "INSERT INTO plugins (slug, owner_user_id, repo, github_repo_id, display_name, description, tags, homepage)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            "INSERT INTO plugins (slug, owner_user_id, repo, github_repo_id, display_name, description, homepage)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              RETURNING *",
         )
         .bind(p.slug)
@@ -215,7 +211,6 @@ impl<'a> PluginRegistryRepository<'a> {
         .bind(p.github_repo_id)
         .bind(p.display_name)
         .bind(p.description)
-        .bind(p.tags)
         .bind(p.homepage)
         .fetch_one(self.pool)
         .await
@@ -227,20 +222,18 @@ impl<'a> PluginRegistryRepository<'a> {
         repo: &str,
         display_name: &str,
         description: &str,
-        tags: &[String],
         homepage: Option<&str>,
     ) -> Result<Plugin, sqlx::Error> {
         sqlx::query_as(
             "UPDATE plugins SET
-                repo = $2, display_name = $3, description = $4, tags = $5,
-                homepage = $6, updated_at = NOW()
+                repo = $2, display_name = $3, description = $4,
+                homepage = $5, updated_at = NOW()
              WHERE id = $1 RETURNING *",
         )
         .bind(plugin_id)
         .bind(repo)
         .bind(display_name)
         .bind(description)
-        .bind(tags)
         .bind(homepage)
         .fetch_one(self.pool)
         .await
@@ -331,7 +324,7 @@ impl<'a> PluginRegistryRepository<'a> {
     ) -> Result<Vec<OwnedPluginSummary>, sqlx::Error> {
         sqlx::query_as(
             "SELECT
-                p.slug, p.display_name, p.description, p.repo, p.tags, p.homepage,
+                p.slug, p.display_name, p.description, p.repo, p.homepage,
                 p.unlisted, p.unlisted_at, p.official, p.disabled, p.disabled_reason,
                 p.created_at, p.updated_at,
                 r.version AS latest_version, r.content_sha256 AS latest_content_sha256
@@ -479,6 +472,30 @@ impl<'a> PluginRegistryRepository<'a> {
         .bind(keep_release_id)
         .execute(self.pool)
         .await?;
+        Ok(())
+    }
+
+    pub async fn list_releases_missing_content_hash(
+        &self,
+    ) -> Result<Vec<(i64, Vec<u8>)>, sqlx::Error> {
+        sqlx::query_as(
+            "SELECT id, body_cache FROM plugin_releases
+             WHERE content_sha256 IS NULL AND body_cache IS NOT NULL",
+        )
+        .fetch_all(self.pool)
+        .await
+    }
+
+    pub async fn set_release_content_hash(
+        &self,
+        release_id: i64,
+        content_sha256: &[u8],
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE plugin_releases SET content_sha256 = $2 WHERE id = $1")
+            .bind(release_id)
+            .bind(content_sha256)
+            .execute(self.pool)
+            .await?;
         Ok(())
     }
 
@@ -652,7 +669,6 @@ impl<'a> PluginRegistryRepository<'a> {
     pub async fn list_plugins(
         &self,
         sort: PluginSortMode,
-        tag: Option<&str>,
         query: Option<&str>,
         official: Option<bool>,
         include_hidden: bool,
@@ -661,12 +677,10 @@ impl<'a> PluginRegistryRepository<'a> {
     ) -> Result<(i64, Vec<PluginSummary>), sqlx::Error> {
         let (total,): (i64,) = sqlx::query_as(
             "SELECT COUNT(*)::bigint FROM plugins p
-             WHERE ($4::bool OR (NOT p.disabled AND NOT p.unlisted))
-               AND ($1::text IS NULL OR $1 = ANY(p.tags))
-               AND ($2::text IS NULL OR p.slug ILIKE '%' || $2 || '%' OR p.display_name ILIKE '%' || $2 || '%' OR p.description ILIKE '%' || $2 || '%')
-               AND ($3::bool IS NULL OR p.official = $3)",
+             WHERE ($3::bool OR (NOT p.disabled AND NOT p.unlisted))
+               AND ($1::text IS NULL OR p.slug ILIKE '%' || $1 || '%' OR p.display_name ILIKE '%' || $1 || '%' OR p.description ILIKE '%' || $1 || '%')
+               AND ($2::bool IS NULL OR p.official = $2)",
         )
-        .bind(tag)
         .bind(query)
         .bind(official)
         .bind(include_hidden)
@@ -684,7 +698,7 @@ impl<'a> PluginRegistryRepository<'a> {
             r#"
             WITH stats AS (
                 SELECT
-                    p.id, p.slug, p.display_name, p.description, p.tags, p.official,
+                    p.id, p.slug, p.display_name, p.description, p.official,
                     p.unlisted, p.disabled,
                     p.updated_at, p.created_at,
                     COALESCE((
@@ -708,10 +722,9 @@ impl<'a> PluginRegistryRepository<'a> {
                     (SELECT MAX(created_at) FROM plugin_releases
                         WHERE plugin_id = p.id AND NOT yanked) AS last_released_at
                 FROM plugins p
-                WHERE ($6::bool OR (NOT p.disabled AND NOT p.unlisted))
-                  AND ($1::text IS NULL OR $1 = ANY(p.tags))
-                  AND ($2::text IS NULL OR p.slug ILIKE '%' || $2 || '%' OR p.display_name ILIKE '%' || $2 || '%' OR p.description ILIKE '%' || $2 || '%')
-                  AND ($3::bool IS NULL OR p.official = $3)
+                WHERE ($5::bool OR (NOT p.disabled AND NOT p.unlisted))
+                  AND ($1::text IS NULL OR p.slug ILIKE '%' || $1 || '%' OR p.display_name ILIKE '%' || $1 || '%' OR p.description ILIKE '%' || $1 || '%')
+                  AND ($2::bool IS NULL OR p.official = $2)
                   AND EXISTS (SELECT 1 FROM plugin_releases WHERE plugin_id = p.id AND NOT yanked)
             ),
             bayes AS (
@@ -729,19 +742,18 @@ impl<'a> PluginRegistryRepository<'a> {
             )
             SELECT
                 r.slug, r.display_name, r.description, r.author, r.owner_discord_id, r.official,
-                r.unlisted, r.disabled, r.tags,
+                r.unlisted, r.disabled,
                 r.latest_version, r.updated_at,
                 r.installs_30d, r.installs_total,
                 r.rating_mean, r.rating_count, r.rating_bayesian::real AS rating_bayesian,
                 (r.velocity_pct * c.velocity_weight + r.rating_pct * c.rating_weight + r.recency_pct * c.recency_weight) AS score
             FROM ranked r, plugin_sort_config c WHERE c.id = 1
             ORDER BY {order_sql}
-            LIMIT $4 OFFSET $5
+            LIMIT $3 OFFSET $4
             "#,
         );
 
         let plugins: Vec<PluginSummary> = sqlx::query_as(&sql)
-            .bind(tag)
             .bind(query)
             .bind(official)
             .bind(limit)
@@ -839,7 +851,6 @@ mod tests {
                 github_repo_id,
                 display_name: "Test Plugin",
                 description: "fixture",
-                tags: &[],
                 homepage: None,
             })
             .await
@@ -878,17 +889,96 @@ mod tests {
         let repo = PluginRegistryRepository::new(&pool);
 
         let (visible_total, visible) = repo
-            .list_plugins(PluginSortMode::New, None, None, None, false, 200, 0)
+            .list_plugins(PluginSortMode::New, None, None, false, 200, 0)
             .await
             .expect("visible listing runs");
         let (hidden_total, hidden) = repo
-            .list_plugins(PluginSortMode::New, None, None, None, true, 200, 0)
+            .list_plugins(PluginSortMode::New, None, None, true, 200, 0)
             .await
             .expect("hidden listing runs");
 
         assert!(hidden_total >= visible_total);
         assert!(hidden.len() >= visible.len());
         assert!(visible.iter().all(|p| !p.disabled && !p.unlisted));
+    }
+
+    #[tokio::test]
+    async fn backfill_accessors_find_and_fill_missing_content_hashes() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let repo = PluginRegistryRepository::new(&pool);
+        let nonce = Utc::now().timestamp_nanos_opt().unwrap();
+        cleanup_rating_fixtures(&pool, nonce, nonce).await;
+
+        let (user_id,): (i64,) =
+            sqlx::query_as("INSERT INTO starfish_users (discord_id) VALUES ($1) RETURNING id")
+                .bind(nonce)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let plugin = repo
+            .create_plugin(NewPlugin {
+                slug: &format!("test-backfill-plugin-{nonce}"),
+                owner_user_id: user_id,
+                repo: "test/backfill-repo",
+                github_repo_id: nonce,
+                display_name: "Test Backfill Plugin",
+                description: "fixture",
+                homepage: None,
+            })
+            .await
+            .unwrap();
+
+        let release = repo
+            .create_release(NewRelease {
+                plugin_id: plugin.id,
+                version: "1.0.0",
+                git_sha: "0123456789abcdef0123456789abcdef01234567",
+                asset_url: "https://example.com/plugin.zip",
+                asset_sha256: b"asset-hash",
+                content_sha256: b"placeholder",
+                asset_size: 42,
+                body_cache: b"zip-bytes",
+                readme_cache: None,
+                manifest_json: &serde_json::json!({}),
+                changelog: None,
+            })
+            .await
+            .unwrap();
+
+        sqlx::query("UPDATE plugin_releases SET content_sha256 = NULL WHERE id = $1")
+            .bind(release.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let missing = repo.list_releases_missing_content_hash().await.unwrap();
+        let row = missing
+            .iter()
+            .find(|(id, _)| *id == release.id)
+            .expect("nulled release appears in backfill listing");
+        assert_eq!(row.1.as_slice(), b"zip-bytes");
+
+        repo.set_release_content_hash(release.id, b"computed-hash")
+            .await
+            .unwrap();
+
+        let missing = repo.list_releases_missing_content_hash().await.unwrap();
+        assert!(missing.iter().all(|(id, _)| *id != release.id));
+
+        let refreshed = repo
+            .get_release_by_version(plugin.id, "1.0.0")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            refreshed.content_sha256.as_deref(),
+            Some(b"computed-hash".as_slice())
+        );
+
+        cleanup_rating_fixtures(&pool, nonce, nonce).await;
     }
 
     #[tokio::test]
@@ -917,7 +1007,6 @@ mod tests {
                 github_repo_id,
                 display_name: "Test Owned Plugin",
                 description: "fixture",
-                tags: &[],
                 homepage: None,
             })
             .await

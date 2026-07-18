@@ -37,6 +37,9 @@ async fn main() -> Result<()> {
     let state = init_state().await?;
     if state.starfish.is_some() {
         spawn_starfish_cleanup(state.db.clone());
+        tokio::spawn(routes::starfish::plugins::backfill_release_content_hashes(
+            state.db.clone(),
+        ));
     }
     reqlog::spawn_partition_maintenance(state.db.clone());
     let (log_tx, log_rx) = reqlog::channel();
