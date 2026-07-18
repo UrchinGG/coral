@@ -1,6 +1,7 @@
 use axum::extract::{Query, State};
+use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use chrono::Utc;
 use serde::Deserialize;
 use utoipa::ToSchema;
@@ -9,6 +10,7 @@ use clients::normalize_uuid;
 use coral_redis::RateLimitResult;
 use database::{BlacklistRepository, Member, MemberRepository, PlayerEvent};
 
+use crate::auth::RequestIdentity;
 use crate::cache::refresh_player_cache;
 use crate::responses::{CubelifyResponse, CubelifyScore, CubelifyTag};
 use crate::state::AppState;
@@ -38,16 +40,31 @@ pub fn router(_state: AppState) -> Router<AppState> {
 pub async fn get_cubelify(
     State(state): State<AppState>,
     Query(query): Query<CubelifyQuery>,
-) -> Json<CubelifyResponse> {
-    Json(process_cubelify(&state, &query).await.unwrap_or_else(|e| e))
+) -> impl IntoResponse {
+    let (response, member_id) = process_cubelify(&state, &query).await;
+    match member_id {
+        Some(member_id) => (Extension(RequestIdentity { member_id }), Json(response)).into_response(),
+        None => Json(response).into_response(),
+    }
 }
 
-async fn process_cubelify(
+async fn process_cubelify(state: &AppState, query: &CubelifyQuery) -> (CubelifyResponse, Option<i64>) {
+    let member = match validate_api_key(state, &query.key).await {
+        Ok(member) => member,
+        Err(response) => return (response, None),
+    };
+    let response = run_cubelify(state, query, &member)
+        .await
+        .unwrap_or_else(|e| e);
+    (response, Some(member.id))
+}
+
+async fn run_cubelify(
     state: &AppState,
     query: &CubelifyQuery,
+    member: &Member,
 ) -> Result<CubelifyResponse, CubelifyResponse> {
-    let member = validate_api_key(state, &query.key).await?;
-    check_rate_limit(state, &query.key, &member).await?;
+    check_rate_limit(state, &query.key, member).await?;
     let uuid = normalize_uuid(&query.uuid);
     refresh_player_cache(state, &uuid, None).await;
     let tags = fetch_tags(state, &uuid).await?;
