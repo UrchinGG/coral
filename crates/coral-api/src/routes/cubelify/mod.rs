@@ -43,12 +43,17 @@ pub async fn get_cubelify(
 ) -> impl IntoResponse {
     let (response, member_id) = process_cubelify(&state, &query).await;
     match member_id {
-        Some(member_id) => (Extension(RequestIdentity { member_id }), Json(response)).into_response(),
+        Some(member_id) => {
+            (Extension(RequestIdentity { member_id }), Json(response)).into_response()
+        }
         None => Json(response).into_response(),
     }
 }
 
-async fn process_cubelify(state: &AppState, query: &CubelifyQuery) -> (CubelifyResponse, Option<i64>) {
+async fn process_cubelify(
+    state: &AppState,
+    query: &CubelifyQuery,
+) -> (CubelifyResponse, Option<i64>) {
     let member = match validate_api_key(state, &query.key).await {
         Ok(member) => member,
         Err(response) => return (response, None),

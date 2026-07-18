@@ -146,7 +146,7 @@ period_handler!(session_yearly, Yearly, "/v3/player/sessions/yearly");
 #[utoipa::path(
     get,
     path = "/v3/player/sessions/custom",
-    description = "Returns the change in a player's stats since a starting point that you specify: the latest snapshot diffed against the most recent snapshot at or before that point. Provide exactly one of `duration` (for example `48h`, `10d`, or `2w`), `from` (a Unix millisecond timestamp or RFC 3339 string), or `marker` (the name of a saved marker). The `marker` form requires account ownership or the `All Sessions` permission. The `delta` is a recursive diff: unchanged fields are omitted, a changed numeric stat is the bare difference (new minus old, e.g. `50` or `-3`), and a field that appeared, disappeared, or changed non-numerically is `{ \"old\": <previous or null>, \"new\": <current or null> }`, with `old` null for a stat absent from the baseline snapshot.",
+    description = "Returns the change in a player's stats since a starting point that you specify: the latest snapshot diffed against the most recent snapshot at or before that point. Provide exactly one of `duration` (for example `48h`, `10d`, or `2w`), `from` (a Unix millisecond timestamp or RFC 3339 string), or `marker` (the name of a saved marker). The `from` and `marker` forms, and `duration` values outside 1h-24h, 1d-7d, or 1w and up, require account ownership or the `All Sessions` permission. The `delta` is a recursive diff: unchanged fields are omitted, a changed numeric stat is the bare difference (new minus old, e.g. `50` or `-3`), and a field that appeared, disappeared, or changed non-numerically is `{ \"old\": <previous or null>, \"new\": <current or null> }`, with `old` null for a stat absent from the baseline snapshot.",
     params(CustomSessionQuery),
     responses(
         (status = 200, body = SessionDeltaResponse),
@@ -166,18 +166,34 @@ pub async fn session_custom(
     let dev = dev_auth.as_ref().map(|Extension(d)| d);
     let now = Utc::now();
     let (uuid, _) = player::resolve_identifier(&state, &query.player).await?;
+    let owned = is_owner(&state, &uuid, member.0.discord_id, dev).await?;
 
     let from = match (&query.duration, &query.from, &query.marker) {
         (Some(d), None, None) => {
-            now - parse_duration(d).ok_or_else(|| {
+            let duration = parse_duration(d).ok_or_else(|| {
                 ApiError::BadRequest("'duration' must be like 48h, 10d, or 2w".into())
-            })?
+            })?;
+            if !owned && !is_unowned_duration_allowed(d) {
+                return Err(ApiError::Forbidden(
+                    "you do not own this account; 'duration' is limited to 1h-24h, 1d-7d, or 1w and up".into(),
+                ));
+            }
+            now - duration
         }
 
-        (None, Some(ts), None) => parse_timestamp(ts)?,
+        (None, Some(ts), None) => {
+            if !owned {
+                return Err(ApiError::Forbidden(
+                    "you do not own this account; use 'duration' instead of 'from'".into(),
+                ));
+            }
+            parse_timestamp(ts)?
+        }
 
         (None, None, Some(name)) => {
-            require_owner(&state, &uuid, member.0.discord_id, dev).await?;
+            if !owned {
+                return Err(ApiError::Forbidden("you do not own this account".into()));
+            }
             SessionRepository::new(state.db.pool())
                 .get(&uuid, member.0.discord_id, name)
                 .await?
@@ -473,22 +489,47 @@ pub async fn list_snapshots(
     ))
 }
 
+async fn is_owner(
+    state: &AppState,
+    uuid: &str,
+    discord_id: i64,
+    dev_auth: Option<&DeveloperKeyAuth>,
+) -> Result<bool, ApiError> {
+    if dev_auth.is_some_and(|d| d.has(permissions::ALL_SESSIONS)) {
+        return Ok(true);
+    }
+    AccountRepository::new(state.db.pool())
+        .is_owned_by(uuid, discord_id)
+        .await
+        .map_err(Into::into)
+}
+
 async fn require_owner(
     state: &AppState,
     uuid: &str,
     discord_id: i64,
     dev_auth: Option<&DeveloperKeyAuth>,
 ) -> Result<(), ApiError> {
-    if dev_auth.is_some_and(|d| d.has(permissions::ALL_SESSIONS)) {
-        return Ok(());
+    if is_owner(state, uuid, discord_id, dev_auth).await? {
+        Ok(())
+    } else {
+        Err(ApiError::Forbidden("you do not own this account".into()))
     }
-    if !AccountRepository::new(state.db.pool())
-        .is_owned_by(uuid, discord_id)
-        .await?
-    {
-        return Err(ApiError::Forbidden("you do not own this account".into()));
+}
+
+fn is_unowned_duration_allowed(s: &str) -> bool {
+    let Some((digits, unit)) = s.split_at_checked(s.len().saturating_sub(1)) else {
+        return false;
+    };
+    let Ok(n) = digits.parse::<i64>() else {
+        return false;
+    };
+    match unit {
+        "h" => (1..=24).contains(&n),
+        "d" => (1..=7).contains(&n),
+        "w" => n >= 1,
+        _ => false,
     }
-    Ok(())
 }
 
 pub(crate) fn parse_timestamp(s: &str) -> Result<DateTime<Utc>, ApiError> {
@@ -521,5 +562,43 @@ fn to_marker_response(m: &SessionMarker) -> MarkerResponse {
             .to_string(),
         created_at: m.created_at.timestamp_millis(),
         created_readable: m.created_at.format("%b %d, %Y %H:%M UTC").to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allows_hours_up_to_a_day() {
+        assert!(is_unowned_duration_allowed("1h"));
+        assert!(is_unowned_duration_allowed("24h"));
+        assert!(!is_unowned_duration_allowed("25h"));
+        assert!(!is_unowned_duration_allowed("0h"));
+    }
+
+    #[test]
+    fn allows_days_up_to_a_week() {
+        assert!(is_unowned_duration_allowed("1d"));
+        assert!(is_unowned_duration_allowed("7d"));
+        assert!(!is_unowned_duration_allowed("8d"));
+        assert!(!is_unowned_duration_allowed("10d"));
+    }
+
+    #[test]
+    fn allows_any_number_of_weeks() {
+        assert!(is_unowned_duration_allowed("1w"));
+        assert!(is_unowned_duration_allowed("2w"));
+        assert!(is_unowned_duration_allowed("52w"));
+        assert!(!is_unowned_duration_allowed("0w"));
+    }
+
+    #[test]
+    fn rejects_malformed_durations() {
+        assert!(!is_unowned_duration_allowed(""));
+        assert!(!is_unowned_duration_allowed("h"));
+        assert!(!is_unowned_duration_allowed("1m"));
+        assert!(!is_unowned_duration_allowed("-1h"));
+        assert!(!is_unowned_duration_allowed("1.5d"));
     }
 }
