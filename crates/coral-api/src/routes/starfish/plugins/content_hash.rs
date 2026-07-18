@@ -76,7 +76,10 @@ fn hash_all_files(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Result<[u8; 3
             .name()
             .to_string();
 
-        if name.ends_with('/') || is_ignored_path(&name) {
+        if name.ends_with('/')
+            || LAYOUT_SKIP_NAMES.contains(&name.as_str())
+            || is_ignored_path(&name)
+        {
             continue;
         }
 
@@ -185,14 +188,14 @@ mod tests {
     }
 
     #[test]
-    fn multi_file_includes_manifest_and_readme() {
+    fn multi_file_excludes_root_manifest_and_readme() {
         let init = b"require('sub.foo')";
         let sub_foo = b"return 1";
-        let manifest = b"{}";
         let zip_bytes = build_zip(&[
             ("init.lua", init),
             ("sub/foo.lua", sub_foo),
-            ("manifest.json", manifest),
+            ("manifest.json", b"{}"),
+            ("README.md", b"# readme"),
         ]);
 
         let hash = compute_content_sha256(&zip_bytes).unwrap();
@@ -200,7 +203,6 @@ mod tests {
         let mut expected_files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         expected_files.insert("init.lua".into(), Sha256::digest(init).to_vec());
         expected_files.insert("sub/foo.lua".into(), Sha256::digest(sub_foo).to_vec());
-        expected_files.insert("manifest.json".into(), Sha256::digest(manifest).to_vec());
 
         let mut hasher = Sha256::new();
         for (rel_path, digest) in &expected_files {
@@ -212,6 +214,51 @@ mod tests {
         let expected: [u8; 32] = hasher.finalize().into();
 
         assert_eq!(hash, expected);
+    }
+
+    #[test]
+    fn multi_file_keeps_nested_readme_not_at_root() {
+        let init = b"require('sub.foo')";
+        let nested_readme = b"# nested docs, not the plugin's root README";
+        let zip_bytes = build_zip(&[("init.lua", init), ("docs/README.md", nested_readme)]);
+
+        let hash = compute_content_sha256(&zip_bytes).unwrap();
+
+        let mut expected_files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+        expected_files.insert("init.lua".into(), Sha256::digest(init).to_vec());
+        expected_files.insert(
+            "docs/README.md".into(),
+            Sha256::digest(nested_readme).to_vec(),
+        );
+
+        let mut hasher = Sha256::new();
+        for (rel_path, digest) in &expected_files {
+            hasher.update(rel_path.as_bytes());
+            hasher.update(b"\0");
+            hasher.update(digest);
+            hasher.update(b"\n");
+        }
+        let expected: [u8; 32] = hasher.finalize().into();
+
+        assert_eq!(hash, expected);
+    }
+
+    #[test]
+    fn multi_file_content_hash_matches_directory_without_manifest() {
+        let init = b"require('sub.foo')";
+        let sub_foo = b"return 1";
+        let with_manifest = build_zip(&[
+            ("init.lua", init),
+            ("sub/foo.lua", sub_foo),
+            ("manifest.json", b"{\"name\":\"whatever\"}"),
+            ("README.md", b"# whatever docs"),
+        ]);
+        let without_manifest = build_zip(&[("init.lua", init), ("sub/foo.lua", sub_foo)]);
+
+        assert_eq!(
+            compute_content_sha256(&with_manifest).unwrap(),
+            compute_content_sha256(&without_manifest).unwrap()
+        );
     }
 
     #[test]

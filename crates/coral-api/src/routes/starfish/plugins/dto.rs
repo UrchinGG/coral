@@ -59,6 +59,7 @@ pub struct ReleaseInfoDto {
     pub git_sha: String,
     pub changelog: Option<String>,
     pub asset_sha256: String,
+    pub content_sha256: Option<String>,
     pub asset_size: i32,
     pub yanked: bool,
     pub yanked_reason: Option<String>,
@@ -161,4 +162,45 @@ pub struct InstalledEntryDto {
     pub update_available: bool,
     pub disabled: bool,
     pub latest_release: ReleaseInfoDto,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OwnedPluginDto {
+    pub slug: String,
+    pub display_name: String,
+    pub description: String,
+    pub repo: String,
+    pub tags: Vec<String>,
+    pub homepage: Option<String>,
+    pub unlisted: bool,
+    pub unlisted_at: Option<DateTime<Utc>>,
+    pub official: bool,
+    pub disabled: bool,
+    pub disabled_reason: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub latest_version: Option<String>,
+    pub latest_content_sha256: Option<String>,
+}
+
+impl From<database::OwnedPluginSummary> for OwnedPluginDto {
+    fn from(p: database::OwnedPluginSummary) -> Self {
+        Self {
+            slug: p.slug,
+            display_name: p.display_name,
+            description: p.description,
+            repo: p.repo,
+            tags: p.tags,
+            homepage: p.homepage,
+            unlisted: p.unlisted,
+            unlisted_at: p.unlisted_at,
+            official: p.official,
+            disabled: p.disabled,
+            disabled_reason: p.disabled_reason,
+            created_at: p.created_at,
+            updated_at: p.updated_at,
+            latest_version: p.latest_version,
+            latest_content_sha256: p.latest_content_sha256.map(hex::encode),
+        }
+    }
 }

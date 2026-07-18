@@ -116,6 +116,7 @@ pub async fn list_installed(
                 git_sha: r.latest_git_sha.clone(),
                 changelog: r.latest_changelog,
                 asset_sha256: hex::encode(&r.latest_asset_sha256),
+                content_sha256: None,
                 asset_size: r.latest_asset_size,
                 yanked: false,
                 yanked_reason: None,

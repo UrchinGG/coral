@@ -48,6 +48,25 @@ pub struct ReleaseBody {
     pub asset_sha256: Vec<u8>,
 }
 
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct OwnedPluginSummary {
+    pub slug: String,
+    pub display_name: String,
+    pub description: String,
+    pub repo: String,
+    pub tags: Vec<String>,
+    pub homepage: Option<String>,
+    pub unlisted: bool,
+    pub unlisted_at: Option<DateTime<Utc>>,
+    pub official: bool,
+    pub disabled: bool,
+    pub disabled_reason: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub latest_version: Option<String>,
+    pub latest_content_sha256: Option<Vec<u8>>,
+}
+
 #[derive(Debug, Clone, FromRow)]
 pub struct PluginInstall {
     pub user_id: i64,
@@ -306,11 +325,28 @@ impl<'a> PluginRegistryRepository<'a> {
             .map(|r| r.rows_affected() > 0)
     }
 
-    pub async fn list_my_plugins(&self, owner_user_id: i64) -> Result<Vec<Plugin>, sqlx::Error> {
-        sqlx::query_as("SELECT * FROM plugins WHERE owner_user_id = $1 ORDER BY created_at DESC")
-            .bind(owner_user_id)
-            .fetch_all(self.pool)
-            .await
+    pub async fn list_my_plugins_with_latest(
+        &self,
+        owner_user_id: i64,
+    ) -> Result<Vec<OwnedPluginSummary>, sqlx::Error> {
+        sqlx::query_as(
+            "SELECT
+                p.slug, p.display_name, p.description, p.repo, p.tags, p.homepage,
+                p.unlisted, p.unlisted_at, p.official, p.disabled, p.disabled_reason,
+                p.created_at, p.updated_at,
+                r.version AS latest_version, r.content_sha256 AS latest_content_sha256
+             FROM plugins p
+             LEFT JOIN LATERAL (
+                SELECT version, content_sha256 FROM plugin_releases
+                WHERE plugin_id = p.id AND NOT yanked
+                ORDER BY created_at DESC LIMIT 1
+             ) r ON true
+             WHERE p.owner_user_id = $1
+             ORDER BY p.created_at DESC",
+        )
+        .bind(owner_user_id)
+        .fetch_all(self.pool)
+        .await
     }
 
     pub async fn set_disabled(
@@ -853,5 +889,69 @@ mod tests {
         assert!(hidden_total >= visible_total);
         assert!(hidden.len() >= visible.len());
         assert!(visible.iter().all(|p| !p.disabled && !p.unlisted));
+    }
+
+    #[tokio::test]
+    async fn list_my_plugins_with_latest_carries_release_version_and_hash() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let repo = PluginRegistryRepository::new(&pool);
+        let nonce = Utc::now().timestamp_nanos_opt().unwrap();
+        let discord_id = nonce;
+        let github_repo_id = nonce;
+        cleanup_rating_fixtures(&pool, discord_id, github_repo_id).await;
+
+        let (user_id,): (i64,) =
+            sqlx::query_as("INSERT INTO starfish_users (discord_id) VALUES ($1) RETURNING id")
+                .bind(discord_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let plugin = repo
+            .create_plugin(NewPlugin {
+                slug: &format!("test-owned-plugin-{nonce}"),
+                owner_user_id: user_id,
+                repo: "test/owned-repo",
+                github_repo_id,
+                display_name: "Test Owned Plugin",
+                description: "fixture",
+                tags: &[],
+                homepage: None,
+            })
+            .await
+            .unwrap();
+
+        let content_hash = b"deterministic-test-content-hash";
+        repo.create_release(NewRelease {
+            plugin_id: plugin.id,
+            version: "1.1.0",
+            git_sha: "0123456789abcdef0123456789abcdef01234567",
+            asset_url: "https://example.com/plugin.zip",
+            asset_sha256: b"asset-hash",
+            content_sha256: content_hash,
+            asset_size: 42,
+            body_cache: b"",
+            readme_cache: None,
+            manifest_json: &serde_json::json!({}),
+            changelog: None,
+        })
+        .await
+        .unwrap();
+
+        let owned = repo.list_my_plugins_with_latest(user_id).await.unwrap();
+        let row = owned
+            .iter()
+            .find(|p| p.slug == plugin.slug)
+            .expect("owned plugin appears in listing");
+
+        assert_eq!(row.latest_version.as_deref(), Some("1.1.0"));
+        assert_eq!(
+            row.latest_content_sha256.as_deref(),
+            Some(content_hash.as_slice())
+        );
+
+        cleanup_rating_fixtures(&pool, discord_id, github_repo_id).await;
     }
 }

@@ -51,10 +51,10 @@ pub struct OkResponse {
 pub async fn list_mine(
     State(state): State<AppState>,
     Extension(caller): Extension<AuthenticatedStarfishUser>,
-) -> Result<Json<Vec<database::Plugin>>, ApiError> {
+) -> Result<Json<Vec<super::dto::OwnedPluginDto>>, ApiError> {
     let repo = PluginRegistryRepository::new(state.db.pool());
-    let plugins = repo.list_my_plugins(caller.user.id).await?;
-    Ok(Json(plugins))
+    let plugins = repo.list_my_plugins_with_latest(caller.user.id).await?;
+    Ok(Json(plugins.into_iter().map(Into::into).collect()))
 }
 
 pub async fn patch_plugin(

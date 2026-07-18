@@ -250,6 +250,7 @@ pub(super) fn release_to_dto(r: &database::PluginRelease) -> ReleaseInfoDto {
         git_sha: r.git_sha.clone(),
         changelog: r.changelog.clone(),
         asset_sha256: hex::encode(&r.asset_sha256),
+        content_sha256: r.content_sha256.as_ref().map(hex::encode),
         asset_size: r.asset_size,
         yanked: r.yanked,
         yanked_reason: r.yanked_reason.clone(),
