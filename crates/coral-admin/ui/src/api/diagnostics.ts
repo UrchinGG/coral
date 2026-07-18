@@ -70,6 +70,7 @@ export type LogFilters = {
   caller?: string;
   error_contains?: string;
   errors?: boolean;
+  q?: string;
   from?: number;
   to?: number;
 };
@@ -89,6 +90,7 @@ export function logFiltersToParams(filters: LogFilters, offset: number, limit: n
   if (filters.caller) params.set("caller", filters.caller);
   if (filters.error_contains) params.set("error_contains", filters.error_contains);
   if (filters.errors) params.set("errors", "true");
+  if (filters.q) params.set("q", filters.q);
   if (filters.from) params.set("from", String(filters.from));
   if (filters.to) params.set("to", String(filters.to));
   return params;

@@ -34,6 +34,7 @@ struct ListParams {
     caller: Option<String>,
     error_contains: Option<String>,
     errors: Option<bool>,
+    q: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
 }
@@ -200,6 +201,18 @@ fn filters(qb: &mut QueryBuilder<'_, Postgres>, p: &ListParams, caller: &CallerM
     }
     if let Some(q) = p.error_contains.as_deref().filter(|s| !s.trim().is_empty()) {
         qb.push(" AND l.error ILIKE ").push_bind(format!("%{q}%"));
+    }
+    if let Some(q) = p.q.as_deref().filter(|s| !s.trim().is_empty()) {
+        let pattern = format!("%{q}%");
+        qb.push(" AND (l.path ILIKE ")
+            .push_bind(pattern.clone())
+            .push(" OR l.query ILIKE ")
+            .push_bind(pattern.clone())
+            .push(" OR l.error ILIKE ")
+            .push_bind(pattern.clone())
+            .push(" OR l.user_agent ILIKE ")
+            .push_bind(pattern)
+            .push(")");
     }
     if p.caller.as_deref().is_some_and(|s| !s.trim().is_empty()) {
         if caller.is_empty() {

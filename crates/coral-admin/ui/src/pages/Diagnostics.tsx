@@ -46,6 +46,7 @@ const FILTER_KEYS = [
   "caller",
   "error_contains",
   "errors",
+  "q",
   "from",
   "to",
 ] as const;
@@ -64,6 +65,7 @@ function filtersFromParams(params: URLSearchParams): LogFilters {
     caller: params.get("caller") ?? undefined,
     error_contains: params.get("error_contains") ?? undefined,
     errors: params.get("errors") === "true",
+    q: params.get("q") ?? undefined,
     from: params.get("from") ? Number(params.get("from")) : undefined,
     to: params.get("to") ? Number(params.get("to")) : undefined,
   };
@@ -489,6 +491,7 @@ function LogPanel({
   onSelectRequest: (r: RequestRow) => void;
 }) {
   const [draft, setDraft] = useState({
+    q: filters.q ?? "",
     path: filters.path ?? "",
     path_exact: filters.path_exact ?? false,
     method: filters.method ?? "",
@@ -500,6 +503,7 @@ function LogPanel({
 
   useEffect(() => {
     setDraft({
+      q: filters.q ?? "",
       path: filters.path ?? "",
       path_exact: filters.path_exact ?? false,
       method: filters.method ?? "",
@@ -508,10 +512,11 @@ function LogPanel({
       error_contains: filters.error_contains ?? "",
       errors: filters.errors ?? false,
     });
-  }, [filters.path, filters.path_exact, filters.method, filters.status, filters.caller, filters.error_contains, filters.errors]);
+  }, [filters.q, filters.path, filters.path_exact, filters.method, filters.status, filters.caller, filters.error_contains, filters.errors]);
 
   const applyDraft = () =>
     onApply({
+      q: draft.q || undefined,
       path: draft.path || undefined,
       path_exact: draft.path_exact,
       method: draft.method || undefined,
@@ -540,6 +545,13 @@ function LogPanel({
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
+        <input
+          className="w-64 rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-xs"
+          placeholder="search requests — player, path, error…"
+          value={draft.q}
+          onChange={(e) => setDraft({ ...draft, q: e.target.value })}
+          onKeyDown={(e) => e.key === "Enter" && applyDraft()}
+        />
         <select
           className="rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-xs"
           value={draft.method}
