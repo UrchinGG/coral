@@ -2,7 +2,7 @@ import { useMemo, useState, type MouseEvent } from "react";
 import type { Bucket } from "../api/types";
 
 const WIDTH = 1000;
-const HEIGHT = 220;
+const HEIGHT = 340;
 const PAD = { l: 52, r: 16, t: 14, b: 26 };
 
 function niceMax(v: number): number {

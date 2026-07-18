@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
@@ -16,8 +16,8 @@ import { DataTable } from "../components/DataTable";
 import { HealthSignal } from "../components/HealthSignal";
 import { Identity } from "../components/Identity";
 import { Panel } from "../components/Panel";
+import { type Stat } from "../components/StatStrip";
 import { RequestModal } from "../components/RequestModal";
-import { StatStrip, type Stat } from "../components/StatStrip";
 import { StatusBar } from "../components/StatusBar";
 import { TimeSeriesChart } from "../components/TimeSeriesChart";
 import { STATUS_COLORS, fmtDate, fmtMs, fmtNum, fmtPercent } from "../format";
@@ -32,6 +32,8 @@ const WINDOWS: [number, string][] = [
 ];
 
 const LOG_PAGE_SIZE = 50;
+const LEADERBOARD_SIZE = 5;
+const LEADERBOARD_EXPANDED_SIZE = 20;
 
 const FILTER_KEYS = [
   "path",
@@ -168,7 +170,7 @@ export function Diagnostics() {
 
   const activeFilterCount = FILTER_KEYS.filter((k) => searchParams.get(k)).length;
 
-  const stripStats: Stat[] = [
+  const railStats: Stat[] = [
     { label: "Requests", value: fmtNum(stats.data?.total ?? 0), sub: `${rps < 1 ? rps.toFixed(2) : Math.round(rps)}/s · ${hours}h` },
     {
       label: "Errors",
@@ -203,22 +205,14 @@ export function Diagnostics() {
 
   return (
     <div className="flex flex-col gap-8">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-lg font-semibold text-gray-100">API Diagnostics</h1>
-          <div className="mt-1.5">
-            <HealthSignal level={health.level} message={health.message} />
-          </div>
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <HealthSignal level={health.level} message={health.message} />
         <Segmented value={hours} options={WINDOWS} onChange={(v) => setParams({ hours: String(v), offset: undefined })} />
       </div>
 
-      <StatStrip stats={stripStats} />
-
-      <Panel
-        title="Traffic"
-        action={
-          <div className="flex items-center gap-3">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
+        <Panel className="lg:col-span-8">
+          <div className="mb-3 flex items-center gap-3">
             <Segmented
               value={mode}
               options={[
@@ -242,25 +236,27 @@ export function Diagnostics() {
               </select>
             )}
           </div>
-        }
-      >
-        <TimeSeriesChart
-          points={series.data ?? []}
-          hours={hours}
-          totalLabel={mode === "hypixel" ? "Outgoing" : "Requests"}
-          onSelect={mode === "hypixel" ? undefined : selectSlot}
-        />
-      </Panel>
-
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        <TopCallersPanel keys={stats.data?.top_keys ?? []} onSelectCaller={(f) => setFilters(f)} />
-        <TopEndpointsPanel paths={stats.data?.top_paths ?? []} onSelectPath={(p) => setParams({ mode: "endpoint", endpoint: p })} />
+          <TimeSeriesChart
+            points={series.data ?? []}
+            hours={hours}
+            totalLabel={mode === "hypixel" ? "Outgoing" : "Requests"}
+            onSelect={mode === "hypixel" ? undefined : selectSlot}
+          />
+        </Panel>
+        <StatRail stats={railStats} />
       </div>
 
-      <BudgetsPanel rows={budgets.data ?? []} onSelectCaller={(discordId) => setFilters({ discord_id: discordId })} />
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+        <TopCallersLeaderboard keys={stats.data?.top_keys ?? []} onSelectCaller={(f) => setFilters(f)} />
+        <TopEndpointsLeaderboard paths={stats.data?.top_paths ?? []} onSelectPath={(p) => setParams({ mode: "endpoint", endpoint: p })} />
+        <BudgetHotspotsLeaderboard rows={budgets.data ?? []} onSelectCaller={(discordId) => setFilters({ discord_id: discordId })} />
+      </div>
 
-      <div>
-        <h2 className="mb-3 text-sm font-medium text-gray-400">Investigate — request log</h2>
+      <div className="rounded-2xl border border-white/8 bg-black/20 p-6">
+        <div className="mb-4">
+          <h2 className="text-base font-semibold text-gray-100">Investigate</h2>
+          <p className="mt-0.5 text-xs text-gray-500">Full request log — combine filters to narrow down abuse or errors</p>
+        </div>
         <LogPanel
           filters={filters}
           activeFilterCount={activeFilterCount}
@@ -289,6 +285,27 @@ function weightedLatency(topPaths: TopPath[]) {
   return { p95, p99 };
 }
 
+const RAIL_TONE_TEXT: Record<NonNullable<Stat["tone"]>, string> = {
+  default: "text-gray-100",
+  danger: "text-danger",
+  warning: "text-warning",
+  ok: "text-ok",
+};
+
+function StatRail({ stats }: { stats: Stat[] }) {
+  return (
+    <div className="flex flex-col divide-y divide-white/8 overflow-hidden rounded-xl border border-white/8 bg-white/[0.03] lg:col-span-4">
+      {stats.map((s) => (
+        <div key={s.label} className="flex flex-1 flex-col justify-center px-4 py-3">
+          <div className="text-[11px] font-medium tracking-wide text-gray-500 uppercase">{s.label}</div>
+          <div className={`mt-0.5 text-xl font-semibold ${RAIL_TONE_TEXT[s.tone ?? "default"]}`}>{s.value}</div>
+          {s.sub && <div className="mt-0.5 text-xs text-gray-500">{s.sub}</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Segmented<T extends string | number>({
   value,
   options,
@@ -313,158 +330,137 @@ function Segmented<T extends string | number>({
   );
 }
 
-function TopCallersPanel({
-  keys,
-  onSelectCaller,
-}: {
-  keys: TopKey[];
-  onSelectCaller: (filters: Partial<LogFilters>) => void;
-}) {
+function LeaderboardRow({ rank, left, right, onClick }: { rank: number; left: ReactNode; right: ReactNode; onClick?: () => void }) {
+  return (
+    <div
+      className={`flex items-center gap-2 py-1.5 text-sm ${onClick ? "cursor-pointer hover:bg-white/4" : ""}`}
+      onClick={onClick}
+    >
+      <span className="w-4 text-xs text-gray-600">{rank}</span>
+      <span className="min-w-0 flex-1 truncate">{left}</span>
+      <span className="shrink-0 text-xs text-gray-400">{right}</span>
+    </div>
+  );
+}
+
+function ShowAllToggle({ expanded, onToggle, hiddenCount }: { expanded: boolean; onToggle: () => void; hiddenCount: number }) {
+  if (hiddenCount <= 0 && !expanded) return null;
+  return (
+    <button onClick={onToggle} className="mt-2 text-xs text-gray-500 hover:text-accent">
+      {expanded ? "Show less" : `Show all (${hiddenCount} more) →`}
+    </button>
+  );
+}
+
+function TopCallersLeaderboard({ keys, onSelectCaller }: { keys: TopKey[]; onSelectCaller: (filters: Partial<LogFilters>) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const limit = expanded ? LEADERBOARD_EXPANDED_SIZE : LEADERBOARD_SIZE;
+  const visible = keys.slice(0, limit);
+
   return (
     <Panel title="Top callers">
       {keys.length === 0 ? (
         <div className="text-sm text-gray-500">No data</div>
       ) : (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-[11px] font-medium tracking-wide text-gray-500 uppercase">
-              <th className="pb-2 font-medium">Caller</th>
-              <th className="pb-2 text-right font-medium">Reqs</th>
-              <th className="pb-2 text-right font-medium">Err</th>
-              <th className="pb-2 text-right font-medium">429</th>
-              <th className="pb-2 text-right font-medium">403</th>
-            </tr>
-          </thead>
-          <tbody>
-            {keys.map((k) => (
-              <tr
-                key={k.key_prefix ?? k.discord_id ?? Math.random()}
-                className="cursor-pointer border-t border-white/5 hover:bg-white/4"
-                onClick={() =>
-                  onSelectCaller(
-                    k.discord_id ? { discord_id: k.discord_id } : k.key_prefix ? { key_prefix: k.key_prefix } : {},
-                  )
-                }
-              >
-                <td className="py-2">
-                  {k.discord_id ? (
-                    <Identity id={k.discord_id} username={k.discord_username} />
-                  ) : k.uuid ? (
-                    <Identity id={k.uuid} username={k.minecraft_username} kind="minecraft" />
-                  ) : (
-                    <span className="font-mono text-xs text-gray-400">{k.key_prefix ?? "none"}</span>
-                  )}
-                </td>
-                <td className="text-right text-gray-300">{fmtNum(k.count)}</td>
-                <td className="text-right">
-                  {k.errors > 0 ? <span className="text-danger">{fmtNum(k.errors)}</span> : <span className="text-gray-600">—</span>}
-                </td>
-                <td className="text-right">
-                  {k.rate_limited > 0 ? (
-                    <span className="text-warning">{fmtNum(k.rate_limited)}</span>
-                  ) : (
-                    <span className="text-gray-600">—</span>
-                  )}
-                </td>
-                <td className="text-right">
-                  {k.forbidden > 0 ? (
-                    <span className="text-warning">{fmtNum(k.forbidden)}</span>
-                  ) : (
-                    <span className="text-gray-600">—</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="flex flex-col divide-y divide-white/5">
+          {visible.map((k, i) => (
+            <LeaderboardRow
+              key={k.key_prefix ?? k.discord_id ?? i}
+              rank={i + 1}
+              onClick={() =>
+                onSelectCaller(k.discord_id ? { discord_id: k.discord_id } : k.key_prefix ? { key_prefix: k.key_prefix } : {})
+              }
+              left={
+                k.discord_id ? (
+                  <Identity id={k.discord_id} username={k.discord_username} />
+                ) : k.uuid ? (
+                  <Identity id={k.uuid} username={k.minecraft_username} kind="minecraft" />
+                ) : (
+                  <span className="font-mono text-xs text-gray-400">{k.key_prefix ?? "none"}</span>
+                )
+              }
+              right={
+                <span className="flex items-center gap-2">
+                  {k.errors > 0 && <span className="text-danger">{fmtNum(k.errors)} err</span>}
+                  {fmtNum(k.count)}
+                </span>
+              }
+            />
+          ))}
+        </div>
       )}
+      <ShowAllToggle expanded={expanded} onToggle={() => setExpanded((e) => !e)} hiddenCount={keys.length - LEADERBOARD_SIZE} />
     </Panel>
   );
 }
 
-function TopEndpointsPanel({ paths, onSelectPath }: { paths: TopPath[]; onSelectPath: (path: string) => void }) {
+function TopEndpointsLeaderboard({ paths, onSelectPath }: { paths: TopPath[]; onSelectPath: (path: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const limit = expanded ? LEADERBOARD_EXPANDED_SIZE : LEADERBOARD_SIZE;
+  const visible = paths.slice(0, limit);
+
   return (
     <Panel title="Top endpoints">
       {paths.length === 0 ? (
         <div className="text-sm text-gray-500">No data</div>
       ) : (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-[11px] font-medium tracking-wide text-gray-500 uppercase">
-              <th className="pb-2 font-medium">Path</th>
-              <th className="pb-2 text-right font-medium">Reqs</th>
-              <th className="pb-2 text-right font-medium">p50/p95/p99</th>
-              <th className="pb-2 text-right font-medium">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {paths.map((p) => (
-              <tr
-                key={p.path ?? Math.random()}
-                className="cursor-pointer border-t border-white/5 hover:bg-white/4"
-                onClick={() => p.path && onSelectPath(p.path)}
-              >
-                <td className="max-w-[220px] truncate py-2 font-mono text-xs">{p.path ?? "—"}</td>
-                <td className="text-right text-gray-300">{fmtNum(p.count)}</td>
-                <td className="text-right font-mono text-xs text-gray-400">
-                  {fmtMs(p.p50_ms)} / {fmtMs(p.p95_ms)} / {fmtMs(p.p99_ms)}
-                </td>
-                <td className="py-2 text-right">
-                  <div className="ml-auto">
-                    <StatusBar
-                      counts={[
-                        { label: "2xx", count: p.status_2xx, color: STATUS_COLORS.s2xx },
-                        { label: "3xx", count: p.status_3xx, color: STATUS_COLORS.s3xx },
-                        { label: "4xx", count: p.status_4xx, color: STATUS_COLORS.s4xx },
-                        { label: "5xx", count: p.status_5xx, color: STATUS_COLORS.s5xx },
-                      ]}
-                    />
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="flex flex-col divide-y divide-white/5">
+          {visible.map((p, i) => (
+            <LeaderboardRow
+              key={p.path ?? i}
+              rank={i + 1}
+              onClick={() => p.path && onSelectPath(p.path)}
+              left={<span className="font-mono text-xs">{p.path ?? "—"}</span>}
+              right={
+                <span className="flex items-center gap-2">
+                  <StatusBar
+                    counts={[
+                      { label: "2xx", count: p.status_2xx, color: STATUS_COLORS.s2xx },
+                      { label: "3xx", count: p.status_3xx, color: STATUS_COLORS.s3xx },
+                      { label: "4xx", count: p.status_4xx, color: STATUS_COLORS.s4xx },
+                      { label: "5xx", count: p.status_5xx, color: STATUS_COLORS.s5xx },
+                    ]}
+                  />
+                  {fmtNum(p.count)}
+                </span>
+              }
+            />
+          ))}
+        </div>
       )}
+      <ShowAllToggle expanded={expanded} onToggle={() => setExpanded((e) => !e)} hiddenCount={paths.length - LEADERBOARD_SIZE} />
     </Panel>
   );
 }
 
-function BudgetsPanel({ rows, onSelectCaller }: { rows: BudgetRow[]; onSelectCaller: (discordId: string) => void }) {
-  const active = rows.filter((r) => r.used > 0);
-  if (active.length === 0) return null;
+function BudgetHotspotsLeaderboard({ rows, onSelectCaller }: { rows: BudgetRow[]; onSelectCaller: (discordId: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const active = useMemo(() => rows.filter((r) => r.used > 0).sort((a, b) => b.utilization - a.utilization), [rows]);
+  const limit = expanded ? LEADERBOARD_EXPANDED_SIZE : LEADERBOARD_SIZE;
+  const visible = active.slice(0, limit);
+
   return (
-    <Panel title="Keyless auth budget utilization" description="Session and batch-lookup rate limits, ranked by usage">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left text-[11px] font-medium tracking-wide text-gray-500 uppercase">
-            <th className="pb-2 font-medium">User</th>
-            <th className="pb-2 font-medium">Budget</th>
-            <th className="pb-2 text-right font-medium">Used / Limit</th>
-            <th className="pb-2 text-right font-medium">Utilization</th>
-          </tr>
-        </thead>
-        <tbody>
-          {active.slice(0, 20).map((r) => (
-            <tr
+    <Panel title="Budget hotspots" description="Keyless session/batch rate limits">
+      {active.length === 0 ? (
+        <div className="text-sm text-gray-500">No active budgets</div>
+      ) : (
+        <div className="flex flex-col divide-y divide-white/5">
+          {visible.map((r, i) => (
+            <LeaderboardRow
               key={`${r.kind}:${r.discord_id}`}
-              className="cursor-pointer border-t border-white/5 hover:bg-white/4"
+              rank={i + 1}
               onClick={() => onSelectCaller(r.discord_id)}
-            >
-              <td className="py-2">
-                <Identity id={r.discord_id} username={r.discord_username} />
-              </td>
-              <td className="text-gray-400">{r.kind === "session" ? "requests / 5min" : "uuids / 5min"}</td>
-              <td className="text-right font-mono text-xs text-gray-300">
-                {fmtNum(r.used)} / {fmtNum(r.limit)}
-              </td>
-              <td className={`text-right ${r.utilization > 0.85 ? "text-danger" : r.utilization > 0.6 ? "text-warning" : "text-gray-300"}`}>
-                {fmtPercent(r.utilization)}
-              </td>
-            </tr>
+              left={<Identity id={r.discord_id} username={r.discord_username} />}
+              right={
+                <span className={r.utilization > 0.85 ? "text-danger" : r.utilization > 0.6 ? "text-warning" : "text-gray-400"}>
+                  {fmtPercent(r.utilization)}
+                </span>
+              }
+            />
           ))}
-        </tbody>
-      </table>
+        </div>
+      )}
+      <ShowAllToggle expanded={expanded} onToggle={() => setExpanded((e) => !e)} hiddenCount={active.length - LEADERBOARD_SIZE} />
     </Panel>
   );
 }
@@ -542,7 +538,7 @@ function LogPanel({
   };
 
   return (
-    <Panel>
+    <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <select
           className="rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-xs"
@@ -649,6 +645,6 @@ function LogPanel({
           </button>
         </div>
       </div>
-    </Panel>
+    </div>
   );
 }
