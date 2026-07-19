@@ -882,6 +882,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delete_plugin_with_installs_clears_every_trace() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let repo = PluginRegistryRepository::new(&pool);
+        let nonce = Utc::now().timestamp_nanos_opt().unwrap();
+        let discord_id = nonce;
+        let github_repo_id = nonce;
+        cleanup_rating_fixtures(&pool, discord_id, github_repo_id).await;
+
+        let (user_id,): (i64,) =
+            sqlx::query_as("INSERT INTO starfish_users (discord_id) VALUES ($1) RETURNING id")
+                .bind(discord_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let slug = format!("test-delete-{nonce}");
+        let plugin = repo
+            .create_plugin(NewPlugin {
+                slug: &slug,
+                owner_user_id: user_id,
+                repo: "test/delete-repo",
+                github_repo_id,
+                display_name: "Delete Fixture",
+                description: "fixture",
+                homepage: None,
+            })
+            .await
+            .unwrap();
+
+        let release = repo
+            .create_release(NewRelease {
+                plugin_id: plugin.id,
+                version: "1.0.0",
+                git_sha: "0000000000000000000000000000000000000000",
+                asset_url: "https://example.com/plugin.zip",
+                asset_sha256: &[0u8; 32],
+                content_sha256: &[0u8; 32],
+                asset_size: 1,
+                body_cache: b"zip",
+                readme_cache: None,
+                manifest_json: &serde_json::json!({}),
+                changelog: None,
+            })
+            .await
+            .unwrap();
+
+        repo.upsert_install(user_id, plugin.id, release.id)
+            .await
+            .unwrap();
+        repo.upsert_rating(user_id, plugin.id, 4, None)
+            .await
+            .unwrap();
+
+        let (_, installs_total) = repo.plugin_install_counts(plugin.id).await.unwrap();
+        assert_eq!(installs_total, 1);
+
+        assert!(repo.delete_plugin(plugin.id).await.unwrap());
+
+        assert!(repo.get_plugin_by_slug(&slug).await.unwrap().is_none());
+        assert!(
+            repo.get_install(user_id, plugin.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            repo.get_user_rating(user_id, plugin.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(repo.get_latest_release(plugin.id).await.unwrap().is_none());
+        assert!(repo.list_user_installs(user_id).await.unwrap().is_empty());
+
+        cleanup_rating_fixtures(&pool, discord_id, github_repo_id).await;
+    }
+
+    #[tokio::test]
     async fn list_plugins_hidden_is_superset_of_visible() {
         let Some(pool) = test_pool().await else {
             return;

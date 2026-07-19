@@ -20,11 +20,6 @@ pub struct PatchPluginRequest {
 }
 
 #[derive(Deserialize)]
-pub struct UnlistRequest {
-    pub unlisted: bool,
-}
-
-#[derive(Deserialize)]
 pub struct SetOfficialRequest {
     pub official: bool,
 }
@@ -96,18 +91,6 @@ pub async fn patch_plugin(
         .await?;
 
     Ok(Json(updated))
-}
-
-pub async fn set_unlisted(
-    State(state): State<AppState>,
-    Extension(caller): Extension<AuthenticatedStarfishUser>,
-    Path(slug): Path<String>,
-    Json(req): Json<UnlistRequest>,
-) -> Result<Json<OkResponse>, ApiError> {
-    let repo = PluginRegistryRepository::new(state.db.pool());
-    let plugin = ensure_plugin_owner_or_admin(&repo, &slug, &caller).await?;
-    repo.set_unlisted(plugin.id, req.unlisted).await?;
-    Ok(Json(OkResponse { ok: true }))
 }
 
 pub async fn set_official(
@@ -182,16 +165,6 @@ pub async fn delete_plugin(
 ) -> Result<Json<OkResponse>, ApiError> {
     let repo = PluginRegistryRepository::new(state.db.pool());
     let plugin = ensure_plugin_owner_or_admin(&repo, &slug, &caller).await?;
-
-    if !is_owner(caller.user.discord_id) {
-        let (_, installs_total) = repo.plugin_install_counts(plugin.id).await?;
-        if installs_total > 0 {
-            return Err(ApiError::Conflict(format!(
-                "plugin has {installs_total} active install(s) — unlist it instead"
-            )));
-        }
-    }
-
     repo.delete_plugin(plugin.id).await?;
     Ok(Json(OkResponse { ok: true }))
 }
