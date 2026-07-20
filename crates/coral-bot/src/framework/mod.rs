@@ -55,6 +55,8 @@ pub struct Data {
     pub sync_cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
     pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
     pub trusted_role_id: Option<RoleId>,
+    pub review_ping_role_id: Option<RoleId>,
+    pub dispute_ping_role_id: Option<RoleId>,
     pub vote_messages: Arc<Mutex<HashMap<(u64, usize, u64), u64>>>,
     pub started_at: i64,
     pub info_cache: Arc<Mutex<commands::admin::info::InfoCache>>,
@@ -273,6 +275,12 @@ impl Handler {
             "help_back" => commands::user::help::handle_help_back(ctx, component, &self.data).await,
             "guild_notifs" => {
                 commands::user::guild_notifs::handle_open(ctx, component, &self.data).await
+            }
+            "guide_ping_toggle" => {
+                commands::blacklist::reviews::handle_ping_toggle(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("guide_ping_choice:") => {
+                commands::blacklist::reviews::handle_ping_choice(ctx, component, &self.data).await
             }
             "gn_account" => {
                 commands::user::guild_notifs::handle_account(ctx, component, &self.data).await

@@ -16,6 +16,26 @@ async fn send_in_thread(
     let _ = ctx.http.send_message(channel_id, files, msg).await;
 }
 
+async fn maybe_ping_dispute(
+    ctx: &Context,
+    data: &Data,
+    channel_id: GenericChannelId,
+    was_disagreement: bool,
+    player: &PlayerEntry,
+) {
+    if was_disagreement || !has_disagreement(player) {
+        return;
+    }
+    let Some(role_id) = data.dispute_ping_role_id else {
+        return;
+    };
+    let notice = CreateMessage::new().content(format!(
+        "<@&{role_id}> Votes disagree on **{}** and need a moderator to resolve them.",
+        player.username
+    ));
+    send_in_thread(ctx, channel_id, &notice, Vec::new()).await;
+}
+
 fn can_vote(rank: crate::framework::AccessRank, member: Option<&database::Member>) -> bool {
     rank >= crate::framework::AccessRank::Helper
         || member.is_some_and(|m| database::standing::evaluate(m).can_vote)
@@ -223,15 +243,24 @@ pub async fn handle_submit(
         tag_ids.push(id);
     }
     let _ = set_forum_tags(ctx, thread_id(component.channel_id), &tag_ids).await;
+    let _ = thread_id(component.channel_id)
+        .edit(&ctx.http, EditThread::new().locked(false))
+        .await;
 
+    let mut notice_lines = Vec::new();
+    if let Some(role_id) = data.review_ping_role_id {
+        notice_lines.push(format!("<@&{role_id}>"));
+    }
+    notice_lines.push(
+        ">>> Vote on the validity of the above tags. If the player is not cheating, tag reason \
+         does not accurately describe the cheats used, or both, then reject it and explain what \
+         you'd change."
+            .to_string(),
+    );
     let notice = CreateMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
         .components(vec![CreateComponent::Container(CreateContainer::new(
-            vec![text(
-                ">>> Vote on the validity of the above tags. If the player is not cheating, tag \
-                 reason does not accurately describe the cheats used, or both, then reject it \
-                 and explain what you'd change.",
-            )],
+            vec![text(notice_lines.join("\n"))],
         ))]);
     send_in_thread(ctx, component.channel_id.into(), &notice, Vec::new()).await;
     Ok(())
@@ -296,6 +325,7 @@ pub async fn handle_approve(
     let is_staff = rank >= crate::framework::AccessRank::Helper;
 
     if !is_staff {
+        let was_disagreement = has_disagreement(&state.players[player_index]);
         let (new_accepts, new_rejects) = record_player_vote(
             data,
             thread_key,
@@ -317,6 +347,14 @@ pub async fn handle_approve(
                 .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
                 .await?;
             update_builder(ctx, data, component.channel_id, &message, &state).await?;
+            maybe_ping_dispute(
+                ctx,
+                data,
+                component.channel_id,
+                was_disagreement,
+                &state.players[player_index],
+            )
+            .await;
             announce_vote(
                 ctx,
                 data,
@@ -566,6 +604,7 @@ pub async fn handle_reject(
         .accept_votes
         .contains(&discord_id);
 
+    let was_disagreement = has_disagreement(&state.players[player_index]);
     let (new_accepts, new_rejects) = record_player_vote(
         data,
         thread_key,
@@ -587,6 +626,14 @@ pub async fn handle_reject(
             .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
             .await?;
         update_builder(ctx, data, component.channel_id, &message, &state).await?;
+        maybe_ping_dispute(
+            ctx,
+            data,
+            component.channel_id,
+            was_disagreement,
+            &state.players[player_index],
+        )
+        .await;
         announce_vote(
             ctx,
             data,
