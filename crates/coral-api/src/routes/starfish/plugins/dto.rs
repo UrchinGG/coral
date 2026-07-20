@@ -39,7 +39,6 @@ pub struct PluginDetailDto {
     pub repo_url: String,
     pub latest_release: ReleaseInfoDto,
     pub releases: Vec<ReleaseInfoDto>,
-    pub readme: Option<String>,
     pub installs_30d: i64,
     pub installs_total: i64,
     pub rating_mean: Option<f32>,

@@ -172,7 +172,6 @@ pub struct NewRelease<'a> {
     pub content_sha256: &'a [u8],
     pub asset_size: i32,
     pub body_cache: &'a [u8],
-    pub readme_cache: Option<&'a str>,
     pub manifest_json: &'a serde_json::Value,
     pub changelog: Option<&'a str>,
 }
@@ -382,8 +381,8 @@ impl<'a> PluginRegistryRepository<'a> {
         sqlx::query_as(
             "INSERT INTO plugin_releases
                 (plugin_id, version, git_sha, asset_url, asset_sha256, content_sha256, asset_size,
-                 body_cache, readme_cache, manifest_json, changelog)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                 body_cache, manifest_json, changelog)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              RETURNING id, plugin_id, version, git_sha, asset_url, asset_sha256, content_sha256,
                        asset_size, manifest_json, changelog, yanked, yanked_at, yanked_reason, created_at",
         )
@@ -395,7 +394,6 @@ impl<'a> PluginRegistryRepository<'a> {
         .bind(r.content_sha256)
         .bind(r.asset_size)
         .bind(r.body_cache)
-        .bind(r.readme_cache)
         .bind(r.manifest_json)
         .bind(r.changelog)
         .fetch_one(self.pool)
@@ -497,15 +495,6 @@ impl<'a> PluginRegistryRepository<'a> {
             .execute(self.pool)
             .await?;
         Ok(())
-    }
-
-    pub async fn get_release_readme(&self, release_id: i64) -> Result<Option<String>, sqlx::Error> {
-        let row: Option<(Option<String>,)> =
-            sqlx::query_as("SELECT readme_cache FROM plugin_releases WHERE id = $1")
-                .bind(release_id)
-                .fetch_optional(self.pool)
-                .await?;
-        Ok(row.and_then(|(r,)| r))
     }
 
     pub async fn yank_release(
@@ -923,7 +912,6 @@ mod tests {
                 content_sha256: &[0u8; 32],
                 asset_size: 1,
                 body_cache: b"zip",
-                readme_cache: None,
                 manifest_json: &serde_json::json!({}),
                 changelog: None,
             })
@@ -1021,7 +1009,6 @@ mod tests {
                 content_sha256: b"placeholder",
                 asset_size: 42,
                 body_cache: b"zip-bytes",
-                readme_cache: None,
                 manifest_json: &serde_json::json!({}),
                 changelog: None,
             })
@@ -1102,7 +1089,6 @@ mod tests {
             content_sha256: content_hash,
             asset_size: 42,
             body_cache: b"",
-            readme_cache: None,
             manifest_json: &serde_json::json!({}),
             changelog: None,
         })

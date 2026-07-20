@@ -66,7 +66,6 @@ pub async fn publish_plugin(
     let ExtractedPlugin {
         manifest,
         manifest_json,
-        readme,
     } = manifest::extract_and_validate(&zip_bytes, &req.version)?;
 
     let plugins_repo = PluginRegistryRepository::new(state.db.pool());
@@ -142,7 +141,6 @@ pub async fn publish_plugin(
             content_sha256: &content_sha,
             asset_size: asset.size,
             body_cache: &zip_bytes,
-            readme_cache: readme.as_deref(),
             manifest_json: &manifest_json,
             changelog: release.body.as_deref(),
         })

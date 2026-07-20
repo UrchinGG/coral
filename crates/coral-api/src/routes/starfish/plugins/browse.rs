@@ -114,8 +114,6 @@ pub async fn get_plugin(
         None => None,
     };
 
-    let readme = repo.get_release_readme(latest.id).await?;
-
     let author = fetch_author(&state, plugin.owner_user_id).await;
     let repo_url = format!("https://github.com/{}", plugin.repo);
 
@@ -135,7 +133,6 @@ pub async fn get_plugin(
         repo_url,
         latest_release,
         releases,
-        readme,
         installs_30d,
         installs_total,
         rating_mean,

@@ -43,7 +43,6 @@ pub enum Dependency {
 pub struct ExtractedPlugin {
     pub manifest: PluginManifest,
     pub manifest_json: serde_json::Value,
-    pub readme: Option<String>,
 }
 
 pub fn extract_and_validate(
@@ -72,12 +71,9 @@ pub fn extract_and_validate(
     validate_manifest(&manifest, expected_version)?;
     validate_entry_file(&mut archive, &manifest.name)?;
 
-    let readme = read_file(&mut archive, "README.md").and_then(|b| String::from_utf8(b).ok());
-
     Ok(ExtractedPlugin {
         manifest,
         manifest_json,
-        readme,
     })
 }
 
