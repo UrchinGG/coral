@@ -211,11 +211,6 @@ pub fn register() -> CreateCommand<'static> {
                 .required(true),
             ),
         )
-        .add_option(CreateCommandOption::new(
-            CommandOptionType::SubCommand,
-            "guide",
-            "Staff: post the pinned tag-review guide",
-        ))
 }
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
@@ -226,7 +221,6 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         Some("manage") => run_manage(ctx, command, data).await,
         Some("lock") => run_lock(ctx, command, data).await,
         Some("unlock") => run_unlock(ctx, command, data).await,
-        Some("guide") => super::reviews::run_guide(ctx, command, data).await,
         _ => Ok(()),
     }
 }

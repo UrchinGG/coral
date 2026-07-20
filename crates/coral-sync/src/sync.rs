@@ -15,7 +15,7 @@ use database::{
     MemberRepository,
 };
 
-use crate::{expr, framework::Data};
+use crate::framework::Data;
 
 pub const NICKNAME_MAX_LEN: usize = 32;
 const BULK_CONCURRENCY: usize = 5;
@@ -28,6 +28,48 @@ pub fn cancel_token() -> CancelToken {
     Arc::new(AtomicBool::new(false))
 }
 
+#[derive(Clone, Default)]
+pub struct Progress {
+    inner: Option<Arc<ProgressInner>>,
+}
+
+struct ProgressInner {
+    processed: std::sync::atomic::AtomicUsize,
+    total: std::sync::atomic::AtomicUsize,
+    report: Box<dyn Fn(usize, usize) + Send + Sync>,
+}
+
+impl Progress {
+    pub fn none() -> Self {
+        Self { inner: None }
+    }
+
+    pub fn new(report: impl Fn(usize, usize) + Send + Sync + 'static) -> Self {
+        Self {
+            inner: Some(Arc::new(ProgressInner {
+                processed: std::sync::atomic::AtomicUsize::new(0),
+                total: std::sync::atomic::AtomicUsize::new(0),
+                report: Box::new(report),
+            })),
+        }
+    }
+
+    pub fn begin(&self, total: usize) {
+        if let Some(inner) = &self.inner {
+            inner.processed.store(0, Ordering::Relaxed);
+            inner.total.store(total, Ordering::Relaxed);
+            (inner.report)(0, total);
+        }
+    }
+
+    pub fn incr(&self) {
+        if let Some(inner) = &self.inner {
+            let processed = inner.processed.fetch_add(1, Ordering::Relaxed) + 1;
+            (inner.report)(processed, inner.total.load(Ordering::Relaxed));
+        }
+    }
+}
+
 async fn yield_to_interactions(data: &Data) {
     while data.active_interactions.load(Ordering::Relaxed) > 0 {
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -36,6 +78,10 @@ async fn yield_to_interactions(data: &Data) {
 
 fn is_cancelled(token: &CancelToken) -> bool {
     token.load(Ordering::Relaxed)
+}
+
+pub(crate) fn is_home_guild(data: &Data, guild_id: GuildId) -> bool {
+    data.home_guild_id == Some(guild_id)
 }
 
 fn extract_custom_nickname(
@@ -104,6 +150,9 @@ pub async fn handle_member_update(ctx: &Context, data: &Data, member: &Member) {
         return;
     }
     let guild_id = member.guild_id;
+    if !is_home_guild(data, guild_id) {
+        return;
+    }
     let discord_id = member.user.id.get() as i64;
 
     let config_repo = GuildConfigRepository::new(data.db.pool());
@@ -163,6 +212,9 @@ pub fn handle_message_activity(ctx: &Context, data: &Data, message: &Message) {
     let Some(guild_id) = message.guild_id else {
         return;
     };
+    if !is_home_guild(data, guild_id) {
+        return;
+    }
     let user_id = message.author.id;
     if is_on_cooldown(data, user_id) {
         return;
@@ -178,6 +230,11 @@ pub fn handle_message_activity(ctx: &Context, data: &Data, message: &Message) {
 }
 
 pub async fn sync_user(ctx: Context, data: Data, user_id: UserId) {
+    let Some(guild_id) = data.home_guild_id else {
+        tracing::debug!("User sync skipped: HOME_GUILD_ID not configured");
+        return;
+    };
+
     let uuid = match MemberRepository::new(data.db.pool())
         .get_by_discord_id(user_id.get() as i64)
         .await
@@ -195,44 +252,45 @@ pub async fn sync_user(ctx: Context, data: Data, user_id: UserId) {
     };
 
     let config_repo = GuildConfigRepository::new(data.db.pool());
-    let configs = match config_repo.get_all().await {
-        Ok(c) => c,
+    let config = match config_repo.get(guild_id.get() as i64).await {
+        Ok(Some(c)) => c,
+        _ => return,
+    };
+    let rules = config_repo
+        .get_role_rules(guild_id.get() as i64)
+        .await
+        .unwrap_or_default();
+
+    let member = match guild_id.member(&ctx.http, user_id).await {
+        Ok(m) => m,
         Err(_) => return,
     };
 
-    for config in configs {
-        let guild_id = GuildId::new(config.guild_id as u64);
-        let member = match guild_id.member(&ctx.http, user_id).await {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        let rules = config_repo
-            .get_role_rules(config.guild_id)
-            .await
-            .unwrap_or_default();
-
-        if let Err(e) = sync_member(
-            &ctx,
-            &data,
-            guild_id,
-            &member,
-            &uuid,
-            &config,
-            &rules,
-            &hypixel_data,
-            false,
-        )
-        .await
-        {
-            tracing::warn!("User sync failed for {} in {guild_id}: {e}", user_id.get());
-        }
+    if let Err(e) = sync_member(
+        &ctx,
+        &data,
+        guild_id,
+        &member,
+        &uuid,
+        &config,
+        &rules,
+        &hypixel_data,
+        false,
+    )
+    .await
+    {
+        tracing::warn!("User sync failed for {} in {guild_id}: {e}", user_id.get());
     }
 }
 
-pub async fn sync_guild_cached(ctx: Context, data: Data, guild_id: GuildId, cancel: CancelToken) {
-    if let Err(e) = try_sync_guild(&ctx, &data, guild_id, &cancel).await {
-        tracing::warn!("Guild sync failed for {guild_id}: {e}");
-    }
+pub async fn sync_guild_cached(
+    ctx: &Context,
+    data: &Data,
+    guild_id: GuildId,
+    cancel: &CancelToken,
+    progress: &Progress,
+) -> Result<()> {
+    try_sync_guild(ctx, data, guild_id, cancel, progress).await
 }
 
 async fn try_sync_from_message(
@@ -288,6 +346,7 @@ async fn try_sync_guild(
     data: &Data,
     guild_id: GuildId,
     cancel: &CancelToken,
+    progress: &Progress,
 ) -> Result<()> {
     let config_repo = GuildConfigRepository::new(data.db.pool());
     let config = match config_repo.get(guild_id.get() as i64).await? {
@@ -302,14 +361,17 @@ async fn try_sync_guild(
         .filter(|m| !m.user.bot())
         .collect();
     let total = non_bots.len();
+    progress.begin(total);
 
     let mut updates = 0usize;
     for chunk in non_bots.chunks(MEMBERS_PER_PAGE as usize) {
         if is_cancelled(cancel) {
             break;
         }
-        let (_, page_updates) =
-            sync_member_batch(ctx, data, guild_id, chunk, &config, &rules, cancel).await;
+        let (_, page_updates) = sync_member_batch(
+            ctx, data, guild_id, chunk, &config, &rules, cancel, progress,
+        )
+        .await;
         updates += page_updates;
     }
 
@@ -324,6 +386,7 @@ async fn try_sync_guild(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn sync_member_batch(
     ctx: &Context,
     data: &Data,
@@ -332,6 +395,7 @@ async fn sync_member_batch(
     config: &GuildConfig,
     rules: &[GuildRoleRule],
     cancel: &CancelToken,
+    progress: &Progress,
 ) -> (usize, usize) {
     let members_repo = MemberRepository::new(data.db.pool());
     let discord_ids: Vec<i64> = members.iter().map(|m| m.user.id.get() as i64).collect();
@@ -395,6 +459,7 @@ async fn sync_member_batch(
     let mut updates = 0;
     while let Some(result) = tasks.join_next().await {
         total += 1;
+        progress.incr();
         if matches!(result, Ok(true)) {
             updates += 1
         }
@@ -530,19 +595,15 @@ async fn sync_unlinked_member(
     Ok(true)
 }
 
-pub async fn clear_nicknames(ctx: Context, data: Data, guild_id: GuildId, cancel: CancelToken) {
-    if let Err(e) = try_clear_nicknames(&ctx, &data, guild_id, &cancel).await {
-        tracing::warn!("Failed to clear nicknames for {guild_id}: {e}");
-    }
-}
-
-async fn try_clear_nicknames(
+pub async fn clear_nicknames(
     ctx: &Context,
     data: &Data,
     guild_id: GuildId,
     cancel: &CancelToken,
+    progress: &Progress,
 ) -> Result<()> {
     let targets = scan_members(ctx, guild_id, |m| m.nick.is_some() && !m.user.bot()).await?;
+    progress.begin(targets.len());
 
     for user_id in targets {
         if is_cancelled(cancel) {
@@ -562,34 +623,25 @@ async fn try_clear_nicknames(
         let _ = guild_id
             .edit_member(&ctx.http, user_id, EditMember::new().nickname(""))
             .await;
+        progress.incr();
     }
 
     Ok(())
 }
 
 pub async fn clear_role(
-    ctx: Context,
-    data: Data,
-    guild_id: GuildId,
-    role_id: RoleId,
-    cancel: CancelToken,
-) {
-    if let Err(e) = try_clear_role(&ctx, &data, guild_id, role_id, &cancel).await {
-        tracing::warn!("Failed to clear role {role_id} in {guild_id}: {e}");
-    }
-}
-
-async fn try_clear_role(
     ctx: &Context,
     data: &Data,
     guild_id: GuildId,
     role_id: RoleId,
     cancel: &CancelToken,
+    progress: &Progress,
 ) -> Result<()> {
     let targets = scan_members(ctx, guild_id, |m| {
         !m.user.bot() && m.roles.contains(&role_id)
     })
     .await?;
+    progress.begin(targets.len());
 
     for user_id in targets {
         if is_cancelled(cancel) {
@@ -600,33 +652,10 @@ async fn try_clear_role(
             .http
             .remove_member_role(guild_id, user_id, role_id, None)
             .await;
+        progress.incr();
     }
 
     Ok(())
-}
-
-pub async fn swap_role(
-    ctx: Context,
-    data: Data,
-    guild_id: GuildId,
-    old_role: Option<RoleId>,
-    new_role: Option<RoleId>,
-    config_field: RoleConfigField,
-    cancel: CancelToken,
-) {
-    if let Err(e) = try_swap_role(
-        &ctx,
-        &data,
-        guild_id,
-        old_role,
-        new_role,
-        config_field,
-        &cancel,
-    )
-    .await
-    {
-        tracing::warn!("Failed to swap role in {guild_id}: {e}");
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -635,7 +664,18 @@ pub enum RoleConfigField {
     Unlinked,
 }
 
-async fn try_swap_role(
+impl RoleConfigField {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "link" => Some(Self::Link),
+            "unlinked" => Some(Self::Unlinked),
+            _ => None,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn swap_role(
     ctx: &Context,
     data: &Data,
     guild_id: GuildId,
@@ -643,6 +683,7 @@ async fn try_swap_role(
     new_role: Option<RoleId>,
     config_field: RoleConfigField,
     cancel: &CancelToken,
+    progress: &Progress,
 ) -> Result<()> {
     if old_role == new_role {
         return Ok(());
@@ -650,6 +691,7 @@ async fn try_swap_role(
     let Some(old) = old_role else { return Ok(()) };
 
     let targets = scan_members(ctx, guild_id, |m| !m.user.bot() && m.roles.contains(&old)).await?;
+    progress.begin(targets.len());
 
     for user_id in targets {
         if is_cancelled(cancel) {
@@ -670,6 +712,7 @@ async fn try_swap_role(
             .http
             .remove_member_role(guild_id, user_id, old, None)
             .await;
+        progress.incr();
     }
 
     Ok(())
@@ -715,31 +758,36 @@ fn set_cooldown(data: &Data, user_id: UserId) {
 }
 
 pub async fn startup_sync(ctx: Context, data: Data) {
+    let Some(guild_id) = data.home_guild_id else {
+        tracing::info!("Startup sync skipped: HOME_GUILD_ID not configured");
+        return;
+    };
+
     let config_repo = GuildConfigRepository::new(data.db.pool());
-    let configs = match config_repo.get_all().await {
-        Ok(c) => c,
+    let config = match config_repo.get(guild_id.get() as i64).await {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            tracing::info!("Startup sync skipped: home guild has no sync config");
+            return;
+        }
         Err(e) => {
-            tracing::error!("Startup sync failed to load configs: {e}");
+            tracing::error!("Startup sync failed to load config: {e}");
             return;
         }
     };
-
-    for config in configs {
-        let guild_id = GuildId::new(config.guild_id as u64);
-        let rules = config_repo
-            .get_role_rules(config.guild_id)
-            .await
-            .unwrap_or_default();
-        if config.nickname_template.is_none() && rules.is_empty() {
-            continue;
-        }
-
-        tracing::info!("Startup sync starting for guild {guild_id}");
-        if let Err(e) = try_sync_guild(&ctx, &data, guild_id, &cancel_token()).await {
-            tracing::warn!("Startup sync failed for guild {guild_id}: {e}");
-        }
+    let rules = config_repo
+        .get_role_rules(guild_id.get() as i64)
+        .await
+        .unwrap_or_default();
+    if config.nickname_template.is_none() && rules.is_empty() {
+        return;
     }
 
+    tracing::info!("Startup sync starting for guild {guild_id}");
+    if let Err(e) = try_sync_guild(&ctx, &data, guild_id, &cancel_token(), &Progress::none()).await
+    {
+        tracing::warn!("Startup sync failed for guild {guild_id}: {e}");
+    }
     tracing::info!("Startup sync complete");
 }
 

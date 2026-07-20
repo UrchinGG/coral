@@ -4,6 +4,8 @@ const NAV_ITEMS = [
   { to: "/", label: "Overview", end: true, extraMatch: [] as string[] },
   { to: "/diagnostics", label: "API Diagnostics", end: false, extraMatch: [] },
   { to: "/members", label: "Members & Moderation", end: false, extraMatch: ["/players"] },
+  { to: "/servers", label: "Server Sync", end: false, extraMatch: [] },
+  { to: "/review-guide", label: "Review Guide", end: false, extraMatch: [] },
   { to: "/plugins", label: "Plugins", end: false, extraMatch: [] },
   { to: "/data", label: "Data", end: false, extraMatch: [] },
 ];

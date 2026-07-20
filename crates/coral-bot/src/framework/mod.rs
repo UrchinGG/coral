@@ -55,8 +55,6 @@ pub struct Data {
     pub sync_cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
     pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
     pub trusted_role_id: Option<RoleId>,
-    pub review_ping_role_id: Option<RoleId>,
-    pub dispute_ping_role_id: Option<RoleId>,
     pub vote_messages: Arc<Mutex<HashMap<(u64, usize, u64), u64>>>,
     pub started_at: i64,
     pub info_cache: Arc<Mutex<commands::admin::info::InfoCache>>,

@@ -20,6 +20,14 @@ pub fn spawn_sync_subscriber(ctx: Context, data: Data) {
                         SyncEvent::SyncUser { discord_id } => {
                             crate::sync::sync_user(ctx, data, UserId::new(discord_id)).await;
                         }
+                        SyncEvent::GuildJobQueued { job_id } => {
+                            crate::jobs::spawn_job(ctx, data, job_id);
+                        }
+                        SyncEvent::GuildJobCancelRequested { job_id } => {
+                            crate::jobs::request_cancel(&data, job_id);
+                        }
+                        SyncEvent::GuildJobProgress { .. } | SyncEvent::GuildJobFinished { .. } => {
+                        }
                     }
                 }
             })

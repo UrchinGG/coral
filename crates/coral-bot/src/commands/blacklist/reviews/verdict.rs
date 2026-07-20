@@ -26,7 +26,11 @@ async fn maybe_ping_dispute(
     if was_disagreement || !has_disagreement(player) {
         return;
     }
-    let Some(role_id) = data.dispute_ping_role_id else {
+    let (_, dispute_role) = database::ReviewGuideRepository::new(data.db.pool())
+        .get_ping_roles()
+        .await
+        .unwrap_or((None, None));
+    let Some(role_id) = dispute_role.map(|id| RoleId::new(id as u64)) else {
         return;
     };
     let notice = CreateMessage::new().content(format!(
@@ -248,7 +252,11 @@ pub async fn handle_submit(
         .await;
 
     let mut notice_lines = Vec::new();
-    if let Some(role_id) = data.review_ping_role_id {
+    let (review_role, _) = database::ReviewGuideRepository::new(data.db.pool())
+        .get_ping_roles()
+        .await
+        .unwrap_or((None, None));
+    if let Some(role_id) = review_role {
         notice_lines.push(format!("<@&{role_id}>"));
     }
     notice_lines.push(

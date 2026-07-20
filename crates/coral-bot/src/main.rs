@@ -95,14 +95,6 @@ async fn init_data() -> Result<Data> {
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .map(RoleId::new),
-        review_ping_role_id: env::var("REVIEW_PING_ROLE_ID")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .map(RoleId::new),
-        dispute_ping_role_id: env::var("DISPUTE_PING_ROLE_ID")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .map(RoleId::new),
         vote_messages: Arc::new(Mutex::new(HashMap::new())),
         started_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

@@ -407,3 +407,131 @@ export type ResolvedIds = {
   uuids: Record<string, string>;
   discord: Record<string, string>;
 };
+
+export type DiscordRoleView = {
+  id: string;
+  name: string;
+  color: string | null;
+  position: number;
+  managed: boolean;
+  assignable: boolean;
+};
+
+export type DiscordChannelView = {
+  id: string;
+  name: string;
+  category: string | null;
+};
+
+export type DiscordServerSummary = {
+  guild_id: string;
+  name: string;
+  icon_url: string | null;
+  member_count: number;
+  linked_members: number;
+  has_link_role: boolean;
+  has_unlinked_role: boolean;
+  has_link_channel: boolean;
+  has_nickname_template: boolean;
+  autorole_count: number;
+};
+
+export type DiscordServerListResponse = {
+  servers: DiscordServerSummary[];
+};
+
+export type ServerSyncConfig = {
+  link_role_id: string | null;
+  unlinked_role_id: string | null;
+  link_channel_id: string | null;
+  link_message_id: string | null;
+  nickname_template: string | null;
+};
+
+export type AutoroleRuleView = {
+  id: number;
+  role_id: string;
+  condition: string;
+};
+
+export type DiscordServerDetail = {
+  guild: {
+    guild_id: string;
+    name: string;
+    icon_url: string | null;
+    member_count: number;
+    linked_members: number;
+  };
+  roles: DiscordRoleView[];
+  channels: DiscordChannelView[];
+  config: ServerSyncConfig;
+  rules: AutoroleRuleView[];
+  preview_context: Record<string, unknown> | null;
+};
+
+export type SyncJobKind = "resync" | "clear_nicknames" | "strip_role" | "swap_role";
+
+export type SyncJobState = "queued" | "running" | "done" | "cancelled" | "failed";
+
+export type SyncJobView = {
+  id: number;
+  kind: SyncJobKind;
+  label: string;
+  state: SyncJobState;
+  processed: number;
+  total: number;
+  started_at: string;
+  finished_at: string | null;
+};
+
+export type SyncJobsResponse = {
+  jobs: SyncJobView[];
+};
+
+export type StartedJobResponse = {
+  job: SyncJobView | null;
+};
+
+export type GuideTagDef = {
+  key: string;
+  name: string;
+  emoji: string;
+  description: string;
+};
+
+export type GuideSectionView = {
+  key: string;
+  heading: string;
+  body: string;
+};
+
+export type GuideContent = {
+  title: string;
+  tags: GuideTagDef[];
+  sections: GuideSectionView[];
+  footer: string;
+};
+
+export type GuideStatus = {
+  posted: boolean;
+  forum_channel_id: string | null;
+  forum_channel_name: string | null;
+  thread_id: string | null;
+  posted_at: string | null;
+  posted_by_username: string | null;
+  up_to_date: boolean;
+};
+
+export type PingRolesConfig = {
+  review_role_id: string | null;
+  dispute_role_id: string | null;
+  review_opt_ins: number;
+  dispute_opt_ins: number;
+};
+
+export type ReviewGuideResponse = {
+  content: GuideContent;
+  status: GuideStatus;
+  ping_roles: PingRolesConfig;
+  home_roles: DiscordRoleView[];
+};

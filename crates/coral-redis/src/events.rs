@@ -109,12 +109,31 @@ impl EventSubscriber {
     }
 }
 
-const SYNC_CHANNEL: &str = "sync:events";
+pub const SYNC_CHANNEL: &str = "sync:events";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SyncEvent {
-    SyncUser { discord_id: u64 },
+    SyncUser {
+        discord_id: u64,
+    },
+    GuildJobQueued {
+        job_id: i64,
+    },
+    GuildJobCancelRequested {
+        job_id: i64,
+    },
+    GuildJobProgress {
+        job_id: i64,
+        guild_id: u64,
+        processed: i32,
+        total: i32,
+    },
+    GuildJobFinished {
+        job_id: i64,
+        guild_id: u64,
+        status: String,
+    },
 }
 
 #[derive(Clone)]

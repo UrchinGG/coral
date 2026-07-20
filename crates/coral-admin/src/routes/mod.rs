@@ -15,6 +15,8 @@ mod players;
 mod plugins;
 mod requests;
 mod resolve;
+mod review_guide;
+mod server;
 
 pub fn api_router() -> Router<AppState> {
     Router::new()
@@ -27,6 +29,8 @@ pub fn api_router() -> Router<AppState> {
         .nest("/plugins", plugins::router())
         .nest("/actions", actions::router())
         .nest("/overview", overview::router())
+        .nest("/server", server::router())
+        .nest("/review-guide", review_guide::router())
 }
 
 #[derive(RustEmbed)]

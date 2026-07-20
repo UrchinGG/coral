@@ -10,6 +10,7 @@ use crate::state::{AppState, OAuthConfig};
 
 mod audit;
 mod auth;
+mod discord;
 mod identity;
 mod routes;
 mod serde_id;

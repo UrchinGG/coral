@@ -74,8 +74,39 @@ pub fn build_link_parts(
     parts
 }
 
+pub async fn handle_link_button(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let discord_id = component.user.id.get();
+    let repo = MemberRepository::new(data.db.pool());
+    if repo.get_by_discord_id(discord_id as i64).await?.is_none() {
+        repo.create(discord_id as i64).await?;
+    }
+
+    let components = crate::commands::admin::accounts_panel::build_accounts_for_self(
+        data,
+        discord_id,
+        &component.user.name,
+    )
+    .await?;
+
+    component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
+                    .components(components),
+            ),
+        )
+        .await?;
+    Ok(())
+}
+
 pub async fn handle_guild_join(ctx: &Context, new_member: &Member, data: &Data) -> Result<()> {
-    if new_member.user.bot() {
+    if new_member.user.bot() || !crate::sync::is_home_guild(data, new_member.guild_id) {
         return Ok(());
     }
     let discord_id = new_member.user.id.get() as i64;

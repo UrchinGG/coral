@@ -11,6 +11,8 @@ import { PlayerDetail } from "./pages/PlayerDetail";
 import { Players } from "./pages/Players";
 import { PluginDetail } from "./pages/PluginDetail";
 import { Plugins } from "./pages/Plugins";
+import { ReviewGuide } from "./pages/ReviewGuide";
+import { ServerSync } from "./pages/ServerSync";
 
 function App() {
   const me = useMe();
@@ -33,6 +35,8 @@ function App() {
           <Route path="/members/:id" element={<MemberDetail />} />
           <Route path="/players" element={<Players />} />
           <Route path="/players/:uuid" element={<PlayerDetail />} />
+          <Route path="/servers" element={<ServerSync />} />
+          <Route path="/review-guide" element={<ReviewGuide />} />
           <Route path="/plugins" element={<Plugins />} />
           <Route path="/plugins/:slug" element={<PluginDetail />} />
           <Route path="/data" element={<Data />} />

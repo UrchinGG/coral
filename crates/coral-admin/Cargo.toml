@@ -12,14 +12,19 @@ path = "src/main.rs"
 [dependencies]
 database = { path = "../database" }
 coral-redis = { path = "../coral-redis" }
+blacklist = { path = "../blacklist" }
+expr.workspace = true
 clients.workspace = true
 
 axum.workspace = true
 tower-http.workspace = true
 tokio.workspace = true
+tokio-stream = "0.1"
+futures-util = "0.3"
 sqlx.workspace = true
 redis.workspace = true
 reqwest.workspace = true
+serenity.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true

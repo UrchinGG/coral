@@ -15,9 +15,11 @@ mod members;
 mod periods;
 mod plugin_registry;
 mod pool;
+mod review_guide;
 mod sessions;
 pub mod standing;
 pub mod starfish;
+mod sync_jobs;
 mod tag_ops;
 
 pub use access::AccessRank;
@@ -41,6 +43,8 @@ pub use plugin_registry::{
     PluginSortMode, PluginSummary, ReleaseBody,
 };
 pub use pool::Database;
+pub use review_guide::{ReviewGuideConfig, ReviewGuideRepository};
 pub use sessions::{SessionMarker, SessionRepository};
 pub use starfish::StarfishRepository;
+pub use sync_jobs::{GuildSyncJob, GuildSyncJobRepository};
 pub use tag_ops::{TagOp, TagOpError};

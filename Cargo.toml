@@ -15,6 +15,7 @@ members = [
     "crates/mc-proto",
     "crates/starfish-crypto",
     "crates/coral-sync",
+    "crates/expr",
 ]
 
 [workspace.package]
@@ -79,6 +80,7 @@ coral-redis = { path = "crates/coral-redis" }
 render = { path = "crates/render" }
 starfish-crypto = { path = "crates/starfish-crypto" }
 mc-proto = { path = "crates/mc-proto" }
+expr = { path = "crates/expr" }
 
 # Crypto & encoding
 hex = "0.4"

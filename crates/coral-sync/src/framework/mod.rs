@@ -29,8 +29,9 @@ pub struct Data {
     pub owner_ids: Vec<u64>,
     pub home_guild_id: Option<GuildId>,
     pub redis_url: String,
+    pub redis: Option<coral_redis::RedisPool>,
     pub sync_cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
-    pub sync_cancel_tokens: Arc<Mutex<HashMap<GuildId, crate::sync::CancelToken>>>,
+    pub job_cancel_tokens: Arc<Mutex<HashMap<i64, crate::sync::CancelToken>>>,
     pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -50,22 +51,15 @@ impl Handler {
     }
 
     fn commands() -> Vec<CreateCommand<'static>> {
-        vec![
-            commands::admin::setup::register()
-                .integration_types(vec![InstallationContext::Guild])
-                .contexts(vec![InteractionContext::Guild]),
-        ]
+        Vec::new()
     }
 
     async fn handle_command(
         &self,
-        ctx: &Context,
-        command: &CommandInteraction,
+        _ctx: &Context,
+        _command: &CommandInteraction,
     ) -> anyhow::Result<()> {
-        match command.data.name.as_str() {
-            "setup" => commands::admin::setup::run(ctx, command, &self.data).await,
-            _ => Ok(()),
-        }
+        Ok(())
     }
 
     async fn handle_component(
@@ -82,63 +76,7 @@ impl Handler {
 
         match id {
             "setup_link" => {
-                commands::admin::setup::handle_link_button(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_link_role_select:") => {
-                commands::admin::setup::handle_link_role_select(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_unlinked_role_select:") => {
-                commands::admin::setup::handle_unlinked_role_select(ctx, component, &self.data)
-                    .await
-            }
-            _ if id.starts_with("setup_nickname_edit:") => {
-                commands::admin::setup::handle_nickname_edit_button(ctx, component, &self.data)
-                    .await
-            }
-            _ if id.starts_with("setup_nickname_clear:") => {
-                commands::admin::setup::handle_nickname_clear_button(ctx, component, &self.data)
-                    .await
-            }
-            _ if id.starts_with("setup_nickname:") => {
-                commands::admin::setup::handle_nickname_button(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_link_channel_select:") => {
-                commands::admin::setup::handle_link_channel_select(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_autorole:") => {
-                commands::admin::setup::handle_autorole_button(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_role_config:") => {
-                commands::admin::setup::handle_role_config_select(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_condition_edit:") => {
-                commands::admin::setup::handle_condition_edit_button(ctx, component, &self.data)
-                    .await
-            }
-            _ if id.starts_with("setup_rule_edit:") => {
-                commands::admin::setup::handle_rule_edit_button(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_rule_remove:") => {
-                commands::admin::setup::handle_rule_remove_button(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_role_strip:") => {
-                commands::admin::setup::handle_role_strip_button(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_nickname_reset:") => {
-                commands::admin::setup::handle_nickname_reset_button(ctx, component, &self.data)
-                    .await
-            }
-            _ if id.starts_with("setup_autorole_back:") => {
-                commands::admin::setup::handle_cancel_button(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_autorole_cancel:") => {
-                commands::admin::setup::handle_autorole_button(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_sync_cancel:") => {
-                commands::admin::setup::handle_sync_cancel_button(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("setup_cancel:") => {
-                commands::admin::setup::handle_cancel_button(ctx, component, &self.data).await
+                commands::user::link::handle_link_button(ctx, component, &self.data).await
             }
             _ => {
                 tracing::warn!("unhandled component interaction: {id}");
@@ -193,15 +131,6 @@ impl Handler {
         let id = modal.data.custom_id.as_str();
 
         match id {
-            _ if id.starts_with("setup_nickname_modal:") => {
-                commands::admin::setup::handle_nickname_modal(ctx, modal, &self.data).await
-            }
-            _ if id.starts_with("setup_add_rule_modal:") => {
-                commands::admin::setup::handle_add_rule_modal(ctx, modal, &self.data).await
-            }
-            _ if id.starts_with("setup_rule_edit_modal:") => {
-                commands::admin::setup::handle_rule_edit_modal(ctx, modal, &self.data).await
-            }
             _ if id.starts_with("link_add_account_modal:") => {
                 commands::admin::accounts_panel::handle_add_account_modal(ctx, modal, &self.data)
                     .await
@@ -262,6 +191,7 @@ impl EventHandler for Handler {
                 let ctx = ctx.clone();
                 let data = self.data.clone();
                 crate::events::spawn_sync_subscriber(ctx.clone(), data.clone());
+                crate::jobs::spawn_startup_sweep(ctx.clone(), data.clone());
                 tokio::spawn(async move { crate::sync::startup_sync(ctx, data).await });
             }
             FullEvent::InteractionCreate { interaction, .. } => {

@@ -42,6 +42,7 @@ async fn init_data() -> Result<Data> {
         tracing::warn!("Migration skipped: {e}");
     }
     let api = CoralApiClient::new(api_url, api_key);
+    let redis = coral_sync::jobs::connect_redis(&redis_url).await;
 
     let home_guild_id = parse_guild_id("HOME_GUILD_ID");
 
@@ -51,8 +52,9 @@ async fn init_data() -> Result<Data> {
         owner_ids: parse_owner_ids(),
         home_guild_id,
         redis_url,
+        redis,
         sync_cooldowns: Arc::new(Mutex::new(HashMap::new())),
-        sync_cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
+        job_cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
         active_interactions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     })
 }
