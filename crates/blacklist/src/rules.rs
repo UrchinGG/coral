@@ -20,7 +20,7 @@ pub static SNIPER: TagDefinition = TagDefinition {
     name: "sniper",
     display_name: "Sniper",
     icon: "mdi-alert-octagram",
-    emote: "<:sniper:1459106167270932618>",
+    emote: "<:sniper:1332971069694279690>",
     color: COLOR_RED,
     score: 10.0,
     priority: 1,
@@ -30,7 +30,7 @@ pub static BLATANT_CHEATER: TagDefinition = TagDefinition {
     name: "blatant_cheater",
     display_name: "Blatant Cheater",
     icon: "mdi-alert-octagram",
-    emote: "<:blatantcheater:1459106183196577812>",
+    emote: "<:blatantcheater:1332971082507882576>",
     color: COLOR_ORANGE,
     score: 5.0,
     priority: 1,
@@ -40,7 +40,7 @@ pub static CLOSET_CHEATER: TagDefinition = TagDefinition {
     name: "closet_cheater",
     display_name: "Closet Cheater",
     icon: "mdi-alert-octagram-outline",
-    emote: "<:closetcheater:1459106337039323136>",
+    emote: "<:closetcheater:1332971236275257404>",
     color: COLOR_ORANGE,
     score: 1.5,
     priority: 1,
@@ -50,7 +50,7 @@ pub static REPLAYS_NEEDED: TagDefinition = TagDefinition {
     name: "replays_needed",
     display_name: "Replays Needed",
     icon: "mdi-archive-alert-outline",
-    emote: "<:replaysneeded:1482502914835615745>",
+    emote: "<:replaysneeded:1529042313773322320>",
     color: COLOR_GRAY,
     score: 0.0,
     priority: 2,
@@ -59,9 +59,9 @@ pub static REPLAYS_NEEDED: TagDefinition = TagDefinition {
 pub static CAUTION: TagDefinition = TagDefinition {
     name: "caution",
     display_name: "Caution",
-    icon: "mdi-alert-outline",
-    emote: "<:caution:1459106358098923583>",
-    color: COLOR_GRAY,
+    icon: "mdi-alert-rhombus-outline",
+    emote: "<:caution:1332971137851850833>",
+    color: COLOR_ORANGE,
     score: 0.0,
     priority: 3,
 };
@@ -70,7 +70,7 @@ pub static CONFIRMED_CHEATER: TagDefinition = TagDefinition {
     name: "confirmed_cheater",
     display_name: "Confirmed Cheater",
     icon: "mdi-alert-octagram-outline",
-    emote: "<:confirmedcheater:1459106129765204049>",
+    emote: "<:confirmedcheater:1332971043324821606>",
     color: COLOR_PURPLE,
     score: 5.0,
     priority: 1,
@@ -93,12 +93,12 @@ static USER_ADDABLE_TAGS: &[&TagDefinition] = &[
     &CAUTION,
 ];
 
-pub const EMOTE_TAG: &str = "<:tag:1459106270207545417>";
-pub const EMOTE_ADDTAG: &str = "<:addtag:1459106318387249289>";
-pub const EMOTE_EDITTAG: &str = "<:edittag:1459106301929062430>";
-pub const EMOTE_REMOVETAG: &str = "<:removetag:1459161936355786752>";
-pub const EMOTE_EVIDENCE: &str = "<:evidencefound:1482666860225888346>";
-pub const EMOTE_NO_EVIDENCE: &str = "<:noevidence:1482666258938990696>";
+pub const EMOTE_TAG: &str = "<:tag:1332971211029876826>";
+pub const EMOTE_ADDTAG: &str = "<:addtag:1332971194097598464>";
+pub const EMOTE_EDITTAG: &str = "<:edittag:1332971160400560128>";
+pub const EMOTE_REMOVETAG: &str = "<:removetag:1529042361806491689>";
+pub const EMOTE_EVIDENCE: &str = "<:evidencefound:1529042287315783760>";
+pub const EMOTE_NO_EVIDENCE: &str = "<:noevidence:1529042312582266941>";
 
 pub fn lookup(name: &str) -> Option<&'static TagDefinition> {
     ALL_TAGS.iter().find(|t| t.name == name).copied()

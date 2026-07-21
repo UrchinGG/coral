@@ -105,17 +105,17 @@ fn build_help_view(api_key: Option<&str>, from_dashboard: bool) -> Vec<CreateCom
     ));
 
     parts.push(text(
-        "<:sniper:1459106167270932618> **Sniper**\n\
+        "<:sniper:1332971069694279690> **Sniper**\n\
          -# Used for cheating snipers. Check the tooltip date; if it's old, they may no longer be active.\n\
-         <:blatantcheater:1459106183196577812> **Blatant Cheater**\n\
+         <:blatantcheater:1332971082507882576> **Blatant Cheater**\n\
          -# Obvious cheats that would be impossible on a vanilla client, like scaffold, speedmine, or autoblock.\n\
-         <:closetcheater:1459106337039323136> **Closet Cheater**\n\
+         <:closetcheater:1332971236275257404> **Closet Cheater**\n\
          -# Cheats that can be more subtle, like legit scaffold, aimassist, or lagrange.\n\
-         <:confirmedcheater:1459106129765204049> **Confirmed Cheater**\n\
+         <:confirmedcheater:1332971043324821606> **Confirmed Cheater**\n\
          -# Applied to players that have been confirmed to be cheating by staff. Typically, video evidence is available for these players on request.\n\
-         <:replaysneeded:1482502914835615745> **Replays Needed**\n\
+         <:replaysneeded:1529042313773322320> **Replays Needed**\n\
          -# Used whenever staff require replays of a player for any reason. Remember to submit replays to staff, it helps us prove players legit and clear their tags.\n\
-         <:caution:1459106358098923583> **Caution**\n\
+         <:caution:1332971137851850833> **Caution**\n\
          -# Special tag used for things that don't fit into any of the above categories. Only staff can apply this."
     ));
     parts.push(separator());
