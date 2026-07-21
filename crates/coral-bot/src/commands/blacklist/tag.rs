@@ -623,7 +623,7 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
                 .await;
 
             let hint = if effective >= 1 {
-                "-# You can remove this tag within 30 minutes using /tag remove."
+                "-# You can overwrite this tag at any time using /tag add, or remove it within 30 minutes using /tag remove."
             } else {
                 "-# You can overwrite or remove this tag within 30 minutes using /tag add and /tag remove."
             };

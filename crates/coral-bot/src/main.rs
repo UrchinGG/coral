@@ -102,6 +102,7 @@ async fn init_data() -> Result<Data> {
             .unwrap_or(0),
         info_cache: Arc::new(Mutex::new(Default::default())),
         review_locks: Arc::new(Mutex::new(HashMap::new())),
+        assembling_reviews: Arc::new(RwLock::new(HashMap::new())),
     })
 }
 
@@ -127,7 +128,7 @@ fn parse_guild_id(name: &str) -> Option<GuildId> {
 
 async fn build_client(data: Data) -> Result<Client> {
     let token = Token::from_env("DISCORD_TOKEN").expect("Invalid DISCORD_TOKEN");
-    let intents = GatewayIntents::GUILDS;
+    let intents = GatewayIntents::GUILDS | GatewayIntents::GUILD_MESSAGES;
 
     let mut cache_settings = serenity::cache::Settings::default();
     cache_settings.cache_guilds = false;

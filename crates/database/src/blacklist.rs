@@ -12,6 +12,7 @@ pub struct PlayerEvent {
     pub expires_at: Option<DateTime<Utc>>,
     pub reviewed_by: Option<Vec<i64>>,
     pub author: Option<i64>,
+    pub displaced_author: Option<i64>,
     pub ts: DateTime<Utc>,
 }
 
@@ -37,7 +38,7 @@ pub enum OverwriteOutcome {
 }
 
 const COLS: &str =
-    "id, uuid, kind, tag_type, reason, hide_username, expires_at, reviewed_by, author, ts";
+    "id, uuid, kind, tag_type, reason, hide_username, expires_at, reviewed_by, author, displaced_author, ts";
 
 pub struct BlacklistRepository<'a> {
     pool: &'a PgPool,
@@ -154,8 +155,8 @@ impl<'a> BlacklistRepository<'a> {
         .await?;
         let new: PlayerEvent = sqlx::query_as(&format!(
             "INSERT INTO player_events
-                (uuid, kind, tag_type, reason, hide_username, expires_at, reviewed_by, author, ts)
-             VALUES ($1, 'tag_set', $2, $3, $4, $5, $6, $7, $8)
+                (uuid, kind, tag_type, reason, hide_username, expires_at, reviewed_by, author, displaced_author, ts)
+             VALUES ($1, 'tag_set', $2, $3, $4, $5, $6, $7, $8, $9)
              RETURNING {COLS}",
         ))
         .bind(uuid)
@@ -165,6 +166,7 @@ impl<'a> BlacklistRepository<'a> {
         .bind(expires_at)
         .bind(reviewed_by)
         .bind(author)
+        .bind(old.author)
         .bind(ts)
         .fetch_one(&mut *tx)
         .await?;

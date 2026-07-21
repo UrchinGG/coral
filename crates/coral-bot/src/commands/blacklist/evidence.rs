@@ -243,7 +243,7 @@ async fn run_member_confirm(
     )
     .await?;
 
-    reviews::spawn_submission_timeout(ctx.clone(), thread_id);
+    reviews::spawn_submission_timeout(ctx.clone(), data.clone(), thread_id);
 
     let emote = lookup_tag("confirmed_cheater")
         .map(|d| d.emote)

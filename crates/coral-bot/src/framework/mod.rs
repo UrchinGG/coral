@@ -59,6 +59,7 @@ pub struct Data {
     pub started_at: i64,
     pub info_cache: Arc<Mutex<commands::admin::info::InfoCache>>,
     pub review_locks: Arc<Mutex<HashMap<u64, Arc<tokio::sync::Mutex<()>>>>>,
+    pub assembling_reviews: Arc<RwLock<HashMap<u64, u64>>>,
 }
 
 impl Data {
@@ -69,6 +70,25 @@ impl Data {
     pub fn evidence_thread_for(&self, uuid: &str) -> Option<ThreadId> {
         let key = uuid.replace('-', "");
         self.evidence_threads.read().unwrap().get(&key).copied()
+    }
+
+    pub fn begin_assembling(&self, thread_id: u64, submitter_id: u64) {
+        self.assembling_reviews
+            .write()
+            .unwrap()
+            .insert(thread_id, submitter_id);
+    }
+
+    pub fn finish_assembling(&self, thread_id: u64) {
+        self.assembling_reviews.write().unwrap().remove(&thread_id);
+    }
+
+    pub fn assembling_submitter(&self, thread_id: u64) -> Option<u64> {
+        self.assembling_reviews
+            .read()
+            .unwrap()
+            .get(&thread_id)
+            .copied()
     }
 
     pub fn review_lock(&self, thread_id: u64) -> Arc<tokio::sync::Mutex<()>> {
@@ -679,6 +699,10 @@ impl EventHandler for Handler {
             }
             FullEvent::ThreadDelete { thread, .. } => {
                 commands::blacklist::evidence::thread_index_remove(&self.data, thread.id);
+                self.data.finish_assembling(thread.id.get());
+            }
+            FullEvent::Message { new_message, .. } => {
+                crate::events::review_guard_message(ctx, &self.data, new_message).await;
             }
             FullEvent::InteractionCreate { interaction, .. } => {
                 self.data

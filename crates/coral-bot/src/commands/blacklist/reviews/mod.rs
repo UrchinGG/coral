@@ -532,10 +532,7 @@ pub async fn create_submission(
     }
 
     let thread = forum_id.create_forum_post(&ctx.http, forum_post).await?;
-    let _ = thread
-        .id
-        .edit(&ctx.http, EditThread::new().locked(true))
-        .await;
+    data.begin_assembling(thread.id.get(), submitter_id);
 
     let reminder = CreateMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
@@ -548,7 +545,7 @@ pub async fn create_submission(
     Ok(thread.id)
 }
 
-pub fn spawn_submission_timeout(ctx: Context, thread_id: ThreadId) {
+pub fn spawn_submission_timeout(ctx: Context, data: Data, thread_id: ThreadId) {
     let channel_id: GenericChannelId = thread_id.into();
 
     tokio::spawn(async move {
@@ -588,5 +585,6 @@ pub fn spawn_submission_timeout(ctx: Context, thread_id: ThreadId) {
         }
 
         let _ = channel_id.delete(&ctx.http, None).await;
+        data.finish_assembling(thread_id.get());
     });
 }

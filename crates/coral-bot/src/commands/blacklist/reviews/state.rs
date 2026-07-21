@@ -62,6 +62,7 @@ pub struct ForumTags {
 }
 
 pub struct ConfirmationData {
+    pub submitter_id: u64,
     pub player_name: String,
     pub player_uuid: String,
     pub tag_type: String,
@@ -458,6 +459,7 @@ pub fn parse_confirmation_data(custom_id: &str, message: &Message) -> Option<Con
         return None;
     }
 
+    let submitter_id: u64 = parts[0].parse().ok()?;
     let tag_type = parts[1].to_string();
     let player_uuid = parts[2].to_string();
 
@@ -477,6 +479,7 @@ pub fn parse_confirmation_data(custom_id: &str, message: &Message) -> Option<Con
         .unwrap_or_default();
 
     Some(ConfirmationData {
+        submitter_id,
         player_name,
         player_uuid,
         tag_type,

@@ -162,7 +162,7 @@ impl<'a> TagOp<'a> {
         self.check_lock(uuid).await?;
 
         let old_preview = self.require_active_tag(uuid, old_tag_type).await?;
-        self.authorize_remove(&old_preview, actor_id, actor_level)?;
+        self.authorize_overwrite(&old_preview, actor_id, actor_level)?;
 
         let hide = permissions::can_set_hide(actor_level) && hide_username;
         let blocking = if new_tag_type == old_tag_type {
@@ -243,12 +243,29 @@ impl<'a> TagOp<'a> {
         actor_id: i64,
         actor_level: i16,
     ) -> Result<(), TagOpError> {
-        let is_own = tag.author == Some(actor_id);
         let age = Utc::now().signed_duration_since(tag.ts).num_minutes();
         let tag_type = tag.tag_type.as_deref().unwrap_or("");
-        if !permissions::can_remove(tag_type, actor_level, is_own, age) {
+        if !permissions::can_remove(tag_type, actor_level, self.is_own(tag, actor_id), age) {
             return Err(TagOpError::InsufficientPermissions);
         }
         Ok(())
+    }
+
+    fn authorize_overwrite(
+        &self,
+        tag: &PlayerEvent,
+        actor_id: i64,
+        actor_level: i16,
+    ) -> Result<(), TagOpError> {
+        let age = Utc::now().signed_duration_since(tag.ts).num_minutes();
+        let tag_type = tag.tag_type.as_deref().unwrap_or("");
+        if !permissions::can_overwrite(tag_type, actor_level, self.is_own(tag, actor_id), age) {
+            return Err(TagOpError::InsufficientPermissions);
+        }
+        Ok(())
+    }
+
+    fn is_own(&self, tag: &PlayerEvent, actor_id: i64) -> bool {
+        tag.author == Some(actor_id) && tag.displaced_author.is_none_or(|d| d == actor_id)
     }
 }

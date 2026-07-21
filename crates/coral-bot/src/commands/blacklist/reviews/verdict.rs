@@ -247,9 +247,7 @@ pub async fn handle_submit(
         tag_ids.push(id);
     }
     let _ = set_forum_tags(ctx, thread_id(component.channel_id), &tag_ids).await;
-    let _ = thread_id(component.channel_id)
-        .edit(&ctx.http, EditThread::new().locked(false))
-        .await;
+    data.finish_assembling(component.channel_id.get());
 
     let mut notice_lines = Vec::new();
     let (review_role, _) = database::ReviewGuideRepository::new(data.db.pool())
@@ -854,6 +852,15 @@ pub async fn handle_confirm(
     };
 
     let submitter_id = component.user.id.get();
+    if conf.submitter_id != submitter_id {
+        return send_vote_error(
+            ctx,
+            component,
+            "Only the person who ran this command can create the post",
+        )
+        .await;
+    }
+
     match create_submission(
         ctx,
         data,
@@ -866,7 +873,7 @@ pub async fn handle_confirm(
     .await
     {
         Ok(thread_id) => {
-            spawn_submission_timeout(ctx.clone(), thread_id);
+            spawn_submission_timeout(ctx.clone(), data.clone(), thread_id);
             component
                 .create_response(
                     &ctx.http,
@@ -903,7 +910,7 @@ pub async fn handle_confirm(
 pub async fn handle_cancel_thread(
     ctx: &Context,
     component: &ComponentInteraction,
-    _data: &Data,
+    data: &Data,
 ) -> Result<()> {
     if !require_submitter(ctx, component).await? {
         return Ok(());
@@ -932,6 +939,8 @@ pub async fn handle_cancel_thread(
         .await?;
     let http = ctx.http.clone();
     let msg_id = sent.id;
+    let data = data.clone();
+    let thread = component.channel_id.get();
 
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
@@ -942,6 +951,7 @@ pub async fn handle_cancel_thread(
             return;
         }
         let _ = channel_id.delete(&http, None).await;
+        data.finish_assembling(thread);
     });
 
     Ok(())
