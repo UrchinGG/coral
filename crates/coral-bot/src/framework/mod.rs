@@ -101,6 +101,39 @@ impl Data {
     }
 }
 
+const REVIEW_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+async fn acquire_review_lock(
+    data: &Data,
+    thread_id: u64,
+) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+    let lock = data.review_lock(thread_id);
+    match tokio::time::timeout(REVIEW_LOCK_WAIT, lock.lock_owned()).await {
+        Ok(guard) => Some(guard),
+        Err(_) => {
+            tracing::warn!("review lock busy for thread {thread_id}, rejecting interaction");
+            None
+        }
+    }
+}
+
+fn review_busy_response() -> CreateInteractionResponse<'static> {
+    CreateInteractionResponse::Message(
+        CreateInteractionResponseMessage::new()
+            .content(
+                "Another action on this submission is still processing. Try again in a moment.",
+            )
+            .ephemeral(true),
+    )
+}
+
+async fn send_review_busy(ctx: &Context, component: &ComponentInteraction) -> anyhow::Result<()> {
+    component
+        .create_response(&ctx.http, review_busy_response())
+        .await?;
+    Ok(())
+}
+
 fn strip_panel_prefix(id: &str) -> Option<&str> {
     id.strip_prefix("manage_")
         .or_else(|| id.strip_prefix("dashboard_"))
@@ -247,12 +280,10 @@ impl Handler {
         id: &str,
     ) -> anyhow::Result<()> {
         let _review_guard = if id.starts_with("review_") {
-            Some(
-                self.data
-                    .review_lock(component.channel_id.get())
-                    .lock_owned()
-                    .await,
-            )
+            match acquire_review_lock(&self.data, component.channel_id.get()).await {
+                Some(guard) => Some(guard),
+                None => return send_review_busy(ctx, component).await,
+            }
         } else {
             None
         };
@@ -554,12 +585,15 @@ impl Handler {
     async fn handle_modal(&self, ctx: &Context, modal: &ModalInteraction) -> anyhow::Result<()> {
         let id = modal.data.custom_id.as_str();
         let _review_guard = if id.starts_with("review_") {
-            Some(
-                self.data
-                    .review_lock(modal.channel_id.get())
-                    .lock_owned()
-                    .await,
-            )
+            match acquire_review_lock(&self.data, modal.channel_id.get()).await {
+                Some(guard) => Some(guard),
+                None => {
+                    modal
+                        .create_response(&ctx.http, review_busy_response())
+                        .await?;
+                    return Ok(());
+                }
+            }
         } else {
             None
         };
@@ -643,17 +677,35 @@ impl Handler {
             let response = CreateInteractionResponse::Message(
                 CreateInteractionResponseMessage::new()
                     .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
-                    .components(vec![container]),
+                    .components(vec![container.clone()]),
             );
+            let followup = CreateInteractionResponseFollowup::new()
+                .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
+                .components(vec![container]);
 
-            let error_response_result = match interaction {
+            let error_response_result = match &interaction {
                 Interaction::Command(cmd) => cmd.create_response(&ctx.http, response).await,
                 Interaction::Component(cmp) => cmp.create_response(&ctx.http, response).await,
                 Interaction::Modal(modal) => modal.create_response(&ctx.http, response).await,
                 _ => Ok(()),
             };
             if let Err(e) = error_response_result {
-                tracing::error!("Failed to send error response: {e}");
+                tracing::debug!("Initial error response rejected, trying follow-up: {e}");
+                let followup_result = match &interaction {
+                    Interaction::Command(cmd) => {
+                        cmd.create_followup(&ctx.http, followup).await.map(|_| ())
+                    }
+                    Interaction::Component(cmp) => {
+                        cmp.create_followup(&ctx.http, followup).await.map(|_| ())
+                    }
+                    Interaction::Modal(modal) => {
+                        modal.create_followup(&ctx.http, followup).await.map(|_| ())
+                    }
+                    _ => Ok(()),
+                };
+                if let Err(e) = followup_result {
+                    tracing::error!("Failed to send error response: {e}");
+                }
             }
         }
     }

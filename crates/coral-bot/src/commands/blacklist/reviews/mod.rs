@@ -46,23 +46,89 @@ const SUBMISSION_WARNING_SECS: u64 = 20 * 60;
 pub const ACCEPT_THRESHOLD: usize = 6;
 pub const REJECT_THRESHOLD: usize = 3;
 
+async fn guild_upload_limit(ctx: &Context, guild_id: Option<GuildId>) -> u64 {
+    const MIB: u64 = 1024 * 1024;
+    let Some(guild_id) = guild_id else {
+        return 10 * MIB;
+    };
+    let tier = match ctx.http.get_guild(guild_id).await {
+        Ok(guild) => guild.premium_tier,
+        Err(e) => {
+            tracing::warn!("Could not resolve guild upload limit, assuming 10 MiB: {e}");
+            return 10 * MIB;
+        }
+    };
+    match tier {
+        PremiumTier::Tier2 => 50 * MIB,
+        PremiumTier::Tier3 => 100 * MIB,
+        _ => 10 * MIB,
+    }
+}
+
+fn format_size(bytes: u64) -> String {
+    const MIB: f64 = (1024 * 1024) as f64;
+    format!("{:.1} MB", bytes as f64 / MIB)
+}
+
+#[derive(Default)]
+struct ExistingFaces {
+    by_filename: HashMap<String, (AttachmentId, String)>,
+}
+
+impl ExistingFaces {
+    fn from_message(message: &Message) -> Self {
+        Self {
+            by_filename: message
+                .attachments
+                .iter()
+                .filter(|a| a.filename.starts_with("face_"))
+                .map(|a| (a.filename.to_string(), (a.id, a.url.to_string())))
+                .collect(),
+        }
+    }
+
+    fn get(&self, uuid: &str) -> Option<&(AttachmentId, String)> {
+        self.by_filename.get(&builder::face_filename(uuid))
+    }
+}
+
+struct FaceAttachments {
+    upload: Vec<CreateAttachment<'static>>,
+    keep: Vec<AttachmentId>,
+    urls: HashMap<String, String>,
+}
+
 async fn player_face_attachments(
     data: &Data,
     state: &SubmissionState,
-) -> Vec<CreateAttachment<'static>> {
-    let mut out = Vec::with_capacity(state.players.len());
-    for player in &state.players {
+    existing: &ExistingFaces,
+) -> FaceAttachments {
+    let missing: Vec<&PlayerEntry> = state
+        .players
+        .iter()
+        .filter(|p| existing.get(&p.uuid).is_none())
+        .collect();
+
+    let upload = futures_util::future::join_all(missing.iter().map(|player| async move {
         let png = data
             .skin_provider
             .fetch_face(&player.uuid, builder::FACE_SIZE)
             .await
             .unwrap_or_else(default_face_png);
-        out.push(CreateAttachment::bytes(
-            png,
-            builder::face_filename(&player.uuid),
-        ));
+        CreateAttachment::bytes(png, builder::face_filename(&player.uuid))
+    }))
+    .await;
+
+    let mut keep = Vec::new();
+    let mut urls = HashMap::new();
+    for player in &state.players {
+        if let Some((id, url)) = existing.get(&player.uuid) {
+            keep.push(*id);
+            urls.insert(player.uuid.clone(), url.clone());
+        }
     }
-    out
+
+    FaceAttachments { upload, keep, urls }
 }
 
 fn default_face_png() -> Vec<u8> {
@@ -241,31 +307,33 @@ async fn fetch_replaced(
     state: &SubmissionState,
 ) -> HashMap<String, builder::ReplacedTag> {
     let repo = database::BlacklistRepository::new(data.db.pool());
-    let mut map = HashMap::new();
-    for player in &state.players {
-        if player.status != PlayerStatus::Pending {
-            continue;
+    let pending = state
+        .players
+        .iter()
+        .filter(|p| p.status == PlayerStatus::Pending);
+
+    let entries = futures_util::future::join_all(pending.map(|player| {
+        let repo = &repo;
+        async move {
+            let tags = repo.get_active_tags(&player.uuid).await.ok()?;
+            let lane = blacklist::priority_lane(&player.tag_type);
+            let existing = tags.iter().find(|t| {
+                let tt = t.tag_type.as_deref().unwrap_or("");
+                tt != player.tag_type && lane.iter().any(|l| l == tt)
+            })?;
+            Some((
+                player.uuid.clone(),
+                builder::ReplacedTag {
+                    tag_type: existing.tag_type.clone().unwrap_or_default(),
+                    reason: existing.reason.clone().unwrap_or_default(),
+                    added_line: super::channel::format_added_line(ctx, existing).await,
+                },
+            ))
         }
-        let Ok(tags) = repo.get_active_tags(&player.uuid).await else {
-            continue;
-        };
-        let lane = blacklist::priority_lane(&player.tag_type);
-        let Some(existing) = tags.iter().find(|t| {
-            let tt = t.tag_type.as_deref().unwrap_or("");
-            tt != player.tag_type && lane.iter().any(|l| l == tt)
-        }) else {
-            continue;
-        };
-        map.insert(
-            player.uuid.clone(),
-            builder::ReplacedTag {
-                tag_type: existing.tag_type.clone().unwrap_or_default(),
-                reason: existing.reason.clone().unwrap_or_default(),
-                added_line: super::channel::format_added_line(ctx, existing).await,
-            },
-        );
-    }
-    map
+    }))
+    .await;
+
+    entries.into_iter().flatten().collect()
 }
 
 async fn update_builder(
@@ -276,9 +344,13 @@ async fn update_builder(
     state: &SubmissionState,
 ) -> Result<()> {
     let existing_urls = gallery_url_map(message);
-    let replaced = fetch_replaced(ctx, data, state).await;
-    let submitter = super::channel::get_username(ctx, state.submitter_id).await;
-    let faces = player_face_attachments(data, state).await;
+    let existing_faces = ExistingFaces::from_message(message);
+    let (replaced, submitter, faces) = futures_util::future::join3(
+        fetch_replaced(ctx, data, state),
+        super::channel::get_username(ctx, state.submitter_id),
+        player_face_attachments(data, state, &existing_faces),
+    )
+    .await;
 
     let mut attachments = EditAttachments::new();
     for url in existing_urls.values() {
@@ -286,7 +358,10 @@ async fn update_builder(
             attachments = attachments.keep(id);
         }
     }
-    for f in &faces {
+    for id in &faces.keep {
+        attachments = attachments.keep(*id);
+    }
+    for f in &faces.upload {
         attachments = attachments.add(f.clone());
     }
 
@@ -297,10 +372,11 @@ async fn update_builder(
             &existing_urls,
             &replaced,
             &submitter,
+            &faces.urls,
         ))
         .attachments(attachments);
     ctx.http
-        .edit_message(channel_id, message.id, &edit, faces)
+        .edit_message(channel_id, message.id, &edit, faces.upload)
         .await?;
     let thread_id = thread_id(channel_id);
     let _ = thread_id
@@ -337,9 +413,13 @@ async fn update_builder_with_files(
     files: Vec<CreateAttachment<'static>>,
 ) -> Result<()> {
     let existing_urls = gallery_url_map(message);
-    let replaced = fetch_replaced(ctx, data, state).await;
-    let submitter = super::channel::get_username(ctx, state.submitter_id).await;
-    let faces = player_face_attachments(data, state).await;
+    let existing_faces = ExistingFaces::from_message(message);
+    let (replaced, submitter, faces) = futures_util::future::join3(
+        fetch_replaced(ctx, data, state),
+        super::channel::get_username(ctx, state.submitter_id),
+        player_face_attachments(data, state, &existing_faces),
+    )
+    .await;
 
     let mut attachments = EditAttachments::new();
     for url in existing_urls.values() {
@@ -347,15 +427,18 @@ async fn update_builder_with_files(
             attachments = attachments.keep(id);
         }
     }
+    for id in &faces.keep {
+        attachments = attachments.keep(*id);
+    }
     for f in files.iter().cloned() {
         attachments = attachments.add(f);
     }
-    for f in &faces {
+    for f in &faces.upload {
         attachments = attachments.add(f.clone());
     }
 
     let mut all_files = files;
-    all_files.extend(faces);
+    all_files.extend(faces.upload);
 
     let edit = EditMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
@@ -364,6 +447,7 @@ async fn update_builder_with_files(
             &existing_urls,
             &replaced,
             &submitter,
+            &faces.urls,
         ))
         .attachments(attachments);
     ctx.http
@@ -380,7 +464,7 @@ async fn update_builder_keep_media(
     state: &SubmissionState,
 ) -> Result<()> {
     let existing_urls = gallery_url_map(message);
-    let replaced = fetch_replaced(ctx, data, state).await;
+    let existing_faces = ExistingFaces::from_message(message);
     let keep: HashSet<&str> = state
         .players
         .iter()
@@ -390,8 +474,12 @@ async fn update_builder_keep_media(
             _ => None,
         })
         .collect();
-    let submitter = super::channel::get_username(ctx, state.submitter_id).await;
-    let faces = player_face_attachments(data, state).await;
+    let (replaced, submitter, faces) = futures_util::future::join3(
+        fetch_replaced(ctx, data, state),
+        super::channel::get_username(ctx, state.submitter_id),
+        player_face_attachments(data, state, &existing_faces),
+    )
+    .await;
 
     let mut attachments = EditAttachments::new();
     for (fname, url) in &existing_urls {
@@ -401,7 +489,10 @@ async fn update_builder_keep_media(
             }
         }
     }
-    for f in &faces {
+    for id in &faces.keep {
+        attachments = attachments.keep(*id);
+    }
+    for f in &faces.upload {
         attachments = attachments.add(f.clone());
     }
 
@@ -412,10 +503,11 @@ async fn update_builder_keep_media(
             &existing_urls,
             &replaced,
             &submitter,
+            &faces.urls,
         ))
         .attachments(attachments);
     ctx.http
-        .edit_message(channel_id, message.id, &edit, faces)
+        .edit_message(channel_id, message.id, &edit, faces.upload)
         .await?;
     Ok(())
 }
@@ -512,7 +604,7 @@ pub async fn create_submission(
 
     let replaced = fetch_replaced(ctx, data, &state).await;
     let submitter = super::channel::get_username(ctx, submitter_id).await;
-    let faces = player_face_attachments(data, &state).await;
+    let faces = player_face_attachments(data, &state, &ExistingFaces::default()).await;
     let mut message = CreateMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
         .components(builder::build_review_message(
@@ -520,8 +612,9 @@ pub async fn create_submission(
             &HashMap::new(),
             &replaced,
             &submitter,
+            &faces.urls,
         ));
-    for f in faces {
+    for f in faces.upload {
         message = message.add_file(f);
     }
 

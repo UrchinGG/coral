@@ -397,8 +397,11 @@ pub async fn handle_media_modal(
         .count();
     let remaining = MAX_MEDIA_PER_PLAYER.saturating_sub(existing_count);
 
+    let upload_limit = guild_upload_limit(ctx, modal.guild_id).await;
+
     let mut files = Vec::new();
     let mut rejected = 0usize;
+    let mut oversized: Vec<(String, u64)> = Vec::new();
     for (i, att_id) in upload_ids.iter().take(remaining).enumerate() {
         let Some(attachment) = modal.data.resolved.attachments.get(att_id) else {
             continue;
@@ -413,6 +416,10 @@ pub async fn handle_media_modal(
             rejected += 1;
             continue;
         }
+        if u64::from(attachment.size) > upload_limit {
+            oversized.push((attachment.filename.to_string(), u64::from(attachment.size)));
+            continue;
+        }
         let filename = format!("{}_{}.{}", player.username, existing_count + i + 1, ext);
         match CreateAttachment::url(&ctx.http, attachment.url.as_str(), filename.clone()).await {
             Ok(file) => {
@@ -424,6 +431,25 @@ pub async fn handle_media_modal(
                 rejected += 1;
             }
         }
+    }
+
+    if files.is_empty() && !oversized.is_empty() {
+        let detail = oversized
+            .iter()
+            .map(|(name, size)| format!("`{name}` ({})", format_size(*size)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        modal
+            .edit_response(
+                &ctx.http,
+                EditInteractionResponse::new().content(format!(
+                    "{detail} exceeds the {} this server allows the bot to upload. \
+                     Compress the clip or upload it elsewhere and add the link as a note.",
+                    format_size(upload_limit)
+                )),
+            )
+            .await?;
+        return Ok(());
     }
 
     if files.is_empty() && rejected > 0 {
@@ -450,11 +476,14 @@ pub async fn handle_media_modal(
             let _ = modal.delete_response(&ctx.http).await;
         }
         Err(e) => {
-            let msg = if e.to_string().contains("too large") || e.to_string().contains("413") {
-                "File too large. Try compressing or using a smaller file."
-            } else {
-                "Failed to upload evidence. Please try again."
-            };
+            tracing::error!("Review media upload failed in {}: {e:?}", modal.channel_id);
+            let text = e.to_string();
+            let msg =
+                if text.contains("too large") || text.contains("413") || text.contains("40005") {
+                    "File too large. Try compressing or using a smaller file."
+                } else {
+                    "Failed to upload evidence. Please try again."
+                };
             modal
                 .edit_response(&ctx.http, EditInteractionResponse::new().content(msg))
                 .await?;

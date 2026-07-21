@@ -195,7 +195,6 @@ fn record_player_vote(
 
 fn cleanup_review_votes(data: &Data, thread_id: u64) {
     reset_thread_votes(data, thread_id);
-    data.review_locks.lock().unwrap().remove(&thread_id);
 }
 
 pub async fn handle_submit(

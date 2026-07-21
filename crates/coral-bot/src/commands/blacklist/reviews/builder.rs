@@ -13,17 +13,24 @@ pub fn face_filename(uuid: &str) -> String {
     format!("face_{uuid}.png")
 }
 
-fn face_url(uuid: &str) -> String {
-    format!("attachment://{}", face_filename(uuid))
+fn face_url(uuid: &str, face_urls: &HashMap<String, String>) -> String {
+    face_urls
+        .get(uuid)
+        .cloned()
+        .unwrap_or_else(|| format!("attachment://{}", face_filename(uuid)))
 }
 
-fn player_section(content: String, uuid: &str) -> CreateContainerComponent<'static> {
+fn player_section(
+    content: String,
+    uuid: &str,
+    face_urls: &HashMap<String, String>,
+) -> CreateContainerComponent<'static> {
     CreateContainerComponent::Section(CreateSection::new(
         vec![CreateSectionComponent::TextDisplay(CreateTextDisplay::new(
             content,
         ))],
         CreateSectionAccessory::Thumbnail(CreateThumbnail::new(CreateUnfurledMediaItem::new(
-            face_url(uuid),
+            face_url(uuid, face_urls),
         ))),
     ))
 }
@@ -39,6 +46,7 @@ pub fn build_review_message(
     existing_urls: &HashMap<String, String>,
     replaced: &HashMap<String, ReplacedTag>,
     submitter_name: &str,
+    face_urls: &HashMap<String, String>,
 ) -> Vec<CreateComponent<'static>> {
     let id = state.submitter_id;
 
@@ -67,7 +75,7 @@ pub fn build_review_message(
         let repl = (player.status == PlayerStatus::Pending)
             .then(|| replaced.get(&player.uuid))
             .flatten();
-        build_player_card(&mut parts, player, repl, submitter_name);
+        build_player_card(&mut parts, player, repl, submitter_name, face_urls);
 
         if state.submitted {
             build_submitted_controls(&mut parts, player, idx, id);
@@ -117,6 +125,7 @@ pub fn build_player_card(
     player: &PlayerEntry,
     replaced: Option<&ReplacedTag>,
     submitter_name: &str,
+    face_urls: &HashMap<String, String>,
 ) {
     let indicator = evidence_indicator(&player.tag_type, !player.evidence.is_empty());
     let added = format!("> -# **\\- Added by `@{submitter_name}`**");
@@ -146,6 +155,7 @@ pub fn build_player_card(
         parts.push(player_section(
             [proposed, uuid_line].join("\n"),
             &player.uuid,
+            face_urls,
         ));
         return;
     };
@@ -159,7 +169,7 @@ pub fn build_player_card(
         false,
     );
     parts.push(text("-# Current"));
-    parts.push(player_section(current_block, &player.uuid));
+    parts.push(player_section(current_block, &player.uuid, face_urls));
     parts.push(text("-# Proposed"));
     parts.push(text([proposed, uuid_line].join("\n")));
 }
@@ -612,7 +622,7 @@ fn build_tag_preview(
     let footer = format!("-# UUID: {}", crate::utils::format_uuid_dashed(uuid));
 
     CreateContainer::new(vec![
-        player_section(format!("{header}{block}\n{footer}"), uuid),
+        player_section(format!("{header}{block}\n{footer}"), uuid, &HashMap::new()),
         separator(),
     ])
 }
@@ -662,6 +672,7 @@ pub fn build_confirmation_message(
         parts.push(player_section(
             [format!("IGN - `{player_name}`\n"), current_block].join("\n"),
             player_uuid,
+            &HashMap::new(),
         ));
         parts.push(separator());
         parts.push(text("-# Proposed"));
@@ -680,6 +691,7 @@ pub fn build_confirmation_message(
         parts.push(player_section(
             [format!("IGN - `{player_name}`\n"), proposed].join("\n"),
             player_uuid,
+            &HashMap::new(),
         ));
         parts.push(separator());
         parts.push(CreateContainerComponent::ActionRow(
