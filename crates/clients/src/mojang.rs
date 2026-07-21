@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use base64::prelude::*;
 use moka::future::Cache;
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 
 use crate::error::ClientError;
@@ -197,8 +197,16 @@ impl MojangClient {
             .send()
             .await?;
 
-        if !response.status().is_success() {
+        let status = response.status();
+        if status == StatusCode::NO_CONTENT {
             return Err(ClientError::PlayerNotFound(name.to_string()));
+        }
+        if !status.is_success() {
+            return Err(match status {
+                StatusCode::NOT_FOUND => ClientError::PlayerNotFound(name.to_string()),
+                StatusCode::TOO_MANY_REQUESTS => ClientError::RateLimited,
+                other => ClientError::MojangApi(other.as_u16()),
+            });
         }
 
         let data: MojangResponse = response.json().await?;
@@ -221,8 +229,15 @@ impl MojangClient {
             .send()
             .await?;
 
-        if !response.status().is_success() {
-            return Err(ClientError::PlayerNotFound(uuid.to_string()));
+        let status = response.status();
+        if !status.is_success() {
+            return Err(match status {
+                StatusCode::NOT_FOUND | StatusCode::NO_CONTENT => {
+                    ClientError::PlayerNotFound(uuid.to_string())
+                }
+                StatusCode::TOO_MANY_REQUESTS => ClientError::RateLimited,
+                other => ClientError::MojangApi(other.as_u16()),
+            });
         }
 
         let data: ProfileResponse = response.json().await?;

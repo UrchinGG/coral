@@ -17,6 +17,9 @@ pub enum ClientError {
     #[error("Rate limited")]
     RateLimited,
 
+    #[error("Mojang API error: HTTP {0}")]
+    MojangApi(u16),
+
     #[error("Invalid UUID: {0}")]
     InvalidUuid(String),
 

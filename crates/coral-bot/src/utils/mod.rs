@@ -19,6 +19,17 @@ pub async fn resolve_username(uuid: &str, data: &Data) -> Option<String> {
         .flatten()
 }
 
+pub async fn resolve_username_or_fetch(uuid: &str, data: &Data) -> Option<String> {
+    if let Some(username) = resolve_username(uuid, data).await {
+        return Some(username);
+    }
+    let username = data.api.resolve(uuid).await.ok()?.username;
+    let _ = CacheRepository::new(data.db.pool())
+        .cache_username(uuid, &username)
+        .await;
+    Some(username)
+}
+
 pub fn text(s: impl Into<String>) -> CreateContainerComponent<'static> {
     CreateContainerComponent::TextDisplay(CreateTextDisplay::new(s.into()))
 }

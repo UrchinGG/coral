@@ -6,34 +6,48 @@ use clients::is_uuid;
 use database::{BlacklistRepository, CacheRepository, PlayerEvent};
 
 use crate::{
+    api::ApiError,
     framework::Data,
-    utils::{format_number, separator, text},
+    utils::{format_number, resolve_username_or_fetch, separator, text},
 };
 
 const PER_PAGE: usize = 10;
 
-async fn fetch_guild(data: &Data, query: &str) -> Option<hypixel::Guild> {
-    hypixel::Guild::from_value(&resolve_guild(data, query).await?)
+enum Lookup {
+    Found(hypixel::Guild),
+    NotFound,
+    Unavailable,
 }
 
-async fn resolve_guild(data: &Data, query: &str) -> Option<serde_json::Value> {
-    if is_uuid(query) {
-        return data.api.get_guild_by_player(query).await.ok().flatten();
+async fn fetch_guild(data: &Data, query: &str) -> Lookup {
+    match resolve_guild(data, query).await {
+        Ok(Some(value)) => match hypixel::Guild::from_value(&value) {
+            Some(guild) => Lookup::Found(guild),
+            None => Lookup::Unavailable,
+        },
+        Ok(None) => Lookup::NotFound,
+        Err(()) => Lookup::Unavailable,
     }
+}
+
+async fn resolve_guild(data: &Data, query: &str) -> Result<Option<serde_json::Value>, ()> {
+    if is_uuid(query) {
+        return data.api.get_guild_by_player(query).await.map_err(|_| ());
+    }
+
     if query.len() <= 16 {
-        if let Ok(resolved) = data.api.resolve(query).await {
-            if let Some(guild) = data
-                .api
-                .get_guild_by_player(&resolved.uuid)
-                .await
-                .ok()
-                .flatten()
-            {
-                return Some(guild);
-            }
+        match data.api.resolve(query).await {
+            Ok(resolved) => match data.api.get_guild_by_player(&resolved.uuid).await {
+                Ok(Some(guild)) => return Ok(Some(guild)),
+                Ok(None) => {}
+                Err(_) => return Err(()),
+            },
+            Err(ApiError::NotFound) => {}
+            Err(_) => return Err(()),
         }
     }
-    data.api.get_guild_by_name(query).await.ok().flatten()
+
+    data.api.get_guild_by_name(query).await.map_err(|_| ())
 }
 
 pub fn register() -> CreateCommand<'static> {
@@ -62,9 +76,7 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         })
         .unwrap_or_default();
 
-    let components = build_view(data, &query, 0)
-        .await
-        .unwrap_or_else(|| not_found(&query));
+    let components = build_view(data, &query, 0).await;
     command
         .edit_response(&ctx.http, page_response(components))
         .await?;
@@ -80,21 +92,19 @@ pub async fn handle_page(
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
     let (page, query) = parse_action(&component.data.custom_id, "guild_pg:");
-    let components = build_view(data, query, page)
-        .await
-        .unwrap_or_else(|| not_found(query));
+    let components = build_view(data, query, page).await;
     component
         .edit_response(&ctx.http, page_response(components))
         .await?;
     Ok(())
 }
 
-async fn build_view(
-    data: &Data,
-    query: &str,
-    page: usize,
-) -> Option<Vec<CreateComponent<'static>>> {
-    let guild = fetch_guild(data, query).await?;
+async fn build_view(data: &Data, query: &str, page: usize) -> Vec<CreateComponent<'static>> {
+    let guild = match fetch_guild(data, query).await {
+        Lookup::Found(guild) => guild,
+        Lookup::NotFound => return not_found(query),
+        Lookup::Unavailable => return unavailable(),
+    };
     let pool = data.db.pool();
 
     let uuids: Vec<String> = guild.members.iter().map(|m| m.uuid.clone()).collect();
@@ -107,7 +117,7 @@ async fn build_view(
         .collect();
     tagged.sort_by_key(|(_, events)| top_priority(events));
 
-    let names = CacheRepository::new(pool)
+    let mut names = CacheRepository::new(pool)
         .usernames(
             &tagged
                 .iter()
@@ -120,6 +130,8 @@ async fn build_view(
     let total = tagged.len();
     let pages = total.div_ceil(PER_PAGE).max(1);
     let page = page.min(pages - 1);
+
+    backfill_names(data, &mut names, &tagged, page).await;
 
     let mut parts: Vec<CreateContainerComponent> = vec![
         text(format!("## {}", guild.name)),
@@ -148,9 +160,34 @@ async fn build_view(
         parts.push(page_buttons(query, page, pages));
     }
 
-    Some(vec![CreateComponent::Container(CreateContainer::new(
-        parts,
-    ))])
+    vec![CreateComponent::Container(CreateContainer::new(parts))]
+}
+
+async fn backfill_names(
+    data: &Data,
+    names: &mut std::collections::HashMap<String, String>,
+    tagged: &[(String, Vec<PlayerEvent>)],
+    page: usize,
+) {
+    let missing: Vec<&String> = tagged
+        .iter()
+        .skip(page * PER_PAGE)
+        .take(PER_PAGE)
+        .map(|(uuid, _)| uuid)
+        .filter(|uuid| !names.contains_key(*uuid))
+        .collect();
+
+    let resolved =
+        futures_util::future::join_all(missing.into_iter().map(|uuid| async move {
+            (uuid.clone(), resolve_username_or_fetch(uuid, data).await)
+        }))
+        .await;
+
+    for (uuid, username) in resolved {
+        if let Some(username) = username {
+            names.insert(uuid, username);
+        }
+    }
 }
 
 fn member_line(
@@ -213,5 +250,11 @@ fn parse_action<'a>(custom_id: &'a str, prefix: &str) -> (usize, &'a str) {
 fn not_found(query: &str) -> Vec<CreateComponent<'static>> {
     vec![CreateComponent::Container(CreateContainer::new(vec![
         text(format!("No guild found for `{query}`.")),
+    ]))]
+}
+
+fn unavailable() -> Vec<CreateComponent<'static>> {
+    vec![CreateComponent::Container(CreateContainer::new(vec![
+        text("Could not reach Hypixel right now. Try again in a moment."),
     ]))]
 }

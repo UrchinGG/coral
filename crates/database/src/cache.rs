@@ -249,6 +249,9 @@ impl<'a> CacheRepository<'a> {
     }
 
     pub async fn cache_username(&self, uuid: &str, username: &str) -> Result<(), sqlx::Error> {
+        if self.get_username(uuid).await?.as_deref() == Some(username) {
+            return Ok(());
+        }
         sqlx::query(
             "INSERT INTO player_snapshots (uuid, username, is_baseline, data) VALUES ($1, $2, false, '{}'::jsonb)",
         )

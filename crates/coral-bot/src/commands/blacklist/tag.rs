@@ -4,14 +4,16 @@ use std::sync::Arc;
 use anyhow::Result;
 use blacklist::{EMOTE_ADDTAG, EMOTE_EDITTAG, EMOTE_REMOVETAG, EMOTE_TAG, lookup as lookup_tag};
 use coral_redis::BlacklistEvent;
-use database::{BlacklistRepository, CacheRepository, MemberRepository, TagOp, TagOpError};
+use database::{BlacklistRepository, MemberRepository, TagOp, TagOpError};
 use serenity::all::*;
 
 use super::channel::{COLOR_ERROR, evidence_indicator, format_added_line, format_tag_block};
 use crate::framework::{AccessRank, AccessRankExt, Data};
 use crate::interact;
 use crate::interact::send_deferred_error;
-use crate::utils::{format_tag_detail, format_uuid_dashed, sanitize_reason};
+use crate::utils::{
+    format_tag_detail, format_uuid_dashed, resolve_username_or_fetch, sanitize_reason,
+};
 
 const FACE_SIZE: u32 = 128;
 const FACE_FILENAME: &str = "face.png";
@@ -771,12 +773,8 @@ pub async fn handle_overwrite_button(
         .as_ref()
         .map_or(rank.to_level(), database::standing::effective_level);
 
-    let cache = CacheRepository::new(data.db.pool());
-    let player_name = cache
-        .get_username(uuid)
+    let player_name = resolve_username_or_fetch(uuid, data)
         .await
-        .ok()
-        .flatten()
         .unwrap_or_else(|| uuid.to_string());
 
     let ops = TagOp::new(data.db.pool());
@@ -1143,10 +1141,12 @@ async fn build_manage_main(
     confirming: Option<i64>,
 ) -> Result<Vec<CreateComponent<'static>>> {
     let repo = BlacklistRepository::new(data.db.pool());
-    let cache = CacheRepository::new(data.db.pool());
-    let (active, username) = tokio::join!(repo.get_active_tags(uuid), cache.get_username(uuid));
+    let (active, username) = tokio::join!(
+        repo.get_active_tags(uuid),
+        resolve_username_or_fetch(uuid, data)
+    );
     let active = active?;
-    let username = username.ok().flatten().unwrap_or_else(|| uuid.to_string());
+    let username = username.unwrap_or_else(|| uuid.to_string());
     let dashed_uuid = format_uuid_dashed(uuid);
     let evidence_url = super::evidence::evidence_thread_url(data, uuid);
     let adders = active.iter().filter_map(|t| t.author);
