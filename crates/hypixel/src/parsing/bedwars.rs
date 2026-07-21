@@ -491,6 +491,29 @@ pub fn level_progress(experience: u64) -> f64 {
     raw.fract()
 }
 
+static NICKNAME_BRACKETS: &[(&str, (&str, &str))] = &[
+    ("prestige_bracket_none", ("[", "]")),
+    ("prestige_bracket_curly", ("{", "}")),
+    ("prestige_bracket_angled", ("<", ">")),
+    ("prestige_bracket_parenthesis", ("(", ")")),
+    (
+        "prestige_bracket_double_angle_quotation_mark",
+        ("\u{ab}", "\u{bb}"),
+    ),
+];
+
+/// Resolves the player's selected bracket cosmetic to plain open/close
+/// characters, defaulting to square brackets. This has to be code rather than
+/// a nickname-template expression because bracket glyphs can be literal `{`/`}`
+/// characters, which the template engine's brace-matching can't safely treat
+/// as string content.
+pub fn nickname_bracket_glyphs(active: Option<&str>) -> (&'static str, &'static str) {
+    active
+        .and_then(|id| NICKNAME_BRACKETS.iter().find(|(name, _)| *name == id))
+        .map(|(_, chars)| *chars)
+        .unwrap_or(("[", "]"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -14,9 +14,33 @@ import { ExpressionEditor } from "./ExpressionEditor";
 import { Panel } from "./Panel";
 
 const DEFAULT_TEMPLATE =
-  '[{achievements.bedwars_level}{\n  if achievements.bedwars_level < 1100: "✫",\n  < 2100: "✪",\n  < 3100: "⚝",\n  else: "✥"\n}] {displayname} | {discord.name}';
+  '{bedwars.bracket_open}{achievements.bedwars_level}{\n' +
+  'if stats.Bedwars.active_star == "star_black_open": "✫",\n' +
+  'stats.Bedwars.active_star == "star_white_circled": "✪",\n' +
+  'stats.Bedwars.active_star == "star_white_outlined": "⚝",\n' +
+  'stats.Bedwars.active_star == "star_four_clubs": "✥",\n' +
+  'stats.Bedwars.active_star == "star_black_outlined": "✭",\n' +
+  'stats.Bedwars.active_star == "star_four_pointed": "✦",\n' +
+  'stats.Bedwars.active_star == "star_pinwheel": "✵",\n' +
+  'stats.Bedwars.active_star == "star_hollow": "✰",\n' +
+  'stats.Bedwars.active_star == "star_nautical": "✯",\n' +
+  'achievements.bedwars_level < 1000: "✫",\n' +
+  'achievements.bedwars_level < 2000: "✪",\n' +
+  'achievements.bedwars_level < 3000: "⚝",\n' +
+  'achievements.bedwars_level < 4000: "✥",\n' +
+  'else: "✭"\n' +
+  '}{bedwars.bracket_close} {displayname} | {discord.name}';
 
-const BASE_FIELDS = ["displayname", "discord.name", "achievements.bedwars_level", "coral.access", "blacklist.tag"];
+const BASE_FIELDS = [
+  "displayname",
+  "discord.name",
+  "stats.Bedwars.active_star",
+  "bedwars.bracket_open",
+  "bedwars.bracket_close",
+  "achievements.bedwars_level",
+  "coral.access",
+  "blacklist.tag",
+];
 
 type NicknameTemplatePanelProps = {
   template: string | null;

@@ -11,7 +11,7 @@ pub use parsing::bedwars::{
     CosmeticSlot, Cosmetics, GuildInfo, Mode, ModeStats, SlumberInfo, Stats as BedwarsPlayerStats,
     WinstreakModeData, WinstreakSnapshot, calculate_level, combined_mode_name,
     experience_for_level, extract as extract_bedwars_stats, extract_winstreak_snapshot,
-    level_progress, ratio,
+    level_progress, nickname_bracket_glyphs, ratio,
 };
 pub use parsing::delta::{SessionPlayerStats, SessionStats};
 pub use parsing::duels::{

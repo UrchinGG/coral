@@ -15,6 +15,7 @@ database = { path = "../database" }
 blacklist = { path = "../blacklist" }
 coral-redis = { path = "../coral-redis" }
 expr.workspace = true
+hypixel.workspace = true
 
 serenity.workspace = true
 serde.workspace = true

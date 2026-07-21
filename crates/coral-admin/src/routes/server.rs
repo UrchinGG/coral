@@ -908,6 +908,15 @@ async fn build_preview_context(
     if ctx.pointer("/achievements/bedwars_level").is_none() {
         ctx["achievements"]["bedwars_level"] = json!(0);
     }
+    let active_bracket = ctx
+        .pointer("/stats/Bedwars/active_prestige_bracket")
+        .and_then(|v| v.as_str());
+    let (bracket_open, bracket_close) = hypixel::nickname_bracket_glyphs(active_bracket);
+    ctx["bedwars"] = json!({
+        "bracket_open": bracket_open,
+        "bracket_close": bracket_close,
+    });
+
     ctx["discord"] = json!({
         "name": discord_member
             .user
