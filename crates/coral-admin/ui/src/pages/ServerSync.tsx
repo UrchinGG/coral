@@ -7,6 +7,7 @@ import { Panel } from "../components/Panel";
 import { PickerSelect, type PickerItem } from "../components/PickerSelect";
 import { SyncJobsPanel } from "../components/SyncJobsPanel";
 import { fmtNum } from "../format";
+import { ReviewGuide } from "./ReviewGuide";
 
 export function ServerSync() {
   const server = useDiscordServer();
@@ -50,6 +51,11 @@ export function ServerSync() {
         previewContext={detail.preview_context}
         memberCount={guild.member_count}
       />
+
+      <div>
+        <h2 className="mb-3 text-base font-semibold text-gray-100">Tag Review Guide</h2>
+        <ReviewGuide />
+      </div>
     </div>
   );
 }

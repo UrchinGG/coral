@@ -21,27 +21,59 @@ pub fn router() -> Router<AppState> {
         .route("/publish", post(publish_guide))
 }
 
+const GUIDE_THREAD_TITLE: &str = "Tag Review Guide";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct GuideTagDef {
-    key: String,
+struct GuideContent {
+    body: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LegacyGuideTagDef {
     name: String,
     emoji: String,
     description: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct GuideSection {
-    key: String,
+#[derive(Debug, Deserialize)]
+struct LegacyGuideSection {
     heading: String,
     body: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct GuideContent {
+#[derive(Debug, Deserialize)]
+struct LegacyGuideContent {
     title: String,
-    tags: Vec<GuideTagDef>,
-    sections: Vec<GuideSection>,
+    tags: Vec<LegacyGuideTagDef>,
+    sections: Vec<LegacyGuideSection>,
     footer: String,
+}
+
+impl LegacyGuideContent {
+    fn flatten(self) -> GuideContent {
+        let tags_text = self
+            .tags
+            .iter()
+            .map(|tag| format!("{} **{}**\n-# {}", tag.emoji, tag.name, tag.description))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let mut body = format!("## {}\n---\n### Tags Definitions\n{tags_text}", self.title);
+        for section in &self.sections {
+            body.push_str(&format!("\n---\n### {}\n{}", section.heading, section.body));
+        }
+        body.push_str(&format!("\n---\n{}", self.footer));
+
+        GuideContent { body }
+    }
+}
+
+fn parse_guide_content(value: &Value) -> Result<(GuideContent, bool), ApiError> {
+    if let Ok(content) = serde_json::from_value::<GuideContent>(value.clone()) {
+        return Ok((content, false));
+    }
+    let legacy: LegacyGuideContent = serde_json::from_value(value.clone()).map_err(internal)?;
+    Ok((legacy.flatten(), true))
 }
 
 #[derive(Serialize)]
@@ -75,18 +107,26 @@ struct HomeRoleView {
 
 #[derive(Serialize)]
 struct ReviewGuideResponse {
-    content: Value,
+    content: GuideContent,
     status: GuideStatus,
     ping_roles: PingRolesView,
     home_roles: Vec<HomeRoleView>,
 }
 
 async fn get_guide(State(state): State<AppState>) -> Result<Json<ReviewGuideResponse>, ApiError> {
-    let config = ReviewGuideRepository::new(state.db.pool())
+    let repo = ReviewGuideRepository::new(state.db.pool());
+    let config = repo
         .get()
         .await
         .map_err(internal)?
         .ok_or_else(|| internal("review_guide_config row missing"))?;
+
+    let (content, migrated) = parse_guide_content(&config.content)?;
+    if migrated {
+        repo.update_content(&serde_json::to_value(&content).map_err(internal)?)
+            .await
+            .map_err(internal)?;
+    }
 
     let http = discord::bot_http(&state).map_err(service_unavailable)?;
     let home_guild = state.home_guild_id.map(|id| GuildId::new(id as u64));
@@ -123,7 +163,7 @@ async fn get_guide(State(state): State<AppState>) -> Result<Json<ReviewGuideResp
     };
 
     Ok(Json(ReviewGuideResponse {
-        content: config.content.clone(),
+        content,
         status: GuideStatus {
             posted: config.posted_thread_id.is_some(),
             forum_channel_id: state.review_forum_id.map(|v| v.to_string()),
@@ -170,7 +210,7 @@ async fn update_guide(
             actor.discord_id,
             "update_review_guide_content",
             "review_guide",
-            json!({"title": content.title}),
+            json!({"length": content.body.len()}),
         )
         .await;
     }
@@ -210,38 +250,32 @@ async fn publish_guide(
         .await
         .map_err(internal)?
         .ok_or_else(|| internal("review_guide_config row missing"))?;
-    let content: GuideContent = serde_json::from_value(config.content.clone())
-        .map_err(|e| internal(format!("stored guide content invalid: {e}")))?;
+    let (content, _) = parse_guide_content(&config.content)?;
 
-    let message = CreateMessage::new()
-        .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(build_guide_message(&content));
-    let thread = ChannelId::new(forum_id as u64)
-        .create_forum_post(&http, CreateForumPost::new(content.title.clone(), message))
-        .await
-        .map_err(bad_gateway)?;
-    let thread_id = thread.id.get() as i64;
+    let components = build_guide_message(&content);
 
-    if let Err(e) = thread
-        .id
-        .edit(
-            &http,
-            EditThread::new().locked(true).flags(ChannelFlags::PINNED),
-        )
-        .await
-    {
-        tracing::warn!("Failed to lock/pin guide thread {thread_id}: {e:#}");
-    }
+    let (thread_id, message_id) = match (config.posted_thread_id, config.posted_message_id) {
+        (Some(thread_id), Some(message_id)) => {
+            let edit = EditMessage::new()
+                .flags(MessageFlags::IS_COMPONENTS_V2)
+                .components(components.clone());
+            match GenericChannelId::new(thread_id as u64)
+                .edit_message(&http, MessageId::new(message_id as u64), edit)
+                .await
+            {
+                Ok(_) => (thread_id, message_id),
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to edit existing guide message ({e:#}), reposting instead"
+                    );
+                    create_guide_thread(&http, forum_id, components).await?
+                }
+            }
+        }
+        _ => create_guide_thread(&http, forum_id, components).await?,
+    };
 
-    if let Some(old_thread) = config.posted_thread_id
-        && let Err(e) = GenericChannelId::new(old_thread as u64)
-            .delete(&http, None)
-            .await
-    {
-        tracing::debug!("Failed to delete old guide thread {old_thread}: {e:#}");
-    }
-
-    repo.set_posted(forum_id, thread_id, thread_id, actor.discord_id)
+    repo.set_posted(forum_id, thread_id, message_id, actor.discord_id)
         .await
         .map_err(internal)?;
 
@@ -250,42 +284,49 @@ async fn publish_guide(
         actor.discord_id,
         "publish_review_guide",
         "review_guide",
-        json!({"thread_id": thread_id, "forum_id": forum_id}),
+        json!({"thread_id": thread_id, "message_id": message_id, "forum_id": forum_id}),
     )
     .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn build_guide_message(content: &GuideContent) -> Vec<CreateComponent<'static>> {
-    let tags_text = content
-        .tags
-        .iter()
-        .map(|tag| format!("{} **{}**\n-# {}", tag.emoji, tag.name, tag.description))
-        .collect::<Vec<_>>()
-        .join("\n");
+async fn create_guide_thread(
+    http: &Http,
+    forum_id: i64,
+    components: Vec<CreateComponent<'static>>,
+) -> Result<(i64, i64), ApiError> {
+    let message = CreateMessage::new()
+        .flags(MessageFlags::IS_COMPONENTS_V2)
+        .components(components);
+    let thread = ChannelId::new(forum_id as u64)
+        .create_forum_post(http, CreateForumPost::new(GUIDE_THREAD_TITLE, message))
+        .await
+        .map_err(bad_gateway)?;
+    let thread_id = thread.id.get() as i64;
 
-    let mut parts = vec![
-        discord::text(format!("## {}", content.title)),
-        discord::separator(),
-        discord::text("### Tags Definitions"),
-        discord::text(tags_text),
-    ];
-    for section in &content.sections {
-        parts.push(discord::separator());
-        parts.push(discord::text(format!(
-            "### {}\n{}",
-            section.heading, section.body
-        )));
+    if let Err(e) = thread
+        .id
+        .edit(
+            http,
+            EditThread::new().locked(true).flags(ChannelFlags::PINNED),
+        )
+        .await
+    {
+        tracing::warn!("Failed to lock/pin guide thread {thread_id}: {e:#}");
     }
-    parts.push(discord::separator());
-    parts.push(discord::text(content.footer.clone()));
-    parts.push(CreateContainerComponent::ActionRow(
-        CreateActionRow::buttons(vec![
+
+    Ok((thread_id, thread_id))
+}
+
+fn build_guide_message(content: &GuideContent) -> Vec<CreateComponent<'static>> {
+    let parts = vec![
+        discord::text(content.body.clone()),
+        CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
             CreateButton::new("guide_ping_toggle")
                 .label("Ping Me For Reviews")
                 .style(ButtonStyle::Secondary),
-        ]),
-    ));
+        ])),
+    ];
 
     vec![CreateComponent::Container(CreateContainer::new(parts))]
 }
@@ -377,4 +418,64 @@ fn bad_gateway(e: impl Into<anyhow::Error>) -> ApiError {
     let e = e.into();
     tracing::warn!("Discord request failed: {e:#}");
     (StatusCode::BAD_GATEWAY, "Discord request failed".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_current_shape_without_migrating() {
+        let value = json!({"body": "hello"});
+        let (content, migrated) = parse_guide_content(&value).unwrap();
+        assert_eq!(content.body, "hello");
+        assert!(!migrated);
+    }
+
+    #[test]
+    fn migrates_legacy_shape_preserving_real_guide_text() {
+        let value = json!({
+            "title": "Tag Review Guide",
+            "tags": [
+                {
+                    "key": "sniper",
+                    "name": "Sniper",
+                    "emoji": "<:sniper:1459106167270932618>",
+                    "description": "Used for cheating snipers."
+                },
+                {
+                    "key": "caution",
+                    "name": "Caution",
+                    "emoji": "<:caution:1459106358098923583>",
+                    "description": "Special tag used for things that don't fit into any of the above categories."
+                }
+            ],
+            "sections": [
+                {
+                    "key": "submitting",
+                    "heading": "Submitting",
+                    "body": "Run `/tag add`, then press **Create Post** on the preview"
+                }
+            ],
+            "footer": "Press the button below to toggle tag review pings."
+        });
+
+        let (content, migrated) = parse_guide_content(&value).unwrap();
+        assert!(migrated);
+        assert_eq!(
+            content.body,
+            "## Tag Review Guide\n\
+             ---\n\
+             ### Tags Definitions\n\
+             <:sniper:1459106167270932618> **Sniper**\n\
+             -# Used for cheating snipers.\n\
+             <:caution:1459106358098923583> **Caution**\n\
+             -# Special tag used for things that don't fit into any of the above categories.\n\
+             ---\n\
+             ### Submitting\n\
+             Run `/tag add`, then press **Create Post** on the preview\n\
+             ---\n\
+             Press the button below to toggle tag review pings."
+        );
+    }
 }

@@ -1,20 +1,11 @@
 import { useState } from "react";
 import { usePostGuide, useReviewGuide, useSaveGuideContent, useSetPingRoles } from "../api/reviewGuide";
-import type { GuideContent, GuideSectionView, GuideTagDef, ReviewGuideResponse } from "../api/types";
+import type { GuideContent, ReviewGuideResponse } from "../api/types";
 import { Badge } from "../components/Badge";
 import { ConfirmButton } from "../components/ConfirmButton";
 import { Panel } from "../components/Panel";
 import { PickerSelect, type PickerItem } from "../components/PickerSelect";
 import { fmtDate, fmtNum } from "../format";
-
-const TAG_COLORS: Record<string, string> = {
-  sniper: "#f97316",
-  blatant_cheater: "#ef4444",
-  closet_cheater: "#a855f7",
-  confirmed_cheater: "#dc2626",
-  replays_needed: "#3b82f6",
-  caution: "#eab308",
-};
 
 export function ReviewGuide() {
   const guide = useReviewGuide();
@@ -34,138 +25,60 @@ function ReviewGuideLoaded({ data }: { data: ReviewGuideResponse }) {
   const [tab, setTab] = useState<"edit" | "preview">("edit");
   const save = useSaveGuideContent();
 
-  const dirty = JSON.stringify(content) !== JSON.stringify(data.content);
+  const dirty = content.body !== data.content.body;
 
   return (
-    <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-lg font-semibold text-gray-100">Tag Review Guide</h1>
-        <p className="mt-1 text-xs text-gray-500">
-          The pinned guide thread in the review forum — the web home of the old <code>/tag guide</code> command.
-        </p>
-      </div>
-
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
-        <Panel
-          className="xl:col-span-2"
-          title="Guide content"
-          description="Edits are saved here first, then published to Discord with “Repost guide”."
-          action={
-            <div className="flex items-center gap-2">
-              <div className="flex overflow-hidden rounded-md border border-white/8">
-                {(["edit", "preview"] as const).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setTab(t)}
-                    className={`px-2.5 py-1 text-xs font-medium ${t === tab ? "bg-accent/15 text-accent" : "text-gray-400 hover:bg-white/5"}`}
-                  >
-                    {t === "edit" ? "Edit" : "Preview"}
-                  </button>
-                ))}
-              </div>
-              <button
-                disabled={!dirty || save.isPending}
-                onClick={() => save.mutate(content)}
-                className="rounded-md bg-accent/15 px-3 py-1 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-40"
-              >
-                {save.isPending ? "Saving…" : "Save"}
-              </button>
+    <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
+      <Panel
+        className="xl:col-span-2"
+        title="Guide content"
+        description="Edits are saved here first, then published to Discord from the Publish panel."
+        action={
+          <div className="flex items-center gap-2">
+            <div className="flex overflow-hidden rounded-md border border-white/8">
+              {(["edit", "preview"] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTab(t)}
+                  className={`px-2.5 py-1 text-xs font-medium ${t === tab ? "bg-accent/15 text-accent" : "text-gray-400 hover:bg-white/5"}`}
+                >
+                  {t === "edit" ? "Edit" : "Preview"}
+                </button>
+              ))}
             </div>
-          }
-        >
-          {tab === "edit" ? (
-            <ContentEditor content={content} onChange={setContent} />
-          ) : (
-            <GuidePreview content={content} />
-          )}
-        </Panel>
+            <button
+              disabled={!dirty || save.isPending}
+              onClick={() => save.mutate(content)}
+              className="rounded-md bg-accent/15 px-3 py-1 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-40"
+            >
+              {save.isPending ? "Saving…" : "Save"}
+            </button>
+          </div>
+        }
+      >
+        {tab === "edit" ? <ContentEditor content={content} onChange={setContent} /> : <GuidePreview content={content} />}
+      </Panel>
 
-        <div className="flex flex-col gap-5">
-          <PublishPanel data={data} dirty={dirty} />
-          <PingRolesPanel data={data} />
-        </div>
+      <div className="flex flex-col gap-5">
+        <PublishPanel data={data} dirty={dirty} />
+        <PingRolesPanel data={data} />
       </div>
     </div>
   );
 }
 
 function ContentEditor({ content, onChange }: { content: GuideContent; onChange: (c: GuideContent) => void }) {
-  const setTag = (index: number, patch: Partial<GuideTagDef>) => {
-    onChange({ ...content, tags: content.tags.map((tag, i) => (i === index ? { ...tag, ...patch } : tag)) });
-  };
-  const setSection = (index: number, patch: Partial<GuideSectionView>) => {
-    onChange({ ...content, sections: content.sections.map((s, i) => (i === index ? { ...s, ...patch } : s)) });
-  };
-
   return (
-    <div className="flex flex-col gap-5">
-      <label className="flex flex-col gap-1">
-        <span className="text-xs text-gray-500">Title</span>
-        <input
-          className="rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-sm"
-          value={content.title}
-          onChange={(e) => onChange({ ...content, title: e.target.value })}
-        />
-      </label>
-
-      <div>
-        <div className="mb-2 text-xs font-medium tracking-wide text-gray-500 uppercase">Tag definitions</div>
-        <div className="flex flex-col gap-3">
-          {content.tags.map((tag, i) => (
-            <div key={tag.key} className="rounded-md border border-white/8 bg-black/20 p-3">
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: TAG_COLORS[tag.key] ?? "#6b7280" }} />
-                <input
-                  className="w-44 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-sm font-medium"
-                  value={tag.name}
-                  onChange={(e) => setTag(i, { name: e.target.value })}
-                />
-                <input
-                  className="flex-1 basis-56 rounded-md border border-white/10 bg-black/30 px-2 py-1 font-mono text-xs text-gray-400"
-                  value={tag.emoji}
-                  onChange={(e) => setTag(i, { emoji: e.target.value })}
-                />
-              </div>
-              <textarea
-                rows={2}
-                className="w-full resize-y rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-sm"
-                value={tag.description}
-                onChange={(e) => setTag(i, { description: e.target.value })}
-              />
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {content.sections.map((section, i) => (
-        <div key={section.key}>
-          <input
-            className="mb-1.5 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-sm font-medium"
-            value={section.heading}
-            onChange={(e) => setSection(i, { heading: e.target.value })}
-          />
-          <textarea
-            rows={5}
-            className="w-full resize-y rounded-md border border-white/10 bg-black/30 px-2 py-1.5 font-mono text-xs leading-5"
-            value={section.body}
-            onChange={(e) => setSection(i, { body: e.target.value })}
-          />
-        </div>
-      ))}
-
-      <label className="flex flex-col gap-1">
-        <span className="text-xs text-gray-500">Ping opt-in prompt</span>
-        <textarea
-          rows={2}
-          className="resize-y rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-sm"
-          value={content.footer}
-          onChange={(e) => onChange({ ...content, footer: e.target.value })}
-        />
-      </label>
-
+    <div className="flex flex-col gap-2">
+      <textarea
+        rows={22}
+        className="w-full resize-y rounded-md border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs leading-5"
+        value={content.body}
+        onChange={(e) => onChange({ body: e.target.value })}
+      />
       <div className="text-xs text-gray-500">
-        Supports Discord-style formatting: <code>**bold**</code>, <code>`code`</code>, and <code>-#</code> for small
-        text. Emoji fields hold the raw Discord emoji markup posted with each tag.
+        Discord markdown: <code>## heading</code>, <code>**bold**</code>, <code>`code`</code>, <code>-# </code> for
+        small text, and <code>---</code> on its own line for a divider.
       </div>
     </div>
   );
@@ -174,41 +87,12 @@ function ContentEditor({ content, onChange }: { content: GuideContent; onChange:
 function GuidePreview({ content }: { content: GuideContent }) {
   return (
     <div className="rounded-md border border-white/8 bg-black/30 p-4">
-      <div className="text-base font-semibold text-gray-100">{content.title}</div>
-
-      <PreviewDivider />
-      <div className="mb-2 text-sm font-semibold text-gray-200">Tags Definitions</div>
-      <div className="flex flex-col gap-2">
-        {content.tags.map((tag) => (
-          <div key={tag.key}>
-            <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-200">
-              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: TAG_COLORS[tag.key] ?? "#6b7280" }} />
-              {tag.name}
-            </div>
-            <div className="text-xs text-gray-500">{tag.description}</div>
-          </div>
-        ))}
-      </div>
-
-      {content.sections.map((section) => (
-        <div key={section.key}>
-          <PreviewDivider />
-          <div className="mb-1.5 text-sm font-semibold text-gray-200">{section.heading}</div>
-          <MarkdownLite text={section.body} />
-        </div>
-      ))}
-
-      <PreviewDivider />
-      <MarkdownLite text={content.footer} />
+      <MarkdownLite text={content.body} />
       <span className="mt-2 inline-block cursor-not-allowed rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-gray-400">
         Ping Me For Reviews
       </span>
     </div>
   );
-}
-
-function PreviewDivider() {
-  return <div className="my-3 border-t border-white/8" />;
 }
 
 function MarkdownLite({ text }: { text: string }) {
@@ -259,7 +143,7 @@ function PublishPanel({ data, dirty }: { data: ReviewGuideResponse; dirty: boole
   const { status } = data;
 
   return (
-    <Panel title="Publish" description="Posting creates a pinned, locked thread in the review forum and replaces the previous one.">
+    <Panel title="Publish" description="Posts a pinned, locked thread in the review forum. If one is already posted, this edits it in place.">
       <div className="flex flex-col gap-2 text-sm">
         {status.posted ? (
           <>
@@ -277,7 +161,7 @@ function PublishPanel({ data, dirty }: { data: ReviewGuideResponse; dirty: boole
               <div>
                 <Badge label="Unpublished changes" tone="warning" />
                 <div className="mt-1 text-xs text-gray-500">
-                  The saved guide differs from the posted thread. Repost to publish.
+                  The saved guide differs from the posted thread. Update to publish.
                 </div>
               </div>
             )}
@@ -290,8 +174,8 @@ function PublishPanel({ data, dirty }: { data: ReviewGuideResponse; dirty: boole
         )}
         <div className="mt-1">
           <ConfirmButton
-            label={status.posted ? "Repost guide" : "Post guide"}
-            confirmLabel="Post pinned thread"
+            label={status.posted ? "Update posted guide" : "Post guide"}
+            confirmLabel={status.posted ? "Edit posted thread" : "Post pinned thread"}
             onConfirm={() => post.mutate()}
             pending={post.isPending}
           />

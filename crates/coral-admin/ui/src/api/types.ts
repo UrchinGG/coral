@@ -492,24 +492,8 @@ export type StartedJobResponse = {
   job: SyncJobView | null;
 };
 
-export type GuideTagDef = {
-  key: string;
-  name: string;
-  emoji: string;
-  description: string;
-};
-
-export type GuideSectionView = {
-  key: string;
-  heading: string;
-  body: string;
-};
-
 export type GuideContent = {
-  title: string;
-  tags: GuideTagDef[];
-  sections: GuideSectionView[];
-  footer: string;
+  body: string;
 };
 
 export type GuideStatus = {
