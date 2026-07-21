@@ -56,7 +56,12 @@ mod tests {
 
     #[test]
     fn trusted_overwrites_another_users_tag() {
-        for old in ["sniper", "blatant_cheater", "closet_cheater", "replays_needed"] {
+        for old in [
+            "sniper",
+            "blatant_cheater",
+            "closet_cheater",
+            "replays_needed",
+        ] {
             assert!(
                 can_overwrite(old, TRUSTED, false, 10_000),
                 "trusted should overwrite {old} regardless of author or age"

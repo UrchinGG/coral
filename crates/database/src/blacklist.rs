@@ -37,8 +37,7 @@ pub enum OverwriteOutcome {
     Conflict(PlayerEvent),
 }
 
-const COLS: &str =
-    "id, uuid, kind, tag_type, reason, hide_username, expires_at, reviewed_by, author, displaced_author, ts";
+const COLS: &str = "id, uuid, kind, tag_type, reason, hide_username, expires_at, reviewed_by, author, displaced_author, ts";
 
 pub struct BlacklistRepository<'a> {
     pool: &'a PgPool,
