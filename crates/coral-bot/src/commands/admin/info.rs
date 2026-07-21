@@ -64,7 +64,7 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
 }
 
 pub fn register() -> CreateCommand<'static> {
-    CreateCommand::new("info").description("Coral statistics and leaderboards")
+    CreateCommand::new("info").description("Urchin statistics and leaderboards")
 }
 
 pub async fn handle_page(

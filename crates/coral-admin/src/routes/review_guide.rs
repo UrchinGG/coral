@@ -319,14 +319,31 @@ async fn create_guide_thread(
 }
 
 fn build_guide_message(content: &GuideContent) -> Vec<CreateComponent<'static>> {
-    let parts = vec![
-        discord::text(content.body.clone()),
-        CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
+    let mut parts = Vec::new();
+    let mut segment = Vec::new();
+    for line in content.body.lines() {
+        let trimmed = line.trim();
+        if trimmed.len() >= 3 && trimmed.chars().all(|c| c == '-') {
+            if !segment.is_empty() {
+                parts.push(discord::text(segment.join("\n")));
+                segment.clear();
+            }
+            parts.push(discord::separator());
+        } else {
+            segment.push(line);
+        }
+    }
+    if !segment.is_empty() {
+        parts.push(discord::text(segment.join("\n")));
+    }
+
+    parts.push(CreateContainerComponent::ActionRow(
+        CreateActionRow::buttons(vec![
             CreateButton::new("guide_ping_toggle")
                 .label("Ping Me For Reviews")
                 .style(ButtonStyle::Secondary),
-        ])),
-    ];
+        ]),
+    ));
 
     vec![CreateComponent::Container(CreateContainer::new(parts))]
 }

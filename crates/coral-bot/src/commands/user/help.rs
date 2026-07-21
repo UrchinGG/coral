@@ -6,8 +6,8 @@ use crate::{
     utils::{separator, text},
 };
 
-const CUBELIFY_GIF: &[u8] = include_bytes!("../../../assets/coral_instructions.gif");
-const CUBELIFY_GIF_NAME: &str = "coral_instructions.gif";
+const CUBELIFY_GIF: &[u8] = include_bytes!("../../../assets/urchin_instructions.gif");
+const CUBELIFY_GIF_NAME: &str = "urchin_instructions.gif";
 
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("help").description("Setup guide and frequently asked questions")
