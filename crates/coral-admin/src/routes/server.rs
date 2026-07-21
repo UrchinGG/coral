@@ -925,6 +925,7 @@ async fn build_preview_context(
             .unwrap_or(&discord_member.user.name),
     });
     ctx["coral"] = json!({ "access": access });
+    ctx["standing"] = json!({ "trusted": member.tag_granted });
 
     let highest = active_tags
         .iter()

@@ -18,6 +18,7 @@ const BUILDER_FIELDS = [
   "coral.access",
   "blacklist.tag",
   "discord.name",
+  "standing.trusted",
 ];
 
 type BuilderRow = {
