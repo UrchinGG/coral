@@ -425,6 +425,12 @@ async fn authenticate_key(state: &AppState, api_key: &str) -> Result<AuthResult,
             return Err(StatusCode::FORBIDDEN);
         }
         check_rate_limit(state, api_key, PERSONAL_RATE_LIMIT).await?;
+        if let Err(e) = MemberRepository::new(state.db.pool())
+            .increment_request_count(api_key)
+            .await
+        {
+            tracing::warn!("Failed to increment request count for member key: {e}");
+        }
         return Ok(AuthResult::Personal(member));
     }
 
@@ -442,6 +448,12 @@ async fn authenticate_key(state: &AppState, api_key: &str) -> Result<AuthResult,
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
         check_rate_limit(state, api_key, dev_key.rate_limit as i64).await?;
+        if let Err(e) = DeveloperKeyRepository::new(state.db.pool())
+            .increment_request_count(api_key)
+            .await
+        {
+            tracing::warn!("Failed to increment request count for developer key: {e}");
+        }
         return Ok(AuthResult::Developer(member, dev_key.permissions));
     }
 

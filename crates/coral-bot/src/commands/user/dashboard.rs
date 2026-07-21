@@ -308,7 +308,7 @@ fn progression_summary(member: &database::Member, rank: AccessRank) -> String {
 
     if rank >= AccessRank::Helper {
         return format!(
-            "### Standing\n{} — full tagging and review access.",
+            "### Standing\n**{}**: full tagging and review access.",
             rank.label()
         );
     }
@@ -316,7 +316,7 @@ fn progression_summary(member: &database::Member, rank: AccessRank) -> String {
     let strikes = strike_count(member);
     if strikes >= REVOKE_STRIKES {
         return format!(
-            "### Standing\n⚠️ {strikes} strikes — tagging and voting are suspended. \
+            "### Standing\n**Suspended**: {strikes} strikes; tagging and voting are paused. \
              You can still submit players for review. Contact staff to appeal.",
         );
     }
@@ -324,30 +324,30 @@ fn progression_summary(member: &database::Member, rank: AccessRank) -> String {
     let standing = evaluate(member);
     let correct = member.accurate_verdicts + BONUS_WEIGHT * member.bonus_verdicts;
     let strike_note = if strikes == 1 {
-        "\n⚠️ 1 strike — you can't advance to Trusted until it's removed."
+        "\n⚠️ 1 strike: you can't advance to **Trusted** until it's removed."
     } else {
         ""
     };
 
     if standing.can_tag {
         format!(
-            "### Standing\n**Trusted** — you can tag players directly, skipping review.{strike_note}"
+            "### Standing\n**Trusted**: you can tag players directly, skipping review.{strike_note}"
         )
     } else if standing.can_vote {
         format!(
-            "### Standing\n**Reviewer** — you can vote on reviews.\n\
-             Progress to Trusted: **{correct}/{TAG_GRANT_CORRECT}** correct verdicts \
+            "### Standing\n**Reviewer**: you can vote on reviews.\n\
+             Progress to **Trusted**: **{correct}/{TAG_GRANT_CORRECT}** correct verdicts \
              at **{EARN_RATIO}:1** accuracy.{strike_note}"
         )
     } else if member.rejected_tags == 0 {
         format!(
-            "### Standing\n**Submitter** — your tags go through review.\n\
+            "### Standing\n**Submitter**: your tags go through review.\n\
              Progress to voting: **{}/{VOTE_GRANT_APPROVALS}** approved submissions with no rejections.",
             member.accepted_tags
         )
     } else {
         format!(
-            "### Standing\n**Submitter** — your tags go through review.\n\
+            "### Standing\n**Submitter**: your tags go through review.\n\
              A rejection is on your record; reach **{EARN_RATIO}:1** approved-to-rejected to unlock voting."
         )
     }

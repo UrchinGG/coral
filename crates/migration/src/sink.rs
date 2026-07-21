@@ -138,7 +138,12 @@ impl Sink {
                 join_date = EXCLUDED.join_date,
                 request_count = EXCLUDED.request_count,
                 tagging_disabled = EXCLUDED.tagging_disabled,
-                access_level = GREATEST(members.access_level, EXCLUDED.access_level)
+                access_level = GREATEST(members.access_level, EXCLUDED.access_level),
+                api_key = CASE
+                    WHEN members.api_key ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                    THEN members.api_key
+                    ELSE EXCLUDED.api_key
+                END
             RETURNING id
             "#,
         )
@@ -209,8 +214,11 @@ impl Sink {
 
 fn parse_ts(s: Option<&str>) -> Option<DateTime<Utc>> {
     let s = s?;
-    match DateTime::parse_from_rfc3339(s) {
-        Ok(dt) => Some(dt.with_timezone(&Utc)),
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Some(dt.with_timezone(&Utc));
+    }
+    match chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f") {
+        Ok(naive) => Some(naive.and_utc()),
         Err(e) => {
             warn!("Bad timestamp '{s}': {e}");
             None
