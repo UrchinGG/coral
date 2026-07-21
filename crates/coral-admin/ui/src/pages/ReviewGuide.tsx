@@ -98,17 +98,23 @@ function GuidePreview({ content }: { content: GuideContent }) {
 function MarkdownLite({ text }: { text: string }) {
   return (
     <div className="flex flex-col gap-0.5">
-      {text.split("\n").map((line, i) =>
-        line.startsWith("-# ") ? (
-          <div key={i} className="text-xs text-gray-500">
-            <InlineMarkdown text={line.slice(3)} />
-          </div>
-        ) : (
+      {text.split("\n").map((line, i) => {
+        if (/^-{3,}$/.test(line.trim())) {
+          return <div key={i} className="my-2 border-t border-white/10" />;
+        }
+        if (line.startsWith("-# ")) {
+          return (
+            <div key={i} className="text-xs text-gray-500">
+              <InlineMarkdown text={line.slice(3)} />
+            </div>
+          );
+        }
+        return (
           <div key={i} className="text-sm text-gray-300">
             <InlineMarkdown text={line} />
           </div>
-        ),
-      )}
+        );
+      })}
     </div>
   );
 }
