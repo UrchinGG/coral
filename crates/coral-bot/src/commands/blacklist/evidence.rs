@@ -999,10 +999,11 @@ pub async fn handle_media_modal(
             attachments = attachments.keep(id);
         }
     }
-    attachments = attachments.add(face.clone());
     for f in files.iter().cloned() {
         attachments = attachments.add(f);
     }
+    attachments = attachments.add(face.clone());
+
     let mut all_files = files.clone();
     all_files.push(face);
 
