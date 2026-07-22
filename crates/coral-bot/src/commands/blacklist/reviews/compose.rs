@@ -203,6 +203,7 @@ pub async fn handle_addplayer_reason_modal(
         uuid,
         tag_type,
         reason,
+        author_name: None,
         status: PlayerStatus::Pending,
         review_note: None,
         evidence: Vec::new(),

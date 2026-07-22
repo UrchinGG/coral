@@ -273,6 +273,14 @@ async fn run_member_confirm(
     tag: &database::PlayerEvent,
 ) -> Result<()> {
     let reason = tag.reason.as_deref().unwrap_or("");
+    // The submission carries over the tag that is up for confirmation, so it
+    // has to stay credited to whoever wrote it rather than to the submitter.
+    let author_name = match tag.author.filter(|_| !tag.hide_username.unwrap_or(false)) {
+        Some(author) if author as u64 != discord_id => {
+            Some(super::channel::get_username(ctx, author as u64).await)
+        }
+        _ => None,
+    };
     let thread_id = reviews::create_submission(
         ctx,
         data,
@@ -281,6 +289,7 @@ async fn run_member_confirm(
         &player_info.uuid,
         tag.tag_type.as_deref().unwrap_or(""),
         reason,
+        author_name.as_deref(),
     )
     .await?;
 

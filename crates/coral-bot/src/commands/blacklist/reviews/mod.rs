@@ -562,6 +562,7 @@ async fn set_forum_tags(ctx: &Context, thread_id: ThreadId, tag_ids: &[ForumTagI
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn create_submission(
     ctx: &Context,
     data: &Data,
@@ -570,6 +571,7 @@ pub async fn create_submission(
     player_uuid: &str,
     tag_type: &str,
     reason: &str,
+    author_name: Option<&str>,
 ) -> Result<ThreadId> {
     let Some(forum_id) = data.review_forum_id else {
         anyhow::bail!("Review forum channel not configured");
@@ -584,6 +586,7 @@ pub async fn create_submission(
         uuid: player_uuid.to_string(),
         tag_type: tag_type.to_string(),
         reason: reason.to_string(),
+        author_name: author_name.map(|n| n.to_string()),
         status: PlayerStatus::Pending,
         review_note: None,
         evidence: Vec::new(),

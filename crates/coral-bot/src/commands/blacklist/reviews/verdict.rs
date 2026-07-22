@@ -868,6 +868,7 @@ pub async fn handle_confirm(
         &conf.player_uuid,
         &conf.tag_type,
         &conf.reason,
+        None,
     )
     .await
     {

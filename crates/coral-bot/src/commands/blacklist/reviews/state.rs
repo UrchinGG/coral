@@ -12,6 +12,10 @@ pub struct PlayerEntry {
     pub uuid: String,
     pub tag_type: String,
     pub reason: String,
+    /// Who wrote the tag being reviewed, when that is not the submitter. A
+    /// `/confirm` submission carries over the reason of the tag it wants
+    /// confirmed, which somebody else may have written.
+    pub author_name: Option<String>,
     pub status: PlayerStatus,
     pub review_note: Option<String>,
     pub evidence: Vec<Evidence>,
@@ -198,6 +202,7 @@ fn process_text_into_player(player: &mut PlayerEntry, content: &str) {
         if trimmed == "-# Proposed" {
             player.tag_type.clear();
             player.reason.clear();
+            player.author_name = None;
             continue;
         }
         if is_tag_type_line(trimmed) {
@@ -228,6 +233,8 @@ fn process_text_into_player(player: &mut PlayerEntry, content: &str) {
         } else if trimmed.starts_with("> -#") {
             if let Some(names) = parse_reviewed_line(trimmed) {
                 player.reviewer_names = names;
+            } else if let Some(name) = parse_added_by_line(trimmed) {
+                player.author_name.get_or_insert(name);
             }
         } else if trimmed.starts_with('>') {
             if player.reason.is_empty() {
@@ -261,6 +268,12 @@ fn parse_tag_type_line(text: &str) -> Option<&'static str> {
     let inner = text.trim().strip_prefix("**")?.split("**").next()?;
     let display = inner.split('>').next_back()?.trim();
     lookup_tag_name_from_display(display)
+}
+
+fn parse_added_by_line(text: &str) -> Option<String> {
+    let rest = text.split("Added by ").nth(1)?;
+    let name = rest.split('`').nth(1)?;
+    name.strip_prefix('@').map(|s| s.to_string())
 }
 
 fn parse_reviewed_line(text: &str) -> Option<Vec<String>> {
@@ -300,6 +313,7 @@ fn new_player_entry(username: String, tag_type: &str) -> PlayerEntry {
         uuid: String::new(),
         tag_type: tag_type.to_string(),
         reason: String::new(),
+        author_name: None,
         status: PlayerStatus::Pending,
         review_note: None,
         evidence: Vec::new(),
@@ -486,4 +500,47 @@ pub fn parse_confirmation_data(custom_id: &str, message: &Message) -> Option<Con
         tag_type,
         reason,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CURRENT_BLOCK: &str = "**<:closetcheater:1> Closet Cheater**\n\
+        > hitting through walls \\(clip 1\\)\n\
+        > -# **\\- Added by `@tagger` <t:1773018673:R>**";
+    const PROPOSED_BLOCK: &str = "**<:blatantcheater:2> Blatant Cheater**\n\
+        > flicks on \\(clip 2\\)\n\
+        > -# **\\- Added by `@submitter`**\n\
+        -# UUID: 0e5cce07-492f-4856-ac22-c907dbff1493";
+
+    fn parse(parts: &[&str]) -> PlayerEntry {
+        let mut player = new_player_entry("Player".to_string(), "");
+        for part in parts {
+            process_text_into_player(&mut player, part);
+        }
+        player
+    }
+
+    #[test]
+    fn proposed_tag_wins_over_the_tag_it_replaces() {
+        let player = parse(&[
+            "IGN - `Player`",
+            "-# Current",
+            CURRENT_BLOCK,
+            "-# Proposed",
+            PROPOSED_BLOCK,
+        ]);
+        assert_eq!(player.tag_type, "blatant_cheater");
+        assert_eq!(player.reason, "flicks on (clip 2)");
+        assert_eq!(player.author_name.as_deref(), Some("submitter"));
+        assert_eq!(player.uuid, "0e5cce07492f4856ac22c907dbff1493");
+    }
+
+    #[test]
+    fn reason_and_author_survive_a_redraw_unchanged() {
+        let player = parse(&["IGN - `Player`", CURRENT_BLOCK]);
+        assert_eq!(player.reason, "hitting through walls (clip 1)");
+        assert_eq!(player.author_name.as_deref(), Some("tagger"));
+    }
 }

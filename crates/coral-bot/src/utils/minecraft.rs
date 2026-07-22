@@ -68,7 +68,7 @@ mod tests {
     #[test]
     fn sanitize_round_trips() {
         for reason in [
-            "autoclutch (temp tag, i will change later)",
+            "hitting through walls (clip 1, will add more)",
             "uses \\ backslash * and _underscores_",
             "plain reason",
         ] {
@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn re_rendering_does_not_stack_escapes() {
-        let raw = "autoclutch (temp tag)";
+        let raw = "hitting through walls (clip 1)";
         let once = sanitize_reason(raw);
         let twice = sanitize_reason(&unsanitize_reason(&once));
         assert_eq!(once, twice);

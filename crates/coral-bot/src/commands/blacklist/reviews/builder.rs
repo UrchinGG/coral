@@ -76,6 +76,13 @@ pub fn build_review_message(
             .then(|| replaced.get(&player.uuid))
             .flatten();
         build_player_card(&mut parts, player, repl, submitter_name, face_urls);
+        if player
+            .author_name
+            .as_deref()
+            .is_some_and(|author| author != submitter_name)
+        {
+            parts.push(text(format!("-# Confirmation opened by <@{id}>")));
+        }
 
         if state.submitted {
             build_submitted_controls(&mut parts, player, idx, id);
@@ -128,7 +135,8 @@ pub fn build_player_card(
     face_urls: &HashMap<String, String>,
 ) {
     let indicator = evidence_indicator(&player.tag_type, !player.evidence.is_empty());
-    let added = format!("> -# **\\- Added by `@{submitter_name}`**");
+    let author = player.author_name.as_deref().unwrap_or(submitter_name);
+    let added = format!("> -# **\\- Added by `@{author}`**");
     let reviewed = (!player.reviewer_names.is_empty()).then(|| {
         let names = player
             .reviewer_names
