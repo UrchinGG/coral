@@ -4,6 +4,7 @@ use blacklist::{EMOTE_EVIDENCE, EMOTE_NO_EVIDENCE, Replay, parse_replay};
 use serenity::all::*;
 
 use super::*;
+use crate::utils::unsanitize_reason;
 
 #[derive(Debug, Clone)]
 pub struct PlayerEntry {
@@ -231,9 +232,9 @@ fn process_text_into_player(player: &mut PlayerEntry, content: &str) {
         } else if trimmed.starts_with('>') {
             if player.reason.is_empty() {
                 if let Some(reason) = trimmed.strip_prefix("> ") {
-                    player.reason = reason.to_string();
+                    player.reason = unsanitize_reason(reason);
                 } else if let Some(reason) = trimmed.strip_prefix('>') {
-                    player.reason = reason.trim().to_string();
+                    player.reason = unsanitize_reason(reason.trim());
                 }
             }
         } else if let Some(evidence) = parse_evidence_line(trimmed) {
@@ -475,7 +476,7 @@ pub fn parse_confirmation_data(custom_id: &str, message: &Message) -> Option<Con
         .map_or(body.as_str(), |(_, rest)| rest);
     let reason = scope
         .lines()
-        .find_map(|line| line.trim().strip_prefix("> ").map(|s| s.to_string()))
+        .find_map(|line| line.trim().strip_prefix("> ").map(unsanitize_reason))
         .unwrap_or_default();
 
     Some(ConfirmationData {

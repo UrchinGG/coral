@@ -9,7 +9,7 @@ use super::channel::{format_added_line, format_reviewed_line, format_tag_block};
 use super::reviews;
 use super::tag::{get_rank, get_rank_and_member};
 use crate::framework::{AccessRank, Data};
-use crate::utils::{format_uuid_dashed, sanitize_reason, separator, text};
+use crate::utils::{format_uuid_dashed, sanitize_reason, separator, text, unsanitize_reason};
 use coral_redis::BlacklistEvent;
 
 fn extract_uuid_from_title(title: &str) -> Option<String> {
@@ -786,7 +786,7 @@ fn ingest_text(state: &mut EvidenceState, content: &str) {
         } else if state.reason.is_empty() {
             if let Some(rest) = trimmed.strip_prefix("> ") {
                 if !rest.starts_with("-#") {
-                    state.reason = rest.to_string();
+                    state.reason = unsanitize_reason(rest);
                 }
             }
         }
