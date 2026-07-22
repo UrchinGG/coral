@@ -1236,11 +1236,30 @@ pub async fn handle_manage_close(
 
 async fn remove_confirmed_tag(
     repo: &BlacklistRepository<'_>,
+    data: &Data,
     state: &EvidenceState,
     actor: i64,
 ) -> Result<()> {
-    repo.remove_event(&state.uuid, "confirmed_cheater", Some(actor))
+    let tag = repo
+        .get_active_tag(&state.uuid, "confirmed_cheater")
         .await?;
+    if !repo
+        .remove_event(&state.uuid, "confirmed_cheater", Some(actor))
+        .await?
+    {
+        return Ok(());
+    }
+
+    if let Some(tag) = tag {
+        data.event_publisher
+            .publish(&BlacklistEvent::TagRemoved {
+                uuid: state.uuid.clone(),
+                tag_id: tag.id,
+                removed_by: actor,
+                silent: true,
+            })
+            .await;
+    }
     Ok(())
 }
 
@@ -1311,7 +1330,7 @@ pub async fn handle_archive(
     };
 
     let repo = BlacklistRepository::new(data.db.pool());
-    remove_confirmed_tag(&repo, &state, discord_id as i64).await?;
+    remove_confirmed_tag(&repo, data, &state, discord_id as i64).await?;
 
     let urls = gallery_url_map(&*component.message);
     let face = face_attachment(data, &state.uuid).await;
