@@ -437,6 +437,12 @@ impl Handler {
             _ if id.starts_with("evidence_mclose:") => {
                 commands::blacklist::evidence::handle_manage_close(ctx, component, &self.data).await
             }
+            _ if id.starts_with("evidence_restore:") => {
+                commands::blacklist::evidence::handle_restore(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("evidence_change:") => {
+                commands::blacklist::evidence::handle_change_tag(ctx, component, &self.data).await
+            }
             _ if id.starts_with("evidence_archive") => {
                 commands::blacklist::evidence::handle_archive(ctx, component, &self.data).await
             }
@@ -624,6 +630,9 @@ impl Handler {
             }
             _ if id.starts_with("review_media_modal:") => {
                 commands::blacklist::reviews::handle_media_modal(ctx, modal, &self.data).await
+            }
+            _ if id.starts_with("evidence_change_modal:") => {
+                commands::blacklist::evidence::handle_change_modal(ctx, modal, &self.data).await
             }
             _ if id.starts_with("evidence_media_modal") => {
                 commands::blacklist::evidence::handle_media_modal(ctx, modal, &self.data).await

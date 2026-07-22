@@ -95,6 +95,18 @@ pub async fn populate_thread_index(ctx: &Context, data: &Data) {
     tracing::info!("evidence thread index populated: {count} threads");
 }
 
+async fn thread_is_archived(ctx: &Context, thread_id: ThreadId) -> bool {
+    match ctx.http.get_channel(thread_id.into()).await {
+        Ok(channel) => channel
+            .thread()
+            .is_some_and(|t| t.thread_metadata.archived()),
+        Err(e) => {
+            tracing::warn!("could not read evidence thread {}: {e}", thread_id.get());
+            false
+        }
+    }
+}
+
 pub fn evidence_thread_url(data: &Data, uuid: &str) -> Option<String> {
     let thread_id = data.evidence_thread_for(uuid)?;
     let guild_id = data.home_guild_id?;
@@ -183,20 +195,49 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         .await;
     };
 
-    if let Some(thread_url) = evidence_thread_url(data, &player_info.uuid) {
+    if let Some(thread_id) = data.evidence_thread_for(&player_info.uuid) {
+        let thread_url = evidence_thread_url(data, &player_info.uuid)
+            .unwrap_or_else(|| format!("<#{}>", thread_id.get()));
         let emote = lookup_tag("confirmed_cheater")
             .map(|d| d.emote)
             .unwrap_or("");
+        let archived = thread_is_archived(ctx, thread_id).await;
+
+        let mut parts = vec![face_section(format!(
+            "## {} Evidence {}\nIGN - `{}`\nThread: {}",
+            emote,
+            if archived {
+                "Post Archived"
+            } else {
+                "Already Exists"
+            },
+            player_info.username,
+            thread_url
+        ))];
+        if archived {
+            parts.push(text(if rank >= AccessRank::Helper {
+                "-# Restoring reopens the post and re-applies the confirmed cheater tag."
+            } else {
+                "-# A helper or above has to restore this post before it can be confirmed again."
+            }));
+            if rank >= AccessRank::Helper {
+                parts.push(CreateContainerComponent::ActionRow(
+                    CreateActionRow::buttons(vec![
+                        CreateButton::new(format!("evidence_restore:{}", player_info.uuid))
+                            .label("Restore Post")
+                            .style(ButtonStyle::Primary),
+                    ]),
+                ));
+            }
+        }
+
         command
             .edit_response(
                 &ctx.http,
                 EditInteractionResponse::new()
                     .flags(MessageFlags::IS_COMPONENTS_V2)
                     .components(vec![CreateComponent::Container(CreateContainer::new(
-                        vec![face_section(format!(
-                            "## {} Evidence Already Exists\nIGN - `{}`\nThread: {}",
-                            emote, player_info.username, thread_url
-                        ))],
+                        parts,
                     ))])
                     .new_attachment(face_attachment(data, &player_info.uuid).await),
             )
@@ -516,6 +557,11 @@ fn build_evidence_message(
         );
     }
     buttons.push(
+        CreateButton::new(format!("evidence_change:{uuid}"))
+            .label("Change Tag")
+            .style(ButtonStyle::Secondary),
+    );
+    buttons.push(
         CreateButton::new("evidence_archive")
             .label("Archive")
             .style(ButtonStyle::Danger),
@@ -766,10 +812,12 @@ async fn try_convert_to_confirmed(data: &Data, state: &EvidenceState, actor_id: 
     {
         return Ok(());
     }
-    let Some(tag) = tags
-        .iter()
-        .find(|t| t.tag_type.as_deref() != Some("confirmed_cheater"))
-    else {
+    let Some(tag) = tags.iter().find(|t| {
+        matches!(
+            t.tag_type.as_deref(),
+            Some("closet_cheater" | "blatant_cheater")
+        )
+    }) else {
         return Ok(());
     };
     let old_tag_type = tag.tag_type.clone().unwrap_or_default();
@@ -1363,6 +1411,279 @@ pub async fn handle_archive(
     let _ = thread_id
         .edit(&ctx.http, EditThread::new().archived(true).locked(true))
         .await;
+    Ok(())
+}
+
+async fn deferred_component_error(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    message: &str,
+) -> Result<()> {
+    component
+        .edit_response(
+            &ctx.http,
+            EditInteractionResponse::new()
+                .flags(MessageFlags::IS_COMPONENTS_V2)
+                .components(vec![CreateComponent::Container(CreateContainer::new(
+                    vec![text(format!("## Error\n{message}"))],
+                ))]),
+        )
+        .await?;
+    Ok(())
+}
+
+/// Reopens an archived evidence post and re-applies the confirmed cheater tag.
+pub async fn handle_restore(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let uuid = component
+        .data
+        .custom_id
+        .strip_prefix("evidence_restore:")
+        .unwrap_or("")
+        .to_string();
+
+    let discord_id = component.user.id.get();
+    if get_rank(data, discord_id).await? < AccessRank::Helper {
+        return crate::interact::send_component_error(
+            ctx,
+            component,
+            "Error",
+            "Only helpers and above can restore evidence",
+        )
+        .await;
+    }
+
+    let Some(thread_id) = data.evidence_thread_for(&uuid) else {
+        return crate::interact::send_component_error(
+            ctx,
+            component,
+            "Error",
+            "That evidence post no longer exists",
+        )
+        .await;
+    };
+
+    let repo = BlacklistRepository::new(data.db.pool());
+    let tags = repo.get_active_tags(&uuid).await?;
+    if !tags.iter().any(|t| {
+        matches!(
+            t.tag_type.as_deref(),
+            Some("confirmed_cheater" | "closet_cheater" | "blatant_cheater")
+        )
+    }) {
+        return crate::interact::send_component_error(
+            ctx,
+            component,
+            "Error",
+            "Player must have a closet cheater or blatant cheater tag",
+        )
+        .await;
+    }
+
+    component.defer(&ctx.http).await?;
+
+    let channel_id: GenericChannelId = thread_id.into();
+    let op_id = MessageId::new(thread_id.get());
+    thread_id
+        .edit(&ctx.http, EditThread::new().archived(false).locked(false))
+        .await?;
+
+    let op = ctx.http.get_message(channel_id, op_id).await?;
+    let Some(state) = parse_state_from_message(&op) else {
+        return deferred_component_error(ctx, component, "Could not parse evidence state").await;
+    };
+
+    try_convert_to_confirmed(data, &state, discord_id).await?;
+
+    let confirmed = repo.get_active_tag(&uuid, "confirmed_cheater").await?;
+    let reason = confirmed
+        .as_ref()
+        .and_then(|t| t.reason.clone())
+        .unwrap_or_else(|| state.reason.clone());
+    let added_line = match &confirmed {
+        Some(tag) => Some(format_added_line(ctx, tag).await),
+        None => state.added_line.clone(),
+    };
+    let reviewed_line = match confirmed.as_ref().map(|t| t.reviewed_by.as_deref()) {
+        Some(reviewed) => format_reviewed_line(ctx, reviewed).await,
+        None => state.reviewed_line.clone(),
+    };
+
+    let urls = gallery_url_map(&op);
+    let components = build_evidence_message(
+        &state.username,
+        &uuid,
+        &reason,
+        added_line.as_deref(),
+        reviewed_line.as_deref(),
+        &state.evidence,
+        state.review_url.as_deref(),
+        &urls,
+    );
+    rebuild_evidence_op(ctx, data, channel_id, op_id, &uuid, components, &urls).await?;
+
+    let emote = lookup_tag("confirmed_cheater")
+        .map(|d| d.emote)
+        .unwrap_or("");
+    component
+        .edit_response(
+            &ctx.http,
+            EditInteractionResponse::new()
+                .flags(MessageFlags::IS_COMPONENTS_V2)
+                .components(vec![CreateComponent::Container(CreateContainer::new(
+                    vec![face_section(format!(
+                        "## {} Evidence Post Restored\nIGN - `{}`\nThread: <#{}>",
+                        emote,
+                        state.username,
+                        thread_id.get()
+                    ))],
+                ))])
+                .new_attachment(face_attachment(data, &uuid).await),
+        )
+        .await?;
+    Ok(())
+}
+
+/// Opens the reason prompt for replacing the confirmed cheater tag behind an
+/// evidence post.
+pub async fn handle_change_tag(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let uuid = component
+        .data
+        .custom_id
+        .strip_prefix("evidence_change:")
+        .unwrap_or("");
+
+    let discord_id = component.user.id.get();
+    if get_rank(data, discord_id).await? < AccessRank::Moderator {
+        return crate::interact::send_component_error(
+            ctx,
+            component,
+            "Error",
+            "Only moderators can change a confirmed cheater tag",
+        )
+        .await;
+    }
+
+    let repo = BlacklistRepository::new(data.db.pool());
+    let Some(tag) = repo.get_active_tag(uuid, "confirmed_cheater").await? else {
+        return crate::interact::send_component_error(
+            ctx,
+            component,
+            "Error",
+            "This player has no confirmed cheater tag to change",
+        )
+        .await;
+    };
+
+    let input = CreateInputText::new(InputTextStyle::Paragraph, "evidence_reason")
+        .placeholder("Reason for this tag")
+        .value(tag.reason.unwrap_or_default())
+        .max_length(120)
+        .required(true);
+    let modal =
+        CreateModal::new(format!("evidence_change_modal:{uuid}"), "Change Tag").components(vec![
+            CreateModalComponent::Label(CreateLabel::input_text("Reason", input)),
+        ]);
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Modal(modal))
+        .await?;
+    Ok(())
+}
+
+pub async fn handle_change_modal(
+    ctx: &Context,
+    modal: &ModalInteraction,
+    data: &Data,
+) -> Result<()> {
+    modal.defer_ephemeral(&ctx.http).await?;
+
+    let uuid = modal
+        .data
+        .custom_id
+        .strip_prefix("evidence_change_modal:")
+        .unwrap_or("")
+        .to_string();
+    let reason = crate::interact::extract_modal_value(&modal.data.components, "evidence_reason");
+    let discord_id = modal.user.id.get();
+    let rank = get_rank(data, discord_id).await?;
+
+    let repo = BlacklistRepository::new(data.db.pool());
+    let hide = repo
+        .get_active_tag(&uuid, "confirmed_cheater")
+        .await?
+        .and_then(|t| t.hide_username)
+        .unwrap_or(false);
+
+    let ops = database::TagOp::new(data.db.pool());
+    let (old_tag, new_tag) = match ops
+        .overwrite(
+            &uuid,
+            "confirmed_cheater",
+            "confirmed_cheater",
+            &reason,
+            discord_id as i64,
+            rank.to_level(),
+            hide,
+        )
+        .await
+    {
+        Ok(tags) => tags,
+        Err(e) => {
+            modal
+                .edit_response(
+                    &ctx.http,
+                    EditInteractionResponse::new().content(super::tag::op_error_message(&e)),
+                )
+                .await?;
+            return Ok(());
+        }
+    };
+
+    data.event_publisher
+        .publish(&BlacklistEvent::TagOverwritten {
+            uuid: uuid.clone(),
+            old_tag_id: old_tag.id,
+            old_tag_type: old_tag.tag_type.clone().unwrap_or_default(),
+            old_reason: old_tag.reason.clone().unwrap_or_default(),
+            new_tag_id: new_tag.id,
+            overwritten_by: discord_id as i64,
+            silent: false,
+        })
+        .await;
+
+    let channel_id = modal.channel_id;
+    let op_id = MessageId::new(channel_id.get());
+    if let Ok(op) = ctx.http.get_message(channel_id, op_id).await
+        && let Some(state) = parse_state_from_message(&op)
+    {
+        let urls = gallery_url_map(&op);
+        let added_line = format_added_line(ctx, &new_tag).await;
+        let components = build_evidence_message(
+            &state.username,
+            &uuid,
+            &reason,
+            Some(&added_line),
+            state.reviewed_line.as_deref(),
+            &state.evidence,
+            state.review_url.as_deref(),
+            &urls,
+        );
+        rebuild_evidence_op(ctx, data, channel_id, op_id, &uuid, components, &urls).await?;
+    }
+
+    modal
+        .edit_response(
+            &ctx.http,
+            EditInteractionResponse::new().content("Confirmed cheater tag replaced"),
+        )
+        .await?;
     Ok(())
 }
 

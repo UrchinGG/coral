@@ -59,7 +59,7 @@ fn simple_result(emote: &str, msg: &str) -> CreateContainer<'static> {
     )])
 }
 
-fn op_error_message(e: &TagOpError) -> &'static str {
+pub(super) fn op_error_message(e: &TagOpError) -> &'static str {
     match e {
         TagOpError::PlayerLocked => "This player's tags are locked",
         TagOpError::InsufficientPermissions => "You don't have permission to do this",
