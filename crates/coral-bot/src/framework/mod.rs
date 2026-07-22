@@ -73,7 +73,7 @@ impl Data {
     }
 
     pub fn evidence_thread_for(&self, uuid: &str) -> Option<ThreadId> {
-        let key = uuid.replace('-', "");
+        let key = uuid.replace('-', "").to_ascii_lowercase();
         self.evidence_threads.read().unwrap().get(&key).copied()
     }
 

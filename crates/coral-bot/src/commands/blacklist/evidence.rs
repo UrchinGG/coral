@@ -13,9 +13,57 @@ use crate::utils::{format_uuid_dashed, sanitize_reason, separator, text, unsanit
 use coral_redis::BlacklistEvent;
 
 fn extract_uuid_from_title(title: &str) -> Option<String> {
-    let last = title.rsplit('|').next()?.trim();
-    let uuid = last.replace('-', "");
-    (uuid.len() == 32 && uuid.chars().all(|c| c.is_ascii_hexdigit())).then_some(uuid)
+    // Old UrchinUtils posts used titles like "069a79f4-..." or "Name | UUID: 069a79f4-...",
+    // so accept a UUID anywhere in the title rather than just after the last '|'.
+    title
+        .split(|c: char| !c.is_ascii_hexdigit() && c != '-')
+        .map(|token| token.replace('-', ""))
+        .find(|uuid| uuid.len() == 32)
+        .map(|uuid| uuid.to_ascii_lowercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_uuid_from_title;
+
+    #[test]
+    fn coral_title() {
+        assert_eq!(
+            extract_uuid_from_title("Scutes | 069a79f4-44e9-4726-a5be-fca90e38aaf5").as_deref(),
+            Some("069a79f444e94726a5befca90e38aaf5")
+        );
+    }
+
+    #[test]
+    fn urchin_bare_uuid_title() {
+        assert_eq!(
+            extract_uuid_from_title("069a79f4-44e9-4726-a5be-fca90e38aaf5").as_deref(),
+            Some("069a79f444e94726a5befca90e38aaf5")
+        );
+    }
+
+    #[test]
+    fn urchin_renamed_title() {
+        assert_eq!(
+            extract_uuid_from_title("Scutes | UUID: 069a79f4-44e9-4726-a5be-fca90e38aaf5")
+                .as_deref(),
+            Some("069a79f444e94726a5befca90e38aaf5")
+        );
+    }
+
+    #[test]
+    fn uppercase_uuid_is_lowercased() {
+        assert_eq!(
+            extract_uuid_from_title("069A79F4-44E9-4726-A5BE-FCA90E38AAF5").as_deref(),
+            Some("069a79f444e94726a5befca90e38aaf5")
+        );
+    }
+
+    #[test]
+    fn title_without_uuid() {
+        assert_eq!(extract_uuid_from_title("general discussion"), None);
+        assert_eq!(extract_uuid_from_title("Scutes | deadbeef"), None);
+    }
 }
 
 pub fn thread_index_insert(data: &Data, name: &str, thread_id: ThreadId, parent_id: ChannelId) {
