@@ -263,7 +263,10 @@ async fn publish_guide(
                 .edit_message(&http, MessageId::new(message_id as u64), edit)
                 .await
             {
-                Ok(_) => (thread_id, message_id),
+                Ok(_) => {
+                    reopen_guide_thread(&http, thread_id).await;
+                    (thread_id, message_id)
+                }
                 Err(e) => {
                     tracing::warn!(
                         "Failed to edit existing guide message ({e:#}), reposting instead"
@@ -304,18 +307,30 @@ async fn create_guide_thread(
         .map_err(bad_gateway)?;
     let thread_id = thread.id.get() as i64;
 
+    // The thread deliberately stays unlocked: Discord greys out message
+    // components for anyone who cannot post in the channel, which would make
+    // the ping opt-in button unusable for everyone but staff. The bot deletes
+    // replies posted there instead.
     if let Err(e) = thread
         .id
-        .edit(
-            http,
-            EditThread::new().locked(true).flags(ChannelFlags::PINNED),
-        )
+        .edit(http, EditThread::new().flags(ChannelFlags::PINNED))
         .await
     {
-        tracing::warn!("Failed to lock/pin guide thread {thread_id}: {e:#}");
+        tracing::warn!("Failed to pin guide thread {thread_id}: {e:#}");
     }
 
     Ok((thread_id, thread_id))
+}
+
+/// Unarchives and unlocks an existing guide thread so its opt-in button stays
+/// clickable for members.
+async fn reopen_guide_thread(http: &Http, thread_id: i64) {
+    if let Err(e) = ThreadId::new(thread_id as u64)
+        .edit(http, EditThread::new().archived(false).locked(false))
+        .await
+    {
+        tracing::warn!("Failed to reopen guide thread {thread_id}: {e:#}");
+    }
 }
 
 fn build_guide_message(content: &GuideContent) -> Vec<CreateComponent<'static>> {

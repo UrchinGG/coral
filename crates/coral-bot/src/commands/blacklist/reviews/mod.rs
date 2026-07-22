@@ -22,7 +22,7 @@ pub use evidence::{
     handle_add_replay, handle_attach_media, handle_edit_replay, handle_edit_replay_modal,
     handle_evidence_select, handle_media_modal, handle_remove_evidence, handle_replay_modal,
 };
-pub use guide::{handle_ping_choice, handle_ping_toggle};
+pub use guide::{handle_ping_choice, handle_ping_toggle, spawn_guide_watcher};
 pub use verdict::{
     handle_abort_delete, handle_approve, handle_cancel_thread, handle_confirm, handle_reject,
     handle_reject_modal, handle_submit,

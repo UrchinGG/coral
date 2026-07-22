@@ -89,6 +89,7 @@ async fn init_data() -> Result<Data> {
         pending_overwrites: Arc::new(Mutex::new(HashMap::new())),
         pending_review_votes: Arc::new(Mutex::new(HashMap::new())),
         evidence_threads: Arc::new(RwLock::new(HashMap::new())),
+        guide_thread_id: Arc::new(RwLock::new(None)),
         sync_cooldowns: Arc::new(Mutex::new(HashMap::new())),
         active_interactions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         trusted_role_id: env::var("TRUSTED_ROLE_ID")

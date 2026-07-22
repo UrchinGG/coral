@@ -52,6 +52,7 @@ pub struct Data {
     pub pending_overwrites: Arc<Mutex<HashMap<String, PendingOverwrite>>>,
     pub pending_review_votes: Arc<Mutex<HashMap<u64, HashMap<usize, (Vec<u64>, Vec<u64>)>>>>,
     pub evidence_threads: Arc<RwLock<HashMap<String, ThreadId>>>,
+    pub guide_thread_id: Arc<RwLock<Option<u64>>>,
     pub sync_cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
     pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
     pub trusted_role_id: Option<RoleId>,
@@ -65,6 +66,10 @@ pub struct Data {
 impl Data {
     pub fn is_owner(&self, user_id: u64) -> bool {
         self.owner_ids.contains(&user_id)
+    }
+
+    pub fn guide_thread(&self) -> Option<u64> {
+        *self.guide_thread_id.read().unwrap()
     }
 
     pub fn evidence_thread_for(&self, uuid: &str) -> Option<ThreadId> {
@@ -734,6 +739,7 @@ impl EventHandler for Handler {
                     Err(e) => tracing::error!("Failed to register global commands: {}", e),
                 }
                 crate::events::spawn_subscriber(ctx.clone(), self.data.clone());
+                commands::blacklist::reviews::spawn_guide_watcher(ctx.clone(), self.data.clone());
                 let data = self.data.clone();
                 let ctx = ctx.clone();
                 tokio::spawn(async move {

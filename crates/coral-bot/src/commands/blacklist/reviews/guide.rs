@@ -5,6 +5,52 @@ use serenity::all::*;
 use crate::framework::{AccessRank, Data};
 use crate::interact::send_component_error;
 
+/// How often the guide thread is re-checked. Discord greys out message
+/// components for everyone who cannot post in the channel, so the guide thread
+/// has to stay unarchived and unlocked for the opt-in button to work; stray
+/// messages are removed by the review guard instead.
+const GUIDE_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+pub fn spawn_guide_watcher(ctx: Context, data: Data) {
+    tokio::spawn(async move {
+        loop {
+            refresh_guide_thread(&ctx, &data).await;
+            tokio::time::sleep(GUIDE_REFRESH_INTERVAL).await;
+        }
+    });
+}
+
+async fn refresh_guide_thread(ctx: &Context, data: &Data) {
+    let config = match ReviewGuideRepository::new(data.db.pool()).get().await {
+        Ok(config) => config,
+        Err(e) => {
+            tracing::warn!("could not load review guide config: {e}");
+            return;
+        }
+    };
+    let Some(thread_id) = config.and_then(|c| c.posted_thread_id) else {
+        return;
+    };
+    *data.guide_thread_id.write().unwrap() = Some(thread_id as u64);
+
+    let thread = ThreadId::new(thread_id as u64);
+    let Ok(channel) = ctx.http.get_channel(thread.into()).await else {
+        return;
+    };
+    let Some(guild_thread) = channel.thread() else {
+        return;
+    };
+    if !guild_thread.thread_metadata.archived() && !guild_thread.thread_metadata.locked() {
+        return;
+    }
+    if let Err(e) = thread
+        .edit(&ctx.http, EditThread::new().archived(false).locked(false))
+        .await
+    {
+        tracing::warn!("could not reopen review guide thread {thread_id}: {e}");
+    }
+}
+
 async fn ping_roles(data: &Data) -> (Option<RoleId>, Option<RoleId>) {
     let (review, dispute) = ReviewGuideRepository::new(data.db.pool())
         .get_ping_roles()
