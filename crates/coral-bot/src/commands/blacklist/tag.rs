@@ -723,11 +723,13 @@ async fn show_overwrite_prompt(
             "## {} Tag Overwrite",
             EMOTE_EDITTAG
         ))),
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(if conflict_type == tag_type {
-            "This player already has this tag. Overwriting replaces it with your tag."
-        } else {
-            "This player already has an incompatible tag. Overwriting replaces it with your tag."
-        })),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
+            if conflict_type == tag_type {
+                "This player already has this tag. Overwriting replaces it with your tag."
+            } else {
+                "This player already has an incompatible tag. Overwriting replaces it with your tag."
+            },
+        )),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
         CreateContainerComponent::TextDisplay(CreateTextDisplay::new("-# Current")),
         face_section(vec![
@@ -1223,12 +1225,25 @@ async fn build_manage_main(
                 ]),
             ));
         } else {
+            let mut buttons = vec![
+                CreateButton::new(format!("mt_remove:{uuid}:{}", tag.id))
+                    .label("Remove")
+                    .style(ButtonStyle::Danger),
+            ];
+            if tag.author.is_some() {
+                let hidden = tag.hide_username.unwrap_or(false);
+                buttons.push(
+                    CreateButton::new(format!("mt_hide:{uuid}:{}:{}", tag.id, u8::from(!hidden)))
+                        .label(if hidden {
+                            "Show Username"
+                        } else {
+                            "Hide Username"
+                        })
+                        .style(ButtonStyle::Secondary),
+                );
+            }
             parts.push(CreateContainerComponent::ActionRow(
-                CreateActionRow::buttons(vec![
-                    CreateButton::new(format!("mt_remove:{uuid}:{}", tag.id))
-                        .label("Remove")
-                        .style(ButtonStyle::Danger),
-                ]),
+                CreateActionRow::buttons(buttons),
             ));
         }
     }
@@ -1352,6 +1367,31 @@ pub async fn handle_manage_confirm(
     }
 }
 
+pub async fn handle_manage_hide(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let payload = component
+        .data
+        .custom_id
+        .strip_prefix("mt_hide:")
+        .unwrap_or("");
+    let mut segments = payload.splitn(3, ':');
+    let uuid = segments.next().unwrap_or("");
+    let tag_id: i64 = segments.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let hide = segments.next() == Some("1");
+
+    let discord_id = component.user.id.get();
+    let rank = get_rank(data, discord_id).await?;
+
+    let ops = TagOp::new(data.db.pool());
+    match ops.set_hide_username(tag_id, hide, rank.to_level()).await {
+        Ok(_) => update_manage_view(ctx, component, data, uuid).await,
+        Err(e) => send_component_message(ctx, component, op_error_message(&e)).await,
+    }
+}
+
 pub async fn handle_manage_back(
     ctx: &Context,
     component: &ComponentInteraction,
@@ -1366,7 +1406,15 @@ pub async fn handle_manage_add_button(
     component: &ComponentInteraction,
     data: &Data,
 ) -> Result<()> {
-    let uuid = parse_manage_uuid(&component.data.custom_id);
+    let payload = component
+        .data
+        .custom_id
+        .strip_prefix("mt_addbtn:")
+        .unwrap_or("");
+    let (uuid, hide) = match payload.split_once(':') {
+        Some((uuid, hide)) => (uuid, hide == "1"),
+        None => (payload, false),
+    };
     let type_options: Vec<CreateSelectMenuOption<'static>> = blacklist::all()
         .iter()
         .filter(|t| t.name != "confirmed_cheater")
@@ -1379,7 +1427,7 @@ pub async fn handle_manage_add_button(
         )]),
         CreateContainerComponent::ActionRow(CreateActionRow::SelectMenu(
             CreateSelectMenu::new(
-                format!("mt_add:{uuid}"),
+                format!("mt_add:{uuid}:{}", u8::from(hide)),
                 CreateSelectMenuKind::String {
                     options: type_options.into(),
                 },
@@ -1390,6 +1438,17 @@ pub async fn handle_manage_add_button(
             CreateButton::new(format!("mt_back:{uuid}"))
                 .label("Cancel")
                 .style(ButtonStyle::Secondary),
+            CreateButton::new(format!("mt_addbtn:{uuid}:{}", u8::from(!hide)))
+                .label(if hide {
+                    "Username: Hidden"
+                } else {
+                    "Username: Shown"
+                })
+                .style(if hide {
+                    ButtonStyle::Primary
+                } else {
+                    ButtonStyle::Secondary
+                }),
         ])),
     ]);
     component
@@ -1417,11 +1476,12 @@ pub async fn handle_manage_add_select(
         }
         _ => return Ok(()),
     };
-    let uuid = component
+    let payload = component
         .data
         .custom_id
         .strip_prefix("mt_add:")
         .unwrap_or("");
+    let (uuid, hide) = payload.split_once(':').unwrap_or((payload, "0"));
 
     if tag_type == "replays_needed" {
         let input = CreateInputText::new(InputTextStyle::Short, "manage_days")
@@ -1429,7 +1489,7 @@ pub async fn handle_manage_add_select(
             .max_length(3)
             .required(true)
             .value("14");
-        let modal = CreateModal::new(format!("mt_expiry:{uuid}"), "Add Replays Needed Tag")
+        let modal = CreateModal::new(format!("mt_expiry:{uuid}:{hide}"), "Add Replays Needed Tag")
             .components(vec![CreateModalComponent::Label(CreateLabel::input_text(
                 "Expiry (days)",
                 input,
@@ -1446,7 +1506,7 @@ pub async fn handle_manage_add_select(
             .map(|d| d.display_name)
             .unwrap_or(tag_type);
         let modal = CreateModal::new(
-            format!("mt_reason:{uuid}:{tag_type}"),
+            format!("mt_reason:{uuid}:{hide}:{tag_type}"),
             format!("Add {display} Tag"),
         )
         .components(vec![CreateModalComponent::Label(CreateLabel::input_text(
@@ -1464,6 +1524,7 @@ enum ManagePlaceOutcome {
     NeedsConfirmation { conflict: database::PlayerEvent },
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn manage_place_tag(
     data: &Data,
     uuid: &str,
@@ -1473,6 +1534,7 @@ async fn manage_place_tag(
     discord_id: u64,
     rank: AccessRank,
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    hide: bool,
 ) -> Result<ManagePlaceOutcome> {
     let ops = TagOp::new(data.db.pool());
     match ops
@@ -1482,7 +1544,7 @@ async fn manage_place_tag(
             reason,
             discord_id as i64,
             rank.to_level(),
-            false,
+            hide,
             None,
             expires_at,
         )
@@ -1509,7 +1571,7 @@ async fn manage_place_tag(
                     old_tag_type,
                     tag_type: tag_type.to_string(),
                     reason: reason.to_string(),
-                    hide: false,
+                    hide,
                     silent: true,
                 },
             );
@@ -1595,7 +1657,10 @@ pub async fn handle_manage_reason_modal(
         .custom_id
         .strip_prefix("mt_reason:")
         .unwrap_or("");
-    let (uuid, tag_type) = payload.rsplit_once(':').unwrap_or(("", ""));
+    let mut segments = payload.splitn(3, ':');
+    let uuid = segments.next().unwrap_or("");
+    let hide = segments.next() == Some("1");
+    let tag_type = segments.next().unwrap_or("");
     if uuid.is_empty() || tag_type.is_empty() {
         return Ok(());
     }
@@ -1613,6 +1678,7 @@ pub async fn handle_manage_reason_modal(
         discord_id,
         rank,
         None,
+        hide,
     )
     .await
     {
@@ -1629,11 +1695,15 @@ pub async fn handle_manage_expiry_modal(
     modal: &ModalInteraction,
     data: &Data,
 ) -> Result<()> {
-    let uuid = modal
+    let payload = modal
         .data
         .custom_id
         .strip_prefix("mt_expiry:")
         .unwrap_or("");
+    let (uuid, hide) = match payload.split_once(':') {
+        Some((uuid, hide)) => (uuid, hide == "1"),
+        None => (payload, false),
+    };
     if uuid.is_empty() {
         return Ok(());
     }
@@ -1658,6 +1728,7 @@ pub async fn handle_manage_expiry_modal(
         discord_id,
         rank,
         expires_at,
+        hide,
     )
     .await
     {

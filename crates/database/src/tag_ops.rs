@@ -111,23 +111,8 @@ impl<'a> TagOp<'a> {
         actor_id: i64,
         actor_level: i16,
     ) -> Result<(String, PlayerEvent), TagOpError> {
-        let event = self
-            .repo
-            .get_event_by_id(event_id)
-            .await?
-            .ok_or(TagOpError::TagNotFound)?;
-        if event.kind != "tag_set" {
-            return Err(TagOpError::TagNotFound);
-        }
+        let event = self.require_current_tag(event_id).await?;
         let tag_type = event.tag_type.clone().ok_or(TagOpError::TagNotFound)?;
-        let active = self
-            .repo
-            .get_active_tag(&event.uuid, &tag_type)
-            .await?
-            .ok_or(TagOpError::TagNotFound)?;
-        if active.id != event.id {
-            return Err(TagOpError::TagNotFound);
-        }
 
         self.check_lock(&event.uuid).await?;
         self.authorize_remove(&event, actor_id, actor_level)?;
@@ -193,6 +178,27 @@ impl<'a> TagOp<'a> {
         }
     }
 
+    pub async fn set_hide_username(
+        &self,
+        event_id: i64,
+        hide_username: bool,
+        actor_level: i16,
+    ) -> Result<PlayerEvent, TagOpError> {
+        if !permissions::can_set_hide(actor_level) {
+            return Err(TagOpError::InsufficientPermissions);
+        }
+
+        let event = self.require_current_tag(event_id).await?;
+        self.check_lock(&event.uuid).await?;
+        if !self.repo.set_hide_username(event_id, hide_username).await? {
+            return Err(TagOpError::TagNotFound);
+        }
+        Ok(PlayerEvent {
+            hide_username: Some(hide_username),
+            ..event
+        })
+    }
+
     pub async fn lock_player(
         &self,
         uuid: &str,
@@ -224,6 +230,25 @@ impl<'a> TagOp<'a> {
             return Err(TagOpError::PlayerLocked);
         }
         Ok(())
+    }
+
+    /// Loads a `tag_set` event by id, rejecting it if it is no longer the
+    /// player's active tag of that type.
+    async fn require_current_tag(&self, event_id: i64) -> Result<PlayerEvent, TagOpError> {
+        let event = self
+            .repo
+            .get_event_by_id(event_id)
+            .await?
+            .ok_or(TagOpError::TagNotFound)?;
+        if event.kind != "tag_set" {
+            return Err(TagOpError::TagNotFound);
+        }
+        let tag_type = event.tag_type.clone().ok_or(TagOpError::TagNotFound)?;
+        let active = self.require_active_tag(&event.uuid, &tag_type).await?;
+        if active.id != event.id {
+            return Err(TagOpError::TagNotFound);
+        }
+        Ok(event)
     }
 
     async fn require_active_tag(

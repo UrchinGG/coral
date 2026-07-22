@@ -414,6 +414,9 @@ impl Handler {
             _ if id.starts_with("mt_add:") => {
                 commands::blacklist::tag::handle_manage_add_select(ctx, component, &self.data).await
             }
+            _ if id.starts_with("mt_hide:") => {
+                commands::blacklist::tag::handle_manage_hide(ctx, component, &self.data).await
+            }
             _ if id.starts_with("mt_back:") => {
                 commands::blacklist::tag::handle_manage_back(ctx, component, &self.data).await
             }

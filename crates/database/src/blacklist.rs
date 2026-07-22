@@ -173,6 +173,22 @@ impl<'a> BlacklistRepository<'a> {
         Ok(OverwriteOutcome::Inserted { old, new })
     }
 
+    pub async fn set_hide_username(
+        &self,
+        event_id: i64,
+        hide_username: bool,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE player_events SET hide_username = $2
+             WHERE id = $1 AND kind = 'tag_set'",
+        )
+        .bind(event_id)
+        .bind(hide_username)
+        .execute(self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn lock_event(
         &self,
         uuid: &str,
