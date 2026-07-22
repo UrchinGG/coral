@@ -64,7 +64,7 @@ fn op_error_message(e: &TagOpError) -> &'static str {
         TagOpError::PlayerLocked => "This player's tags are locked",
         TagOpError::InsufficientPermissions => "You don't have permission to do this",
         TagOpError::InvalidTagType => "Invalid tag type",
-        TagOpError::TagAlreadyExists => "Player already has this tag type",
+        TagOpError::TagAlreadyExists(_) => "Player already has this tag type",
         TagOpError::PriorityConflict(_) => "Conflicts with an existing tag",
         TagOpError::TagNotFound => "Tag not found or already removed",
         TagOpError::EditWindowExpired => "The 30-minute edit window has passed",
@@ -641,7 +641,7 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
             )
             .await
         }
-        Err(TagOpError::PriorityConflict(conflict)) => {
+        Err(TagOpError::PriorityConflict(conflict) | TagOpError::TagAlreadyExists(conflict)) => {
             show_overwrite_prompt(
                 ctx,
                 command,
@@ -723,9 +723,11 @@ async fn show_overwrite_prompt(
             "## {} Tag Overwrite",
             EMOTE_EDITTAG
         ))),
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
-            "This player already has an incompatible tag. Overwriting replaces it with your tag.",
-        )),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(if conflict_type == tag_type {
+            "This player already has this tag. Overwriting replaces it with your tag."
+        } else {
+            "This player already has an incompatible tag. Overwriting replaces it with your tag."
+        })),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
         CreateContainerComponent::TextDisplay(CreateTextDisplay::new("-# Current")),
         face_section(vec![
@@ -1498,7 +1500,7 @@ async fn manage_place_tag(
                 .await;
             Ok(ManagePlaceOutcome::Added)
         }
-        Err(TagOpError::PriorityConflict(conflict)) => {
+        Err(TagOpError::PriorityConflict(conflict) | TagOpError::TagAlreadyExists(conflict)) => {
             let old_tag_type = conflict.tag_type.clone().unwrap_or_default();
             data.pending_overwrites.lock().unwrap().insert(
                 modal_id.to_string(),

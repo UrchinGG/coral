@@ -9,7 +9,7 @@ pub enum TagOpError {
     PlayerLocked,
     InsufficientPermissions,
     InvalidTagType,
-    TagAlreadyExists,
+    TagAlreadyExists(PlayerEvent),
     PriorityConflict(PlayerEvent),
     TagNotFound,
     EditWindowExpired,
@@ -79,7 +79,7 @@ impl<'a> TagOp<'a> {
                 .await?
                 .ok_or(TagOpError::Database(sqlx::Error::RowNotFound)),
             AddOutcome::Conflict(c) if c.tag_type.as_deref() == Some(tag_type) => {
-                Err(TagOpError::TagAlreadyExists)
+                Err(TagOpError::TagAlreadyExists(c))
             }
             AddOutcome::Conflict(c) => Err(TagOpError::PriorityConflict(c)),
         }

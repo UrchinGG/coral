@@ -91,7 +91,7 @@ fn map_op_error(e: TagOpError) -> ApiError {
             ApiError::Forbidden("insufficient permissions".into())
         }
         TagOpError::InvalidTagType => ApiError::BadRequest("invalid tag type".into()),
-        TagOpError::TagAlreadyExists => {
+        TagOpError::TagAlreadyExists(_) => {
             ApiError::Conflict("player already has this tag type".into())
         }
         TagOpError::PriorityConflict(t) => ApiError::Conflict(format!(

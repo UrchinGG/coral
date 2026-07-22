@@ -664,8 +664,13 @@ pub fn build_confirmation_message(
             None,
             false,
         );
+        let lead = if current.tag_type == tag_type {
+            "This player already has this tag."
+        } else {
+            "This player already has an incompatible tag."
+        };
         parts.push(text(format!(
-            "This player already has an incompatible tag. Confirming opens a post in {destination} where you add evidence and others vote — if approved, your tag replaces the current one."
+            "{lead} Confirming opens a post in {destination} where you add evidence and others vote — if approved, your tag replaces the current one."
         )));
         parts.push(separator());
         parts.push(text("-# Current"));

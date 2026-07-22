@@ -110,7 +110,7 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
             return send_deferred_error(ctx, command, "Error", "This player's tags are locked")
                 .await;
         }
-        Err(database::TagOpError::TagAlreadyExists)
+        Err(database::TagOpError::TagAlreadyExists(_))
         | Err(database::TagOpError::PriorityConflict(_)) => {
             return send_deferred_error(
                 ctx,
