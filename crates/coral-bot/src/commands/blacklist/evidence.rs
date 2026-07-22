@@ -1571,7 +1571,7 @@ pub async fn handle_change_tag(
         .unwrap_or("");
 
     let discord_id = component.user.id.get();
-    if get_rank(data, discord_id).await? < AccessRank::Moderator {
+    if get_rank(data, discord_id).await? < AccessRank::Helper {
         return crate::interact::send_component_error(
             ctx,
             component,

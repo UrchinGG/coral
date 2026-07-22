@@ -141,7 +141,7 @@ impl<'a> TagOp<'a> {
         if blacklist::lookup(new_tag_type).is_none() {
             return Err(TagOpError::InvalidTagType);
         }
-        if !permissions::can_add(new_tag_type, actor_level) {
+        if new_tag_type != old_tag_type && !permissions::can_add(new_tag_type, actor_level) {
             return Err(TagOpError::InsufficientPermissions);
         }
         self.check_lock(uuid).await?;
