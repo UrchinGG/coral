@@ -57,7 +57,7 @@ async fn enforce_uuid_budget(
 #[utoipa::path(
     post,
     path = "/v3/players",
-    description = "Looks up blacklist tags for up to 100 players in a single request. Only UUIDs are accepted; usernames are not resolved, and malformed entries are skipped. Each queried player also triggers a background snapshot refresh to help saturate the player cache.",
+    description = "Looks up blacklist tags for up to 100 players in a single request. Only UUIDs are accepted; usernames are not resolved, and malformed entries are skipped. Each queried player also triggers a background snapshot refresh to help saturate the player cache. Tags with `hide_username` set omit both `added_by` and `added_by_username`.",
     request_body = BatchRequest,
     responses(
         (status = 200, description = "Batch lookup completed", body = BatchResponse),

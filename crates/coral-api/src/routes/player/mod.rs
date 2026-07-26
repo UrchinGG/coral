@@ -180,7 +180,7 @@ fn spawn_cache_update(state: &AppState, uuid: &str, data: &Value, username: &str
 #[utoipa::path(
     get,
     path = "/v3/player/tags",
-    description = "Returns the blacklist tags currently active on a player, plus their formatted Hypixel display name.",
+    description = "Returns the blacklist tags currently active on a player, plus their formatted Hypixel display name. Tags with `hide_username` set omit both `added_by` and `added_by_username`.",
     params(
         ("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID"),
     ),
@@ -214,7 +214,7 @@ pub async fn player_tags(
 #[utoipa::path(
     get,
     path = "/v3/player/profile",
-    description = "Returns a player's full Hypixel profile, including their blacklist tags and skin metadata. Set `max_cache_age` (for example `5m`, `1h`, or a number of seconds) to serve a stored snapshot within that age instead of calling Hypixel, and to fall back to the latest snapshot when Hypixel is unreachable. Responses served from a snapshot are marked `stale`. Requires the `Player Data` permission or an Admin key.",
+    description = "Returns a player's full Hypixel profile, including their blacklist tags and skin metadata. Set `max_cache_age` (for example `5m`, `1h`, or a number of seconds) to serve a stored snapshot within that age instead of calling Hypixel, and to fall back to the latest snapshot when Hypixel is unreachable. Responses served from a snapshot are marked `stale`. Requires the `Player Data` permission or an Admin key. Tags with `hide_username` set omit both `added_by` and `added_by_username`.",
     params(
         ("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID"),
         ("max_cache_age" = Option<String>, Query, description = "Accept a stored snapshot up to this age (e.g. `5m`, `1h`, `30s`)"),

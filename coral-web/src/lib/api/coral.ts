@@ -42,7 +42,8 @@ export type PlayerTags = {
   tags: Array<{
     tag_type: string;
     reason: string;
-    added_by: number;
+    added_by?: number;
+    added_by_username?: string;
     added_on: number;
     hide_username: boolean;
   }>;

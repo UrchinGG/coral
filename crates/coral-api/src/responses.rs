@@ -34,7 +34,8 @@ pub struct PlayerTagsResponse {
 pub struct TagResponse {
     pub tag_type: String,
     pub reason: String,
-    pub added_by: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub added_by: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub added_by_username: Option<String>,
     pub added_on: i64,
@@ -88,13 +89,14 @@ pub struct SuccessResponse {
 
 impl TagResponse {
     pub fn from_db(tag: &database::PlayerEvent) -> Self {
+        let hide_username = tag.hide_username.unwrap_or(false);
         Self {
             tag_type: tag.tag_type.clone().unwrap_or_default(),
             reason: tag.reason.clone().unwrap_or_default(),
-            added_by: tag.author.unwrap_or(0),
+            added_by: tag.author.filter(|_| !hide_username),
             added_by_username: None,
             added_on: tag.ts.timestamp_millis(),
-            hide_username: tag.hide_username.unwrap_or(false),
+            hide_username,
             expires_at: tag.expires_at.map(|t| t.timestamp_millis()),
         }
     }
@@ -108,7 +110,7 @@ pub async fn tag_responses(
     let mut out = Vec::with_capacity(tags.len());
     for tag in tags {
         let mut resp = TagResponse::from_db(tag);
-        if let Some(author) = tag.author.filter(|_| !tag.hide_username.unwrap_or(false)) {
+        if let Some(author) = resp.added_by {
             resp.added_by_username = match names.get(&author) {
                 Some(name) => name.clone(),
                 None => {
