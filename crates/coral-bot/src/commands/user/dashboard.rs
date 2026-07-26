@@ -313,6 +313,16 @@ fn progression_summary(member: &database::Member, rank: AccessRank) -> String {
         );
     }
 
+    // Checked before strikes: an override outranks them, so a struck member who
+    // staff pinned to Trusted must not be told they're suspended.
+    if let Some(over) = override_of(member) {
+        return format!(
+            "### Standing\n**{}**: {}. Set by staff.",
+            over.label(),
+            over.description().to_lowercase()
+        );
+    }
+
     let strikes = strike_count(member);
     if strikes >= REVOKE_STRIKES {
         return format!(

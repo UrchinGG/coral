@@ -135,6 +135,9 @@ export type StandingView = {
   can_tag: boolean;
   tag_reason: string;
   effective_level: number;
+  standing_override: string | null;
+  override_by: string | null;
+  override_at: string | null;
   strike_count: number;
   accepted_tags: number;
   rejected_tags: number;

@@ -887,6 +887,7 @@ async fn build_preview_context(
         .await
         .ok()??;
     let access = member.access_level;
+    let trusted = database::standing::is_trusted(&member);
     let uuid = member.uuid?;
 
     let cache_repo = CacheRepository::new(state.db.pool());
@@ -925,7 +926,7 @@ async fn build_preview_context(
             .unwrap_or(&discord_member.user.name),
     });
     ctx["coral"] = json!({ "access": access });
-    ctx["standing"] = json!({ "trusted": member.tag_granted });
+    ctx["standing"] = json!({ "trusted": trusted });
 
     let highest = active_tags
         .iter()

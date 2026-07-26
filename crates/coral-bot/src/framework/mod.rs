@@ -523,6 +523,9 @@ impl Handler {
             _ if id.starts_with("manage_show_dev_key:") => {
                 commands::admin::manage::handle_show_dev_key(ctx, component, &self.data).await
             }
+            _ if id.starts_with("manage_standing_override:") => {
+                commands::admin::manage::handle_standing_override(ctx, component, &self.data).await
+            }
             _ if id.starts_with("manage_toggle_name_updates:") => {
                 commands::admin::manage::handle_toggle_name_updates(ctx, component, &self.data)
                     .await

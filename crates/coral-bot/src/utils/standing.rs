@@ -16,6 +16,18 @@ pub async fn refresh_and_sync(ctx: &Context, data: &Data, discord_id: u64) {
     }
 }
 
+/// Force the trusted role to match a member's effective standing. Used after a
+/// staff override, where `refresh` deliberately reports no change.
+pub async fn sync_from_member(ctx: &Context, data: &Data, member: &database::Member) {
+    sync_trusted_role(
+        ctx,
+        data,
+        member.discord_id as u64,
+        standing::evaluate(member).can_tag,
+    )
+    .await;
+}
+
 async fn sync_trusted_role(ctx: &Context, data: &Data, discord_id: u64, granted: bool) {
     let (Some(guild_id), Some(role_id)) = (data.home_guild_id, data.trusted_role_id) else {
         return;

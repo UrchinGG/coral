@@ -496,7 +496,7 @@ pub(crate) async fn sync_member(
         .ok()
         .flatten();
     let access = member_db.as_ref().map(|m| m.access_level).unwrap_or(0);
-    let tag_granted = member_db.as_ref().is_some_and(|m| m.tag_granted);
+    let tag_granted = member_db.as_ref().is_some_and(database::standing::is_trusted);
     let template_ctx = build_template_context(hypixel_data, member, &tags, access, tag_granted);
 
     let mut roles: Vec<RoleId> = member.roles.iter().copied().collect();

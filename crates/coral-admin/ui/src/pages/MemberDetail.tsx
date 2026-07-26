@@ -161,6 +161,18 @@ function StandingPanel({ member }: { member: MemberDetailType }) {
   return (
     <Panel title="Standing">
       <div className="flex flex-col gap-3 text-sm">
+        {s.standing_override && (
+          <div>
+            <Badge
+              label={`Overridden: ${s.standing_override[0].toUpperCase()}${s.standing_override.slice(1)}`}
+              tone="warning"
+            />
+            <div className="mt-1 text-xs text-gray-400">
+              Set by staff{s.override_at ? ` on ${new Date(s.override_at).toLocaleString()}` : ""}
+              . Change it with /manage in Discord.
+            </div>
+          </div>
+        )}
         <div>
           <Badge label={s.can_vote ? "Can vote" : "Cannot vote"} tone={s.can_vote ? "ok" : "default"} />
           <div className="mt-1 text-xs text-gray-400">{s.vote_reason}</div>

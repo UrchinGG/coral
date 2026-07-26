@@ -20,13 +20,17 @@ pub struct Member {
     pub bonus_verdicts: i64,
     pub vote_granted: bool,
     pub tag_granted: bool,
+    pub standing_override: Option<String>,
+    pub standing_override_by: Option<i64>,
+    pub standing_override_at: Option<DateTime<Utc>>,
     pub config: Value,
     pub strikes: Value,
 }
 
 const COLUMNS: &str = "id, discord_id, uuid, api_key, join_date, request_count, access_level, \
     key_locked, tagging_disabled, accepted_tags, rejected_tags, accurate_verdicts, \
-    incorrect_verdicts, bonus_verdicts, vote_granted, tag_granted, config, strikes";
+    incorrect_verdicts, bonus_verdicts, vote_granted, tag_granted, standing_override, \
+    standing_override_by, standing_override_at, config, strikes";
 
 pub struct MemberRepository<'a> {
     pool: &'a PgPool,
@@ -245,6 +249,26 @@ impl<'a> MemberRepository<'a> {
             .execute(self.pool)
             .await?;
         Ok(())
+    }
+
+    pub async fn set_standing_override(
+        &self,
+        discord_id: i64,
+        value: Option<&str>,
+        by: u64,
+    ) -> Result<bool, sqlx::Error> {
+        sqlx::query(
+            "UPDATE members SET standing_override = $2, standing_override_by = $3,
+                 standing_override_at = $4
+             WHERE discord_id = $1",
+        )
+        .bind(discord_id)
+        .bind(value)
+        .bind(value.map(|_| by as i64))
+        .bind(value.map(|_| Utc::now()))
+        .execute(self.pool)
+        .await
+        .map(|r| r.rows_affected() > 0)
     }
 
     pub async fn add_strike(

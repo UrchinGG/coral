@@ -169,19 +169,6 @@ pub(crate) async fn build_main_view(
                 .disabled(!can_modify)
         });
 
-        if invoker_rank >= AccessRank::Helper && can_modify {
-            let (label, style) = if m.tagging_disabled {
-                ("Enable Tagging", ButtonStyle::Success)
-            } else {
-                ("Disable Tagging", ButtonStyle::Danger)
-            };
-            key_buttons.push(
-                CreateButton::new(format!("manage_toggle_tagging:{target_id}"))
-                    .label(label)
-                    .style(style),
-            );
-        }
-
         parts.push(CreateContainerComponent::ActionRow(
             CreateActionRow::buttons(key_buttons),
         ));
@@ -292,29 +279,86 @@ pub(crate) async fn build_main_view(
             .unwrap_or(0);
 
         let standing = database::standing::evaluate(m);
-        let tier = if m.access_level >= AccessRank::Helper.to_level() {
-            "staff"
-        } else if standing.can_tag {
-            "trusted"
-        } else if standing.can_vote {
-            "reviewer"
-        } else {
-            "submitter"
-        };
+        let over = database::standing::override_of(m);
+        let is_staff = m.access_level >= AccessRank::Helper.to_level();
+
         parts.push(text(format!(
-            "Added **{}** tags to the blacklist\n\
+            "### Tag Permissions\nAdded **{}** tags to the blacklist\n\
              **{}** accepted tag reviews · **{}** rejected\n\
-             **{}** accurate verdicts · **{}** inaccurate · **{}** bonus\n\
-             Standing: **{tier}** (vote: {}, tag: {})",
+             **{}** accurate verdicts · **{}** inaccurate · **{}** bonus",
             total_tags,
             m.accepted_tags,
             m.rejected_tags,
             m.accurate_verdicts,
             m.incorrect_verdicts,
             m.bonus_verdicts,
-            standing.can_vote,
-            standing.can_tag,
         )));
+
+        let tier_label = standing_tier_label(m, standing, over);
+        let source = match (is_staff, over, m.standing_override_by) {
+            (true, ..) => "staff rank bypasses the standing system".to_string(),
+            (_, Some(_), Some(by)) => {
+                let when = m
+                    .standing_override_at
+                    .map(|t| format!(" <t:{}:R>", t.timestamp()))
+                    .unwrap_or_default();
+                format!("set by <@{by}>{when}")
+            }
+            (_, Some(_), None) => "set by staff".to_string(),
+            _ => "automatic".to_string(),
+        };
+        parts.push(text(format!(
+            "Standing: **{tier_label}** — {source}\n-# vote: {} · tag: {}",
+            standing.can_vote, standing.can_tag,
+        )));
+
+        if m.tagging_disabled && !is_staff {
+            parts.push(text(
+                "-# ⚠️ Tagging is disabled on this account — no tags can be added at any tier until it is re-enabled.",
+            ));
+        }
+
+        if is_staff {
+            parts.push(text("-# Staff rank bypasses the standing system."));
+        } else {
+            let mut options = vec![
+                CreateSelectMenuOption::new("Automatic", "auto")
+                    .description("Follow the standing rules")
+                    .default_selection(over.is_none()),
+            ];
+            options.extend(database::standing::OVERRIDE_TIERS.into_iter().map(|t| {
+                CreateSelectMenuOption::new(t.label(), t.as_str())
+                    .description(t.description())
+                    .default_selection(over == Some(t))
+            }));
+            parts.push(CreateContainerComponent::ActionRow(
+                CreateActionRow::SelectMenu(
+                    CreateSelectMenu::new(
+                        format!("manage_standing_override:{target_id}"),
+                        CreateSelectMenuKind::String {
+                            options: options.into(),
+                        },
+                    )
+                    .placeholder(format!("Tag Permissions — {tier_label}"))
+                    .disabled(!require_mod_over(invoker_rank, target_rank)),
+                ),
+            ));
+        }
+
+        if invoker_rank >= AccessRank::Helper && can_modify {
+            let (label, style) = if m.tagging_disabled {
+                ("Enable Tagging", ButtonStyle::Success)
+            } else {
+                ("Disable Tagging", ButtonStyle::Danger)
+            };
+            parts.push(CreateContainerComponent::ActionRow(
+                CreateActionRow::buttons(vec![
+                    CreateButton::new(format!("manage_toggle_tagging:{target_id}"))
+                        .label(label)
+                        .style(style),
+                ]),
+            ));
+        }
 
         let strikes = m.strikes.as_array().cloned().unwrap_or_default();
         if strikes.is_empty() {
@@ -437,6 +481,22 @@ pub(crate) async fn build_main_view(
     }
 
     vec![CreateComponent::Container(CreateContainer::new(parts))]
+}
+
+fn standing_tier_label(
+    m: &database::Member,
+    standing: database::standing::Standing,
+    over: Option<database::standing::StandingOverride>,
+) -> &'static str {
+    if m.access_level >= AccessRank::Helper.to_level() {
+        return AccessRank::from_level(m.access_level).label();
+    }
+    match over {
+        Some(o) => o.label(),
+        None if standing.can_tag => "Trusted",
+        None if standing.can_vote => "Reviewer",
+        None => "Submitter",
+    }
 }
 
 fn access_level_options(
@@ -565,9 +625,18 @@ pub async fn handle_access_select(
             .await;
     }
 
-    MemberRepository::new(data.db.pool())
-        .set_access_level(target_id as i64, new_level)
-        .await?;
+    let repo = MemberRepository::new(data.db.pool());
+    repo.set_access_level(target_id as i64, new_level).await?;
+    // A stale override would keep suppressing standing that the new rank grants;
+    // effective_level ignores it for staff but evaluate() does not. Sync the role
+    // here too — refresh() won't, since the underlying auto flag never moved.
+    if new_rank >= AccessRank::Helper {
+        repo.set_standing_override(target_id as i64, None, invoker_id)
+            .await?;
+        if let Some(updated) = repo.get_by_discord_id(target_id as i64).await? {
+            crate::utils::standing::sync_from_member(ctx, data, &updated).await;
+        }
+    }
     channel::post_access_changed(ctx, data, target_id, target_rank, new_rank, invoker_id).await;
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }
@@ -768,6 +837,76 @@ pub async fn handle_toggle_tagging(
         .set_tagging_disabled(target_id as i64, new_state)
         .await?;
     channel::post_tagging_toggled(ctx, data, target_id, new_state, invoker_id).await;
+    refresh_main(ctx, component, data, invoker_rank, target_id).await
+}
+
+pub async fn handle_standing_override(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let selected = match &component.data.kind {
+        ComponentInteractionDataKind::StringSelect { values } => values.first().cloned(),
+        _ => None,
+    };
+    let Some(selected) = selected else {
+        return Ok(());
+    };
+    let new_over = database::standing::StandingOverride::parse(&selected);
+    if new_over.is_none() && selected != "auto" {
+        return Ok(());
+    }
+
+    let target_id = interact::parse_id(&component.data.custom_id)
+        .ok_or_else(|| anyhow!("Invalid select ID"))?;
+    let invoker_id = component.user.id.get();
+    let (invoker_rank, target, target_rank) = fetch_context(data, invoker_id, target_id).await?;
+
+    if !require_mod_over(invoker_rank, target_rank) {
+        return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
+            .await;
+    }
+    let Some(m) = target else {
+        return interact::send_component_error(ctx, component, "Error", "User is not registered")
+            .await;
+    };
+    if target_rank >= AccessRank::Helper {
+        return interact::send_component_error(
+            ctx,
+            component,
+            "Error",
+            "Staff bypass the standing system, so an override would do nothing",
+        )
+        .await;
+    }
+
+    let old_over = database::standing::override_of(&m);
+    if old_over == new_over {
+        return refresh_main(ctx, component, data, invoker_rank, target_id).await;
+    }
+    let old_label = standing_tier_label(&m, database::standing::evaluate(&m), old_over);
+
+    let repo = MemberRepository::new(data.db.pool());
+    repo.set_standing_override(target_id as i64, new_over.map(|o| o.as_str()), invoker_id)
+        .await?;
+
+    // fetch_context handed us the pre-write row; the role sync reads the
+    // override off whatever member it is given, so it needs the fresh one.
+    if let Some(updated) = repo.get_by_discord_id(target_id as i64).await? {
+        crate::utils::standing::sync_from_member(ctx, data, &updated).await;
+    }
+
+    let new_label = new_over.map_or("Automatic", |o| o.label());
+    channel::post_standing_override(
+        ctx,
+        data,
+        target_id,
+        old_label,
+        new_label,
+        new_over == Some(database::standing::StandingOverride::Restricted),
+        invoker_id,
+    )
+    .await;
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }
 

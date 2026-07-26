@@ -625,6 +625,37 @@ pub async fn post_tagging_toggled(
     send_to_mod_channel(ctx, data, container, vec![]).await;
 }
 
+pub async fn post_standing_override(
+    ctx: &Context,
+    data: &Data,
+    target_id: u64,
+    old_label: &str,
+    new_label: &str,
+    restricting: bool,
+    invoker_id: u64,
+) {
+    let invoker = get_username(ctx, invoker_id).await;
+    let container = CreateContainer::new(vec![
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "## Tag Permissions Changed\n<@{target_id}>"
+        ))),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "{old_label} \u{2192} {new_label}"
+        ))),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "-# Changed by `@{invoker}`"
+        ))),
+        CreateContainerComponent::Separator(CreateSeparator::new(true)),
+    ]);
+    let container = if restricting {
+        container.accent_color(COLOR_ERROR)
+    } else {
+        container
+    };
+
+    send_to_mod_channel(ctx, data, container, vec![]).await;
+}
+
 async fn post_key_change(
     ctx: &Context,
     data: &Data,
