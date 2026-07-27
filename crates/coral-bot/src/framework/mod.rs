@@ -31,6 +31,12 @@ impl AccessRankExt for AccessRank {
 }
 
 #[derive(Clone)]
+pub struct EvidenceThread {
+    pub id: ThreadId,
+    pub name: String,
+}
+
+#[derive(Clone)]
 pub struct Data {
     pub db: Arc<Database>,
     pub api: Arc<CoralApiClient>,
@@ -51,7 +57,7 @@ pub struct Data {
     pub home_guild_id: Option<GuildId>,
     pub pending_overwrites: Arc<Mutex<HashMap<String, PendingOverwrite>>>,
     pub pending_review_votes: Arc<Mutex<HashMap<u64, HashMap<usize, (Vec<u64>, Vec<u64>)>>>>,
-    pub evidence_threads: Arc<RwLock<HashMap<String, ThreadId>>>,
+    pub evidence_threads: Arc<RwLock<HashMap<String, EvidenceThread>>>,
     pub guide_thread_id: Arc<RwLock<Option<u64>>>,
     pub sync_cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
     pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
@@ -74,7 +80,11 @@ impl Data {
 
     pub fn evidence_thread_for(&self, uuid: &str) -> Option<ThreadId> {
         let key = uuid.replace('-', "").to_ascii_lowercase();
-        self.evidence_threads.read().unwrap().get(&key).copied()
+        self.evidence_threads
+            .read()
+            .unwrap()
+            .get(&key)
+            .map(|e| e.id)
     }
 
     pub fn begin_assembling(&self, thread_id: u64, submitter_id: u64) {
@@ -213,6 +223,9 @@ impl Handler {
             "confirm" => commands::blacklist::evidence::run(ctx, command, &self.data).await,
             "guild" => commands::blacklist::guild::run(ctx, command, &self.data).await,
             "watch" => commands::blacklist::watch::run(ctx, command, &self.data).await,
+            commands::blacklist::evidence_attach::COMMAND_NAME => {
+                commands::blacklist::evidence_attach::run(ctx, command, &self.data).await
+            }
             _ => Ok(()),
         }
     }
@@ -451,6 +464,15 @@ impl Handler {
             _ if id.starts_with("evidence_archive") => {
                 commands::blacklist::evidence::handle_archive(ctx, component, &self.data).await
             }
+            _ if id.starts_with("evid_pick:") => {
+                commands::blacklist::evidence_attach::handle_pick(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("evid_search:") => {
+                commands::blacklist::evidence_attach::handle_search_button(
+                    ctx, component, &self.data,
+                )
+                .await
+            }
             _ if id.starts_with("tag_history_nav:") => {
                 commands::blacklist::channel::handle_history_nav(ctx, component, &self.data).await
             }
@@ -642,6 +664,10 @@ impl Handler {
             _ if id.starts_with("evidence_media_modal") => {
                 commands::blacklist::evidence::handle_media_modal(ctx, modal, &self.data).await
             }
+            _ if id.starts_with("evid_query:") => {
+                commands::blacklist::evidence_attach::handle_search_modal(ctx, modal, &self.data)
+                    .await
+            }
             _ if id.starts_with("review_reject_modal:") => {
                 commands::blacklist::reviews::handle_reject_modal(ctx, modal, &self.data).await
             }
@@ -737,6 +763,13 @@ impl EventHandler for Handler {
                 match Command::set_global_commands(&ctx.http, &Self::commands()).await {
                     Ok(cmds) => tracing::info!("Registered {} global commands", cmds.len()),
                     Err(e) => tracing::error!("Failed to register global commands: {}", e),
+                }
+                if let Some(guild_id) = self.data.home_guild_id
+                    && let Err(e) = guild_id
+                        .create_command(&ctx.http, commands::blacklist::evidence_attach::register())
+                        .await
+                {
+                    tracing::error!("Failed to register evidence context menu: {}", e);
                 }
                 crate::events::spawn_subscriber(ctx.clone(), self.data.clone());
                 commands::blacklist::reviews::spawn_guide_watcher(ctx.clone(), self.data.clone());

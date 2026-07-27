@@ -8,13 +8,11 @@ use serenity::all::*;
 use super::channel::{format_added_line, format_reviewed_line, format_tag_block};
 use super::reviews;
 use super::tag::{get_rank, get_rank_and_member};
-use crate::framework::{AccessRank, Data};
+use crate::framework::{AccessRank, Data, EvidenceThread};
 use crate::utils::{format_uuid_dashed, sanitize_reason, separator, text, unsanitize_reason};
 use coral_redis::BlacklistEvent;
 
 fn extract_uuid_from_title(title: &str) -> Option<String> {
-    // Old UrchinUtils posts used titles like "069a79f4-..." or "Name | UUID: 069a79f4-...",
-    // so accept a UUID anywhere in the title rather than just after the last '|'.
     title
         .split(|c: char| !c.is_ascii_hexdigit() && c != '-')
         .map(|token| token.replace('-', ""))
@@ -24,7 +22,82 @@ fn extract_uuid_from_title(title: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_uuid_from_title;
+    use super::{
+        EvidenceItem, display_name_from_title, extract_uuid_from_title, next_evidence_index,
+        thread_matches,
+    };
+
+    fn items(names: &[&str]) -> Vec<EvidenceItem> {
+        names
+            .iter()
+            .map(|n| EvidenceItem {
+                filename: n.to_string(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn display_name_coral_title() {
+        assert_eq!(
+            display_name_from_title("Scutes | 069a79f4-44e9-4726-a5be-fca90e38aaf5"),
+            "Scutes"
+        );
+    }
+
+    #[test]
+    fn display_name_urchin_title() {
+        assert_eq!(
+            display_name_from_title("Scutes | UUID: 069a79f4-44e9-4726-a5be-fca90e38aaf5"),
+            "Scutes"
+        );
+    }
+
+    #[test]
+    fn display_name_bare_uuid_title() {
+        assert_eq!(
+            display_name_from_title("069a79f4-44e9-4726-a5be-fca90e38aaf5"),
+            "069a79f4-44e9-4726-a5be-fca90e38aaf5"
+        );
+    }
+
+    #[test]
+    fn search_matches_name_case_insensitively() {
+        assert!(thread_matches("Scutes", "069a79f4", "scut"));
+        assert!(thread_matches("Scutes", "069a79f4", "SCUTES"));
+        assert!(!thread_matches("Scutes", "069a79f4", "notaplayer"));
+    }
+
+    #[test]
+    fn search_matches_uuid_with_or_without_dashes() {
+        let uuid = "069a79f444e94726a5befca90e38aaf5";
+        assert!(thread_matches("Scutes", uuid, uuid));
+        assert!(thread_matches(
+            "Scutes",
+            uuid,
+            "069a79f4-44e9-4726-a5be-fca90e38aaf5"
+        ));
+        assert!(thread_matches("Scutes", uuid, "069a79f4"));
+    }
+
+    #[test]
+    fn empty_query_matches_nothing() {
+        assert!(!thread_matches("Scutes", "069a79f4", "   "));
+    }
+
+    #[test]
+    fn next_index_follows_the_highest_in_use() {
+        assert_eq!(next_evidence_index(&items(&[])), 1);
+        assert_eq!(
+            next_evidence_index(&items(&["Scutes_1.png", "Scutes_2.png"])),
+            3
+        );
+    }
+
+    #[test]
+    fn next_index_does_not_reuse_a_removed_slot() {
+        // Scutes_1 was removed; the next upload must not become Scutes_2 again.
+        assert_eq!(next_evidence_index(&items(&["Scutes_2.png"])), 3);
+    }
 
     #[test]
     fn coral_title() {
@@ -66,6 +139,10 @@ mod tests {
     }
 }
 
+fn display_name_from_title(title: &str) -> &str {
+    title.split_once(" | ").map(|(n, _)| n).unwrap_or(title)
+}
+
 pub fn thread_index_insert(data: &Data, name: &str, thread_id: ThreadId, parent_id: ChannelId) {
     if data.evidence_forum_id != Some(parent_id) {
         return;
@@ -73,17 +150,20 @@ pub fn thread_index_insert(data: &Data, name: &str, thread_id: ThreadId, parent_
     let Some(uuid) = extract_uuid_from_title(name) else {
         return;
     };
-    data.evidence_threads
-        .write()
-        .unwrap()
-        .insert(uuid, thread_id);
+    data.evidence_threads.write().unwrap().insert(
+        uuid,
+        EvidenceThread {
+            id: thread_id,
+            name: display_name_from_title(name).to_string(),
+        },
+    );
 }
 
 pub fn thread_index_remove(data: &Data, thread_id: ThreadId) {
     data.evidence_threads
         .write()
         .unwrap()
-        .retain(|_, id| *id != thread_id);
+        .retain(|_, e| e.id != thread_id);
 }
 
 pub async fn populate_thread_index(ctx: &Context, data: &Data) {
@@ -94,14 +174,20 @@ pub async fn populate_thread_index(ctx: &Context, data: &Data) {
         return;
     };
 
-    let mut found: HashMap<String, ThreadId> = HashMap::new();
+    let mut found: HashMap<String, EvidenceThread> = HashMap::new();
 
     match ctx.http.get_guild_active_threads(guild_id).await {
         Ok(active) => {
             for t in &active.threads {
                 if t.parent_id == forum_id {
                     if let Some(uuid) = extract_uuid_from_title(&t.base.name) {
-                        found.insert(uuid, t.id);
+                        found.insert(
+                            uuid,
+                            EvidenceThread {
+                                id: t.id,
+                                name: display_name_from_title(&t.base.name).to_string(),
+                            },
+                        );
                     }
                 }
             }
@@ -119,7 +205,13 @@ pub async fn populate_thread_index(ctx: &Context, data: &Data) {
             Ok(batch) => {
                 for t in &batch.threads {
                     if let Some(uuid) = extract_uuid_from_title(&t.base.name) {
-                        found.insert(uuid, t.id);
+                        found.insert(
+                            uuid,
+                            EvidenceThread {
+                                id: t.id,
+                                name: display_name_from_title(&t.base.name).to_string(),
+                            },
+                        );
                     }
                 }
                 let next_before = batch
@@ -143,6 +235,52 @@ pub async fn populate_thread_index(ctx: &Context, data: &Data) {
     tracing::info!("evidence thread index populated: {count} threads");
 }
 
+fn newest_first(
+    mut threads: Vec<(String, EvidenceThread)>,
+    limit: usize,
+) -> Vec<(String, EvidenceThread)> {
+    threads.sort_by_key(|(_, e)| std::cmp::Reverse(e.id.get()));
+    threads.truncate(limit);
+    threads
+}
+
+pub(super) fn recent_evidence_threads(data: &Data, limit: usize) -> Vec<(String, EvidenceThread)> {
+    let index = data.evidence_threads.read().unwrap();
+    newest_first(
+        index.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+        limit,
+    )
+}
+
+fn thread_matches(name: &str, uuid: &str, query: &str) -> bool {
+    let needle = query.trim().to_ascii_lowercase();
+    if needle.is_empty() {
+        return false;
+    }
+    name.to_ascii_lowercase().contains(&needle) || uuid.contains(&needle.replace('-', ""))
+}
+
+pub(super) fn search_evidence_threads(
+    data: &Data,
+    query: &str,
+    limit: usize,
+) -> Vec<(String, EvidenceThread)> {
+    let index = data.evidence_threads.read().unwrap();
+    newest_first(
+        index
+            .iter()
+            .filter(|(uuid, e)| thread_matches(&e.name, uuid, query))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+        limit,
+    )
+}
+
+pub(super) fn evidence_thread_entry(data: &Data, uuid: &str) -> Option<EvidenceThread> {
+    let key = uuid.replace('-', "").to_ascii_lowercase();
+    data.evidence_threads.read().unwrap().get(&key).cloned()
+}
+
 async fn thread_is_archived(ctx: &Context, thread_id: ThreadId) -> bool {
     match ctx.http.get_channel(thread_id.into()).await {
         Ok(channel) => channel
@@ -155,6 +293,29 @@ async fn thread_is_archived(ctx: &Context, thread_id: ThreadId) -> bool {
     }
 }
 
+pub(super) enum ThreadState {
+    Open,
+    IdleArchived,
+    Closed,
+    Missing,
+}
+
+pub(super) async fn evidence_thread_state(ctx: &Context, thread_id: ThreadId) -> ThreadState {
+    let Ok(channel) = ctx.http.get_channel(thread_id.into()).await else {
+        return ThreadState::Missing;
+    };
+    let Some(thread) = channel.thread() else {
+        return ThreadState::Missing;
+    };
+    if thread.thread_metadata.locked() {
+        ThreadState::Closed
+    } else if thread.thread_metadata.archived() {
+        ThreadState::IdleArchived
+    } else {
+        ThreadState::Open
+    }
+}
+
 pub fn evidence_thread_url(data: &Data, uuid: &str) -> Option<String> {
     let thread_id = data.evidence_thread_for(uuid)?;
     let guild_id = data.home_guild_id?;
@@ -162,9 +323,10 @@ pub fn evidence_thread_url(data: &Data, uuid: &str) -> Option<String> {
         "https://discord.com/channels/{guild_id}/{thread_id}"
     ))
 }
-const ALLOWED_MEDIA_EXTENSIONS: &[&str] =
+pub(super) const ALLOWED_MEDIA_EXTENSIONS: &[&str] =
     &["png", "jpg", "jpeg", "gif", "webp", "mp4", "webm", "mov"];
 const MAX_EVIDENCE_MEDIA: u8 = 10;
+pub(super) const MAX_EVIDENCE_ITEMS: usize = 9;
 
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("confirm")
@@ -266,7 +428,7 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
             parts.push(text(if rank >= AccessRank::Helper {
                 "-# Restoring reopens the post and re-applies the confirmed cheater tag."
             } else {
-                "-# A helper or above has to restore this post before it can be confirmed again."
+                "-# A staff member has to restore this post before it can be confirmed again."
             }));
             if rank >= AccessRank::Helper {
                 parts.push(CreateContainerComponent::ActionRow(
@@ -321,8 +483,6 @@ async fn run_member_confirm(
     tag: &database::PlayerEvent,
 ) -> Result<()> {
     let reason = tag.reason.as_deref().unwrap_or("");
-    // The submission carries over the tag that is up for confirmation, so it
-    // has to stay credited to whoever wrote it rather than to the submitter.
     let author_name = match tag.author.filter(|_| !tag.hide_username.unwrap_or(false)) {
         Some(author) if author as u64 != discord_id => {
             Some(super::channel::get_username(ctx, author as u64).await)
@@ -479,7 +639,7 @@ fn face_section(content: String) -> CreateContainerComponent<'static> {
     ))
 }
 
-async fn face_attachment(data: &Data, uuid: &str) -> CreateAttachment<'static> {
+pub(super) async fn face_attachment(data: &Data, uuid: &str) -> CreateAttachment<'static> {
     let png = data
         .skin_provider
         .fetch_face(uuid, FACE_SIZE)
@@ -931,114 +1091,146 @@ pub async fn handle_add_media(
     Ok(())
 }
 
-pub async fn handle_media_modal(
-    ctx: &Context,
-    modal: &ModalInteraction,
-    data: &Data,
-) -> Result<()> {
-    modal.defer_ephemeral(&ctx.http).await?;
+pub(super) enum AppendError {
+    NotFound,
+    Legacy,
+    Full,
+    NoneAccepted,
+    DownloadFailed,
+    TooLarge,
+    UploadFailed,
+}
 
-    let attachment_ids: Vec<AttachmentId> = modal
-        .data
-        .components
+impl AppendError {
+    pub(super) fn message(&self) -> String {
+        match self {
+            AppendError::NotFound => "Could not find the evidence message".into(),
+            AppendError::Legacy => {
+                "That post predates the current bot, so it can't be edited. Add media from inside the thread.".into()
+            }
+            AppendError::Full => format!(
+                "That evidence post is already at the {MAX_EVIDENCE_ITEMS} attachment limit. Remove something first."
+            ),
+            AppendError::NoneAccepted => {
+                "Only images and videos are accepted (png, jpg, gif, webp, mp4, webm, mov)".into()
+            }
+            AppendError::DownloadFailed => "Could not download those attachments. Please try again.".into(),
+            AppendError::TooLarge => "File too large. Try compressing or using a smaller file.".into(),
+            AppendError::UploadFailed => "Failed to upload evidence. Please try again.".into(),
+        }
+    }
+}
+
+pub(super) struct AppendOutcome {
+    pub added: usize,
+    pub rejected: usize,
+    pub failed: usize,
+    pub over_capacity: usize,
+    pub username: String,
+}
+
+impl AppendOutcome {
+    pub(super) fn notes(&self) -> String {
+        let mut out = String::new();
+        if self.over_capacity > 0 {
+            out.push_str(&format!(
+                "\n-# {} skipped — the post holds at most {MAX_EVIDENCE_ITEMS} attachments",
+                self.over_capacity
+            ));
+        }
+        if self.rejected > 0 {
+            out.push_str(&format!(
+                "\n-# {} skipped — not an accepted image or video",
+                self.rejected
+            ));
+        }
+        if self.failed > 0 {
+            out.push_str(&format!("\n-# {} failed to download", self.failed));
+        }
+        out
+    }
+}
+
+fn next_evidence_index(evidence: &[EvidenceItem]) -> usize {
+    evidence
         .iter()
-        .filter_map(|c| match c {
-            Component::Label(label) => match &label.component {
-                LabelComponent::FileUpload(fu) => Some(fu.values.iter().copied()),
-                _ => None,
-            },
+        .filter_map(|e| match evidence_name_index(&e.filename) {
+            (_, Some(n)) => n.parse::<usize>().ok(),
             _ => None,
         })
-        .flatten()
-        .collect();
+        .max()
+        .unwrap_or(evidence.len())
+        + 1
+}
 
-    if attachment_ids.is_empty() {
-        let _ = modal.delete_response(&ctx.http).await;
-        return Ok(());
-    }
+pub(super) async fn append_media_to_op(
+    ctx: &Context,
+    data: &Data,
+    thread_id: ThreadId,
+    actor_id: u64,
+    sources: &[(String, String)],
+) -> std::result::Result<AppendOutcome, AppendError> {
+    let channel_id: GenericChannelId = thread_id.into();
+    let op_id = MessageId::new(thread_id.get());
 
-    modal
-        .edit_response(
-            &ctx.http,
-            EditInteractionResponse::new().content("Downloading files..."),
-        )
-        .await?;
-
-    let channel_id = modal.channel_id;
-    let builder_msg_id = MessageId::new(channel_id.get());
-    let Ok(builder_msg) = ctx
-        .http
-        .get_message(channel_id.into(), builder_msg_id)
-        .await
-    else {
-        modal
-            .edit_response(
-                &ctx.http,
-                EditInteractionResponse::new().content("Could not find the evidence message"),
-            )
-            .await?;
-        return Ok(());
+    let Ok(op) = ctx.http.get_message(channel_id, op_id).await else {
+        return Err(AppendError::NotFound);
     };
-
-    let Some(mut state) = parse_state_from_message(&builder_msg) else {
-        modal
-            .edit_response(
-                &ctx.http,
-                EditInteractionResponse::new().content("Could not parse evidence state"),
-            )
-            .await?;
-        return Ok(());
+    if op.author.id != ctx.cache.current_user().id {
+        return Err(AppendError::Legacy);
+    }
+    let Some(mut state) = parse_state_from_message(&op) else {
+        return Err(AppendError::Legacy);
     };
 
     let existing_count = state.evidence.len();
+    let capacity = MAX_EVIDENCE_ITEMS.saturating_sub(existing_count);
+    if capacity == 0 {
+        return Err(AppendError::Full);
+    }
+
+    let mut next_index = next_evidence_index(&state.evidence);
     let mut files = Vec::new();
     let mut rejected = 0usize;
+    let mut failed = 0usize;
+    let mut over_capacity = 0usize;
 
-    for (i, att_id) in attachment_ids.iter().enumerate() {
-        let Some(attachment) = modal.data.resolved.attachments.get(att_id) else {
-            continue;
-        };
-        let ext = url_extension(&attachment.filename).to_ascii_lowercase();
+    for (source_name, url) in sources {
+        let ext = url_extension(source_name).to_ascii_lowercase();
         if !ALLOWED_MEDIA_EXTENSIONS.contains(&ext.as_str()) {
             rejected += 1;
             continue;
         }
-        let filename = format!("{}_{}.{}", state.username, existing_count + i + 1, ext);
-        match CreateAttachment::url(&ctx.http, attachment.url.as_str(), filename.clone()).await {
+        if files.len() >= capacity {
+            over_capacity += 1;
+            continue;
+        }
+        let filename = format!("{}_{}.{}", state.username, next_index, ext);
+        match CreateAttachment::url(&ctx.http, url.as_str(), filename.clone()).await {
             Ok(file) => {
                 files.push(file);
                 state.evidence.push(EvidenceItem { filename });
+                next_index += 1;
             }
             Err(e) => {
                 tracing::warn!("Failed to download attachment: {e}");
-                rejected += 1;
+                failed += 1;
             }
         }
     }
 
-    if files.is_empty() && rejected > 0 {
-        modal
-            .edit_response(
-                &ctx.http,
-                EditInteractionResponse::new().content(
-                    "Only images and videos are accepted (png, jpg, gif, webp, mp4, webm, mov)",
-                ),
-            )
-            .await?;
-        return Ok(());
+    if files.is_empty() {
+        return Err(if over_capacity > 0 {
+            AppendError::Full
+        } else if failed > 0 {
+            AppendError::DownloadFailed
+        } else {
+            AppendError::NoneAccepted
+        });
     }
 
-    let urls = gallery_url_map(&builder_msg);
-    let components = build_evidence_message(
-        &state.username,
-        &state.uuid,
-        &state.reason,
-        state.added_line.as_deref(),
-        state.reviewed_line.as_deref(),
-        &state.evidence,
-        state.review_url.as_deref(),
-        &urls,
-    );
+    let urls = gallery_url_map(&op);
+    let components = evidence_op_view(&state, &urls);
 
     let face = face_attachment(data, &state.uuid).await;
     let mut attachments = EditAttachments::new();
@@ -1055,6 +1247,68 @@ pub async fn handle_media_modal(
     let mut all_files = files.clone();
     all_files.push(face);
 
+    let edit = EditMessage::new()
+        .content("")
+        .flags(MessageFlags::IS_COMPONENTS_V2)
+        .components(components)
+        .attachments(attachments);
+
+    if let Err(e) = ctx
+        .http
+        .edit_message(channel_id, op_id, &edit, all_files)
+        .await
+    {
+        let msg = e.to_string();
+        return Err(if msg.contains("too large") || msg.contains("413") {
+            AppendError::TooLarge
+        } else {
+            AppendError::UploadFailed
+        });
+    }
+
+    if existing_count == 0 {
+        if let Err(e) = try_convert_to_confirmed(data, &state, actor_id).await {
+            tracing::warn!("failed to convert tag to confirmed: {e}");
+        }
+    }
+
+    Ok(AppendOutcome {
+        added: files.len(),
+        rejected,
+        failed,
+        over_capacity,
+        username: state.username,
+    })
+}
+
+pub async fn handle_media_modal(
+    ctx: &Context,
+    modal: &ModalInteraction,
+    data: &Data,
+) -> Result<()> {
+    modal.defer_ephemeral(&ctx.http).await?;
+
+    let sources: Vec<(String, String)> = modal
+        .data
+        .components
+        .iter()
+        .filter_map(|c| match c {
+            Component::Label(label) => match &label.component {
+                LabelComponent::FileUpload(fu) => Some(fu.values.iter().copied()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|id| modal.data.resolved.attachments.get(&id))
+        .map(|a| (a.filename.to_string(), a.url.to_string()))
+        .collect();
+
+    if sources.is_empty() {
+        let _ = modal.delete_response(&ctx.http).await;
+        return Ok(());
+    }
+
     modal
         .edit_response(
             &ctx.http,
@@ -1062,31 +1316,31 @@ pub async fn handle_media_modal(
         )
         .await?;
 
-    let edit = EditMessage::new()
-        .content("")
-        .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(components)
-        .attachments(attachments);
-
-    match ctx
-        .http
-        .edit_message(channel_id.into(), builder_msg.id, &edit, all_files)
-        .await
-    {
-        Ok(_) => {
-            if existing_count == 0 {
-                try_convert_to_confirmed(data, &state, modal.user.id.get()).await?;
+    let thread_id = ThreadId::new(modal.channel_id.get());
+    match append_media_to_op(ctx, data, thread_id, modal.user.id.get(), &sources).await {
+        Ok(outcome) => {
+            let notes = outcome.notes();
+            if notes.is_empty() {
+                let _ = modal.delete_response(&ctx.http).await;
+            } else {
+                modal
+                    .edit_response(
+                        &ctx.http,
+                        EditInteractionResponse::new().content(format!(
+                            "Added {} attachment{}.{notes}",
+                            outcome.added,
+                            if outcome.added == 1 { "" } else { "s" }
+                        )),
+                    )
+                    .await?;
             }
-            let _ = modal.delete_response(&ctx.http).await;
         }
         Err(e) => {
-            let msg = if e.to_string().contains("too large") || e.to_string().contains("413") {
-                "File too large. Try compressing or using a smaller file."
-            } else {
-                "Failed to upload evidence. Please try again."
-            };
             modal
-                .edit_response(&ctx.http, EditInteractionResponse::new().content(msg))
+                .edit_response(
+                    &ctx.http,
+                    EditInteractionResponse::new().content(e.message()),
+                )
                 .await?;
         }
     }
@@ -1159,7 +1413,7 @@ pub async fn handle_manage(
             ctx,
             component,
             "Error",
-            "Only helpers and above can remove evidence",
+            "Only staff can remove evidence",
         )
         .await;
     }
@@ -1277,7 +1531,7 @@ pub async fn handle_manage_remove(
             ctx,
             component,
             "Error",
-            "Only helpers and above can remove evidence",
+            "Only staff can remove evidence",
         )
         .await;
     }
@@ -1420,7 +1674,7 @@ pub async fn handle_archive(
             ctx,
             component,
             "Error",
-            "Only helpers and above can archive evidence",
+            "Only staff can archive evidence",
         )
         .await;
     }
@@ -1509,7 +1763,7 @@ pub async fn handle_restore(
             ctx,
             component,
             "Error",
-            "Only helpers and above can restore evidence",
+            "Only staff can restore evidence",
         )
         .await;
     }
