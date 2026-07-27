@@ -94,13 +94,8 @@ fn picker(
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
     if get_rank(data, command.user.id.get()).await? < AccessRank::Helper {
-        return crate::interact::send_error(
-            ctx,
-            command,
-            "Error",
-            "Only staff can add evidence",
-        )
-        .await;
+        return crate::interact::send_error(ctx, command, "Error", "Only staff can add evidence")
+            .await;
     }
 
     let Some(ResolvedTarget::Message(message)) = command.data.target() else {
@@ -281,7 +276,10 @@ pub async fn handle_pick(
                 .edit(&ctx.http, EditThread::new().archived(false))
                 .await
             {
-                tracing::warn!("could not unarchive evidence thread {}: {e}", entry.id.get());
+                tracing::warn!(
+                    "could not unarchive evidence thread {}: {e}",
+                    entry.id.get()
+                );
                 return edit_component_error(
                     ctx,
                     component,
