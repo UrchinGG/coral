@@ -104,6 +104,7 @@ async fn init_data() -> Result<Data> {
         info_cache: Arc::new(Mutex::new(Default::default())),
         review_locks: Arc::new(Mutex::new(HashMap::new())),
         assembling_reviews: Arc::new(RwLock::new(HashMap::new())),
+        pending_attach_sources: Arc::new(Mutex::new(HashMap::new())),
     })
 }
 

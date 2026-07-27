@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use anyhow::Result;
 use serenity::all::*;
 
@@ -13,6 +15,8 @@ pub const COMMAND_NAME: &str = "Add to Evidence Post";
 
 const RECENT_LIMIT: usize = 5;
 const SEARCH_LIMIT: usize = 25;
+const SOURCE_TTL: Duration = Duration::from_secs(30 * 60);
+const EXPIRED: &str = "This picker expired — run the command again";
 
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new(COMMAND_NAME).kind(CommandType::Message)
@@ -34,6 +38,30 @@ fn media_sources(message: &Message) -> Vec<(String, String)> {
         .filter(|a| is_media(&a.filename))
         .map(|a| (a.filename.to_string(), a.url.to_string()))
         .collect()
+}
+
+fn remember_sources(
+    data: &Data,
+    channel_id: GenericChannelId,
+    message_id: MessageId,
+    sources: Vec<(String, String)>,
+) {
+    let mut cache = data.pending_attach_sources.lock().unwrap();
+    cache.retain(|_, (at, _)| at.elapsed() < SOURCE_TTL);
+    cache.insert(
+        (channel_id.get(), message_id.get()),
+        (Instant::now(), sources),
+    );
+}
+
+fn recall_sources(
+    data: &Data,
+    channel_id: GenericChannelId,
+    message_id: MessageId,
+) -> Option<Vec<(String, String)>> {
+    let cache = data.pending_attach_sources.lock().unwrap();
+    let (at, sources) = cache.get(&(channel_id.get(), message_id.get()))?;
+    (at.elapsed() < SOURCE_TTL).then(|| sources.clone())
 }
 
 fn parse_source(custom_id: &str, prefix: &str) -> Option<(GenericChannelId, MessageId)> {
@@ -103,8 +131,8 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
             .await;
     };
 
-    let count = media_sources(message).len();
-    if count == 0 {
+    let sources = media_sources(message);
+    if sources.is_empty() {
         return crate::interact::send_error(
             ctx,
             command,
@@ -113,6 +141,9 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         )
         .await;
     }
+
+    let count = sources.len();
+    remember_sources(data, command.channel_id, message.id, sources);
 
     let source = format!("{}:{}", command.channel_id.get(), message.id.get());
     let recent = recent_evidence_threads(data, RECENT_LIMIT);
@@ -185,10 +216,10 @@ pub async fn handle_search_modal(
         hits.push((info.uuid.replace('-', "").to_ascii_lowercase(), entry));
     }
 
-    let count = match ctx.http.get_message(channel_id, message_id).await {
-        Ok(message) => media_sources(&message).len(),
-        Err(_) => return edit_error(ctx, modal, "That message is no longer available").await,
+    let Some(sources) = recall_sources(data, channel_id, message_id) else {
+        return edit_error(ctx, modal, EXPIRED).await;
     };
+    let count = sources.len();
 
     let source = format!("{}:{}", channel_id.get(), message_id.get());
     modal
@@ -244,18 +275,9 @@ pub async fn handle_pick(
         return edit_component_error(ctx, component, "That evidence post no longer exists").await;
     };
 
-    let Ok(message) = ctx.http.get_message(channel_id, message_id).await else {
-        return edit_component_error(ctx, component, "That message is no longer available").await;
+    let Some(sources) = recall_sources(data, channel_id, message_id) else {
+        return edit_component_error(ctx, component, EXPIRED).await;
     };
-    let sources = media_sources(&message);
-    if sources.is_empty() {
-        return edit_component_error(
-            ctx,
-            component,
-            "That message has no image or video attachments",
-        )
-        .await;
-    }
 
     match evidence_thread_state(ctx, entry.id).await {
         ThreadState::Missing => {

@@ -67,6 +67,7 @@ pub struct Data {
     pub info_cache: Arc<Mutex<commands::admin::info::InfoCache>>,
     pub review_locks: Arc<Mutex<HashMap<u64, Arc<tokio::sync::Mutex<()>>>>>,
     pub assembling_reviews: Arc<RwLock<HashMap<u64, u64>>>,
+    pub pending_attach_sources: Arc<Mutex<HashMap<(u64, u64), (Instant, Vec<(String, String)>)>>>,
 }
 
 impl Data {
