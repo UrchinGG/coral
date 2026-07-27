@@ -108,7 +108,7 @@ async fn handle_add(
         ctx,
         command,
         &format!("Strike added for <@{target_id}>: \"{reason}\""),
-        false,
+        true,
     )
     .await
 }
