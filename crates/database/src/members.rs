@@ -282,6 +282,14 @@ impl<'a> MemberRepository<'a> {
         Ok(count)
     }
 
+    pub async fn count_trusted(&self) -> Result<i64, sqlx::Error> {
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM members WHERE tag_granted = TRUE")
+                .fetch_one(self.pool)
+                .await?;
+        Ok(count)
+    }
+
     pub async fn total_requests(&self) -> Result<i64, sqlx::Error> {
         let (total,): (i64,) =
             sqlx::query_as("SELECT COALESCE(SUM(request_count), 0)::bigint FROM members")

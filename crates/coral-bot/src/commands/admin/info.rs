@@ -130,6 +130,7 @@ async fn build_statistics(ctx: &Context, data: &Data) -> Vec<CreateComponent<'st
 
     let (
         registered,
+        trusted,
         requests,
         tags,
         breakdown,
@@ -141,6 +142,7 @@ async fn build_statistics(ctx: &Context, data: &Data) -> Vec<CreateComponent<'st
         guild_storage,
     ) = tokio::join!(
         members.count(),
+        members.count_trusted(),
         members.total_requests(),
         blacklist.count_active_tags(),
         blacklist.count_active_tags_by_type(),
@@ -195,8 +197,9 @@ async fn build_statistics(ctx: &Context, data: &Data) -> Vec<CreateComponent<'st
         header,
         separator(),
         text(format!(
-            "### Members\n**{}** registered\n**{}** lifetime requests",
+            "### Members\n**{}** registered\n**{}** trusted\n**{}** lifetime requests",
             format_number(registered.unwrap_or(0) as u64),
+            format_number(trusted.unwrap_or(0) as u64),
             format_number(requests.unwrap_or(0) as u64),
         )),
         separator(),
