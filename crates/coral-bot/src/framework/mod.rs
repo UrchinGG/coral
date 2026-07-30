@@ -231,6 +231,17 @@ impl Handler {
         }
     }
 
+    async fn handle_autocomplete(
+        &self,
+        ctx: &Context,
+        command: &CommandInteraction,
+    ) -> anyhow::Result<()> {
+        match command.data.name.as_str() {
+            "tag" => commands::blacklist::tag::autocomplete(ctx, command).await,
+            _ => Ok(()),
+        }
+    }
+
     async fn handle_component(
         &self,
         ctx: &Context,
@@ -706,6 +717,7 @@ impl Handler {
             Interaction::Command(command) => self.handle_command(ctx, command).await,
             Interaction::Component(component) => self.handle_component(ctx, component).await,
             Interaction::Modal(modal) => self.handle_modal(ctx, modal).await,
+            Interaction::Autocomplete(command) => self.handle_autocomplete(ctx, command).await,
             _ => return,
         };
 

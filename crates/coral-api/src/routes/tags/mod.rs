@@ -323,6 +323,7 @@ pub async fn lock_player(
         &req.reason,
         member.0.discord_id,
         member.0.access_level,
+        None,
     )
     .await
     .map_err(map_op_error)?;

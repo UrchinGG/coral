@@ -518,6 +518,7 @@ pub async fn post_tag_changed(
     send_to_mod_channel(ctx, data, container, vec![face]).await;
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn post_lock_change(
     ctx: &Context,
     data: &Data,
@@ -525,6 +526,7 @@ pub async fn post_lock_change(
     name: &str,
     locked: bool,
     reason: Option<&str>,
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
     changed_by: u64,
 ) {
     let dashed_uuid = format_uuid_dashed(uuid);
@@ -544,6 +546,9 @@ pub async fn post_lock_change(
     let mut section_parts = vec![title];
     if let Some(r) = reason {
         section_parts.push(format!("> {}", sanitize_reason(r)));
+    }
+    if let Some(exp) = expires_at {
+        section_parts.push(format!("-# Unlocks <t:{}:R>", exp.timestamp()));
     }
     section_parts.push(format!(
         "-# {} by `@{}`\n-# UUID: {dashed_uuid}",

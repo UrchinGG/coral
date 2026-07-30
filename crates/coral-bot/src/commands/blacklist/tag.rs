@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use blacklist::{EMOTE_ADDTAG, EMOTE_EDITTAG, EMOTE_REMOVETAG, EMOTE_TAG, lookup as lookup_tag};
+use chrono::{Duration, Utc};
 use coral_redis::BlacklistEvent;
 use database::{BlacklistRepository, MemberRepository, TagOp, TagOpError};
 use serenity::all::*;
@@ -80,6 +81,80 @@ pub struct PendingOverwrite {
     pub reason: String,
     pub hide: bool,
     pub silent: bool,
+}
+
+const LOCK_PRESETS: [(&str, &str); 4] = [
+    ("1 week", "1w"),
+    ("2 weeks", "2w"),
+    ("1 month", "1mo"),
+    ("3 months", "3mo"),
+];
+
+const MAX_LOCK_DAYS: i64 = 365;
+
+fn parse_lock_duration(input: &str) -> Option<Duration> {
+    let lowered = input.trim().to_ascii_lowercase();
+    let split = lowered.find(|c: char| !c.is_ascii_digit())?;
+    let (digits, unit) = lowered.split_at(split);
+    let n: i64 = digits.parse().ok()?;
+    let days = match unit.trim() {
+        "d" | "day" | "days" => n,
+        "w" | "week" | "weeks" => n.checked_mul(7)?,
+        "m" | "mo" | "month" | "months" => n.checked_mul(30)?,
+        _ => return None,
+    };
+    (1..=MAX_LOCK_DAYS)
+        .contains(&days)
+        .then(|| Duration::days(days))
+}
+
+fn duration_label(duration: Duration) -> String {
+    let days = duration.num_days();
+    let (n, unit) = if days % 30 == 0 {
+        (days / 30, "month")
+    } else if days % 7 == 0 {
+        (days / 7, "week")
+    } else {
+        (days, "day")
+    };
+    format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
+}
+
+pub async fn autocomplete(ctx: &Context, command: &CommandInteraction) -> Result<()> {
+    let Some(focused) = command.data.autocomplete() else {
+        return Ok(());
+    };
+    if focused.name != "duration" {
+        return Ok(());
+    }
+
+    let typed = focused.value.trim();
+    let needle = typed.to_ascii_lowercase();
+    let mut choices = Vec::new();
+    if let Some(duration) = parse_lock_duration(typed) {
+        choices.push(AutocompleteChoice::new(
+            format!("Lock for {}", duration_label(duration)),
+            typed.to_string(),
+        ));
+    }
+    choices.extend(
+        LOCK_PRESETS
+            .iter()
+            .filter(|(label, value)| {
+                needle.is_empty() || label.contains(&needle) || value.starts_with(&needle)
+            })
+            .map(|(label, value)| AutocompleteChoice::new(*label, *value)),
+    );
+
+    command
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Autocomplete(
+                CreateAutocompleteResponse::new().set_choices(choices),
+            ),
+        )
+        .await?;
+    Ok(())
 }
 
 fn tag_choices(option: CreateCommandOption<'static>) -> CreateCommandOption<'static> {
@@ -196,6 +271,14 @@ pub fn register() -> CreateCommand<'static> {
                 CreateCommandOption::new(CommandOptionType::String, "reason", "Reason for locking")
                     .required(true)
                     .max_length(120),
+            )
+            .add_sub_option(
+                CreateCommandOption::new(
+                    CommandOptionType::String,
+                    "duration",
+                    "How long the lock lasts (e.g. 5d, 2w, 3mo) - permanent if omitted",
+                )
+                .set_autocomplete(true),
             ),
         )
         .add_option(
@@ -955,6 +1038,24 @@ async fn run_lock(ctx: &Context, command: &CommandInteraction, data: &Data) -> R
     let options = get_sub_options(command);
     let player = get_string(&options, "player");
     let reason = get_string(&options, "reason");
+    let duration = get_string(&options, "duration").trim();
+
+    let expires_at = if duration.is_empty() {
+        None
+    } else {
+        match parse_lock_duration(duration) {
+            Some(d) => Some(Utc::now() + d),
+            None => {
+                return send_deferred_error(
+                    ctx,
+                    command,
+                    "Error",
+                    "Invalid duration. Use a value like `5d`, `2w`, or `3mo` (max 365 days)",
+                )
+                .await;
+            }
+        }
+    };
 
     let player_info = match data.api.resolve(player).await {
         Ok(info) => info,
@@ -962,28 +1063,36 @@ async fn run_lock(ctx: &Context, command: &CommandInteraction, data: &Data) -> R
     };
 
     let ops = TagOp::new(data.db.pool());
-    if let Err(e) = ops
+    let fresh = match ops
         .lock_player(
             &player_info.uuid,
             reason,
             discord_id as i64,
             rank.to_level(),
+            expires_at,
         )
         .await
     {
-        return send_deferred_error(ctx, command, "Error", op_error_message(&e)).await;
-    }
+        Ok(fresh) => fresh,
+        Err(e) => return send_deferred_error(ctx, command, "Error", op_error_message(&e)).await,
+    };
 
     let dashed_uuid = format_uuid_dashed(&player_info.uuid);
+    let title = if fresh { "Player Locked" } else { "Lock Updated" };
+    let mut section = vec![
+        format!(
+            "## {} {} \u{1F512}\nIGN - `{}`\n",
+            EMOTE_TAG, title, player_info.username
+        ),
+        format!("> {}", sanitize_reason(reason)),
+    ];
+    if let Some(exp) = expires_at {
+        section.push(format!("-# Unlocks <t:{}:R>", exp.timestamp()));
+    }
+    section.push(format!("-# UUID: {dashed_uuid}"));
+
     let container = CreateContainer::new(vec![
-        face_section(vec![
-            format!(
-                "## {} Player Locked \u{1F512}\nIGN - `{}`\n",
-                EMOTE_TAG, player_info.username
-            ),
-            format!("> {}", sanitize_reason(reason)),
-            format!("-# UUID: {dashed_uuid}"),
-        ]),
+        face_section(section),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
     ]);
 
@@ -1795,4 +1904,46 @@ async fn send_component_message(
         )
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn days(input: &str) -> Option<i64> {
+        parse_lock_duration(input).map(|d| d.num_days())
+    }
+
+    #[test]
+    fn parses_units() {
+        assert_eq!(days("5d"), Some(5));
+        assert_eq!(days("12w"), Some(84));
+        assert_eq!(days("5m"), Some(150));
+        assert_eq!(days("3mo"), Some(90));
+        assert_eq!(days("2 weeks"), Some(14));
+        assert_eq!(days(" 1W "), Some(7));
+    }
+
+    #[test]
+    fn rejects_junk_and_out_of_range() {
+        for input in ["", "5", "w", "abc", "0d", "-3d", "2y", "366d", "1200000w"] {
+            assert_eq!(days(input), None, "expected {input} to be rejected");
+        }
+    }
+
+    #[test]
+    fn labels_read_naturally() {
+        assert_eq!(duration_label(Duration::days(1)), "1 day");
+        assert_eq!(duration_label(Duration::days(5)), "5 days");
+        assert_eq!(duration_label(Duration::days(7)), "1 week");
+        assert_eq!(duration_label(Duration::days(84)), "12 weeks");
+        assert_eq!(duration_label(Duration::days(90)), "3 months");
+    }
+
+    #[test]
+    fn presets_are_valid_input() {
+        for (_, value) in LOCK_PRESETS {
+            assert!(parse_lock_duration(value).is_some(), "{value} must parse");
+        }
+    }
 }

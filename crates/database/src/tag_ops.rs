@@ -205,12 +205,15 @@ impl<'a> TagOp<'a> {
         reason: &str,
         actor_id: i64,
         actor_level: i16,
-    ) -> Result<(), TagOpError> {
+        expires_at: Option<DateTime<Utc>>,
+    ) -> Result<bool, TagOpError> {
         if actor_level < 3 {
             return Err(TagOpError::ModeratorRequired);
         }
-        self.repo.lock_event(uuid, Some(reason), actor_id).await?;
-        Ok(())
+        Ok(self
+            .repo
+            .lock_event(uuid, Some(reason), actor_id, expires_at)
+            .await?)
     }
 
     pub async fn unlock_player(

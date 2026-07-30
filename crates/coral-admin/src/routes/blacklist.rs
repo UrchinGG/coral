@@ -267,7 +267,7 @@ async fn fetch_lock_states(pool: &PgPool, uuids: &[String]) -> Vec<LockState> {
     sqlx::query_as(
         "SELECT DISTINCT ON (uuid)
              uuid,
-             (kind = 'lock') AS is_locked,
+             (kind = 'lock' AND (expires_at IS NULL OR expires_at > NOW())) AS is_locked,
              reason AS lock_reason,
              author AS locked_by,
              ts AS locked_at
@@ -471,13 +471,10 @@ async fn lock(
     Path(uuid): Path<String>,
     Json(req): Json<LockRequest>,
 ) -> Result<Json<OkResponse>, StatusCode> {
-    let locked = BlacklistRepository::new(state.db.pool())
-        .lock_event(&uuid, req.reason.as_deref(), actor.discord_id)
+    BlacklistRepository::new(state.db.pool())
+        .lock_event(&uuid, req.reason.as_deref(), actor.discord_id, None)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if !locked {
-        return Err(StatusCode::CONFLICT);
-    }
     audit(
         &state,
         actor,

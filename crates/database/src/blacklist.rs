@@ -22,6 +22,7 @@ pub struct LockState {
     pub reason: Option<String>,
     pub locked_by: Option<i64>,
     pub locked_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug)]
@@ -194,31 +195,31 @@ impl<'a> BlacklistRepository<'a> {
         uuid: &str,
         reason: Option<&str>,
         author: i64,
+        expires_at: Option<DateTime<Utc>>,
     ) -> Result<bool, sqlx::Error> {
         let mut tx = self.pool.begin().await?;
         acquire_lock(&mut tx, uuid).await?;
 
-        if current_lock_kind(&mut tx, uuid).await?.as_deref() == Some("lock") {
-            return Ok(false);
-        }
+        let was_locked = is_locked(&mut tx, uuid).await?;
         sqlx::query(
-            "INSERT INTO player_events (uuid, kind, reason, author)
-             VALUES ($1, 'lock', $2, $3)",
+            "INSERT INTO player_events (uuid, kind, reason, author, expires_at)
+             VALUES ($1, 'lock', $2, $3, $4)",
         )
         .bind(uuid)
         .bind(reason)
         .bind(author)
+        .bind(expires_at)
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
-        Ok(true)
+        Ok(!was_locked)
     }
 
     pub async fn unlock_event(&self, uuid: &str, author: i64) -> Result<bool, sqlx::Error> {
         let mut tx = self.pool.begin().await?;
         acquire_lock(&mut tx, uuid).await?;
 
-        if current_lock_kind(&mut tx, uuid).await?.as_deref() != Some("lock") {
+        if !is_locked(&mut tx, uuid).await? {
             return Ok(false);
         }
         sqlx::query(
@@ -234,8 +235,15 @@ impl<'a> BlacklistRepository<'a> {
     }
 
     pub async fn get_lock_state(&self, uuid: &str) -> Result<LockState, sqlx::Error> {
-        let latest: Option<(String, Option<String>, Option<i64>, DateTime<Utc>)> = sqlx::query_as(
-            "SELECT kind, reason, author, ts FROM player_events
+        type LockRow = (
+            String,
+            Option<String>,
+            Option<i64>,
+            DateTime<Utc>,
+            Option<DateTime<Utc>>,
+        );
+        let latest: Option<LockRow> = sqlx::query_as(
+            "SELECT kind, reason, author, ts, expires_at FROM player_events
              WHERE uuid = $1 AND kind IN ('lock', 'unlock')
              ORDER BY ts DESC, id DESC LIMIT 1",
         )
@@ -243,12 +251,17 @@ impl<'a> BlacklistRepository<'a> {
         .fetch_optional(self.pool)
         .await?;
         Ok(match latest {
-            Some((kind, reason, author, ts)) if kind == "lock" => LockState {
-                locked: true,
-                reason,
-                locked_by: author,
-                locked_at: Some(ts),
-            },
+            Some((kind, reason, author, ts, expires_at))
+                if kind == "lock" && expires_at.is_none_or(|exp| exp > Utc::now()) =>
+            {
+                LockState {
+                    locked: true,
+                    reason,
+                    locked_by: author,
+                    locked_at: Some(ts),
+                    expires_at,
+                }
+            }
             _ => LockState::default(),
         })
     }
@@ -483,17 +496,18 @@ async fn active_conflict(
     .await
 }
 
-async fn current_lock_kind(
+async fn is_locked(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     uuid: &str,
-) -> Result<Option<String>, sqlx::Error> {
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT kind FROM player_events
+) -> Result<bool, sqlx::Error> {
+    let row: Option<(bool,)> = sqlx::query_as(
+        "SELECT kind = 'lock' AND (expires_at IS NULL OR expires_at > NOW())
+         FROM player_events
          WHERE uuid = $1 AND kind IN ('lock', 'unlock')
          ORDER BY ts DESC, id DESC LIMIT 1",
     )
     .bind(uuid)
     .fetch_optional(&mut **tx)
     .await?;
-    Ok(row.map(|(k,)| k))
+    Ok(row.is_some_and(|(locked,)| locked))
 }

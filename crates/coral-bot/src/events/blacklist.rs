@@ -116,6 +116,11 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
             reason,
         } => {
             let name = resolve_name(&cache, &uuid).await;
+            let expires_at = repo
+                .get_lock_state(&uuid)
+                .await
+                .ok()
+                .and_then(|state| state.expires_at);
             channel::post_lock_change(
                 ctx,
                 data,
@@ -123,6 +128,7 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
                 &name,
                 true,
                 Some(&reason),
+                expires_at,
                 locked_by as u64,
             )
             .await;
@@ -130,8 +136,17 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
 
         BlacklistEvent::PlayerUnlocked { uuid, unlocked_by } => {
             let name = resolve_name(&cache, &uuid).await;
-            channel::post_lock_change(ctx, data, &uuid, &name, false, None, unlocked_by as u64)
-                .await;
+            channel::post_lock_change(
+                ctx,
+                data,
+                &uuid,
+                &name,
+                false,
+                None,
+                None,
+                unlocked_by as u64,
+            )
+            .await;
         }
 
         BlacklistEvent::TagEdited { .. } => {}
