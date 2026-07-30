@@ -1078,7 +1078,11 @@ async fn run_lock(ctx: &Context, command: &CommandInteraction, data: &Data) -> R
     };
 
     let dashed_uuid = format_uuid_dashed(&player_info.uuid);
-    let title = if fresh { "Player Locked" } else { "Lock Updated" };
+    let title = if fresh {
+        "Player Locked"
+    } else {
+        "Lock Updated"
+    };
     let mut section = vec![
         format!(
             "## {} {} \u{1F512}\nIGN - `{}`\n",
