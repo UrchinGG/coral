@@ -2,10 +2,11 @@ use chrono::Utc;
 use serenity::all::*;
 
 use coral_redis::{BlacklistEvent, EventSubscriber};
-use database::{BlacklistRepository, CacheRepository, PlayerEvent};
+use database::{BlacklistRepository, PlayerEvent};
 
 use crate::commands::blacklist::channel;
 use crate::framework::Data;
+use crate::utils::resolve_username_or_fetch;
 
 pub fn spawn_subscriber(ctx: Context, data: Data) {
     let redis_url = data.redis_url.clone();
@@ -37,7 +38,6 @@ pub fn spawn_subscriber(ctx: Context, data: Data) {
 
 async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyhow::Result<()> {
     let repo = BlacklistRepository::new(data.db.pool());
-    let cache = CacheRepository::new(data.db.pool());
 
     match event {
         BlacklistEvent::TagAdded {
@@ -52,7 +52,7 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
                 schedule_expiry(data.clone(), uuid.clone(), tag_type, tag_id, expires_at);
             }
             let all_tags = repo.get_active_tags(&uuid).await.unwrap_or_default();
-            let name = resolve_name(&cache, &uuid).await;
+            let name = resolve_name(data, &uuid).await;
             channel::post_new_tag(
                 ctx,
                 data,
@@ -77,7 +77,7 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
             let new_tag = fetch_event(&repo, new_tag_id, "TagOverwritten").await?;
             let old_tag = fetch_event(&repo, old_tag_id, "TagOverwritten").await?;
             let all_tags = repo.get_active_tags(&uuid).await.unwrap_or_default();
-            let name = resolve_name(&cache, &uuid).await;
+            let name = resolve_name(data, &uuid).await;
             channel::post_tag_changed(
                 ctx,
                 data,
@@ -105,7 +105,7 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
                 tracing::warn!("event {tag_id} not found for TagRemoved");
                 return Ok(());
             };
-            let name = resolve_name(&cache, &uuid).await;
+            let name = resolve_name(data, &uuid).await;
             channel::post_tag_removed(ctx, data, &uuid, &name, &tag, removed_by as u64, silent)
                 .await;
         }
@@ -115,7 +115,7 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
             locked_by,
             reason,
         } => {
-            let name = resolve_name(&cache, &uuid).await;
+            let name = resolve_name(data, &uuid).await;
             let expires_at = repo
                 .get_lock_state(&uuid)
                 .await
@@ -135,7 +135,7 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
         }
 
         BlacklistEvent::PlayerUnlocked { uuid, unlocked_by } => {
-            let name = resolve_name(&cache, &uuid).await;
+            let name = resolve_name(data, &uuid).await;
             channel::post_lock_change(
                 ctx,
                 data,
@@ -165,12 +165,9 @@ async fn fetch_event(
         .ok_or_else(|| anyhow::anyhow!("event {event_id} not found for {event_name}"))
 }
 
-async fn resolve_name(cache: &CacheRepository<'_>, uuid: &str) -> String {
-    cache
-        .get_username(uuid)
+async fn resolve_name(data: &Data, uuid: &str) -> String {
+    resolve_username_or_fetch(uuid, data)
         .await
-        .ok()
-        .flatten()
         .unwrap_or_else(|| uuid.to_string())
 }
 

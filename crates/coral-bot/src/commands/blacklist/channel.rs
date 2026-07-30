@@ -5,12 +5,14 @@ use blacklist::{
     EMOTE_ADDTAG, EMOTE_EDITTAG, EMOTE_EVIDENCE, EMOTE_NO_EVIDENCE, EMOTE_REMOVETAG, EMOTE_TAG,
     lookup as lookup_tag,
 };
-use database::{BlacklistRepository, CacheRepository, GuildSubscriptionRepository, PlayerEvent};
+use database::{BlacklistRepository, GuildSubscriptionRepository, PlayerEvent};
 
 use super::evidence::evidence_thread_url;
 
 use crate::framework::{AccessRank, Data};
-use crate::utils::{format_tag_detail, format_uuid_dashed, sanitize_reason};
+use crate::utils::{
+    format_tag_detail, format_uuid_dashed, resolve_username_or_fetch, sanitize_reason,
+};
 
 const FACE_SIZE: u32 = 128;
 const FACE_FILENAME: &str = "face.png";
@@ -186,11 +188,8 @@ async fn respond_history(
         .get_tag_history(uuid)
         .await
         .unwrap_or_default();
-    let username = CacheRepository::new(data.db.pool())
-        .get_username(uuid)
+    let username = resolve_username_or_fetch(uuid, data)
         .await
-        .ok()
-        .flatten()
         .unwrap_or_else(|| uuid.to_string());
     let (content, total_pages) = render_tag_history(ctx, &username, &events, page).await;
     let page = page.min(total_pages.saturating_sub(1));
