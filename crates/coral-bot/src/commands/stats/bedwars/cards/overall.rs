@@ -385,11 +385,11 @@ impl Shape for GuildBox<'_> {
 
         let name = self.stats.guild.name.as_deref().unwrap_or("-");
         let rank = self.stats.guild.rank.as_deref().unwrap_or("N/A");
-        let joined = self
+        let gexp = self
             .stats
             .guild
-            .joined
-            .map(format_timestamp)
+            .weekly_gexp
+            .map(format_number)
             .unwrap_or_else(|| "N/A".to_string());
         let color = self
             .stats
@@ -408,10 +408,10 @@ impl Shape for GuildBox<'_> {
                 .color(color)
                 .build(),
             MCText::new()
-                .span("Joined: ")
+                .span("GEXP: ")
                 .color(NamedColor::Gray)
-                .then(&joined)
-                .color(NamedColor::White)
+                .then(&gexp)
+                .color(NamedColor::DarkGreen)
                 .build(),
         ];
 
