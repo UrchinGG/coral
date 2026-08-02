@@ -1251,6 +1251,44 @@ async fn run_manage(ctx: &Context, command: &CommandInteraction, data: &Data) ->
     Ok(())
 }
 
+fn format_lock_block(state: &database::LockState, names: &HashMap<i64, String>) -> Option<String> {
+    if !state.locked {
+        return None;
+    }
+
+    let reason = state
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .map(sanitize_reason)
+        .unwrap_or_else(|| "*No reason given*".to_string());
+    let mut lines = vec![
+        "**\u{1F512} Tags Locked**".to_string(),
+        format!("> {reason}"),
+    ];
+
+    let when = state
+        .locked_at
+        .map(|t| format!(" <t:{}:R>", t.timestamp()))
+        .unwrap_or_default();
+    match state.locked_by {
+        Some(id) => {
+            let name = names.get(&id).map(|s| s.as_str()).unwrap_or("unknown");
+            lines.push(format!("> -# **\\- Locked by `@{name}`{when}**"));
+        }
+        None if !when.is_empty() => lines.push(format!("> -# **\\-{when}**")),
+        None => {}
+    }
+
+    lines.push(match state.expires_at {
+        Some(exp) => format!("> -# **\\- Unlocks <t:{}:R>**", exp.timestamp()),
+        None => "> -# **\\- Permanent**".to_string(),
+    });
+
+    Some(lines.join("\n"))
+}
+
 async fn build_manage_main(
     ctx: &Context,
     data: &Data,
@@ -1258,11 +1296,13 @@ async fn build_manage_main(
     confirming: Option<i64>,
 ) -> Result<Vec<CreateComponent<'static>>> {
     let repo = BlacklistRepository::new(data.db.pool());
-    let (active, username) = tokio::join!(
+    let (active, lock_state, username) = tokio::join!(
         repo.get_active_tags(uuid),
+        repo.get_lock_state(uuid),
         resolve_username_or_fetch(uuid, data)
     );
     let active = active?;
+    let lock_state = lock_state?;
     let username = username.unwrap_or_else(|| uuid.to_string());
     let dashed_uuid = format_uuid_dashed(uuid);
     let evidence_url = super::evidence::evidence_thread_url(data, uuid);
@@ -1270,12 +1310,30 @@ async fn build_manage_main(
     let reviewers = active
         .iter()
         .flat_map(|t| t.reviewed_by.iter().flatten().copied());
-    let names = resolve_names(&ctx.http, adders.chain(reviewers)).await;
+    let names = resolve_names(
+        &ctx.http,
+        adders.chain(reviewers).chain(lock_state.locked_by),
+    )
+    .await;
 
     let mut parts: Vec<CreateContainerComponent> = vec![face_section(vec![format!(
         "## {} Manage Tags\nIGN - `{}`",
         EMOTE_EDITTAG, username
     )])];
+
+    if let Some(block) = format_lock_block(&lock_state, &names) {
+        parts.push(CreateContainerComponent::Separator(CreateSeparator::new(
+            true,
+        )));
+        parts.push(CreateContainerComponent::TextDisplay(
+            CreateTextDisplay::new(block),
+        ));
+        if active.is_empty() {
+            parts.push(CreateContainerComponent::Separator(CreateSeparator::new(
+                true,
+            )));
+        }
+    }
 
     if active.is_empty() {
         parts.push(CreateContainerComponent::TextDisplay(
@@ -1949,5 +2007,48 @@ mod tests {
         for (_, value) in LOCK_PRESETS {
             assert!(parse_lock_duration(value).is_some(), "{value} must parse");
         }
+    }
+
+    fn locked_state() -> database::LockState {
+        database::LockState {
+            locked: true,
+            reason: Some("appeal pending".into()),
+            locked_by: Some(7),
+            locked_at: Some(Utc::now()),
+            expires_at: None,
+        }
+    }
+
+    fn names() -> HashMap<i64, String> {
+        HashMap::from([(7i64, "staffer".to_string())])
+    }
+
+    #[test]
+    fn unlocked_renders_nothing() {
+        assert!(format_lock_block(&database::LockState::default(), &HashMap::new()).is_none());
+    }
+
+    #[test]
+    fn locked_block_shows_who_and_why() {
+        let block = format_lock_block(&locked_state(), &names()).unwrap();
+        assert!(block.contains("Tags Locked"));
+        assert!(block.contains("> appeal pending"));
+        assert!(block.contains("Locked by `@staffer`"));
+        assert!(block.contains("Permanent"));
+    }
+
+    #[test]
+    fn locked_block_handles_missing_pieces() {
+        let state = database::LockState {
+            reason: Some("   ".into()),
+            locked_by: Some(99),
+            expires_at: Some(Utc::now() + Duration::days(3)),
+            ..locked_state()
+        };
+        let block = format_lock_block(&state, &names()).unwrap();
+        assert!(block.contains("*No reason given*"));
+        assert!(block.contains("`@unknown`"));
+        assert!(block.contains("Unlocks <t:"));
+        assert!(!block.contains("Permanent"));
     }
 }
