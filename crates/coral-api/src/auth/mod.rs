@@ -12,8 +12,8 @@ use database::{
 };
 
 use crate::routes::starfish::auth::validate_hwid;
-use crate::routes::starfish::require_starfish;
 use crate::routes::starfish::session_auth::resolve_verified_session;
+use crate::routes::starfish::{is_owner, require_starfish};
 use crate::{error::ApiError, state::AppState};
 
 const ELEVATED_CANONICAL_PATH: &str = "/v3/hypixel/player";
@@ -140,21 +140,25 @@ async fn authorize_elevated_session(
     let triad = SessionTriad::from_request(request)
         .ok_or_else(|| ApiError::Unauthorized("missing credentials".into()))?;
 
+    let (discord_id, member) = resolve_session_member(state, &triad).await?;
+    let owner = is_owner(discord_id);
+
     let method = request.method().clone();
     let path = request.uri().path().to_owned();
-    if !elevated_endpoint_allowed(&method, &path) {
+    if !owner && !elevated_endpoint_allowed(&method, &path) {
         return Err(ApiError::Unauthorized(
             "endpoint not available for session auth".into(),
         ));
     }
 
-    let attestation = PluginAttestation::from_request(request)
-        .ok_or_else(|| ApiError::Forbidden("attestation required".into()))?;
+    if !owner {
+        let attestation = PluginAttestation::from_request(request)
+            .ok_or_else(|| ApiError::Forbidden("attestation required".into()))?;
 
-    verify_attestation(plugin_attest_pubkey(), &method, &triad.token, &attestation)?;
-    verify_official_plugin(state, &attestation.slug, &attestation.plugin_hash).await?;
+        verify_attestation(plugin_attest_pubkey(), &method, &triad.token, &attestation)?;
+        verify_official_plugin(state, &attestation.slug, &attestation.plugin_hash).await?;
+    }
 
-    let (discord_id, member) = resolve_session_member(state, &triad).await?;
     request.extensions_mut().insert(AuthenticatedMember(member));
     request.extensions_mut().insert(SessionAuth { discord_id });
     Ok(())

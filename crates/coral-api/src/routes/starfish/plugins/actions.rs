@@ -32,6 +32,10 @@ pub async fn install_plugin(
         ));
     }
 
+    if plugin.owner_user_id == caller.user.id {
+        return Err(ApiError::Conflict("you already own this plugin".into()));
+    }
+
     let release = repo
         .get_latest_release(plugin.id)
         .await?
