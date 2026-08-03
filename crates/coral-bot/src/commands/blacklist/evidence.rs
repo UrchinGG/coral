@@ -1051,6 +1051,8 @@ async fn try_convert_to_confirmed(data: &Data, state: &EvidenceState, actor_id: 
             None,
             None,
             Some(actor_id as i64),
+            Some(actor_id as i64),
+            None,
             &blocking,
             Some(tag.id),
         )
@@ -1997,6 +1999,40 @@ pub async fn handle_change_modal(
         )
         .await?;
     Ok(())
+}
+
+pub async fn refresh_evidence_reason(
+    ctx: &Context,
+    data: &Data,
+    uuid: &str,
+    tag: &database::PlayerEvent,
+) -> Result<()> {
+    let Some(thread_id) = data.evidence_thread_for(uuid) else {
+        return Ok(());
+    };
+    let channel_id: GenericChannelId = thread_id.into();
+    let op_id = MessageId::new(thread_id.get());
+
+    let Ok(op) = ctx.http.get_message(channel_id, op_id).await else {
+        return Ok(());
+    };
+    let Some(state) = parse_state_from_message(&op) else {
+        return Ok(());
+    };
+
+    let urls = gallery_url_map(&op);
+    let added_line = format_added_line(ctx, tag).await;
+    let components = build_evidence_message(
+        &state.username,
+        uuid,
+        tag.reason.as_deref().unwrap_or(""),
+        Some(&added_line),
+        state.reviewed_line.as_deref(),
+        &state.evidence,
+        state.review_url.as_deref(),
+        &urls,
+    );
+    rebuild_evidence_op(ctx, data, channel_id, op_id, uuid, components, &urls).await
 }
 
 pub async fn create_evidence_from_review(

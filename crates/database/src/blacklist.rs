@@ -123,6 +123,8 @@ impl<'a> BlacklistRepository<'a> {
         expires_at: Option<DateTime<Utc>>,
         reviewed_by: Option<&[i64]>,
         author: Option<i64>,
+        tag_author: Option<i64>,
+        ts_override: Option<DateTime<Utc>>,
         blocking_types: &[String],
         expected_old_id: Option<i64>,
     ) -> Result<OverwriteOutcome, sqlx::Error> {
@@ -143,14 +145,17 @@ impl<'a> BlacklistRepository<'a> {
             return Ok(OverwriteOutcome::Conflict(conflict));
         }
 
+        // both rows share this ts so the `ts DESC, id DESC` ordering used to find
+        // the active tag resolves to the new tag_set, not the clear
         let (_remove_id, ts): (i64, DateTime<Utc>) = sqlx::query_as(
-            "INSERT INTO player_events (uuid, kind, tag_type, author)
-             VALUES ($1, 'tag_clear', $2, $3)
+            "INSERT INTO player_events (uuid, kind, tag_type, author, ts)
+             VALUES ($1, 'tag_clear', $2, $3, COALESCE($4::timestamptz, NOW()))
              RETURNING id, ts",
         )
         .bind(uuid)
         .bind(old_tag_type)
         .bind(author)
+        .bind(ts_override)
         .fetch_one(&mut *tx)
         .await?;
         let new: PlayerEvent = sqlx::query_as(&format!(
@@ -165,7 +170,7 @@ impl<'a> BlacklistRepository<'a> {
         .bind(hide_username)
         .bind(expires_at)
         .bind(reviewed_by)
-        .bind(author)
+        .bind(tag_author)
         .bind(old.author)
         .bind(ts)
         .fetch_one(&mut *tx)

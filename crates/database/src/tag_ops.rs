@@ -167,8 +167,67 @@ impl<'a> TagOp<'a> {
                 None,
                 None,
                 Some(actor_id),
+                Some(actor_id),
+                None,
                 &blocking,
                 Some(old_preview.id),
+            )
+            .await?
+        {
+            OverwriteOutcome::Inserted { old, new } => Ok((old, new)),
+            OverwriteOutcome::OldNotActive => Err(TagOpError::TagNotFound),
+            OverwriteOutcome::Conflict(c) => Err(TagOpError::PriorityConflict(c)),
+        }
+    }
+
+    /// Changes an existing tag's reason or type in place. Unlike `overwrite`,
+    /// the tag keeps its original author and hidden-username setting; a
+    /// reason-only edit also keeps its expiry and review credits.
+    pub async fn edit(
+        &self,
+        event_id: i64,
+        new_tag_type: &str,
+        new_reason: &str,
+        actor_id: i64,
+        actor_level: i16,
+    ) -> Result<(PlayerEvent, PlayerEvent), TagOpError> {
+        if blacklist::lookup(new_tag_type).is_none() {
+            return Err(TagOpError::InvalidTagType);
+        }
+
+        let old = self.require_current_tag(event_id).await?;
+        let old_tag_type = old.tag_type.clone().ok_or(TagOpError::TagNotFound)?;
+        let same_type = new_tag_type == old_tag_type;
+        if !same_type && !permissions::can_add(new_tag_type, actor_level) {
+            return Err(TagOpError::InsufficientPermissions);
+        }
+        self.check_lock(&old.uuid).await?;
+        self.authorize_overwrite(&old, actor_id, actor_level)?;
+
+        let blocking = if same_type {
+            Vec::new()
+        } else {
+            priority_lane_excluding(new_tag_type, &old_tag_type)
+        };
+        // neither carries over to a different tag type
+        let expires_at = same_type.then_some(old.expires_at).flatten();
+        let reviewed_by = same_type.then(|| old.reviewed_by.clone()).flatten();
+
+        match self
+            .repo
+            .overwrite_event(
+                &old.uuid,
+                &old_tag_type,
+                new_tag_type,
+                new_reason,
+                old.hide_username.unwrap_or(false),
+                expires_at,
+                reviewed_by.as_deref(),
+                Some(actor_id),
+                old.author,
+                Some(old.ts),
+                &blocking,
+                Some(old.id),
             )
             .await?
         {
