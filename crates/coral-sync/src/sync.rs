@@ -245,22 +245,6 @@ pub async fn sync_user(ctx: Context, data: Data, user_id: UserId) {
         return;
     };
 
-    let uuid = match MemberRepository::new(data.db.pool())
-        .get_by_discord_id(user_id.get() as i64)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|m| m.uuid)
-    {
-        Some(uuid) => uuid,
-        None => return,
-    };
-
-    let hypixel_data = match resolve_hypixel_data(&data, &uuid).await {
-        Some(hd) => hd,
-        None => return,
-    };
-
     let config_repo = GuildConfigRepository::new(data.db.pool());
     let config = match config_repo.get(guild_id.get() as i64).await {
         Ok(Some(c)) => c,
@@ -276,19 +260,35 @@ pub async fn sync_user(ctx: Context, data: Data, user_id: UserId) {
         Err(_) => return,
     };
 
-    if let Err(e) = sync_member(
-        &ctx,
-        &data,
-        guild_id,
-        &member,
-        &uuid,
-        &config,
-        &rules,
-        &hypixel_data,
-        false,
-    )
-    .await
-    {
+    let uuid = MemberRepository::new(data.db.pool())
+        .get_by_discord_id(user_id.get() as i64)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|m| m.uuid);
+
+    let result = match uuid {
+        Some(uuid) => {
+            let Some(hypixel_data) = resolve_hypixel_data(&data, &uuid).await else {
+                return;
+            };
+            sync_member(
+                &ctx,
+                &data,
+                guild_id,
+                &member,
+                &uuid,
+                &config,
+                &rules,
+                &hypixel_data,
+                false,
+            )
+            .await
+        }
+        None => sync_unlinked_member(&ctx, &data, guild_id, &member, &config, &rules).await,
+    };
+
+    if let Err(e) = result {
         tracing::warn!("User sync failed for {} in {guild_id}: {e}", user_id.get());
     }
 }

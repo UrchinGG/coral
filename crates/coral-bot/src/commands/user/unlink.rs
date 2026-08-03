@@ -1,6 +1,7 @@
 use anyhow::Result;
 use serenity::all::*;
 
+use coral_redis::SyncEvent;
 use database::MemberRepository;
 
 use crate::framework::Data;
@@ -35,6 +36,9 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     }
 
     repo.clear_uuid(discord_id as i64).await?;
+    data.sync_event_publisher
+        .publish(&SyncEvent::SyncUser { discord_id })
+        .await;
 
     if let Some(guild_id) = command.guild_id {
         let _ = guild_id

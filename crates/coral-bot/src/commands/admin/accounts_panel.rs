@@ -776,6 +776,11 @@ pub async fn handle_remove_account(
         MemberRepository::new(data.db.pool())
             .clear_uuid(target_id as i64)
             .await?;
+        data.sync_event_publisher
+            .publish(&coral_redis::SyncEvent::SyncUser {
+                discord_id: target_id,
+            })
+            .await;
     } else {
         AccountRepository::new(data.db.pool())
             .remove(member.id, &uuid)

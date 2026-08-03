@@ -740,6 +740,11 @@ pub async fn handle_remove_account(
         MemberRepository::new(data.db.pool())
             .clear_uuid(target_id as i64)
             .await?;
+        tokio::spawn(crate::sync::sync_user(
+            ctx.clone(),
+            data.clone(),
+            UserId::new(target_id),
+        ));
     } else {
         AccountRepository::new(data.db.pool())
             .remove(member.id, &uuid)
