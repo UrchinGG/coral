@@ -1400,6 +1400,9 @@ async fn build_manage_main(
                 CreateButton::new(format!("mt_remove:{uuid}:{}", tag.id))
                     .label("Remove")
                     .style(ButtonStyle::Danger),
+                CreateButton::new(format!("mt_edit:{uuid}:{}", tag.id))
+                    .label("Edit")
+                    .style(ButtonStyle::Secondary),
             ];
             if tag.author.is_some() {
                 let hidden = tag.hide_username.unwrap_or(false);
@@ -1688,6 +1691,356 @@ pub async fn handle_manage_add_select(
             .await?;
     }
     Ok(())
+}
+
+fn parse_manage_target<'a>(custom_id: &'a str, prefix: &str) -> (&'a str, i64) {
+    let payload = custom_id.strip_prefix(prefix).unwrap_or("");
+    let (uuid, tag_id) = payload.rsplit_once(':').unwrap_or(("", ""));
+    (uuid, tag_id.parse().unwrap_or(0))
+}
+
+/// Loads the tag behind an edit button, rejecting it if it is no longer the
+/// player's active tag of that type (stale button on an old message).
+async fn load_editable_tag(
+    data: &Data,
+    uuid: &str,
+    tag_id: i64,
+) -> Result<Option<database::PlayerEvent>> {
+    let repo = BlacklistRepository::new(data.db.pool());
+    let Some(tag) = repo.get_event_by_id(tag_id).await? else {
+        return Ok(None);
+    };
+    if tag.kind != "tag_set" || tag.uuid != uuid {
+        return Ok(None);
+    }
+    let Some(tag_type) = tag.tag_type.clone() else {
+        return Ok(None);
+    };
+    let active = repo.get_active_tag(uuid, &tag_type).await?;
+    Ok(active.filter(|a| a.id == tag.id).map(|_| tag))
+}
+
+fn edit_type_targets(current: &str) -> Vec<&'static blacklist::TagDefinition> {
+    blacklist::all()
+        .iter()
+        .copied()
+        .filter(|t| {
+            t.name != current && t.name != "replays_needed" && t.name != "confirmed_cheater"
+        })
+        .collect()
+}
+
+const STALE_TAG_MESSAGE: &str = "That tag has changed since this menu was opened";
+
+fn edit_reason_modal(custom_id: String, title: &str, value: String) -> CreateModal<'static> {
+    let input = CreateInputText::new(InputTextStyle::Paragraph, "manage_edit_reason")
+        .placeholder("Reason for this tag")
+        .value(value)
+        .max_length(120)
+        .required(true);
+    CreateModal::new(custom_id, title.to_string()).components(vec![CreateModalComponent::Label(
+        CreateLabel::input_text("Reason", input),
+    )])
+}
+
+async fn apply_tag_edit(
+    ctx: &Context,
+    data: &Data,
+    uuid: &str,
+    tag: &database::PlayerEvent,
+    new_tag_type: &str,
+    new_reason: &str,
+    discord_id: u64,
+    rank: AccessRank,
+) -> Result<()> {
+    let old_tag_type = tag.tag_type.as_deref().unwrap_or("");
+
+    let ops = TagOp::new(data.db.pool());
+    let (old_tag, new_tag) = ops
+        .edit(
+            tag.id,
+            new_tag_type,
+            new_reason,
+            discord_id as i64,
+            rank.to_level(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", op_error_message(&e)))?;
+
+    data.event_publisher
+        .publish(&BlacklistEvent::TagOverwritten {
+            uuid: uuid.to_string(),
+            old_tag_id: old_tag.id,
+            old_tag_type: old_tag.tag_type.clone().unwrap_or_default(),
+            old_reason: old_tag.reason.clone().unwrap_or_default(),
+            new_tag_id: new_tag.id,
+            overwritten_by: discord_id as i64,
+            silent: true,
+        })
+        .await;
+
+    if old_tag_type == "confirmed_cheater" {
+        if new_tag_type == "confirmed_cheater" {
+            if let Err(e) =
+                super::evidence::refresh_evidence_reason(ctx, data, uuid, &new_tag).await
+            {
+                tracing::error!("Failed to refresh evidence post for {uuid}: {e}");
+            }
+        } else {
+            try_archive_evidence(ctx, data, uuid).await;
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn handle_manage_edit_button(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let (uuid, tag_id) = parse_manage_target(&component.data.custom_id, "mt_edit:");
+    let Some(tag) = load_editable_tag(data, uuid, tag_id).await? else {
+        return send_component_message(ctx, component, STALE_TAG_MESSAGE).await;
+    };
+
+    let tag_type = tag.tag_type.as_deref().unwrap_or("");
+    let added_line = format_added_line(ctx, &tag).await;
+    let block = format_tag_block(
+        tag_type,
+        &format_tag_detail(&tag),
+        "",
+        Some(&added_line),
+        None,
+        false,
+    );
+
+    let mut options = Vec::new();
+    // replays_needed renders its expiry instead of a reason, so editing one would show nothing
+    if tag_type != "replays_needed" {
+        options.push(
+            CreateButton::new(format!("mt_ereason:{uuid}:{tag_id}"))
+                .label("Change Tag Reason")
+                .style(ButtonStyle::Primary),
+        );
+    }
+    options.push(
+        CreateButton::new(format!("mt_etype:{uuid}:{tag_id}"))
+            .label("Change Tag Type")
+            .style(ButtonStyle::Primary),
+    );
+
+    let container = CreateContainer::new(vec![
+        face_section(vec![format!(
+            "## {} Edit Tag\nChoose what to change:",
+            EMOTE_EDITTAG
+        )]),
+        CreateContainerComponent::Separator(CreateSeparator::new(true)),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(block)),
+        CreateContainerComponent::ActionRow(CreateActionRow::buttons(options)),
+        CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
+            CreateButton::new(format!("mt_back:{uuid}"))
+                .label("Cancel")
+                .style(ButtonStyle::Secondary),
+        ])),
+    ]);
+
+    component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2)
+                    .components(vec![CreateComponent::Container(container)])
+                    .add_file(face_attachment(data, uuid).await),
+            ),
+        )
+        .await?;
+    Ok(())
+}
+
+pub async fn handle_manage_edit_reason_button(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let (uuid, tag_id) = parse_manage_target(&component.data.custom_id, "mt_ereason:");
+    let Some(tag) = load_editable_tag(data, uuid, tag_id).await? else {
+        return send_component_message(ctx, component, STALE_TAG_MESSAGE).await;
+    };
+
+    let modal = edit_reason_modal(
+        format!("mt_ereason_m:{uuid}:{tag_id}"),
+        "Change Tag Reason",
+        tag.reason.clone().unwrap_or_default(),
+    );
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Modal(modal))
+        .await?;
+    Ok(())
+}
+
+pub async fn handle_manage_edit_reason_modal(
+    ctx: &Context,
+    modal: &ModalInteraction,
+    data: &Data,
+) -> Result<()> {
+    let (uuid, tag_id) = parse_manage_target(&modal.data.custom_id, "mt_ereason_m:");
+    let uuid = uuid.to_string();
+    let Some(tag) = load_editable_tag(data, &uuid, tag_id).await? else {
+        return manage_simple_response(ctx, modal, STALE_TAG_MESSAGE).await;
+    };
+
+    let reason = interact::extract_modal_value(&modal.data.components, "manage_edit_reason");
+    let tag_type = tag.tag_type.clone().unwrap_or_default();
+    let discord_id = modal.user.id.get();
+    let rank = get_rank(data, discord_id).await?;
+
+    match apply_tag_edit(ctx, data, &uuid, &tag, &tag_type, &reason, discord_id, rank).await {
+        Ok(()) => refresh_manage_modal(ctx, modal, data, &uuid).await,
+        Err(e) => manage_simple_response(ctx, modal, &e.to_string()).await,
+    }
+}
+
+pub async fn handle_manage_edit_type_button(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let (uuid, tag_id) = parse_manage_target(&component.data.custom_id, "mt_etype:");
+    let Some(tag) = load_editable_tag(data, uuid, tag_id).await? else {
+        return send_component_message(ctx, component, STALE_TAG_MESSAGE).await;
+    };
+
+    let options: Vec<CreateSelectMenuOption<'static>> =
+        edit_type_targets(tag.tag_type.as_deref().unwrap_or(""))
+            .into_iter()
+            .map(|t| CreateSelectMenuOption::new(t.display_name, t.name))
+            .collect();
+
+    let container = CreateContainer::new(vec![
+        face_section(vec![format!(
+            "## {} Change Tag Type\nThe reason stays the same:",
+            EMOTE_EDITTAG
+        )]),
+        CreateContainerComponent::ActionRow(CreateActionRow::SelectMenu(
+            CreateSelectMenu::new(
+                format!("mt_etypesel:{uuid}:{tag_id}"),
+                CreateSelectMenuKind::String {
+                    options: options.into(),
+                },
+            )
+            .placeholder("New tag type..."),
+        )),
+        CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
+            CreateButton::new(format!("mt_back:{uuid}"))
+                .label("Cancel")
+                .style(ButtonStyle::Secondary),
+        ])),
+    ]);
+
+    component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2)
+                    .components(vec![CreateComponent::Container(container)])
+                    .add_file(face_attachment(data, uuid).await),
+            ),
+        )
+        .await?;
+    Ok(())
+}
+
+pub async fn handle_manage_edit_type_select(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let new_tag_type = match &component.data.kind {
+        ComponentInteractionDataKind::StringSelect { values } => {
+            values.first().map(|s| s.as_str()).unwrap_or("")
+        }
+        _ => return Ok(()),
+    };
+    let (uuid, tag_id) = parse_manage_target(&component.data.custom_id, "mt_etypesel:");
+    let Some(tag) = load_editable_tag(data, uuid, tag_id).await? else {
+        return send_component_message(ctx, component, STALE_TAG_MESSAGE).await;
+    };
+
+    let reason = tag.reason.clone().unwrap_or_default();
+    // replays_needed tags carry no reason, so the new type needs one typed in
+    if reason.trim().is_empty() {
+        let modal = edit_reason_modal(
+            format!("mt_etyper:{uuid}:{tag_id}:{new_tag_type}"),
+            "Change Tag Type",
+            String::new(),
+        );
+        component
+            .create_response(&ctx.http, CreateInteractionResponse::Modal(modal))
+            .await?;
+        return Ok(());
+    }
+
+    let discord_id = component.user.id.get();
+    let rank = get_rank(data, discord_id).await?;
+
+    match apply_tag_edit(
+        ctx,
+        data,
+        uuid,
+        &tag,
+        new_tag_type,
+        &reason,
+        discord_id,
+        rank,
+    )
+    .await
+    {
+        Ok(()) => update_manage_view(ctx, component, data, uuid).await,
+        Err(e) => send_component_message(ctx, component, &e.to_string()).await,
+    }
+}
+
+pub async fn handle_manage_edit_type_modal(
+    ctx: &Context,
+    modal: &ModalInteraction,
+    data: &Data,
+) -> Result<()> {
+    let payload = modal
+        .data
+        .custom_id
+        .strip_prefix("mt_etyper:")
+        .unwrap_or("");
+    let mut segments = payload.splitn(3, ':');
+    let uuid = segments.next().unwrap_or("").to_string();
+    let tag_id: i64 = segments.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let new_tag_type = segments.next().unwrap_or("").to_string();
+
+    let Some(tag) = load_editable_tag(data, &uuid, tag_id).await? else {
+        return manage_simple_response(ctx, modal, STALE_TAG_MESSAGE).await;
+    };
+
+    let reason = interact::extract_modal_value(&modal.data.components, "manage_edit_reason");
+    let discord_id = modal.user.id.get();
+    let rank = get_rank(data, discord_id).await?;
+
+    match apply_tag_edit(
+        ctx,
+        data,
+        &uuid,
+        &tag,
+        &new_tag_type,
+        &reason,
+        discord_id,
+        rank,
+    )
+    .await
+    {
+        Ok(()) => refresh_manage_modal(ctx, modal, data, &uuid).await,
+        Err(e) => manage_simple_response(ctx, modal, &e.to_string()).await,
+    }
 }
 
 enum ManagePlaceOutcome {
@@ -2006,6 +2359,33 @@ mod tests {
     fn presets_are_valid_input() {
         for (_, value) in LOCK_PRESETS {
             assert!(parse_lock_duration(value).is_some(), "{value} must parse");
+        }
+    }
+
+    fn target_names(current: &str) -> Vec<&'static str> {
+        edit_type_targets(current).iter().map(|t| t.name).collect()
+    }
+
+    #[test]
+    fn edit_targets_drop_current_and_unassignable_types() {
+        let names = target_names("sniper");
+        assert!(
+            !names.contains(&"sniper"),
+            "current type must not be offered"
+        );
+        assert!(!names.contains(&"replays_needed"));
+        assert!(!names.contains(&"confirmed_cheater"));
+        assert!(names.contains(&"blatant_cheater"));
+        assert!(names.contains(&"caution"));
+    }
+
+    #[test]
+    fn edit_targets_stay_available_for_protected_types() {
+        for current in ["confirmed_cheater", "replays_needed"] {
+            assert!(
+                !target_names(current).is_empty(),
+                "{current} should still be changeable to something"
+            );
         }
     }
 

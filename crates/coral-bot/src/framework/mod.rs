@@ -447,6 +447,24 @@ impl Handler {
             _ if id.starts_with("mt_hide:") => {
                 commands::blacklist::tag::handle_manage_hide(ctx, component, &self.data).await
             }
+            _ if id.starts_with("mt_edit:") => {
+                commands::blacklist::tag::handle_manage_edit_button(ctx, component, &self.data)
+                    .await
+            }
+            _ if id.starts_with("mt_ereason:") => {
+                commands::blacklist::tag::handle_manage_edit_reason_button(
+                    ctx, component, &self.data,
+                )
+                .await
+            }
+            _ if id.starts_with("mt_etype:") => {
+                commands::blacklist::tag::handle_manage_edit_type_button(ctx, component, &self.data)
+                    .await
+            }
+            _ if id.starts_with("mt_etypesel:") => {
+                commands::blacklist::tag::handle_manage_edit_type_select(ctx, component, &self.data)
+                    .await
+            }
             _ if id.starts_with("mt_back:") => {
                 commands::blacklist::tag::handle_manage_back(ctx, component, &self.data).await
             }
@@ -694,6 +712,14 @@ impl Handler {
             }
             _ if id.starts_with("mt_expiry:") => {
                 commands::blacklist::tag::handle_manage_expiry_modal(ctx, modal, &self.data).await
+            }
+            _ if id.starts_with("mt_ereason_m:") => {
+                commands::blacklist::tag::handle_manage_edit_reason_modal(ctx, modal, &self.data)
+                    .await
+            }
+            _ if id.starts_with("mt_etyper:") => {
+                commands::blacklist::tag::handle_manage_edit_type_modal(ctx, modal, &self.data)
+                    .await
             }
             _ if id.starts_with("manage_register_modal:") => {
                 commands::admin::manage::handle_register_modal(ctx, modal, &self.data).await
