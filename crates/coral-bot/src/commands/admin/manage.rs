@@ -351,7 +351,7 @@ pub(crate) async fn build_main_view(
             }
         }
 
-        if invoker_rank >= AccessRank::Admin {
+        if invoker_rank >= AccessRank::Owner {
             let pause_name_updates = m
                 .config
                 .get("pause_name_updates")
@@ -379,8 +379,7 @@ pub(crate) async fn build_main_view(
                             ButtonStyle::Success
                         } else {
                             ButtonStyle::Danger
-                        })
-                        .disabled(!can_modify),
+                        }),
                 ]),
             ));
         }
@@ -1144,13 +1143,10 @@ pub async fn handle_toggle_name_updates(
     let target_id = interact::parse_id(&component.data.custom_id)
         .ok_or_else(|| anyhow!("Invalid button ID"))?;
     let invoker_id = component.user.id.get();
-    let (invoker_rank, _, target_rank) = fetch_context(data, invoker_id, target_id).await?;
+    let (invoker_rank, _, _) = fetch_context(data, invoker_id, target_id).await?;
 
-    if invoker_rank < AccessRank::Admin
-        || (invoker_rank <= target_rank && invoker_rank < AccessRank::Owner)
-    {
-        return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
-            .await;
+    if invoker_rank < AccessRank::Owner {
+        return interact::send_component_error(ctx, component, "Error", "Owner only").await;
     }
 
     let repo = MemberRepository::new(data.db.pool());
