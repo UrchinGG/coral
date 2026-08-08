@@ -1231,8 +1231,8 @@ async fn run_manage(ctx: &Context, command: &CommandInteraction, data: &Data) ->
 
     let discord_id = command.user.id.get();
     let rank = get_rank(data, discord_id).await?;
-    if rank < AccessRank::Moderator {
-        return send_deferred_error(ctx, command, "Error", "Only moderators can manage tags").await;
+    if rank < AccessRank::Helper {
+        return send_deferred_error(ctx, command, "Error", "Only staff can manage tags").await;
     }
 
     let options = get_sub_options(command);

@@ -1880,7 +1880,7 @@ pub async fn handle_change_tag(
             ctx,
             component,
             "Error",
-            "Only moderators can change a confirmed cheater tag",
+            "Only staff can change a confirmed cheater tag",
         )
         .await;
     }
