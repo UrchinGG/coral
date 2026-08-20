@@ -71,7 +71,8 @@ async fn run_cubelify(
 ) -> Result<CubelifyResponse, CubelifyResponse> {
     check_rate_limit(state, &query.key, member).await?;
     let uuid = normalize_uuid(&query.uuid);
-    refresh_player_cache(state, &uuid, None).await;
+    let (bg_state, bg_uuid) = (state.clone(), uuid.clone());
+    tokio::spawn(async move { refresh_player_cache(&bg_state, &bg_uuid, None).await });
     let tags = fetch_tags(state, &uuid).await?;
     Ok(build_response(state, &tags).await)
 }
