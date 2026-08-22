@@ -85,8 +85,8 @@ async fn init_state() -> Result<AppState> {
     if hypixel.is_none() {
         tracing::warn!("HYPIXEL_API_KEY unset - Hypixel-backed endpoints will return 503");
     }
-    let mojang = MojangClient::new();
-    let skin_provider = match LocalSkinProvider::new(redis.connection()) {
+    let mojang = MojangClient::new(redis.connection());
+    let skin_provider = match LocalSkinProvider::new(mojang.clone(), redis.connection()) {
         Some(p) => {
             tracing::info!("Skin renderer initialized");
             Some(Arc::new(p) as Arc<dyn SkinProvider>)

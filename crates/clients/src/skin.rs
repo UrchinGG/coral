@@ -42,7 +42,7 @@ pub struct LocalSkinProvider {
 }
 
 impl LocalSkinProvider {
-    pub fn new(redis: ConnectionManager) -> Option<Self> {
+    pub fn new(mojang: MojangClient, redis: ConnectionManager) -> Option<Self> {
         let http = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -52,7 +52,7 @@ impl LocalSkinProvider {
 
         Some(Self {
             http,
-            mojang: MojangClient::new(),
+            mojang,
             renderer: Arc::new(renderer),
             redis,
         })

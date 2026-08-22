@@ -10,7 +10,7 @@ use anyhow::Result;
 use serenity::all::*;
 use tracing_subscriber::EnvFilter;
 
-use clients::{LocalSkinProvider, SkinProvider};
+use clients::{LocalSkinProvider, MojangClient, SkinProvider};
 use coral_redis::{EventPublisher, RedisPool, SyncEventPublisher};
 use database::Database;
 
@@ -51,8 +51,10 @@ async fn init_data() -> Result<Data> {
     let event_publisher = EventPublisher::new(redis.clone());
     let sync_event_publisher = SyncEventPublisher::new(redis.clone());
     let api = CoralApiClient::new(api_url, api_key);
+    let mojang = MojangClient::new(redis.connection());
     let skin_provider: Arc<dyn SkinProvider> = Arc::new(
-        LocalSkinProvider::new(redis.connection()).expect("Failed to initialize skin renderer"),
+        LocalSkinProvider::new(mojang, redis.connection())
+            .expect("Failed to initialize skin renderer"),
     );
 
     let review_forum_id = parse_channel_id("REVIEW_FORUM_ID");

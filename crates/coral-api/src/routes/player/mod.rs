@@ -249,7 +249,7 @@ pub async fn player_stats(
     let (player_result, tags, profile) = tokio::join!(
         resolve_player_data(&state, &uuid, max_cache_age),
         repo.get_active_tags(&uuid),
-        state.mojang.get_profile(&uuid),
+        state.mojang.get_profile_metadata(&uuid),
     );
     let (player_data, stale) = player_result?;
     let tags = tags?;

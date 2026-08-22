@@ -23,7 +23,7 @@ pub struct AppState {
     pub home_guild_id: Option<i64>,
     pub review_forum_id: Option<i64>,
     pub http: reqwest::Client,
-    pub mojang: MojangClient,
+    pub mojang: Option<MojangClient>,
     pub oauth: Arc<OAuthConfig>,
     pub session_secret: [u8; 32],
 }
@@ -37,6 +37,7 @@ impl AppState {
         session_secret: [u8; 32],
     ) -> Self {
         let discord_token = env_non_empty("DISCORD_TOKEN");
+        let mojang = redis.as_ref().map(|r| MojangClient::new(r.connection()));
         Self {
             db: Arc::new(db),
             owner_ids: Arc::new(owner_ids),
@@ -48,7 +49,7 @@ impl AppState {
             home_guild_id: env_id("HOME_GUILD_ID"),
             review_forum_id: env_id("REVIEW_FORUM_ID"),
             http: reqwest::Client::new(),
-            mojang: MojangClient::new(),
+            mojang,
             oauth: Arc::new(oauth),
             session_secret,
         }

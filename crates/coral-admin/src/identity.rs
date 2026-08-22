@@ -128,12 +128,16 @@ pub async fn resolve_minecraft_usernames(
         .filter(|u| !out.contains_key(*u))
         .cloned()
         .collect();
-    if !missing.is_empty() {
+    if let (Some(mojang), false) = (state.mojang.as_ref(), missing.is_empty()) {
         let mut set = tokio::task::JoinSet::new();
         for uuid in missing {
-            let mojang = state.mojang.clone();
+            let mojang = mojang.clone();
             set.spawn(async move {
-                let username = mojang.get_profile(&uuid).await.ok().map(|p| p.username);
+                let username = mojang
+                    .get_profile_metadata(&uuid)
+                    .await
+                    .ok()
+                    .map(|p| p.username);
                 (uuid, username)
             });
         }
@@ -150,7 +154,13 @@ pub async fn resolve_minecraft_uuid(state: &AppState, query: &str) -> Option<Str
     if is_uuid(query) {
         return Some(clients::normalize_uuid(query));
     }
-    state.mojang.resolve(query).await.ok().map(|p| p.uuid)
+    state
+        .mojang
+        .as_ref()?
+        .resolve(query)
+        .await
+        .ok()
+        .map(|p| p.uuid)
 }
 
 pub async fn member_ids_by_discord_id(state: &AppState, discord_ids: &[i64]) -> HashMap<i64, i64> {

@@ -1141,7 +1141,7 @@ async fn fetch_player(
     match cached_uuid {
         Some(uuid) => {
             let (api, guild, skin) = tokio::join!(
-                data.api.get_player_stats(player),
+                data.api.get_player_stats(uuid),
                 data.api.get_guild_by_player(uuid),
                 data.skin_provider
                     .fetch(uuid, super::SKIN_RENDER_WIDTH, super::SKIN_RENDER_HEIGHT,),
