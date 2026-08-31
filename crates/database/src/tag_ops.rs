@@ -266,8 +266,8 @@ impl<'a> TagOp<'a> {
         actor_level: i16,
         expires_at: Option<DateTime<Utc>>,
     ) -> Result<bool, TagOpError> {
-        if actor_level < 3 {
-            return Err(TagOpError::ModeratorRequired);
+        if actor_level < 2 {
+            return Err(TagOpError::InsufficientPermissions);
         }
         Ok(self
             .repo
@@ -281,8 +281,8 @@ impl<'a> TagOp<'a> {
         actor_id: i64,
         actor_level: i16,
     ) -> Result<bool, TagOpError> {
-        if actor_level < 3 {
-            return Err(TagOpError::ModeratorRequired);
+        if actor_level < 2 {
+            return Err(TagOpError::InsufficientPermissions);
         }
         Ok(self.repo.unlock_event(uuid, actor_id).await?)
     }
