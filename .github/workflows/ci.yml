@@ -59,7 +59,7 @@ jobs:
     runs-on: [self-hosted, linux, coral]
     timeout-minutes: 30
     env:
-      REGISTRY: localhost:5000
+      REGISTRY: infra-vm:5000
       CORAL_CLIENTS_CONTEXT: /srv/coral/clients
 
     steps:
