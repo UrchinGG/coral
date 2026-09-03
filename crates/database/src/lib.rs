@@ -36,7 +36,7 @@ pub use guild_cache::GuildCacheRepository;
 pub use guild_config::{GuildConfig, GuildConfigRepository, GuildRoleRule};
 pub use guild_current::GuildCurrentRepository;
 pub use guild_subscriptions::{GuildSubscription, GuildSubscriptionRepository};
-pub use members::{Member, MemberRepository};
+pub use members::{Member, MemberRepository, ReviewCounterDelta};
 pub use periods::Period;
 pub use plugin_registry::{
     DisabledEntry, InstalledWithLatest, NewPlugin, NewRelease, OwnedPluginSummary, Plugin,

@@ -316,6 +316,20 @@ pub(crate) async fn build_main_view(
             standing.can_tag,
         )));
 
+        if invoker_rank >= AccessRank::Admin {
+            parts.push(CreateContainerComponent::ActionRow(
+                CreateActionRow::buttons(vec![
+                    CreateButton::new(format!("manage_reviews:{target_id}"))
+                        .label("Tag Reviews")
+                        .style(ButtonStyle::Secondary)
+                        .disabled(!super::review_scores::can_correct(
+                            invoker_rank,
+                            target_rank,
+                        )),
+                ]),
+            ));
+        }
+
         let strikes = m.strikes.as_array().cloned().unwrap_or_default();
         if strikes.is_empty() {
             parts.push(text("-# No strikes"));

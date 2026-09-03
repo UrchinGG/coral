@@ -642,6 +642,52 @@ pub async fn post_tagging_toggled(
     send_to_mod_channel(ctx, data, container, vec![]).await;
 }
 
+/// Staff-log entry for an admin restating the outcome of a settled tag
+/// review. Records what moved so the correction can be audited later.
+#[allow(clippy::too_many_arguments)]
+pub async fn post_review_score_correction(
+    ctx: &Context,
+    data: &Data,
+    target_id: u64,
+    invoker_id: u64,
+    label: &str,
+    count: i64,
+    reason: &str,
+    before: &database::Member,
+    after: &database::Member,
+) {
+    let invoker = get_username(ctx, invoker_id).await;
+    let container = CreateContainer::new(vec![
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "## Tag Review Score Corrected\n<@{target_id}>"
+        ))),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "**{label}** \u{00D7}{count}\n> {}",
+            sanitize_reason(reason)
+        ))),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "Reviews: {} accepted / {} rejected \u{2192} {} accepted / {} rejected\n\
+             Verdicts: {} accurate / {} inaccurate / {} bonus \u{2192} {} accurate / {} inaccurate / {} bonus",
+            before.accepted_tags,
+            before.rejected_tags,
+            after.accepted_tags,
+            after.rejected_tags,
+            before.accurate_verdicts,
+            before.incorrect_verdicts,
+            before.bonus_verdicts,
+            after.accurate_verdicts,
+            after.incorrect_verdicts,
+            after.bonus_verdicts,
+        ))),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "-# Corrected by `@{invoker}`"
+        ))),
+        CreateContainerComponent::Separator(CreateSeparator::new(true)),
+    ]);
+
+    send_to_mod_channel(ctx, data, container, vec![]).await;
+}
+
 async fn post_key_change(
     ctx: &Context,
     data: &Data,

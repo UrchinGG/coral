@@ -610,6 +610,16 @@ impl Handler {
             _ if id.starts_with("manage_show_dev_key:") => {
                 commands::admin::manage::handle_show_dev_key(ctx, component, &self.data).await
             }
+            _ if id.starts_with("manage_reviews_action:") => {
+                commands::admin::review_scores::handle_action_select(ctx, component, &self.data)
+                    .await
+            }
+            _ if id.starts_with("manage_reviews_back:") => {
+                commands::admin::review_scores::handle_back(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("manage_reviews:") => {
+                commands::admin::review_scores::handle_open(ctx, component, &self.data).await
+            }
             _ if id.starts_with("manage_toggle_name_updates:") => {
                 commands::admin::manage::handle_toggle_name_updates(ctx, component, &self.data)
                     .await
@@ -758,6 +768,9 @@ impl Handler {
             }
             _ if id.starts_with("manage_register_modal:") => {
                 commands::admin::manage::handle_register_modal(ctx, modal, &self.data).await
+            }
+            _ if id.starts_with("manage_reviews_modal:") => {
+                commands::admin::review_scores::handle_modal(ctx, modal, &self.data).await
             }
             _ if id.starts_with("manage_dev_rate_limit_modal:") => {
                 commands::admin::manage::handle_dev_rate_limit_modal(ctx, modal, &self.data).await

@@ -28,6 +28,16 @@ const COLUMNS: &str = "id, discord_id, uuid, api_key, join_date, request_count, 
     key_locked, tagging_disabled, accepted_tags, rejected_tags, accurate_verdicts, \
     incorrect_verdicts, bonus_verdicts, vote_granted, tag_granted, config, strikes";
 
+/// Signed adjustments to a member's tag-review counters.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReviewCounterDelta {
+    pub accepted_tags: i64,
+    pub rejected_tags: i64,
+    pub accurate_verdicts: i64,
+    pub incorrect_verdicts: i64,
+    pub bonus_verdicts: i64,
+}
+
 pub struct MemberRepository<'a> {
     pool: &'a PgPool,
 }
@@ -223,6 +233,27 @@ impl<'a> MemberRepository<'a> {
         .execute(self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Applies a signed correction to a member's review counters. Used when
+    /// staff revise the outcome of a review that was settled wrongly; counters
+    /// are floored at zero so a correction can never push one negative.
+    pub async fn adjust_review_counters(
+        &self,
+        discord_id: i64,
+        delta: ReviewCounterDelta,
+    ) -> Result<Option<Member>, sqlx::Error> {
+        sqlx::query_as(&format!(
+            "UPDATE members SET              accepted_tags = GREATEST(accepted_tags + $2, 0),              rejected_tags = GREATEST(rejected_tags + $3, 0),              accurate_verdicts = GREATEST(accurate_verdicts + $4, 0),              incorrect_verdicts = GREATEST(incorrect_verdicts + $5, 0),              bonus_verdicts = GREATEST(bonus_verdicts + $6, 0)              WHERE discord_id = $1 RETURNING {COLUMNS}"
+        ))
+        .bind(discord_id)
+        .bind(delta.accepted_tags)
+        .bind(delta.rejected_tags)
+        .bind(delta.accurate_verdicts)
+        .bind(delta.incorrect_verdicts)
+        .bind(delta.bonus_verdicts)
+        .fetch_optional(self.pool)
+        .await
     }
 
     pub async fn set_vote_granted(
