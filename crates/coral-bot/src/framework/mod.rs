@@ -205,6 +205,41 @@ impl Handler {
         ctx: &Context,
         command: &CommandInteraction,
     ) -> anyhow::Result<()> {
+        let result = self.dispatch_command(ctx, command).await;
+        if result.is_ok() {
+            self.deliver_tag_notice(ctx, command).await;
+        }
+        result
+    }
+
+    /// Shows the one-time "you were tagged" notice to a player we could not
+    /// reach when the tag was applied.
+    async fn deliver_tag_notice(&self, ctx: &Context, command: &CommandInteraction) {
+        let Some((ids, components)) =
+            commands::blacklist::appeal::pending_notice(&self.data, command.user.id).await
+        else {
+            return;
+        };
+        match command
+            .create_followup(
+                &ctx.http,
+                CreateInteractionResponseFollowup::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
+                    .components(components),
+            )
+            .await
+        {
+            // Left undelivered so the next command tries again.
+            Err(e) => tracing::warn!("Failed to deliver tag notice: {e}"),
+            Ok(_) => commands::blacklist::appeal::mark_notice_delivered(&self.data, &ids).await,
+        }
+    }
+
+    async fn dispatch_command(
+        &self,
+        ctx: &Context,
+        command: &CommandInteraction,
+    ) -> anyhow::Result<()> {
         match command.data.name.as_str() {
             "tag" => commands::blacklist::tag::run(ctx, command, &self.data).await,
             "bedwars" => commands::stats::bedwars::run(ctx, command, &self.data).await,

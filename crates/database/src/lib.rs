@@ -20,6 +20,7 @@ mod sessions;
 pub mod standing;
 pub mod starfish;
 mod sync_jobs;
+mod tag_notices;
 mod tag_ops;
 
 pub use access::AccessRank;
@@ -47,4 +48,5 @@ pub use review_guide::{ReviewGuideConfig, ReviewGuideRepository};
 pub use sessions::{SessionMarker, SessionRepository};
 pub use starfish::StarfishRepository;
 pub use sync_jobs::{GuildSyncJob, GuildSyncJobRepository};
+pub use tag_notices::{PendingTagNotice, TagNoticeRepository};
 pub use tag_ops::{TagOp, TagOpError};

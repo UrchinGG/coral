@@ -1,3 +1,4 @@
+pub mod appeal;
 pub mod channel;
 pub mod evidence;
 pub mod evidence_attach;

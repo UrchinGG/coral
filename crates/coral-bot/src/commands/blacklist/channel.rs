@@ -7,6 +7,7 @@ use blacklist::{
 };
 use database::{BlacklistRepository, GuildSubscriptionRepository, PlayerEvent};
 
+use super::appeal;
 use super::evidence::evidence_thread_url;
 
 use crate::framework::{AccessRank, Data};
@@ -328,10 +329,16 @@ pub async fn post_new_tag(
         review_url,
     )
     .await;
+    let notice = appeal::notify_tagged_player(ctx, data, uuid, name, tag).await;
     if silent {
         return None;
     }
-    let watchers = guild_watchers(data, uuid, tag.tag_type.as_deref()).await;
+    let mut mentions = guild_watchers(data, uuid, tag.tag_type.as_deref()).await;
+    if let Some(tagged) = notice.ping()
+        && !mentions.contains(&tagged)
+    {
+        mentions.push(tagged);
+    }
     post_to_blacklist_channel(
         ctx,
         data,
@@ -340,7 +347,7 @@ pub async fn post_new_tag(
         all_tags,
         "New Tag",
         EMOTE_ADDTAG,
-        &watchers,
+        &mentions,
         review_url,
     )
     .await
@@ -368,10 +375,16 @@ pub async fn post_overwritten_tag(
         review_url,
     )
     .await;
+    let notice = appeal::notify_tagged_player(ctx, data, uuid, name, tag).await;
     if silent {
         return None;
     }
-    let watchers = guild_watchers(data, uuid, tag.tag_type.as_deref()).await;
+    let mut mentions = guild_watchers(data, uuid, tag.tag_type.as_deref()).await;
+    if let Some(tagged) = notice.ping()
+        && !mentions.contains(&tagged)
+    {
+        mentions.push(tagged);
+    }
     post_to_blacklist_channel(
         ctx,
         data,
@@ -380,7 +393,7 @@ pub async fn post_overwritten_tag(
         all_tags,
         "Tag Overwritten",
         EMOTE_EDITTAG,
-        &watchers,
+        &mentions,
         review_url,
     )
     .await
