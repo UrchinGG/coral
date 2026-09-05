@@ -8,7 +8,6 @@ use crate::discord::DiscordResolver;
 use crate::error::ApiError;
 
 pub struct StarfishConfig {
-    pub core_tables_bytes: Vec<u8>,
     pub hmac_secret: [u8; 32],
     pub signing_key: ed25519_dalek::SigningKey,
     pub discord_client_id: String,

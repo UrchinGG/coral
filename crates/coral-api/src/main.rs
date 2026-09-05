@@ -127,16 +127,7 @@ fn parse_starfish_config() -> Option<StarfishConfig> {
     .expect("STARFISH_ED25519_PRIVATE_KEY must be 32 bytes");
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&signing_key_bytes);
 
-    let core_tables_bytes = match env::var("STARFISH_CORE_TABLES") {
-        Ok(hex_str) => hex::decode(&hex_str).expect("STARFISH_CORE_TABLES must be valid hex"),
-        Err(_) => {
-            tracing::info!("STARFISH_CORE_TABLES not set, using defaults");
-            crate::routes::starfish::default_core_tables_bytes()
-        }
-    };
-
     let config = StarfishConfig {
-        core_tables_bytes,
         hmac_secret,
         signing_key,
         discord_client_id: env::var("STARFISH_DISCORD_CLIENT_ID")
@@ -148,10 +139,7 @@ fn parse_starfish_config() -> Option<StarfishConfig> {
         github_repo: env::var("STARFISH_GITHUB_REPO")
             .expect("STARFISH_GITHUB_REPO required when Starfish is enabled"),
     };
-    tracing::info!(
-        "Starfish licensing enabled ({} bytes core tables)",
-        config.core_tables_bytes.len()
-    );
+    tracing::info!("Starfish licensing enabled");
     Some(config)
 }
 

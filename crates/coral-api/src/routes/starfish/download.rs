@@ -15,7 +15,7 @@ use crate::{
     state::{AppState, StarfishConfig},
 };
 
-use super::require_starfish;
+use super::{require_starfish, session_auth};
 
 const GITHUB_API_URL: &str = "https://api.github.com";
 
@@ -133,20 +133,7 @@ async fn download_latest(
     headers: axum::http::HeaderMap,
 ) -> Result<Response, ApiError> {
     let config = require_starfish(&state)?;
-
-    let discord_token = headers
-        .get("Authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
-        .or(query.token.as_deref())
-        .ok_or_else(|| ApiError::Unauthorized("Missing authorization".into()))?;
-
-    let user = super::resolve_discord_user(&state, discord_token).await?;
-    match user.as_ref().map(|u| u.license_status.as_str()) {
-        Some("active") => {}
-        Some(_) => return Err(ApiError::Unauthorized("License required".into())),
-        None => return Err(ApiError::Unauthorized("User not registered".into())),
-    }
+    authorize_download(&state, &headers, &query).await?;
 
     let platform = query.platform.unwrap_or(Platform::Windows);
     let release = fetch_latest_release(&config).await?;
@@ -202,6 +189,49 @@ async fn download_latest(
         .header(header::CONTENT_LENGTH, bytes.len())
         .body(Body::from(bytes.to_vec()))
         .map_err(|e| ApiError::Internal(format!("Failed to build response: {e}")))?)
+}
+
+/// The desktop app authenticates with its starfish session headers; the website keeps
+/// using a Discord OAuth bearer token. Both paths require an active license.
+async fn authorize_download(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+    query: &DownloadQuery,
+) -> Result<(), ApiError> {
+    if let Some((token, hwid, signature)) = starfish_session_headers(headers) {
+        super::auth::validate_hwid(&hwid)?;
+        let repo = database::StarfishRepository::new(state.db.pool());
+        session_auth::resolve_verified_session(&repo, &token, &hwid, &signature).await?;
+        return Ok(());
+    }
+
+    let discord_token = headers
+        .get("Authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .or(query.token.as_deref())
+        .ok_or_else(|| ApiError::Unauthorized("Missing authorization".into()))?;
+
+    let user = super::resolve_discord_user(state, discord_token).await?;
+    match user.as_ref().map(|u| u.license_status.as_str()) {
+        Some("active") => Ok(()),
+        Some(_) => Err(ApiError::Unauthorized("License required".into())),
+        None => Err(ApiError::Unauthorized("User not registered".into())),
+    }
+}
+
+fn starfish_session_headers(headers: &axum::http::HeaderMap) -> Option<(String, String, String)> {
+    let get = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(String::from)
+    };
+    Some((
+        get("X-Starfish-Session")?,
+        get("X-Starfish-HWID")?,
+        get("X-Starfish-Signature")?,
+    ))
 }
 
 async fn fetch_latest_release(config: &StarfishConfig) -> Result<GitHubRelease, ApiError> {

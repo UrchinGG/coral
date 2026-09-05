@@ -84,6 +84,31 @@ pub fn hash_for_attestation(data: &[u8]) -> [u8; 32] {
     Sha256::digest(data).into()
 }
 
+pub fn derive_attestation_key(secret: &[u8; 32], session_token: &str) -> [u8; 32] {
+    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC accepts any key size");
+    mac.update(b"STARFISH_ATTEST_V1");
+    mac.update(session_token.as_bytes());
+    mac.finalize().into_bytes().into()
+}
+
+pub fn sign_attestation_mac(session_key: &[u8; 32], payload: &[u8]) -> [u8; 32] {
+    let mut mac = HmacSha256::new_from_slice(session_key).expect("HMAC accepts any key size");
+    mac.update(payload);
+    mac.finalize().into_bytes().into()
+}
+
+pub fn verify_attestation_mac(
+    secret: &[u8; 32],
+    session_token: &str,
+    payload: &[u8],
+    signature: &[u8],
+) -> bool {
+    let key = derive_attestation_key(secret, session_token);
+    let mut mac = HmacSha256::new_from_slice(&key).expect("HMAC accepts any key size");
+    mac.update(payload);
+    mac.verify_slice(signature).is_ok()
+}
+
 pub fn base64_encode(data: &[u8]) -> String {
     base64::Engine::encode(&base64::engine::general_purpose::STANDARD, data)
 }

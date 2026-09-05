@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use database::{StarfishRepository, starfish::HwidComponents};
 use starfish_crypto::{
-    base64_encode, build_attestation_payload, ed25519_sign, encrypt_core_data,
-    generate_refresh_token, generate_session_token, hash_for_attestation, hash_refresh_token,
-    sign_unlock_key,
+    base64_encode, build_attestation_payload, derive_attestation_key, ed25519_sign,
+    encrypt_core_data, generate_refresh_token, generate_session_token, hash_for_attestation,
+    hash_refresh_token, sign_unlock_key,
 };
 
 use crate::{
@@ -361,7 +361,8 @@ pub fn build_unlock_key(
     signature: &[u8],
     refresh_token: Option<String>,
 ) -> UnlockKey {
-    let core_data = encrypt_core_data(&config.core_tables_bytes, session_token, hwid);
+    let attestation_key = derive_attestation_key(&config.hmac_secret, session_token);
+    let core_data = encrypt_core_data(&attestation_key, session_token, hwid);
     let core_data_hash = hash_for_attestation(&core_data);
     let attestation = build_attestation_payload(
         session_token,
@@ -408,7 +409,8 @@ async fn issue_new_session(
         expires_at_ts,
         &config.hmac_secret,
     );
-    let core_data = encrypt_core_data(&config.core_tables_bytes, &session_token, hwid);
+    let attestation_key = derive_attestation_key(&config.hmac_secret, &session_token);
+    let core_data = encrypt_core_data(&attestation_key, &session_token, hwid);
     repo.create_session(
         user_id,
         hwid_id,

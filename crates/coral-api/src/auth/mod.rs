@@ -3,7 +3,6 @@ use axum::http::{Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
 use coral_redis::RateLimitResult;
 use database::{
@@ -19,20 +18,6 @@ use crate::{error::ApiError, state::AppState};
 const ELEVATED_CANONICAL_PATH: &str = "/v3/hypixel/player";
 const ELEVATED_STRIPPED_PATH: &str = "/hypixel/player";
 const ATTEST_MAX_SKEW_SECS: i64 = 120;
-const PLUGIN_ATTEST_PUBKEY_HEX: &str =
-    "fc250918338b1ae4b9306e2cb6a9e561d745342d2aeecc3f82b3ee36cd936548";
-
-fn plugin_attest_pubkey() -> &'static VerifyingKey {
-    static KEY: std::sync::OnceLock<VerifyingKey> = std::sync::OnceLock::new();
-    KEY.get_or_init(|| {
-        let bytes: [u8; 32] = hex::decode(PLUGIN_ATTEST_PUBKEY_HEX)
-            .expect("attestation public key must be valid hex")
-            .try_into()
-            .expect("attestation public key must be 32 bytes");
-        VerifyingKey::from_bytes(&bytes)
-            .expect("attestation public key must be a valid ed25519 key")
-    })
-}
 
 #[derive(Clone)]
 pub struct AuthenticatedMember(pub Member);
@@ -152,10 +137,11 @@ async fn authorize_elevated_session(
     }
 
     if !owner {
+        let config = require_starfish(state)?;
         let attestation = PluginAttestation::from_request(request)
             .ok_or_else(|| ApiError::Forbidden("attestation required".into()))?;
 
-        verify_attestation(plugin_attest_pubkey(), &method, &triad.token, &attestation)?;
+        verify_attestation(&config.hmac_secret, &method, &triad.token, &attestation)?;
         verify_official_plugin(state, &attestation.slug, &attestation.plugin_hash).await?;
     }
 
@@ -291,7 +277,7 @@ fn elevated_endpoint_allowed(method: &Method, path: &str) -> bool {
 }
 
 fn verify_attestation(
-    pubkey: &VerifyingKey,
+    secret: &[u8; 32],
     method: &Method,
     session_token: &str,
     attestation: &PluginAttestation,
@@ -308,11 +294,18 @@ fn verify_attestation(
         &attestation.slug,
         &attestation.plugin_hash,
     );
-    let signature = Signature::from_slice(&attestation.signature)
-        .map_err(|_| ApiError::Unauthorized("malformed attestation".into()))?;
-    pubkey
-        .verify(&payload, &signature)
-        .map_err(|_| ApiError::Unauthorized("attestation verification failed".into()))
+    if starfish_crypto::verify_attestation_mac(
+        secret,
+        session_token,
+        &payload,
+        &attestation.signature,
+    ) {
+        Ok(())
+    } else {
+        Err(ApiError::Unauthorized(
+            "attestation verification failed".into(),
+        ))
+    }
 }
 
 async fn verify_official_plugin(
@@ -509,7 +502,8 @@ fn extract_api_key(request: &Request) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::Signer;
+
+    const TEST_SECRET: [u8; 32] = [9u8; 32];
 
     #[test]
     fn session_allowlist_matches_urchin_routes() {
@@ -562,10 +556,6 @@ mod tests {
         assert!(!elevated_endpoint_allowed(&Method::GET, "/player/tags"));
     }
 
-    fn signing_key() -> ed25519_dalek::SigningKey {
-        ed25519_dalek::SigningKey::from_bytes(&[7u8; 32])
-    }
-
     fn signed_attestation(
         session_token: &str,
         timestamp: i64,
@@ -580,7 +570,8 @@ mod tests {
             slug,
             plugin_hash,
         );
-        let signature = signing_key().sign(&payload).to_bytes().to_vec();
+        let session_key = starfish_crypto::derive_attestation_key(&TEST_SECRET, session_token);
+        let signature = starfish_crypto::sign_attestation_mac(&session_key, &payload).to_vec();
         PluginAttestation {
             slug: slug.into(),
             plugin_hash: plugin_hash.into(),
@@ -591,31 +582,40 @@ mod tests {
 
     #[test]
     fn attestation_roundtrip_verifies() {
-        let pubkey = signing_key().verifying_key();
         let now = Utc::now().timestamp();
         let attestation = signed_attestation("session-abc", now, "bw", "deadbeef");
-        assert!(verify_attestation(&pubkey, &Method::GET, "session-abc", &attestation).is_ok());
+        assert!(
+            verify_attestation(&TEST_SECRET, &Method::GET, "session-abc", &attestation).is_ok()
+        );
     }
 
     #[test]
     fn attestation_rejects_tampered_fields() {
-        let pubkey = signing_key().verifying_key();
         let now = Utc::now().timestamp();
         let mut attestation = signed_attestation("session-abc", now, "bw", "deadbeef");
         attestation.slug = "urchin".into();
-        assert!(verify_attestation(&pubkey, &Method::GET, "session-abc", &attestation).is_err());
+        assert!(
+            verify_attestation(&TEST_SECRET, &Method::GET, "session-abc", &attestation).is_err()
+        );
 
         let attestation = signed_attestation("session-abc", now, "bw", "deadbeef");
         assert!(
-            verify_attestation(&pubkey, &Method::GET, "different-session", &attestation).is_err()
+            verify_attestation(
+                &TEST_SECRET,
+                &Method::GET,
+                "different-session",
+                &attestation
+            )
+            .is_err()
         );
     }
 
     #[test]
     fn attestation_rejects_stale_timestamp() {
-        let pubkey = signing_key().verifying_key();
         let stale = Utc::now().timestamp() - ATTEST_MAX_SKEW_SECS - 5;
         let attestation = signed_attestation("session-abc", stale, "bw", "deadbeef");
-        assert!(verify_attestation(&pubkey, &Method::GET, "session-abc", &attestation).is_err());
+        assert!(
+            verify_attestation(&TEST_SECRET, &Method::GET, "session-abc", &attestation).is_err()
+        );
     }
 }
