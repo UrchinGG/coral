@@ -5,7 +5,11 @@ const API_URL = process.env.CORAL_API_URL || "http://localhost:8000";
 
 type DiscordUser = { id: string; username: string; avatar: string | null };
 type LicenseStatus = { has_license: boolean };
-type ReleaseInfo = { version: string; platforms: Record<string, { filename: string; size: number }> };
+type ReleaseInfo = {
+  version: string;
+  release_notes: string | null;
+  platforms: Record<string, { filename: string; size: number }>;
+};
 
 export async function GET() {
   const token = (await cookies()).get("sf_token")?.value;

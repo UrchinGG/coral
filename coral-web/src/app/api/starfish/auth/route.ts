@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
+import { starfishOrigin } from "@/lib/starfish/origin";
 
 const DISCORD_CLIENT_ID = process.env.STARFISH_DISCORD_CLIENT_ID || "";
-const SITE_URL = process.env.SITE_URL || "https://coral.urchin.gg";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const origin = starfishOrigin(request);
+  if (!origin) return NextResponse.json({ error: "Unrecognized host" }, { status: 400 });
+
   const params = new URLSearchParams({
     client_id: DISCORD_CLIENT_ID,
-    redirect_uri: `${SITE_URL}/api/starfish/callback`,
+    redirect_uri: `${origin}/api/starfish/callback`,
     response_type: "code",
     scope: "identify",
   });

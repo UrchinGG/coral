@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { headers } from "next/headers";
 import { OceanBackground } from "@/components/OceanBackground";
 import "./globals.css";
 
@@ -34,7 +35,9 @@ export const metadata: Metadata = {
   icons: { icon: "/favicon.ico" },
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const isStarfish = (await headers()).has("x-starfish-rewrite");
+
   return (
     <html lang="en">
       <head>
@@ -42,7 +45,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="preload" as="font" type="font/woff2" href="/fonts/minecraft-bold.woff2" crossOrigin="anonymous" />
       </head>
       <body className={`${inter.variable} antialiased`}>
-        <OceanBackground />
+        {!isStarfish && <OceanBackground />}
         {children}
       </body>
     </html>

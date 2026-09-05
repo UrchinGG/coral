@@ -7,14 +7,14 @@ const sections = [
   {
     label: "Getting Started",
     items: [
-      { title: "Introduction", href: "/starfish/docs" },
+      { title: "Introduction", href: "/docs" },
     ],
   },
   {
     label: "Network",
     items: [
-      { title: "HTTP", href: "/starfish/docs/http" },
-      { title: "Webhooks", href: "/starfish/docs/webhooks" },
+      { title: "HTTP", href: "/docs/http" },
+      { title: "Webhooks", href: "/docs/webhooks" },
     ],
   },
 ];

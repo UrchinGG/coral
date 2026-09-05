@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Starfish Docs",
+  title: "Docs",
   description: "Plugin API reference for Starfish.",
 };
 
@@ -13,8 +13,8 @@ export default function DocsPage() {
       <p className="text-sm text-white/40 mb-10">Lua scripting reference for Starfish plugins.</p>
 
       <div className="space-y-3">
-        <DocLink href="/starfish/docs/http" title="HTTP" description="Make HTTP requests with async callbacks." />
-        <DocLink href="/starfish/docs/webhooks" title="Webhooks" description="Register HTTP endpoints that external services can call." />
+        <DocLink href="/docs/http" title="HTTP" description="Make HTTP requests with async callbacks." />
+        <DocLink href="/docs/webhooks" title="Webhooks" description="Register HTTP endpoints that external services can call." />
       </div>
     </div>
   );
