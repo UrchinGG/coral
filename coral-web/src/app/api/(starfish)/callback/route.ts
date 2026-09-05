@@ -19,7 +19,7 @@ export async function GET(request: Request) {
       client_secret: DISCORD_CLIENT_SECRET,
       grant_type: "authorization_code",
       code,
-      redirect_uri: `${origin}/api/starfish/callback`,
+      redirect_uri: `${origin}/api/callback`,
     }),
   });
 

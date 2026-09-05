@@ -9,7 +9,7 @@ export async function GET(request: Request) {
 
   const params = new URLSearchParams({
     client_id: DISCORD_CLIENT_ID,
-    redirect_uri: `${origin}/api/starfish/callback`,
+    redirect_uri: `${origin}/api/callback`,
     response_type: "code",
     scope: "identify",
   });

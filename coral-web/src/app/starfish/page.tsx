@@ -41,7 +41,7 @@ export default function StarfishPage() {
   const [selectedPlatform, setSelectedPlatform] = useState<Platform>(detectPlatform);
 
   useEffect(() => {
-    fetch("/api/starfish/status")
+    fetch("/api/status")
       .then((r) => r.json())
       .then((data) => {
         if (!data.authenticated) {
@@ -111,7 +111,7 @@ function LoginCard() {
       <div className="text-center py-4">
         <h2 className="text-xl font-bold mb-2">Get Starfish</h2>
         <p className="text-sm text-white/40 mb-6">Sign in with Discord to check your license and download.</p>
-        <a href="/api/starfish/auth"
+        <a href="/api/auth"
           className="inline-flex items-center gap-2 px-6 py-2.5 rounded-md bg-[#5865F2] hover:bg-[#4752C4] text-white text-sm font-medium transition-colors">
           <DiscordIcon />
           Sign in with Discord
@@ -149,7 +149,7 @@ function AccessPanel({
               </div>
             </div>
           </div>
-          <a href="/api/starfish/logout" className="text-[11px] text-white/25 hover:text-white/50 transition-colors">
+          <a href="/api/logout" className="text-[11px] text-white/25 hover:text-white/50 transition-colors">
             Sign out
           </a>
         </div>
@@ -176,7 +176,7 @@ function AccessPanel({
           </div>
 
           {release.platforms[selectedPlatform] ? (
-            <a href={`/api/starfish/download?platform=${selectedPlatform}`}
+            <a href={`/api/download?platform=${selectedPlatform}`}
               className="block w-full py-2.5 rounded-md bg-white/[0.08] hover:bg-white/[0.14] text-center text-sm text-white/70 font-medium transition-colors">
               Download for {PLATFORM_LABELS[selectedPlatform]}
               <span className="text-[11px] text-white/30 ml-2">
