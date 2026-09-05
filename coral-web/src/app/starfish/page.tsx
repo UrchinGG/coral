@@ -61,13 +61,13 @@ export default function StarfishPage() {
         <div className="max-w-4xl mx-auto text-center mb-12">
           <img src="/starfish.png" alt="Starfish" width={48} height={48} className="mx-auto mb-5 pixelated" />
           <h1 className="text-4xl sm:text-5xl font-bold tracking-tight mb-3">Starfish</h1>
-          <p className="text-base text-white/40">Hypixel proxy with game overlay and Lua scripting.</p>
+          <p className="text-base text-white/40">An injectable game overlay and script loader for Minecraft 1.8.9</p>
         </div>
 
         <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-4 mb-16">
-          <FeatureCard title="Game Overlay" description="Rendered directly into Minecraft via DLL injection. See stats, tags, and custom UI without alt-tabbing." />
-          <FeatureCard title="Lua Scripting" description="Write plugins in Lua with full access to game state, packets, and the overlay renderer." />
-          <FeatureCard title="Cross-Platform" description="Native support for Windows, Linux, and macOS." />
+          <FeatureCard title="Packet API" description="Read and write packets in Lua with the plugin API." />
+          <FeatureCard title="Native Overlay" description="Native rendering and input control." />
+          <FeatureCard title="Cross-Platform" description="All features supported on Windows, Linux, and macOS. Tested on Lunar Client, Badlion, Forge, and more." />
         </div>
       </section>
 
