@@ -80,7 +80,7 @@ fn build_help_view(api_key: Option<&str>, from_dashboard: bool) -> Vec<CreateCom
         "### How to add Urchin to Cubelify\n\
          1. Run `/dashboard` to register and get your API key\n\
          2. Open the **Settings** menu in Cubelify and navigate to **Integrations**\n\
-         3. Under **Custom**,paste the URL below\n\
+         3. Under **Custom**, paste the URL below\n\
          4. Go to the **Columns** page\n\
          5. Add the **Custom Anti-Sniper Tags** column to your overlay",
     ));
