@@ -34,13 +34,14 @@ export default function InputPage() {
         <Signature>{"session:set(text, cursor?) -> nil"}</Signature>
         <Signature>{"session:cursorFromX(offsetPx, size, extend) -> nil"}</Signature>
         <Signature>{"session:stop() -> nil"}</Signature>
-        <P>Ends silently — <Mono>onCancel</Mono> does not fire.</P>
+        <P>Ends the session yourself — <Mono>onCancel</Mono> does not fire. If instead a click lands outside every hit region, or the game recaptures the mouse, the session is closed for you and <Mono>onCancel</Mono> does fire — both are things a plugin can't otherwise notice on its own.</P>
       </Section>
 
       <Section title="Mouse capture">
         <Signature>{"starfish.input.captureMouse(opts) -> MouseSession"}</Signature>
         <P>Starts an exclusive mouse-capture session, superseding any prior one. <Mono>opts</Mono>: <Mono>onMiss?(event)</Mono> (<Mono>{'{kind="down"|"up"|"scroll", button, x, y, dy}'}</Mono>), <Mono>onCancel?()</Mono>.</P>
         <Signature>{"session:stop() -> nil"}</Signature>
+        <P>Ends the session yourself — <Mono>onCancel</Mono> does not fire. Pressing Escape closes it for you instead, the same guarantee a vanilla screen makes, and does fire <Mono>onCancel</Mono>.</P>
       </Section>
     </div>
   );
