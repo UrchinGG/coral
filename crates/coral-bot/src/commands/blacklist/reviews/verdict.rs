@@ -658,6 +658,7 @@ pub async fn handle_reject(
     let losing_votes = state.players[player_index].accept_votes.clone();
 
     state.players[player_index].status = PlayerStatus::Rejected;
+    state.ever_denied = true;
     state.players[player_index].accept_votes.clear();
     state.players[player_index].reject_votes.clear();
 
@@ -741,6 +742,7 @@ pub async fn handle_reject_modal(
     let losing_votes = state.players[player_index].accept_votes.clone();
 
     state.players[player_index].status = PlayerStatus::Rejected;
+    state.ever_denied = true;
     state.players[player_index].review_note = Some(reason.clone());
     state.players[player_index].accept_votes.clear();
     state.players[player_index].reject_votes.clear();
@@ -914,6 +916,18 @@ pub async fn handle_cancel_thread(
 ) -> Result<()> {
     if !require_submitter(ctx, component).await? {
         return Ok(());
+    }
+
+    if let Some(message) = find_builder_message(ctx, component.channel_id).await
+        && parse_state_from_message(&message).is_some_and(|state| state.ever_denied)
+    {
+        return send_vote_error(
+            ctx,
+            component,
+            "This review has already been denied, so it can no longer be cancelled. Edit it \
+             and submit it again for another vote.",
+        )
+        .await;
     }
 
     let submitter_id = component.data.custom_id.split(':').last().unwrap_or("0");

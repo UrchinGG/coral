@@ -54,6 +54,7 @@ pub struct SubmissionState {
     pub players: Vec<PlayerEntry>,
     pub submitted: bool,
     pub reopened: bool,
+    pub ever_denied: bool,
     pub editing: Option<usize>,
     pub editing_evidence: usize,
     pub pending_add: Option<PendingAdd>,
@@ -113,22 +114,46 @@ pub fn parse_state_from_message(message: &Message) -> Option<SubmissionState> {
             _ => false,
         });
 
-    let reopened = texts.iter().any(|t| {
-        t.lines().any(|line| {
-            let line = line.trim();
-            (line.starts_with("-# Evidence submitted by") || line.starts_with("-# Submitted by"))
-                && line.contains("reopened")
-        })
-    });
+    let reopened = submitter_line_has(&texts, REOPENED_MARKER);
+    let ever_denied = submitter_line_has(&texts, DENIED_MARKER)
+        || players.iter().any(|p| p.status == PlayerStatus::Rejected);
 
     Some(SubmissionState {
         submitter_id,
         players,
         submitted,
         reopened,
+        ever_denied,
         editing: None,
         editing_evidence: 0,
         pending_add: None,
+    })
+}
+
+const REOPENED_MARKER: &str = "reopened";
+const DENIED_MARKER: &str = "previously denied";
+
+pub fn render_submitter_line(submitter_id: u64, reopened: bool, ever_denied: bool) -> String {
+    let mut line = format!("-# Evidence submitted by <@{submitter_id}>");
+    if reopened {
+        line.push_str(" · ");
+        line.push_str(REOPENED_MARKER);
+    }
+    if ever_denied {
+        line.push_str(" · ");
+        line.push_str(DENIED_MARKER);
+    }
+    line
+}
+
+fn is_submitter_line(line: &str) -> bool {
+    line.starts_with("-# Evidence submitted by") || line.starts_with("-# Submitted by")
+}
+
+fn submitter_line_has(texts: &[String], marker: &str) -> bool {
+    texts.iter().any(|t| {
+        t.lines()
+            .any(|line| is_submitter_line(line.trim()) && line.contains(marker))
     })
 }
 
@@ -542,5 +567,19 @@ mod tests {
         let player = parse(&["IGN - `Player`", CURRENT_BLOCK]);
         assert_eq!(player.reason, "hitting through walls (clip 1)");
         assert_eq!(player.author_name.as_deref(), Some("tagger"));
+    }
+
+    #[test]
+    fn a_denial_survives_a_redraw_that_clears_the_verdict() {
+        let line = vec![render_submitter_line(7, true, true)];
+        assert!(submitter_line_has(&line, DENIED_MARKER));
+        assert!(submitter_line_has(&line, REOPENED_MARKER));
+    }
+
+    #[test]
+    fn an_undenied_submission_carries_no_denial_marker() {
+        let line = vec![render_submitter_line(7, true, false)];
+        assert!(!submitter_line_has(&line, DENIED_MARKER));
+        assert!(submitter_line_has(&line, REOPENED_MARKER));
     }
 }

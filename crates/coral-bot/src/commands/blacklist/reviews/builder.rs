@@ -104,7 +104,11 @@ pub fn build_review_message(
         build_editing_footer(&mut parts, state, id);
     }
 
-    parts.push(submitter_line(state.submitter_id, state.reopened));
+    parts.push(text(render_submitter_line(
+        state.submitter_id,
+        state.reopened,
+        state.ever_denied,
+    )));
 
     let mut components = vec![CreateComponent::Container(CreateContainer::new(parts))];
     if !state.submitted {
@@ -115,16 +119,6 @@ pub fn build_review_message(
         }
     }
     components
-}
-
-fn submitter_line(submitter_id: u64, reopened: bool) -> CreateContainerComponent<'static> {
-    if reopened {
-        text(format!(
-            "-# Evidence submitted by <@{submitter_id}> · reopened"
-        ))
-    } else {
-        text(format!("-# Evidence submitted by <@{submitter_id}>"))
-    }
 }
 
 pub fn build_player_card(
@@ -496,11 +490,13 @@ pub fn build_editing_footer(
                 .label("Submit")
                 .style(ButtonStyle::Success),
         );
-        buttons.push(
-            CreateButton::new(format!("review_cancel_thread:{id}"))
-                .label("Cancel Review")
-                .style(ButtonStyle::Danger),
-        );
+        if !state.ever_denied {
+            buttons.push(
+                CreateButton::new(format!("review_cancel_thread:{id}"))
+                    .label("Cancel Review")
+                    .style(ButtonStyle::Danger),
+            );
+        }
     }
     if !buttons.is_empty() {
         parts.push(CreateContainerComponent::ActionRow(

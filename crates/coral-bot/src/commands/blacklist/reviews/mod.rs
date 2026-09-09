@@ -600,6 +600,7 @@ pub async fn create_submission(
         players: vec![player],
         submitted: false,
         reopened: false,
+        ever_denied: false,
         editing: None,
         editing_evidence: 0,
         pending_add: None,
