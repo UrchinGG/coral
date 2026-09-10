@@ -10,7 +10,9 @@ const TICKET_URL: &str = "https://discord.com/channels/1339318572069158962/13422
 /// Where the tag notice ended up, so the caller knows whether the blacklist
 /// post still needs to ping the player.
 pub enum NoticeDelivery {
-    /// Nobody has this account linked, or the tag was not notifiable.
+    /// The tag type does not warrant a notice (e.g. Replays Needed).
+    NotNotifiable,
+    /// Nobody has this account linked, so there is nobody to notify.
     NoOwner,
     /// The player got their DM.
     Dm,
@@ -25,6 +27,20 @@ impl NoticeDelivery {
         match self {
             Self::PingInServer(id) => Some(*id),
             _ => None,
+        }
+    }
+
+    /// One-line summary for the staff log, so mods can see whether the tagged
+    /// player actually heard about it.
+    pub fn log_line(&self) -> &'static str {
+        match self {
+            Self::NotNotifiable => "-# Player notice: not sent for this tag type",
+            Self::NoOwner => "-# Player notice: not registered with Urchin, nothing sent",
+            Self::Dm => "-# Player notice: DM delivered",
+            Self::PingInServer(_) => {
+                "-# Player notice: DMs closed, pinged in server and queued for next command"
+            }
+            Self::Queued => "-# Player notice: DMs closed, queued for next command",
         }
     }
 }
@@ -71,11 +87,11 @@ pub async fn notify_tagged_player(
     tag: &PlayerEvent,
 ) -> NoticeDelivery {
     let Some(tag_type) = tag.tag_type.as_deref() else {
-        return NoticeDelivery::NoOwner;
+        return NoticeDelivery::NotNotifiable;
     };
     // Replays Needed is a request for footage, not an accusation to appeal.
     if tag_type == REPLAYS_NEEDED.name {
-        return NoticeDelivery::NoOwner;
+        return NoticeDelivery::NotNotifiable;
     }
 
     let pool = data.db.pool();

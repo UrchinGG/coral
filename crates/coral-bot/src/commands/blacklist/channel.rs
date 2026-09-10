@@ -318,6 +318,7 @@ pub async fn post_new_tag(
     silent: bool,
     review_url: Option<&str>,
 ) -> Option<MessageId> {
+    let notice = appeal::notify_tagged_player(ctx, data, uuid, name, tag).await;
     post_tag_to_log(
         ctx,
         data,
@@ -327,9 +328,9 @@ pub async fn post_new_tag(
         "New Tag",
         EMOTE_ADDTAG,
         review_url,
+        &notice,
     )
     .await;
-    let notice = appeal::notify_tagged_player(ctx, data, uuid, name, tag).await;
     if silent {
         return None;
     }
@@ -364,6 +365,7 @@ pub async fn post_overwritten_tag(
     silent: bool,
     review_url: Option<&str>,
 ) -> Option<MessageId> {
+    let notice = appeal::notify_tagged_player(ctx, data, uuid, name, tag).await;
     post_tag_to_log(
         ctx,
         data,
@@ -373,9 +375,9 @@ pub async fn post_overwritten_tag(
         "Tag Overwritten",
         EMOTE_EDITTAG,
         review_url,
+        &notice,
     )
     .await;
-    let notice = appeal::notify_tagged_player(ctx, data, uuid, name, tag).await;
     if silent {
         return None;
     }
@@ -730,6 +732,7 @@ async fn post_tag_to_log(
     title: &str,
     emote: &str,
     review_url: Option<&str>,
+    notice: &appeal::NoticeDelivery,
 ) {
     let dashed_uuid = format_uuid_dashed(uuid);
     let added_line = format_added_line(ctx, tag).await;
@@ -750,7 +753,11 @@ async fn post_tag_to_log(
         face_section(vec![
             format!("## {emote} {title}\nIGN - `{name}`\n"),
             block,
-            tag_footer(&dashed_uuid, review_url, evidence_url.as_deref()),
+            format!(
+                "{}\n{}",
+                tag_footer(&dashed_uuid, review_url, evidence_url.as_deref()),
+                notice.log_line()
+            ),
         ]),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
     ]);
