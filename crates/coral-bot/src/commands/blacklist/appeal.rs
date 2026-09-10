@@ -7,42 +7,75 @@ use crate::utils::format_uuid_dashed;
 
 const TICKET_URL: &str = "https://discord.com/channels/1339318572069158962/1342235914746986556";
 
-/// Where the tag notice ended up, so the caller knows whether the blacklist
-/// post still needs to ping the player.
-pub enum NoticeDelivery {
+/// Where the tag notice ended up for each member who has the tagged account
+/// linked, so the caller knows who still needs a ping on the blacklist post.
+#[derive(Default)]
+pub struct NoticeDelivery {
     /// The tag type does not warrant a notice (e.g. Replays Needed).
-    NotNotifiable,
-    /// Nobody has this account linked, so there is nobody to notify.
-    NoOwner,
-    /// The player got their DM.
-    Dm,
-    /// DMs are closed. Ping them on the blacklist post if there is one.
-    PingInServer(UserId),
-    /// DMs are closed and they are not in the server; a one-time notice is queued.
-    Queued,
+    not_notifiable: bool,
+    /// Members who got their DM.
+    dmed: Vec<UserId>,
+    /// Members with DMs closed who are in the home guild; ping them instead.
+    pinged: Vec<UserId>,
+    /// Members with DMs closed who are not in the server; notice is queued.
+    queued: Vec<UserId>,
 }
 
 impl NoticeDelivery {
-    pub fn ping(&self) -> Option<UserId> {
-        match self {
-            Self::PingInServer(id) => Some(*id),
-            _ => None,
+    fn not_notifiable() -> Self {
+        Self {
+            not_notifiable: true,
+            ..Self::default()
         }
     }
 
-    /// One-line summary for the staff log, so mods can see whether the tagged
-    /// player actually heard about it.
-    pub fn log_line(&self) -> &'static str {
-        match self {
-            Self::NotNotifiable => "-# Player notice: not sent for this tag type",
-            Self::NoOwner => "-# Player notice: not registered with Urchin, nothing sent",
-            Self::Dm => "-# Player notice: DM delivered",
-            Self::PingInServer(_) => {
-                "-# Player notice: DMs closed, pinged in server and queued for next command"
-            }
-            Self::Queued => "-# Player notice: DMs closed, queued for next command",
-        }
+    /// Members to mention on the blacklist post because DMs did not reach them.
+    pub fn pings(&self) -> &[UserId] {
+        &self.pinged
     }
+
+    fn no_owner(&self) -> bool {
+        self.dmed.is_empty() && self.pinged.is_empty() && self.queued.is_empty()
+    }
+
+    /// Staff-log summary, so mods can see whether the tagged player heard about
+    /// it and which accounts were reached.
+    pub fn log_line(&self) -> String {
+        if self.not_notifiable {
+            return "-# Player notice: not sent for this tag type".to_string();
+        }
+        if self.no_owner() {
+            return "-# Player notice: not registered with Urchin, nothing sent".to_string();
+        }
+
+        let mut lines = Vec::new();
+        if !self.dmed.is_empty() {
+            lines.push(format!(
+                "-# Player notice: DM delivered to {}",
+                mentions(&self.dmed)
+            ));
+        }
+        if !self.pinged.is_empty() {
+            lines.push(format!(
+                "-# Player notice: DMs closed for {}, pinged in server and queued for next command",
+                mentions(&self.pinged)
+            ));
+        }
+        if !self.queued.is_empty() {
+            lines.push(format!(
+                "-# Player notice: DMs closed for {}, queued for next command",
+                mentions(&self.queued)
+            ));
+        }
+        lines.join("\n")
+    }
+}
+
+fn mentions(ids: &[UserId]) -> String {
+    ids.iter()
+        .map(|id| format!("<@{id}>"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn tag_label(tag_type: &str) -> String {
@@ -77,8 +110,9 @@ fn appeal_body(user_id: UserId, username: &str, uuid: &str, detail: &str) -> Str
     )
 }
 
-/// DMs the owner of `uuid` an appeal notice for a freshly applied tag, falling
-/// back to a blacklist-post ping and/or a one-time in-command notice.
+/// DMs every member who has `uuid` linked an appeal notice for a freshly
+/// applied tag, falling back to a blacklist-post ping and/or a one-time
+/// in-command notice for anyone whose DMs are closed.
 pub async fn notify_tagged_player(
     ctx: &Context,
     data: &Data,
@@ -87,49 +121,55 @@ pub async fn notify_tagged_player(
     tag: &PlayerEvent,
 ) -> NoticeDelivery {
     let Some(tag_type) = tag.tag_type.as_deref() else {
-        return NoticeDelivery::NotNotifiable;
+        return NoticeDelivery::not_notifiable();
     };
     // Replays Needed is a request for footage, not an accusation to appeal.
     if tag_type == REPLAYS_NEEDED.name {
-        return NoticeDelivery::NotNotifiable;
+        return NoticeDelivery::not_notifiable();
     }
 
     let pool = data.db.pool();
-    let owner = match AccountRepository::new(pool).owner_discord_id(uuid).await {
-        Ok(Some(id)) => id,
-        Ok(None) => return NoticeDelivery::NoOwner,
+    let owners = match AccountRepository::new(pool).owner_discord_ids(uuid).await {
+        Ok(owners) => owners,
         Err(e) => {
-            tracing::error!("Failed to look up owner of {uuid} for tag notice: {e}");
-            return NoticeDelivery::NoOwner;
+            tracing::error!("Failed to look up owners of {uuid} for tag notice: {e}");
+            Vec::new()
         }
     };
-    let user_id = UserId::new(owner as u64);
 
     let dashed_uuid = format_uuid_dashed(uuid);
-    let detail = format!("{} - {}", tag_label(tag_type), reason_text(tag));
+    let reason = reason_text(tag);
+    let detail = format!("{} - {}", tag_label(tag_type), reason);
 
-    if send_dm(
-        ctx,
-        user_id,
-        &appeal_body(user_id, username, &dashed_uuid, &detail),
-    )
-    .await
-    {
-        return NoticeDelivery::Dm;
-    }
+    let mut delivery = NoticeDelivery::default();
+    for owner in owners {
+        let user_id = UserId::new(owner as u64);
 
-    if let Err(e) = TagNoticeRepository::new(pool)
-        .queue(owner, uuid, username, tag_type, &reason_text(tag))
+        if send_dm(
+            ctx,
+            user_id,
+            &appeal_body(user_id, username, &dashed_uuid, &detail),
+        )
         .await
-    {
-        tracing::error!("Failed to queue tag notice for {owner}: {e}");
-    }
+        {
+            delivery.dmed.push(user_id);
+            continue;
+        }
 
-    if in_home_guild(ctx, data, user_id).await {
-        NoticeDelivery::PingInServer(user_id)
-    } else {
-        NoticeDelivery::Queued
+        if let Err(e) = TagNoticeRepository::new(pool)
+            .queue(owner, uuid, username, tag_type, &reason)
+            .await
+        {
+            tracing::error!("Failed to queue tag notice for {owner}: {e}");
+        }
+
+        if in_home_guild(ctx, data, user_id).await {
+            delivery.pinged.push(user_id);
+        } else {
+            delivery.queued.push(user_id);
+        }
     }
+    delivery
 }
 
 async fn send_dm(ctx: &Context, user_id: UserId, content: &str) -> bool {

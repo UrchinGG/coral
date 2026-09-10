@@ -65,18 +65,17 @@ impl<'a> AccountRepository<'a> {
         .await
     }
 
-    /// Discord ID of the member who has this account linked, if any.
-    pub async fn owner_discord_id(&self, uuid: &str) -> Result<Option<i64>, sqlx::Error> {
+    /// Discord IDs of every member who has this account linked.
+    pub async fn owner_discord_ids(&self, uuid: &str) -> Result<Vec<i64>, sqlx::Error> {
         sqlx::query_scalar(
             "SELECT discord_id FROM members WHERE uuid = $1
              UNION
              SELECT m.discord_id FROM minecraft_accounts ma
              JOIN members m ON m.id = ma.member_id
-             WHERE ma.uuid = $1
-             LIMIT 1",
+             WHERE ma.uuid = $1",
         )
         .bind(uuid)
-        .fetch_optional(self.pool)
+        .fetch_all(self.pool)
         .await
     }
 

@@ -335,10 +335,10 @@ pub async fn post_new_tag(
         return None;
     }
     let mut mentions = guild_watchers(data, uuid, tag.tag_type.as_deref()).await;
-    if let Some(tagged) = notice.ping()
-        && !mentions.contains(&tagged)
-    {
-        mentions.push(tagged);
+    for tagged in notice.pings() {
+        if !mentions.contains(tagged) {
+            mentions.push(*tagged);
+        }
     }
     post_to_blacklist_channel(
         ctx,
@@ -382,10 +382,10 @@ pub async fn post_overwritten_tag(
         return None;
     }
     let mut mentions = guild_watchers(data, uuid, tag.tag_type.as_deref()).await;
-    if let Some(tagged) = notice.ping()
-        && !mentions.contains(&tagged)
-    {
-        mentions.push(tagged);
+    for tagged in notice.pings() {
+        if !mentions.contains(tagged) {
+            mentions.push(*tagged);
+        }
     }
     post_to_blacklist_channel(
         ctx,
