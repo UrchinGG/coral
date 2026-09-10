@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 
-const DESCRIPTION = "Hypixel proxy with game overlay and Lua scripting.";
+const DESCRIPTION = "An injectable game overlay and script loader for Minecraft 1.8.9.";
 
 export const metadata: Metadata = {
   // `absolute` (not `default`) so this doesn't get composed with the root

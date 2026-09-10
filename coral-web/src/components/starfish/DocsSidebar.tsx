@@ -11,10 +11,38 @@ const sections = [
     ],
   },
   {
+    label: "Communication",
+    items: [
+      { title: "Chat", href: "/docs/chat" },
+      { title: "Commands", href: "/docs/commands" },
+      { title: "Display", href: "/docs/display" },
+      { title: "Overlay", href: "/docs/overlay" },
+      { title: "Text", href: "/docs/text" },
+    ],
+  },
+  {
+    label: "Game State",
+    items: [
+      { title: "Entities", href: "/docs/entities" },
+      { title: "Players", href: "/docs/players" },
+      { title: "World", href: "/docs/world" },
+      { title: "Inventory", href: "/docs/inventory" },
+      { title: "Scoreboard", href: "/docs/scoreboard" },
+    ],
+  },
+  {
     label: "Network",
     items: [
-      { title: "HTTP", href: "/docs/http" },
-      { title: "Webhooks", href: "/docs/webhooks" },
+      { title: "Network", href: "/docs/network" },
+    ],
+  },
+  {
+    label: "Core",
+    items: [
+      { title: "Events", href: "/docs/events" },
+      { title: "Input", href: "/docs/input" },
+      { title: "Plugins", href: "/docs/plugins" },
+      { title: "Client", href: "/docs/client" },
     ],
   },
 ];

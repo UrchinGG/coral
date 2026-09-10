@@ -34,12 +34,19 @@ pub enum Platform {
 }
 
 impl Platform {
-    fn matches_binary(&self, filename: &str) -> bool {
+    /// Every platform ships one directly-executable file with a fixed name, so the
+    /// updater can `rename` it straight over the running binary — no installers or
+    /// archives to unpack.
+    fn binary_filename(&self) -> &'static str {
         match self {
-            Self::Windows => filename.ends_with(".exe"),
-            Self::Linux => filename.ends_with(".AppImage") || filename.ends_with(".tar.gz"),
-            Self::Macos => filename.ends_with(".dmg") || filename.ends_with(".app.zip"),
+            Self::Windows => "starfish-windows.exe",
+            Self::Linux => "starfish-linux",
+            Self::Macos => "starfish-macos",
         }
+    }
+
+    fn matches_binary(&self, filename: &str) -> bool {
+        filename == self.binary_filename()
     }
 
     fn matches_signature(&self, binary_name: &str, filename: &str) -> bool {
