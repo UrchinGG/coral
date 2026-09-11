@@ -153,6 +153,7 @@ export type DevKeyView = {
 };
 
 export type StarfishView = {
+  id: number;
   license_status: string;
   has_active_session: boolean;
 };
@@ -339,6 +340,73 @@ export type PluginDetailResponse = {
   installs_30d: number;
   installs_total: number;
   reviews: ReviewView[];
+};
+
+export type StarfishUserRow = {
+  id: number;
+  discord_id: string;
+  license_status: string;
+  github_username: string | null;
+  hwid_count: number;
+  has_active_session: boolean;
+  last_heartbeat_at: string | null;
+  plugins_installed: number;
+  plugins_owned: number;
+  updated_at: string;
+  discord_username: string | null;
+  member_id: number | null;
+};
+
+export type StarfishUserListResponse = {
+  total: number;
+  users: StarfishUserRow[];
+};
+
+export type StarfishHwidView = {
+  id: number;
+  hwid_hash: string;
+  is_active: boolean;
+  registered_at: string;
+  has_components: boolean;
+};
+
+export type StarfishSessionView = {
+  id: number;
+  hwid_id: number;
+  issued_at: string;
+  expires_at: string;
+  last_heartbeat_at: string;
+};
+
+export type StarfishInstalledPlugin = {
+  slug: string;
+  installed_version: string;
+  latest_version: string;
+  disabled: boolean;
+};
+
+export type StarfishOwnedPlugin = {
+  slug: string;
+  display_name: string;
+  official: boolean;
+  unlisted: boolean;
+  disabled: boolean;
+  latest_version: string | null;
+};
+
+export type StarfishUserDetailResponse = {
+  id: number;
+  discord_id: string;
+  discord_username: string | null;
+  member_id: number | null;
+  license_status: string;
+  github_username: string | null;
+  created_at: string;
+  updated_at: string;
+  hwids: StarfishHwidView[];
+  sessions: StarfishSessionView[];
+  installed_plugins: StarfishInstalledPlugin[];
+  owned_plugins: StarfishOwnedPlugin[];
 };
 
 export type FlagKind = "budget" | "probe" | "spike" | "hypixel_headroom";

@@ -62,8 +62,6 @@ pub fn router() -> Router<AppState> {
         .route("/{id}/dev-key/lock", post(set_dev_key_locked))
         .route("/{id}/dev-key/rate-limit", post(set_dev_key_rate_limit))
         .route("/{id}/dev-key/permissions", post(set_dev_key_permissions))
-        .route("/{id}/starfish/license", post(set_license_status))
-        .route("/{id}/starfish/sessions/revoke", post(revoke_sessions))
 }
 
 #[derive(Deserialize)]
@@ -315,6 +313,7 @@ impl From<DeveloperKey> for DevKeyView {
 
 #[derive(Serialize)]
 struct StarfishView {
+    id: i64,
     license_status: String,
     has_active_session: bool,
 }
@@ -398,6 +397,7 @@ async fn detail(
             .await
             .unwrap_or(false);
             Some(StarfishView {
+                id: user.id,
                 license_status: user.license_status,
                 has_active_session,
             })
@@ -822,64 +822,6 @@ async fn set_dev_key_permissions(
         "set_dev_key_permissions",
         member.discord_id,
         json!({"permissions": req.permissions}),
-    )
-    .await;
-    Ok(Json(OkResponse { ok: true }))
-}
-
-#[derive(Deserialize)]
-struct LicenseStatusRequest {
-    status: String,
-}
-
-async fn set_license_status(
-    State(state): State<AppState>,
-    Extension(actor): Extension<AdminActor>,
-    Path(id): Path<i64>,
-    Json(req): Json<LicenseStatusRequest>,
-) -> Result<Json<OkResponse>, StatusCode> {
-    let member = member_or_404(&state, id).await?;
-    StarfishRepository::new(state.db.pool())
-        .set_license_status(member.discord_id, &req.status)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    audit(
-        &state,
-        actor,
-        "set_license_status",
-        member.discord_id,
-        json!({"status": req.status}),
-    )
-    .await;
-    Ok(Json(OkResponse { ok: true }))
-}
-
-async fn revoke_sessions(
-    State(state): State<AppState>,
-    Extension(actor): Extension<AdminActor>,
-    Path(id): Path<i64>,
-) -> Result<Json<OkResponse>, StatusCode> {
-    let member = member_or_404(&state, id).await?;
-    let starfish = StarfishRepository::new(state.db.pool());
-    let user = starfish
-        .get_user_by_discord_id(member.discord_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    starfish
-        .delete_user_sessions(user.id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    starfish
-        .delete_user_refresh_tokens(user.id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    audit(
-        &state,
-        actor,
-        "revoke_starfish_sessions",
-        member.discord_id,
-        json!({}),
     )
     .await;
     Ok(Json(OkResponse { ok: true }))

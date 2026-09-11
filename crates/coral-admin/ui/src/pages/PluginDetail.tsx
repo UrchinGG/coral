@@ -35,7 +35,7 @@ export function PluginDetail() {
 
   return (
     <div className="flex flex-col gap-6">
-      <button onClick={() => navigate("/plugins")} className="w-fit text-sm text-gray-400 hover:text-white">
+      <button onClick={() => navigate("/starfish/plugins")} className="w-fit text-sm text-gray-400 hover:text-white">
         ← Back to plugins
       </button>
 
@@ -68,7 +68,7 @@ export function PluginDetail() {
         )}
       </Panel>
 
-      <ActionBar plugin={p} onDeleted={() => navigate("/plugins")} />
+      <ActionBar plugin={p} onDeleted={() => navigate("/starfish/plugins")} />
 
       <ReleasesPanel slug={p.slug} releases={releases} />
 

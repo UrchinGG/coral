@@ -17,6 +17,7 @@ mod requests;
 mod resolve;
 mod review_guide;
 mod server;
+mod starfish;
 
 pub fn api_router() -> Router<AppState> {
     Router::new()
@@ -27,6 +28,7 @@ pub fn api_router() -> Router<AppState> {
         .nest("/requests", requests::router())
         .nest("/resolve", resolve::router())
         .nest("/plugins", plugins::router())
+        .nest("/starfish", starfish::router())
         .nest("/actions", actions::router())
         .nest("/overview", overview::router())
         .nest("/server", server::router())

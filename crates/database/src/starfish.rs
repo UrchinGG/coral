@@ -356,6 +356,18 @@ impl<'a> StarfishRepository<'a> {
             .await
     }
 
+    pub async fn get_user_sessions(
+        &self,
+        user_id: i64,
+    ) -> Result<Vec<StarfishSession>, sqlx::Error> {
+        sqlx::query_as(
+            "SELECT * FROM starfish_sessions WHERE user_id = $1 ORDER BY issued_at DESC LIMIT 20",
+        )
+        .bind(user_id)
+        .fetch_all(self.pool)
+        .await
+    }
+
     pub async fn create_session(
         &self,
         user_id: i64,

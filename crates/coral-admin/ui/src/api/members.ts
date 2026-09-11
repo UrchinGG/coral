@@ -130,16 +130,3 @@ export function useSetDevKeyPermissions(id: number) {
   });
 }
 
-export function useSetLicenseStatus(id: number) {
-  return useAdminMutation((status: string) => apiPost(`/members/${id}/starfish/license`, { status }), {
-    successMessage: "License status updated",
-    invalidateKeys: memberKeys(id),
-  });
-}
-
-export function useRevokeStarfishSessions(id: number) {
-  return useAdminMutation<void, unknown>(() => apiPost(`/members/${id}/starfish/sessions/revoke`), {
-    successMessage: "Starfish sessions revoked",
-    invalidateKeys: memberKeys(id),
-  });
-}

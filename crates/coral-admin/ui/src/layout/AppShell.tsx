@@ -5,7 +5,7 @@ const NAV_ITEMS = [
   { to: "/diagnostics", label: "API Diagnostics", end: false, extraMatch: [] },
   { to: "/members", label: "Members & Moderation", end: false, extraMatch: ["/players"] },
   { to: "/servers", label: "Server Config", end: false, extraMatch: [] },
-  { to: "/plugins", label: "Plugins", end: false, extraMatch: [] },
+  { to: "/starfish", label: "Starfish", end: false, extraMatch: [] },
   { to: "/data", label: "Data", end: false, extraMatch: [] },
 ];
 

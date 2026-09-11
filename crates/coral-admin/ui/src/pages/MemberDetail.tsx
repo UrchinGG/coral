@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   useAddStrike,
   useCreateDevKey,
@@ -9,12 +9,10 @@ import {
   useRegenerateApiKey,
   useRemoveStrike,
   useResetRateLimit,
-  useRevokeStarfishSessions,
   useSetAccessLevel,
   useSetDevKeyLocked,
   useSetDevKeyPermissions,
   useSetDevKeyRateLimit,
-  useSetLicenseStatus,
   useSetTaggingDisabled,
   useUnlockMember,
 } from "../api/members";
@@ -351,10 +349,6 @@ function DevKeyPanel({ member }: { member: MemberDetailType }) {
 }
 
 function StarfishPanel({ member }: { member: MemberDetailType }) {
-  const setLicense = useSetLicenseStatus(member.id);
-  const revokeSessions = useRevokeStarfishSessions(member.id);
-  const [status, setStatus] = useState(member.starfish?.license_status ?? "inactive");
-
   if (!member.starfish) {
     return (
       <Panel title="Starfish">
@@ -369,29 +363,9 @@ function StarfishPanel({ member }: { member: MemberDetailType }) {
         <Badge label={member.starfish.license_status} tone={member.starfish.license_status === "active" ? "ok" : "default"} />
         {member.starfish.has_active_session && <Badge label="Active session" tone="ok" />}
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <select
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-          className="rounded-md border border-white/10 bg-black/30 px-2 py-1 text-xs"
-        >
-          <option value="inactive">inactive</option>
-          <option value="active">active</option>
-          <option value="suspended">suspended</option>
-        </select>
-        <ConfirmButton
-          label="Set status"
-          disabled={status === member.starfish.license_status}
-          onConfirm={() => setLicense.mutate(status)}
-          pending={setLicense.isPending}
-        />
-        <ConfirmButton
-          label="Revoke sessions"
-          tone="danger"
-          onConfirm={() => revokeSessions.mutate()}
-          pending={revokeSessions.isPending}
-        />
-      </div>
+      <Link to={`/starfish/users/${member.starfish.id}`} className="text-xs text-accent hover:underline">
+        Manage in Starfish →
+      </Link>
     </Panel>
   );
 }
