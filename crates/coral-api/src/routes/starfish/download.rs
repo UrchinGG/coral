@@ -22,6 +22,7 @@ const GITHUB_API_URL: &str = "https://api.github.com";
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/download/info", get(get_release_info))
+        .route("/download/releases", get(list_releases))
         .route("/download/latest", get(download_latest))
 }
 
@@ -68,6 +69,7 @@ pub struct ReleaseInfo {
     pub name: String,
     pub published_at: String,
     pub release_notes: Option<String>,
+    pub prerelease: bool,
     pub platforms: HashMap<String, PlatformAsset>,
 }
 
@@ -77,6 +79,8 @@ struct GitHubRelease {
     name: Option<String>,
     published_at: String,
     body: Option<String>,
+    draft: bool,
+    prerelease: bool,
     assets: Vec<GitHubAsset>,
 }
 
@@ -90,7 +94,20 @@ struct GitHubAsset {
 async fn get_release_info(State(state): State<AppState>) -> Result<Json<ReleaseInfo>, ApiError> {
     let config = require_starfish(&state)?;
     let release = fetch_latest_release(&config).await?;
+    Ok(Json(to_release_info(release)))
+}
 
+async fn list_releases(State(state): State<AppState>) -> Result<Json<Vec<ReleaseInfo>>, ApiError> {
+    let config = require_starfish(&state)?;
+    let releases = fetch_releases(&config).await?
+        .into_iter()
+        .filter(is_public_release)
+        .map(to_release_info)
+        .collect();
+    Ok(Json(releases))
+}
+
+fn to_release_info(release: GitHubRelease) -> ReleaseInfo {
     let mut platforms = HashMap::new();
     for (platform, key) in [
         (Platform::Windows, "windows"),
@@ -118,13 +135,27 @@ async fn get_release_info(State(state): State<AppState>) -> Result<Json<ReleaseI
         }
     }
 
-    Ok(Json(ReleaseInfo {
+    ReleaseInfo {
         version: release.tag_name,
         name: release.name.unwrap_or_default(),
         published_at: release.published_at,
         release_notes: release.body,
+        prerelease: release.prerelease,
         platforms,
-    }))
+    }
+}
+
+fn is_public_release(release: &GitHubRelease) -> bool {
+    !release.draft && has_all_platform_assets(release)
+}
+
+fn has_all_platform_assets(release: &GitHubRelease) -> bool {
+    [Platform::Windows, Platform::Linux, Platform::Macos].into_iter().all(|platform| {
+        let Some(binary) = release.assets.iter().find(|a| platform.matches_binary(&a.name)) else {
+            return false;
+        };
+        release.assets.iter().any(|a| platform.matches_signature(&binary.name, &a.name))
+    })
 }
 
 #[derive(Deserialize)]
@@ -242,9 +273,16 @@ fn starfish_session_headers(headers: &axum::http::HeaderMap) -> Option<(String, 
 }
 
 async fn fetch_latest_release(config: &StarfishConfig) -> Result<GitHubRelease, ApiError> {
+    fetch_releases(config).await?
+        .into_iter()
+        .find(is_public_release)
+        .ok_or_else(|| ApiError::NotFound("No releases found".into()))
+}
+
+async fn fetch_releases(config: &StarfishConfig) -> Result<Vec<GitHubRelease>, ApiError> {
     let url = format!("{GITHUB_API_URL}/repos/{}/releases", config.github_repo);
 
-    let releases: Vec<GitHubRelease> = reqwest::Client::new()
+    reqwest::Client::new()
         .get(&url)
         .bearer_auth(&config.github_token)
         .header("Accept", "application/vnd.github+json")
@@ -255,10 +293,5 @@ async fn fetch_latest_release(config: &StarfishConfig) -> Result<GitHubRelease, 
         .map_err(|e| ApiError::ExternalApi(format!("GitHub API error: {e}")))?
         .json()
         .await
-        .map_err(|e| ApiError::ExternalApi(format!("Failed to parse GitHub response: {e}")))?;
-
-    releases
-        .into_iter()
-        .next()
-        .ok_or_else(|| ApiError::NotFound("No releases found".into()))
+        .map_err(|e| ApiError::ExternalApi(format!("Failed to parse GitHub response: {e}")))
 }
