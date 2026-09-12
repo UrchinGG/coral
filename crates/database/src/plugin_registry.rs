@@ -2,6 +2,13 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 
+const SEARCH_TERMS_MATCH: &str = "($1::text IS NULL OR NOT EXISTS (
+    SELECT 1 FROM regexp_split_to_table(trim($1), '\\s+') AS term
+    WHERE p.slug NOT ILIKE '%' || term || '%'
+      AND p.display_name NOT ILIKE '%' || term || '%'
+      AND p.description NOT ILIKE '%' || term || '%'
+))";
+
 #[derive(Debug, Clone, FromRow, Serialize)]
 pub struct Plugin {
     pub id: i64,
@@ -501,7 +508,7 @@ impl<'a> PluginRegistryRepository<'a> {
         &self,
         plugin_id: i64,
         version: &str,
-        reason: &str,
+        reason: Option<&str>,
     ) -> Result<bool, sqlx::Error> {
         sqlx::query(
             "UPDATE plugin_releases SET yanked = true, yanked_at = NOW(), yanked_reason = $3
@@ -664,12 +671,12 @@ impl<'a> PluginRegistryRepository<'a> {
         limit: i64,
         offset: i64,
     ) -> Result<(i64, Vec<PluginSummary>), sqlx::Error> {
-        let (total,): (i64,) = sqlx::query_as(
+        let (total,): (i64,) = sqlx::query_as(&format!(
             "SELECT COUNT(*)::bigint FROM plugins p
              WHERE ($3::bool OR (NOT p.disabled AND NOT p.unlisted))
-               AND ($1::text IS NULL OR p.slug ILIKE '%' || $1 || '%' OR p.display_name ILIKE '%' || $1 || '%' OR p.description ILIKE '%' || $1 || '%')
+               AND {SEARCH_TERMS_MATCH}
                AND ($2::bool IS NULL OR p.official = $2)",
-        )
+        ))
         .bind(query)
         .bind(official)
         .bind(include_hidden)
@@ -712,7 +719,7 @@ impl<'a> PluginRegistryRepository<'a> {
                         WHERE plugin_id = p.id AND NOT yanked) AS last_released_at
                 FROM plugins p
                 WHERE ($5::bool OR (NOT p.disabled AND NOT p.unlisted))
-                  AND ($1::text IS NULL OR p.slug ILIKE '%' || $1 || '%' OR p.display_name ILIKE '%' || $1 || '%' OR p.description ILIKE '%' || $1 || '%')
+                  AND {SEARCH_TERMS_MATCH}
                   AND ($2::bool IS NULL OR p.official = $2)
                   AND EXISTS (SELECT 1 FROM plugin_releases WHERE plugin_id = p.id AND NOT yanked)
             ),
