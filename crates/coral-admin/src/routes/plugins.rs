@@ -364,7 +364,11 @@ async fn yank_release(
     Json(req): Json<YankRequest>,
 ) -> Result<Json<OkResponse>, StatusCode> {
     let plugin = plugin_or_404(&state, &slug).await?;
-    let reason = req.reason.as_deref().map(str::trim).filter(|r| !r.is_empty());
+    let reason = req
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|r| !r.is_empty());
     let ok = PluginRegistryRepository::new(state.db.pool())
         .yank_release(plugin.id, &version, reason)
         .await
