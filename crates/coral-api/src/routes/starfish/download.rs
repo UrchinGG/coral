@@ -35,16 +35,16 @@ pub enum Platform {
 }
 
 impl Platform {
-    fn binary_filename(&self) -> &'static str {
+    fn binary_filenames(&self) -> &'static [&'static str] {
         match self {
-            Self::Windows => "starfish-windows.exe",
-            Self::Linux => "starfish-linux",
-            Self::Macos => "starfish-macos.zip",
+            Self::Windows => &["starfish-windows.exe"],
+            Self::Linux => &["starfish-linux"],
+            Self::Macos => &["starfish-macos.zip", "starfish-macos"],
         }
     }
 
     fn matches_binary(&self, filename: &str) -> bool {
-        filename == self.binary_filename()
+        self.binary_filenames().contains(&filename)
     }
 
     fn matches_signature(&self, binary_name: &str, filename: &str) -> bool {
