@@ -33,12 +33,18 @@ pub(crate) struct AddTagBody {
     pub reason: String,
     #[serde(default)]
     pub hide_username: bool,
+    /// Log the tag only in the staff channel, skipping the public blacklist channel. Requires the Helper rank.
+    #[serde(default)]
+    pub silent: bool,
 }
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct RemoveTagBody {
     #[serde(rename = "type")]
     pub tag_type: String,
+    /// Log the removal only in the staff channel, skipping the public blacklist channel. Requires the Helper rank.
+    #[serde(default)]
+    pub silent: bool,
 }
 
 /// Overwrites an existing tag. `tag_type` identifies the existing tag (must currently be active).
@@ -51,6 +57,9 @@ pub(crate) struct UpdateTagBody {
     pub new_reason: String,
     #[serde(default)]
     pub hide_username: bool,
+    /// Log the overwrite only in the staff channel, skipping the public blacklist channel. Requires the Helper rank.
+    #[serde(default)]
+    pub silent: bool,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -80,6 +89,17 @@ fn validate_reason(reason: &str) -> Result<(), ApiError> {
         return Err(ApiError::BadRequest(format!(
             "reason exceeds maximum length of {MAX_REASON_LENGTH} characters"
         )));
+    }
+    Ok(())
+}
+
+fn check_silent(silent: bool, member: &database::Member) -> Result<(), ApiError> {
+    if silent
+        && database::AccessRank::from_level(member.access_level) < database::AccessRank::Helper
+    {
+        return Err(ApiError::Forbidden(
+            "silent tagging requires the Helper rank".into(),
+        ));
     }
     Ok(())
 }
@@ -122,7 +142,7 @@ async fn enforce_tag_limit(state: &AppState, member: &database::Member) -> Resul
 
 #[utoipa::path(
     post, path = "/v3/tags",
-    description = "Adds a blacklist tag to a player. The tag types you may apply depend on your rank, which also determines whether `hide_username` is honored.",
+    description = "Adds a blacklist tag to a player. The tag types you may apply depend on your rank, which also determines whether `hide_username` is honored. Setting `silent` logs the tag only in the staff channel instead of the public blacklist channel, and requires the Helper rank.",
     params(("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID")),
     request_body = AddTagBody,
     responses(
@@ -144,6 +164,7 @@ pub async fn add_tag(
             "tagging is disabled on your account".into(),
         ));
     }
+    check_silent(body.silent, &member.0)?;
     enforce_tag_limit(&state, &member.0).await?;
     validate_reason(&body.reason)?;
 
@@ -170,7 +191,7 @@ pub async fn add_tag(
             uuid: uuid.clone(),
             tag_id: tag.id,
             added_by: member.0.discord_id,
-            silent: false,
+            silent: body.silent,
             review_url: None,
         })
         .await;
@@ -183,7 +204,7 @@ pub async fn add_tag(
 
 #[utoipa::path(
     delete, path = "/v3/tags",
-    description = "Removes a tag of the given type from a player. Removing a tag created by someone else, or an older tag, requires a higher rank.",
+    description = "Removes a tag of the given type from a player. Removing a tag created by someone else, or an older tag, requires a higher rank. Setting `silent` logs the removal only in the staff channel instead of the public blacklist channel, and requires the Helper rank.",
     params(("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID")),
     request_body = RemoveTagBody,
     responses(
@@ -199,6 +220,7 @@ pub async fn remove_tag(
     Query(query): Query<TargetQuery>,
     Json(body): Json<RemoveTagBody>,
 ) -> Result<StatusCode, ApiError> {
+    check_silent(body.silent, &member.0)?;
     enforce_tag_limit(&state, &member.0).await?;
 
     let uuid = resolve_target(&state, &query).await?;
@@ -220,7 +242,7 @@ pub async fn remove_tag(
             uuid: uuid.clone(),
             tag_id: tag.id,
             removed_by: member.0.discord_id,
-            silent: false,
+            silent: body.silent,
         })
         .await;
 
@@ -232,7 +254,7 @@ pub async fn remove_tag(
 
 #[utoipa::path(
     patch, path = "/v3/tags",
-    description = "Overwrites an active tag, replacing its type, its reason, or both. The `confirmed_cheater` type cannot be set through this endpoint; it is granted only through the review system.",
+    description = "Overwrites an active tag, replacing its type, its reason, or both. The `confirmed_cheater` type cannot be set through this endpoint; it is granted only through the review system. Setting `silent` logs the overwrite only in the staff channel instead of the public blacklist channel, and requires the Helper rank.",
     params(("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID")),
     request_body = UpdateTagBody,
     responses(
@@ -258,6 +280,7 @@ pub async fn update_tag(
             "confirmed cheater tags can only be applied through the review system".into(),
         ));
     }
+    check_silent(body.silent, &member.0)?;
     validate_reason(&body.new_reason)?;
     enforce_tag_limit(&state, &member.0).await?;
 
@@ -286,7 +309,7 @@ pub async fn update_tag(
             old_reason: old_tag.reason.clone().unwrap_or_default(),
             new_tag_id: new_tag.id,
             overwritten_by: member.0.discord_id,
-            silent: false,
+            silent: body.silent,
         })
         .await;
 

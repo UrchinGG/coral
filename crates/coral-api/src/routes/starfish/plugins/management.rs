@@ -134,7 +134,11 @@ pub async fn yank_release(
 ) -> Result<Json<OkResponse>, ApiError> {
     let repo = PluginRegistryRepository::new(state.db.pool());
     let plugin = ensure_plugin_owner_or_admin(&repo, &slug, &caller).await?;
-    let reason = req.reason.as_deref().map(str::trim).filter(|r| !r.is_empty());
+    let reason = req
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|r| !r.is_empty());
     let ok = repo.yank_release(plugin.id, &version, reason).await?;
     if !ok {
         return Err(ApiError::NotFound(format!("release {version} not found")));

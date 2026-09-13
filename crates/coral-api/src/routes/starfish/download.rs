@@ -96,7 +96,8 @@ async fn get_release_info(State(state): State<AppState>) -> Result<Json<ReleaseI
 
 async fn list_releases(State(state): State<AppState>) -> Result<Json<Vec<ReleaseInfo>>, ApiError> {
     let config = require_starfish(&state)?;
-    let releases = fetch_releases(&config).await?
+    let releases = fetch_releases(&config)
+        .await?
         .into_iter()
         .filter(is_public_release)
         .map(to_release_info)
@@ -147,12 +148,21 @@ fn is_public_release(release: &GitHubRelease) -> bool {
 }
 
 fn has_all_platform_assets(release: &GitHubRelease) -> bool {
-    [Platform::Windows, Platform::Linux, Platform::Macos].into_iter().all(|platform| {
-        let Some(binary) = release.assets.iter().find(|a| platform.matches_binary(&a.name)) else {
-            return false;
-        };
-        release.assets.iter().any(|a| platform.matches_signature(&binary.name, &a.name))
-    })
+    [Platform::Windows, Platform::Linux, Platform::Macos]
+        .into_iter()
+        .all(|platform| {
+            let Some(binary) = release
+                .assets
+                .iter()
+                .find(|a| platform.matches_binary(&a.name))
+            else {
+                return false;
+            };
+            release
+                .assets
+                .iter()
+                .any(|a| platform.matches_signature(&binary.name, &a.name))
+        })
 }
 
 #[derive(Deserialize)]
@@ -270,7 +280,8 @@ fn starfish_session_headers(headers: &axum::http::HeaderMap) -> Option<(String, 
 }
 
 async fn fetch_latest_release(config: &StarfishConfig) -> Result<GitHubRelease, ApiError> {
-    fetch_releases(config).await?
+    fetch_releases(config)
+        .await?
         .into_iter()
         .find(is_public_release)
         .ok_or_else(|| ApiError::NotFound("No releases found".into()))
