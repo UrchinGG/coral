@@ -35,14 +35,11 @@ pub enum Platform {
 }
 
 impl Platform {
-    /// Every platform ships one directly-executable file with a fixed name, so the
-    /// updater can `rename` it straight over the running binary — no installers or
-    /// archives to unpack.
     fn binary_filename(&self) -> &'static str {
         match self {
             Self::Windows => "starfish-windows.exe",
             Self::Linux => "starfish-linux",
-            Self::Macos => "starfish-macos",
+            Self::Macos => "starfish-macos.zip",
         }
     }
 
