@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-export function StarfishNav({ active }: { active?: "home" | "docs" }) {
+export function StarfishNav({ active }: { active?: "home" | "docs" | "releases" }) {
   return (
     <nav className="fixed top-0 w-full z-50 bg-[rgba(10,10,10,0.8)] backdrop-blur-xl border-b border-white/[0.06]">
       <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
@@ -10,6 +10,7 @@ export function StarfishNav({ active }: { active?: "home" | "docs" }) {
         </Link>
         <div className="flex items-center gap-6 text-sm">
           <Link href="/docs" className={`hover:text-white/70 transition-colors ${active === "docs" ? "text-white/70" : "text-white/40"}`}>Docs</Link>
+          <Link href="/releases" className={`hover:text-white/70 transition-colors ${active === "releases" ? "text-white/70" : "text-white/40"}`}>Patch Notes</Link>
           <a href="https://discord.gg/jgKEVUJj3H" target="_blank" rel="noreferrer" className="text-white/40 hover:text-white/70 transition-colors">Discord</a>
         </div>
       </div>
