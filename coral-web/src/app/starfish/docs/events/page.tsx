@@ -10,7 +10,7 @@ export default function EventsPage() {
   return (
     <div>
       <h1 className="text-3xl font-bold tracking-tight mb-2">Events</h1>
-      <p className="text-sm text-white/40 mb-10">Generic pub/sub, plus tick-based timers. Both return a <Mono>Subscription</Mono> — the same handle type <Mono>chat.onReceive</Mono>, <Mono>entities.onSpawn</Mono>, and every other <Mono>onX</Mono> call in the API returns.</p>
+      <p className="text-sm text-white/40 mb-10">Generic pub/sub, plus tick-based timers. Both return a <Mono>Subscription</Mono>, the same handle every <Mono>onX</Mono> call in the API returns, including <Mono>chat.onReceive</Mono> and <Mono>entities.onSpawn</Mono>.</p>
 
       <Section title="Subscription">
         <Signature>{"sub:off() -> nil"}</Signature>
@@ -19,7 +19,7 @@ export default function EventsPage() {
 
       <Section title="starfish.events">
         <Signature>{"starfish.events.on(eventName, handler) -> Subscription"}</Signature>
-        <P><Mono>eventName</Mono> is <Mono>namespace:name</Mono>. Reserved namespaces must be a real catalogued event or this errors.</P>
+        <P><Mono>eventName</Mono> is <Mono>namespace:name</Mono>. The namespaces Starfish uses for its own events (<Mono>chat, config, entity, inventory, player, plugin, scoreboard, server, session, team, world</Mono>) are reserved: an event under one of these must be a real catalogued event, both here and in <Mono>emit</Mono>, so a typo'd core event name errors instead of silently never firing. Any other namespace is free for a plugin's own events.</P>
         <Signature>{"starfish.events.once(eventName, handler) -> Subscription"}</Signature>
         <P>Same as <Mono>on</Mono>, but removes itself after firing once.</P>
         <Signature>{"starfish.events.off(subscription) -> nil"}</Signature>

@@ -10,17 +10,17 @@ export default function ClientPage() {
   return (
     <div>
       <h1 className="text-3xl font-bold tracking-tight mb-2">Client</h1>
-      <p className="text-sm text-white/40 mb-10">Client-side-only state changes — nothing here sends a packet to the server. All functions return <Mono>nil</Mono> unless noted.</p>
+      <p className="text-sm text-white/40 mb-10">Client-side-only state changes; nothing here sends a packet to the server. All functions return <Mono>nil</Mono> unless noted.</p>
 
       <Section title="starfish.client.player">
         <Signature>{"setHealth(opts) -> nil"}</Signature>
         <P><Mono>{"{health, food, saturation}"}</Mono></P>
         <Signature>{"setPosition(opts) -> nil"}</Signature>
-        <P><Mono>{"{x, y, z, yaw?, pitch?}"}</Mono> — yaw/pitch default 0.</P>
+        <P><Mono>{"{x, y, z, yaw?, pitch?}"}</Mono>. Yaw/pitch default 0.</P>
         <Signature>{"setExperience(opts) -> nil"}</Signature>
-        <P><Mono>{"{bar, level, total?}"}</Mono> — total defaults 0.</P>
+        <P><Mono>{"{bar, level, total?}"}</Mono>. Total defaults 0.</P>
         <Signature>{"setAbilities(opts) -> nil"}</Signature>
-        <P><Mono>{"{invulnerable?, flying?, allowFlying?, creative?, flySpeed?, walkSpeed?}"}</Mono> — flySpeed/walkSpeed default 0.05/0.1.</P>
+        <P><Mono>{"{invulnerable?, flying?, allowFlying?, creative?, flySpeed?, walkSpeed?}"}</Mono>. flySpeed/walkSpeed default 0.05/0.1.</P>
         <Signature>{"setSpawn(position) -> nil"}</Signature>
         <Signature>{"setHeldItemSlot(slot) -> nil"}</Signature>
       </Section>
@@ -73,16 +73,16 @@ export default function ClientPage() {
         <Signature>{"teleport(entityId, position, opts?) -> nil"}</Signature>
         <P><Mono>opts</Mono>: <Mono>yaw?, pitch?, onGround?</Mono> (default 0, 0, true).</P>
         <Signature>{"move(entityId, opts) -> nil"}</Signature>
-        <P><Mono>{"{dx, dy, dz, onGround?}"}</Mono> — onGround defaults true.</P>
+        <P><Mono>{"{dx, dy, dz, onGround?}"}</Mono>. onGround defaults true.</P>
         <Signature>{"look(entityId, opts) -> nil"}</Signature>
         <P><Mono>{"{yaw, pitch, onGround?}"}</Mono></P>
         <Signature>{"moveLook(entityId, opts) -> nil"}</Signature>
         <P><Mono>{"{dx, dy, dz, yaw, pitch, onGround?}"}</Mono></P>
         <Signature>{"setVelocity(entityId, opts) -> nil"}</Signature>
-        <P><Mono>{"{x, y, z}"}</Mono> — errors if <Mono>entityId</Mono> is the local player's own tracked entity.</P>
+        <P><Mono>{"{x, y, z}"}</Mono>. Errors if <Mono>entityId</Mono> is the local player's own tracked entity.</P>
         <Signature>{"setHeadRotation(entityId, headYaw) -> nil"}</Signature>
         <Signature>{"setMetadata(entityId, entries) -> nil"}</Signature>
-        <P>Each entry <Mono>{'{index, type, value}'}</Mono> — <Mono>type</Mono> is <Mono>byte | short | int | float | string | slot | position | rotation</Mono>.</P>
+        <P>Each entry is <Mono>{'{index, type, value}'}</Mono>; <Mono>type</Mono> is <Mono>byte | short | int | float | string | slot | position | rotation</Mono>.</P>
         <Signature>{"setEquipment(entityId, slot, item) -> nil"}</Signature>
         <P>Errors on an unrecognized slot name.</P>
         <Signature>{"animate(entityId, animation) -> nil"}</Signature>

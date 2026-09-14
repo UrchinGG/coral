@@ -10,7 +10,7 @@ export default function TextPage() {
   return (
     <div>
       <h1 className="text-3xl font-bold tracking-tight mb-2">Text</h1>
-      <p className="text-sm text-white/40 mb-10">Build rich text components — used wherever chat or overlay text accepts click/hover formatting.</p>
+      <p className="text-sm text-white/40 mb-10">Build rich text components for anywhere chat or overlay text accepts click/hover formatting.</p>
 
       <Section title="Building">
         <Signature>{"starfish.text.of(s) -> Component"}</Signature>
@@ -48,7 +48,7 @@ export default function TextPage() {
         <Signature>{"c:copy(value) -> Component"}</Signature>
         <P>Shorthand for <Mono>click</Mono> with the matching action.</P>
         <Signature>{"c:append(other) -> Component"}</Signature>
-        <P>Same as <Mono>{"c .. other"}</Mono> — both push <Mono>other</Mono> onto <Mono>extra</Mono>.</P>
+        <P>Same as <Mono>{"c .. other"}</Mono>: both push <Mono>other</Mono> onto <Mono>extra</Mono>.</P>
       </Section>
     </div>
   );

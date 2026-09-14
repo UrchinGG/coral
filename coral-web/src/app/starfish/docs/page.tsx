@@ -29,7 +29,7 @@ export default function DocsPage() {
   return (
     <div>
       <h1 className="text-3xl font-bold tracking-tight mb-2">Plugin API</h1>
-      <p className="text-sm text-white/40 mb-10">Lua scripting reference for Starfish plugins. This is a minimal, in-progress pass — it covers what's callable today, not a full guide.</p>
+      <p className="text-sm text-white/40 mb-10">Lua scripting reference for Starfish plugins. This is a minimal, in-progress pass over what's callable today, not a full guide.</p>
 
       <Section title="Positions">
         <P>Anywhere a function takes a position, you can pass a plain table, an entity, or the local player:</P>

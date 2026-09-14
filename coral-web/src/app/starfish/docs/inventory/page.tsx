@@ -17,7 +17,7 @@ export default function InventoryPage() {
         <Signature>{"starfish.inventory.heldItem() -> Item | nil"}</Signature>
         <Signature>{"starfish.inventory.heldSlot() -> number"}</Signature>
         <Signature>{"starfish.inventory.armor() -> table"}</Signature>
-        <P><Mono>{"{helmet?, chestplate?, leggings?, boots?}"}</Mono> — keys present only when occupied.</P>
+        <P><Mono>{"{helmet?, chestplate?, leggings?, boots?}"}</Mono>. Keys present only when occupied.</P>
         <Signature>{"starfish.inventory.windowId() -> number"}</Signature>
         <P>0 when no window is open.</P>
         <Signature>{"starfish.inventory.isWindowOpen() -> boolean"}</Signature>

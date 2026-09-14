@@ -59,7 +59,7 @@ export default function OverlayPage() {
 
       <Section title="Hit regions">
         <Signature>{"starfish.overlay.hitRect(opts) -> nil"}</Signature>
-        <P>Registers a mouse-hit rectangle, feeding <Mono>onHit</Mono>. <Mono>opts</Mono>: <Mono>id</Mono>, <Mono>anchor?, x?, y?, w, h</Mono>, <Mono>cursor?</Mono> (<Mono>hand | text | ...</Mono>), <Mono>scrollable?</Mono> (default false).</P>
+        <P>Registers a mouse-hit rectangle, feeding <Mono>onHit</Mono>. <Mono>opts</Mono>: <Mono>id</Mono>, <Mono>anchor?, x?, y?, w, h</Mono>, <Mono>cursor?</Mono> (<Mono>hand | text</Mono>, default arrow), <Mono>scrollable?</Mono> (default false).</P>
       </Section>
 
       <Section title="Anchor">

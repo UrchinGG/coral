@@ -10,7 +10,7 @@ export default function DisplayPage() {
   return (
     <div>
       <h1 className="text-3xl font-bold tracking-tight mb-2">Display</h1>
-      <p className="text-sm text-white/40 mb-10">Tab-list name prefixes, suffixes, and header text. Every function scopes to the calling plugin's own contribution — multiple plugins can modify the same player without overwriting each other.</p>
+      <p className="text-sm text-white/40 mb-10">Tab-list name prefixes, suffixes, and header text. Every function scopes to the calling plugin's own contribution, so multiple plugins can modify the same player without overwriting each other.</p>
 
       <Section title="Prefix / suffix">
         <Signature>{"starfish.display.setPrefix(uuid, value, opts?) -> nil"}</Signature>

@@ -10,7 +10,7 @@ export default function EntitiesPage() {
   return (
     <div>
       <h1 className="text-3xl font-bold tracking-tight mb-2">Entities</h1>
-      <p className="text-sm text-white/40 mb-10">Read tracked entity state. Positions can be passed as <Mono>{"{x, y, z}"}</Mono>, an entity, or the local player — anywhere a function below takes a position.</p>
+      <p className="text-sm text-white/40 mb-10">Read tracked entity state. Anywhere a function below takes a position, pass <Mono>{"{x, y, z}"}</Mono>, an entity, or the local player.</p>
 
       <Section title="Lookup">
         <Signature>{"starfish.entities.all() -> Entity[]"}</Signature>

@@ -21,7 +21,7 @@ export default function CommandsPage() {
           ["description", "string?", "Shown in help output"],
           ["arguments", "table?", "Array of argument specs (below)"],
         ]} />
-        <P>Each argument spec: <Mono>name</Mono>, <Mono>type</Mono> (<Mono>string | int | number | bool | player | choice | greedy</Mono>, default <Mono>string</Mono>), <Mono>description?</Mono>, <Mono>optional?</Mono>, <Mono>choices?</Mono> (for <Mono>choice</Mono> type). Arguments are type/arity-checked before the handler runs.</P>
+        <P>Each argument spec: <Mono>name</Mono>, <Mono>type</Mono> (<Mono>string | int | number | bool | player | choice | greedy</Mono>, default <Mono>string</Mono>), <Mono>description?</Mono>, <Mono>optional?</Mono>, <Mono>choices?</Mono> (required for <Mono>choice</Mono>). <Mono>player</Mono> matches an online player's name case-insensitively and binds to their exact name; <Mono>greedy</Mono> consumes the rest of the input as one string. Arguments are type/arity-checked before the handler runs.</P>
         <Signature>{"starfish.commands.unregister(name) -> boolean"}</Signature>
         <P>Removes a previously registered command for the calling plugin.</P>
         <Signature>{"starfish.commands.exists(name) -> boolean"}</Signature>
@@ -38,7 +38,7 @@ export default function CommandsPage() {
 
       <Section title="starfish.ui">
         <Signature>{"starfish.ui.lines(lines) -> UiReply"}</Signature>
-        <P>Builds a multi-line reply from an array of strings or components — each entry is one chat line.</P>
+        <P>Builds a multi-line reply from an array of strings or components; each entry is one chat line.</P>
         <Signature>{"starfish.ui.page(opts) -> UiReply"}</Signature>
         <PropTable rows={[
           ["title", "string?", "Header line"],
@@ -47,7 +47,7 @@ export default function CommandsPage() {
           ["page", "number?", "Default 1"],
           ["command", "string?", "Not yet used for clickable pagination"],
         ]} />
-        <P>Renders as title + current page's entries + a <Mono>Page N/Total</Mono> footer. <Mono>UiReply</Mono> is opaque — only valid as a command return value or <Mono>ctx:reply(...)</Mono> argument.</P>
+        <P>Renders as title + current page's entries + a <Mono>Page N/Total</Mono> footer. <Mono>UiReply</Mono> is opaque, valid only as a command return value or <Mono>ctx:reply(...)</Mono> argument.</P>
       </Section>
     </div>
   );
