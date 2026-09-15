@@ -290,7 +290,7 @@ async fn fetch_latest_release(config: &StarfishConfig) -> Result<GitHubRelease, 
 async fn fetch_releases(config: &StarfishConfig) -> Result<Vec<GitHubRelease>, ApiError> {
     let url = format!("{GITHUB_API_URL}/repos/{}/releases", config.github_repo);
 
-    reqwest::Client::new()
+    let response = reqwest::Client::new()
         .get(&url)
         .bearer_auth(&config.github_token)
         .header("Accept", "application/vnd.github+json")
@@ -298,7 +298,17 @@ async fn fetch_releases(config: &StarfishConfig) -> Result<Vec<GitHubRelease>, A
         .header("X-GitHub-Api-Version", "2022-11-28")
         .send()
         .await
-        .map_err(|e| ApiError::ExternalApi(format!("GitHub API error: {e}")))?
+        .map_err(|e| ApiError::ExternalApi(format!("GitHub API error: {e}")))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(ApiError::ExternalApi(format!(
+            "GitHub API returned {status}: {body}"
+        )));
+    }
+
+    response
         .json()
         .await
         .map_err(|e| ApiError::ExternalApi(format!("Failed to parse GitHub response: {e}")))
