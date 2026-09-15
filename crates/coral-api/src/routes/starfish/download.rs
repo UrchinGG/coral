@@ -74,7 +74,7 @@ pub struct ReleaseInfo {
 struct GitHubRelease {
     tag_name: String,
     name: Option<String>,
-    published_at: String,
+    published_at: Option<String>,
     body: Option<String>,
     draft: bool,
     prerelease: bool,
@@ -136,7 +136,7 @@ fn to_release_info(release: GitHubRelease) -> ReleaseInfo {
     ReleaseInfo {
         version: release.tag_name,
         name: release.name.unwrap_or_default(),
-        published_at: release.published_at,
+        published_at: release.published_at.unwrap_or_default(),
         release_notes: release.body,
         prerelease: release.prerelease,
         platforms,
