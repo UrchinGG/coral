@@ -18,7 +18,6 @@ pub struct PluginManifest {
     pub display_name: String,
     pub version: String,
     pub description: String,
-    pub author: String,
     #[serde(default)]
     pub homepage: Option<String>,
     #[serde(default)]
@@ -117,9 +116,6 @@ fn validate_manifest(m: &PluginManifest, expected_version: &str) -> Result<(), A
         return Err(ApiError::BadRequest(format!(
             "description must be 1-{MAX_DESCRIPTION_CHARS} chars"
         )));
-    }
-    if m.author.trim().is_empty() {
-        return Err(ApiError::BadRequest("author is required".into()));
     }
     Ok(())
 }
