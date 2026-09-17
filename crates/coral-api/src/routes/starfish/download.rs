@@ -308,8 +308,15 @@ async fn fetch_releases(config: &StarfishConfig) -> Result<Vec<GitHubRelease>, A
         )));
     }
 
-    response
+    let mut releases: Vec<GitHubRelease> = response
         .json()
         .await
-        .map_err(|e| ApiError::ExternalApi(format!("Failed to parse GitHub response: {e}")))
+        .map_err(|e| ApiError::ExternalApi(format!("Failed to parse GitHub response: {e}")))?;
+
+    releases.sort_by_key(|r| std::cmp::Reverse(release_version(r)));
+    Ok(releases)
+}
+
+fn release_version(release: &GitHubRelease) -> Option<semver::Version> {
+    semver::Version::parse(release.tag_name.trim_start_matches('v')).ok()
 }
