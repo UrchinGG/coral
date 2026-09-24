@@ -146,7 +146,7 @@ period_handler!(session_yearly, Yearly, "/v3/player/sessions/yearly");
 #[utoipa::path(
     get,
     path = "/v3/player/sessions/custom",
-    description = "Returns the change in a player's stats since a starting point that you specify: the latest snapshot diffed against the most recent snapshot at or before that point. Provide exactly one of `duration` (for example `48h`, `10d`, or `2w`), `from` (a Unix millisecond timestamp or RFC 3339 string), or `marker` (the name of a saved marker). The `from` and `marker` forms, and `duration` values outside 1h-24h, 1d-7d, or 1w and up, require account ownership or the `All Sessions` permission. The `delta` is a recursive diff: unchanged fields are omitted, a changed numeric stat is the bare difference (new minus old, e.g. `50` or `-3`), and a field that appeared, disappeared, or changed non-numerically is `{ \"old\": <previous or null>, \"new\": <current or null> }`, with `old` null for a stat absent from the baseline snapshot.",
+    description = "Returns the change in a player's stats since a starting point that you specify: the latest snapshot diffed against the most recent snapshot at or before that point. Provide exactly one of `duration` (for example `48h`, `10d`, or `2w`), `from` (a Unix millisecond timestamp or RFC 3339 string), or `marker` (the name of a saved marker). The `from` and `marker` forms require account ownership or the `All Sessions` permission, as do `duration` values outside 1-24 hours, 1-30 days, or 1 week and up. The `delta` is a recursive diff: unchanged fields are omitted, a changed numeric stat is the bare difference (new minus old, e.g. `50` or `-3`), and a field that appeared, disappeared, or changed non-numerically is `{ \"old\": <previous or null>, \"new\": <current or null> }`, with `old` null for a stat absent from the baseline snapshot.",
     params(CustomSessionQuery),
     responses(
         (status = 200, body = SessionDeltaResponse),
@@ -175,7 +175,7 @@ pub async fn session_custom(
             })?;
             if !owned && !is_unowned_duration_allowed(d) {
                 return Err(ApiError::Forbidden(
-                    "you do not own this account; 'duration' is limited to 1h-24h, 1d-7d, or 1w and up".into(),
+                    "you do not own this account; 'duration' is limited to 1-24 hours, 1-30 days, or 1 week and up".into(),
                 ));
             }
             now - duration
@@ -526,7 +526,7 @@ fn is_unowned_duration_allowed(s: &str) -> bool {
     };
     match unit {
         "h" => (1..=24).contains(&n),
-        "d" => (1..=7).contains(&n),
+        "d" => (1..=30).contains(&n),
         "w" => n >= 1,
         _ => false,
     }
@@ -578,11 +578,11 @@ mod tests {
     }
 
     #[test]
-    fn allows_days_up_to_a_week() {
+    fn allows_days_up_to_thirty() {
         assert!(is_unowned_duration_allowed("1d"));
-        assert!(is_unowned_duration_allowed("7d"));
-        assert!(!is_unowned_duration_allowed("8d"));
-        assert!(!is_unowned_duration_allowed("10d"));
+        assert!(is_unowned_duration_allowed("30d"));
+        assert!(!is_unowned_duration_allowed("31d"));
+        assert!(!is_unowned_duration_allowed("0d"));
     }
 
     #[test]
