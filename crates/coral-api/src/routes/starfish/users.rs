@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use database::StarfishRepository;
 
-use crate::{error::ApiError, state::AppState};
+use crate::{discord::DiscordProfile, error::ApiError, state::AppState};
 
 use super::is_owner;
 use super::session_auth::{AuthenticatedStarfishUser, require_starfish_session};
@@ -28,18 +28,22 @@ pub fn router(state: AppState) -> Router<AppState> {
 #[derive(Serialize)]
 struct MeResponse {
     discord_id: i64,
+    discord: Option<DiscordProfile>,
     github_username: Option<String>,
     is_owner: bool,
 }
 
 async fn get_me(
+    State(state): State<AppState>,
     Extension(caller): Extension<AuthenticatedStarfishUser>,
-) -> Result<Json<MeResponse>, ApiError> {
-    Ok(Json(MeResponse {
-        discord_id: caller.user.discord_id,
+) -> Json<MeResponse> {
+    let discord_id = caller.user.discord_id;
+    Json(MeResponse {
+        discord_id,
+        discord: state.discord.resolve_profile(discord_id as u64).await,
         github_username: caller.user.github_username.clone(),
-        is_owner: is_owner(caller.user.discord_id),
-    }))
+        is_owner: is_owner(discord_id),
+    })
 }
 
 #[derive(Deserialize)]

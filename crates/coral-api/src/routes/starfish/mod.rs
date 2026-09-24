@@ -78,7 +78,7 @@ pub fn router(state: AppState) -> Router<AppState> {
     }
 
     Router::new()
-        .merge(auth::router())
+        .merge(auth::router(state.clone()))
         .merge(license::router())
         .merge(download::router())
         .merge(users::router(state.clone()))

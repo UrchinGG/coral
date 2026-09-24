@@ -1,4 +1,4 @@
-use axum::{Json, Router, extract::State, routing::post};
+use axum::{Extension, Json, Router, extract::State, http::StatusCode, middleware, routing::post};
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +14,7 @@ use crate::{
     state::{AppState, StarfishConfig},
 };
 
+use super::session_auth::{AuthenticatedStarfishUser, require_starfish_session};
 use super::{rate_limit, require_starfish};
 const DISCORD_DEVICE_AUTH_URL: &str = "https://discord.com/api/v10/oauth2/device/authorize";
 const DISCORD_TOKEN_URL: &str = "https://discord.com/api/v10/oauth2/token";
@@ -26,13 +27,23 @@ const HWID_FUZZY_MATCH_THRESHOLD: usize = 3;
 const HWID_MAX_CHANGES_PER_WINDOW: i64 = 2;
 const HWID_CHANGE_WINDOW_DAYS: i32 = 30;
 
-pub fn router() -> Router<AppState> {
+pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/auth/device", post(request_device_code))
         .route("/auth/poll", post(poll_for_token))
         .route("/auth/oauth-url", post(get_oauth_url))
         .route("/auth/oauth-callback", post(oauth_callback))
         .route("/auth/refresh", post(refresh_session))
+        .merge(session_router(state))
+}
+
+fn session_router(state: AppState) -> Router<AppState> {
+    Router::new()
+        .route("/auth/logout", post(logout))
+        .route_layer(middleware::from_fn_with_state(
+            state,
+            require_starfish_session,
+        ))
 }
 
 pub fn validate_hwid(hwid: &str) -> Result<(), ApiError> {
@@ -534,6 +545,16 @@ async fn refresh_session(
     .await?;
 
     Ok(Json(PollResponse::Complete { unlock_key }))
+}
+
+async fn logout(
+    State(state): State<AppState>,
+    Extension(caller): Extension<AuthenticatedStarfishUser>,
+) -> Result<StatusCode, ApiError> {
+    let repo = StarfishRepository::new(state.db.pool());
+    repo.delete_user_sessions(caller.user.id).await?;
+    repo.delete_user_refresh_tokens(caller.user.id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn handle_hwid_registration(
