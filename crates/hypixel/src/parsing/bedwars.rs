@@ -267,13 +267,17 @@ pub fn combined_mode_name(modes: &[Mode]) -> String {
 
 pub fn extract(username: &str, player: &Value, guild: Option<GuildInfo>) -> Option<Stats> {
     let bw = player.get("stats")?.get("Bedwars")?;
-    let experience = bw.get("Experience").and_then(|v| v.as_u64()).unwrap_or(0);
+    let experience_stat = bw.get("Experience").and_then(|v| v.as_u64());
+    let experience = experience_stat.unwrap_or(0);
 
-    let level = player
+    let achievement_level = player
         .get("achievements")
         .and_then(|a| a.get("bedwars_level"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or_else(|| calculate_level(experience)) as u32;
+        .and_then(|v| v.as_u64());
+    let level = experience_stat
+        .map(calculate_level)
+        .or(achievement_level)
+        .unwrap_or(0) as u32;
 
     let display_name = player
         .get("displayname")
@@ -478,17 +482,13 @@ pub fn experience_for_level(level: u64) -> u64 {
 
 pub fn level_progress(experience: u64) -> f64 {
     let exp = experience % 487000;
-    let raw = match exp {
-        0..500 => exp as f64 / 500.0 / 100.0,
-        500..1500 => (1.0 + (exp - 500) as f64 / 1000.0) / 100.0,
-        1500..3500 => (2.0 + (exp - 1500) as f64 / 2000.0) / 100.0,
-        3500..7000 => (3.0 + (exp - 3500) as f64 / 3500.0) / 100.0,
-        _ => {
-            let remaining = exp - 7000;
-            ((4 + remaining / 5000) as f64 + (remaining % 5000) as f64 / 5000.0) / 100.0
-        }
-    };
-    raw.fract()
+    match exp {
+        0..500 => exp as f64 / 500.0,
+        500..1500 => (exp - 500) as f64 / 1000.0,
+        1500..3500 => (exp - 1500) as f64 / 2000.0,
+        3500..7000 => (exp - 3500) as f64 / 3500.0,
+        _ => ((exp - 7000) % 5000) as f64 / 5000.0,
+    }
 }
 
 static NICKNAME_BRACKETS: &[(&str, (&str, &str))] = &[
