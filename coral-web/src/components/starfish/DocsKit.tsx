@@ -15,6 +15,10 @@ export function Mono({ children }: { children: React.ReactNode }) {
   return <code className="text-[13px] text-white/70 bg-white/[0.06] px-1.5 py-0.5 rounded">{children}</code>;
 }
 
+export function Prose({ text }: { text: string }) {
+  return <>{text.split("`").map((part, index) => (index % 2 ? <Mono key={index}>{part}</Mono> : part))}</>;
+}
+
 export function Signature({ children }: { children: string }) {
   return (
     <div className="mb-3 px-3 py-2 rounded-md bg-white/[0.04] border border-white/[0.08] font-mono text-sm text-white/60">
@@ -31,15 +35,17 @@ export function Code({ children }: { children: string }) {
   );
 }
 
-export function PropTable({ rows }: { rows: [string, string, string][] }) {
+const PROP_COLUMNS: [string, string, string] = ["Field", "Type", "Description"];
+
+export function PropTable({ rows, columns = PROP_COLUMNS }: { rows: [string, string, string][]; columns?: [string, string, string] }) {
   return (
     <div className="mb-4 rounded-md border border-white/[0.08] overflow-hidden">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-white/[0.08] bg-white/[0.02]">
-            <th className="text-left px-3 py-2 text-white/40 font-medium text-xs">Field</th>
-            <th className="text-left px-3 py-2 text-white/40 font-medium text-xs">Type</th>
-            <th className="text-left px-3 py-2 text-white/40 font-medium text-xs">Description</th>
+            {columns.map((column) => (
+              <th key={column} className="text-left px-3 py-2 text-white/40 font-medium text-xs">{column}</th>
+            ))}
           </tr>
         </thead>
         <tbody>
