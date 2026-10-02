@@ -2,6 +2,7 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Extension, Json, Router};
+use chrono::{DateTime, Duration, Utc};
 use serde::Deserialize;
 use utoipa::ToSchema;
 
@@ -14,10 +15,13 @@ use crate::{
     error::ApiError,
     responses::TagResponse,
     routes::player::{pick_identifier, resolve_identifier},
+    routes::session::{parse_duration, parse_timestamp},
     state::AppState,
 };
 
 const MAX_REASON_LENGTH: usize = 500;
+const DEFAULT_EXPIRY_DAYS: i64 = 14;
+const MAX_EXPIRY_DAYS: i64 = 365;
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct TargetQuery {
@@ -36,6 +40,11 @@ pub(crate) struct AddTagBody {
     /// Log the tag only in the staff channel, skipping the public blacklist channel. Requires the Helper rank.
     #[serde(default)]
     pub silent: bool,
+    /// When a `replays_needed` tag expires: a relative duration (`48h`, `10d`, `2w`), an absolute
+    /// Unix millisecond timestamp or RFC 3339 string, or `permanent`. Defaults to 14 days and may
+    /// be at most 365 days away. Only accepted for `replays_needed` tags.
+    #[serde(default)]
+    pub duration: Option<String>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -93,6 +102,46 @@ fn validate_reason(reason: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+fn resolve_expiry(
+    tag_type: &str,
+    duration: Option<&str>,
+    now: DateTime<Utc>,
+) -> Result<Option<DateTime<Utc>>, ApiError> {
+    if tag_type != "replays_needed" {
+        return match duration {
+            Some(_) => Err(ApiError::BadRequest(
+                "'duration' is only supported for replays_needed tags".into(),
+            )),
+            None => Ok(None),
+        };
+    }
+
+    let expires_at = match duration.map(str::trim) {
+        None => now + Duration::days(DEFAULT_EXPIRY_DAYS),
+        Some("permanent") => return Ok(None),
+        Some(d) => match parse_duration(d) {
+            Some(duration) => now + duration,
+            None => parse_timestamp(d).map_err(|_| {
+                ApiError::BadRequest(
+                    "'duration' must be like 48h, 10d, or 2w, a Unix millisecond timestamp, an RFC 3339 string, or 'permanent'".into(),
+                )
+            })?,
+        },
+    };
+
+    if expires_at <= now {
+        return Err(ApiError::BadRequest(
+            "'duration' must be in the future".into(),
+        ));
+    }
+    if expires_at > now + Duration::days(MAX_EXPIRY_DAYS) {
+        return Err(ApiError::BadRequest(format!(
+            "'duration' cannot be more than {MAX_EXPIRY_DAYS} days away"
+        )));
+    }
+    Ok(Some(expires_at))
+}
+
 fn check_silent(silent: bool, member: &database::Member) -> Result<(), ApiError> {
     if silent
         && database::AccessRank::from_level(member.access_level) < database::AccessRank::Helper
@@ -142,7 +191,7 @@ async fn enforce_tag_limit(state: &AppState, member: &database::Member) -> Resul
 
 #[utoipa::path(
     post, path = "/v3/tags",
-    description = "Adds a blacklist tag to a player. The tag types you may apply depend on your rank, which also determines whether `hide_username` is honored. Setting `silent` logs the tag only in the staff channel instead of the public blacklist channel, and requires the Helper rank.",
+    description = "Adds a blacklist tag to a player. The tag types you may apply depend on your rank, which also determines whether `hide_username` is honored. Setting `silent` logs the tag only in the staff channel instead of the public blacklist channel, and requires the Helper rank. For `replays_needed` tags, `duration` sets when the tag expires: a relative duration (for example `48h`, `10d`, or `2w`), an absolute expiry as a Unix millisecond timestamp or RFC 3339 string, or `permanent`. It defaults to 14 days, must be in the future, and may be at most 365 days away. Sending `duration` with any other tag type is rejected.",
     params(("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID")),
     request_body = AddTagBody,
     responses(
@@ -167,6 +216,7 @@ pub async fn add_tag(
     check_silent(body.silent, &member.0)?;
     enforce_tag_limit(&state, &member.0).await?;
     validate_reason(&body.reason)?;
+    let expires_at = resolve_expiry(&body.tag_type, body.duration.as_deref(), Utc::now())?;
 
     let uuid = resolve_target(&state, &query).await?;
     let ops = TagOp::new(state.db.pool());
@@ -180,7 +230,7 @@ pub async fn add_tag(
             database::standing::effective_level(&member.0),
             body.hide_username,
             None,
-            None,
+            expires_at,
         )
         .await
         .map_err(map_op_error)?;
@@ -394,4 +444,64 @@ pub async fn unlock_player(
         .await;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn now() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn replays_needed_defaults_to_fourteen_days() {
+        let exp = resolve_expiry("replays_needed", None, now()).unwrap();
+        assert_eq!(exp, Some(now() + Duration::days(14)));
+    }
+
+    #[test]
+    fn accepts_relative_durations() {
+        let exp = resolve_expiry("replays_needed", Some("48h"), now()).unwrap();
+        assert_eq!(exp, Some(now() + Duration::hours(48)));
+        let exp = resolve_expiry("replays_needed", Some("2w"), now()).unwrap();
+        assert_eq!(exp, Some(now() + Duration::weeks(2)));
+    }
+
+    #[test]
+    fn accepts_absolute_timestamps() {
+        let target = now() + Duration::days(3);
+        let millis = target.timestamp_millis().to_string();
+        assert_eq!(
+            resolve_expiry("replays_needed", Some(&millis), now()).unwrap(),
+            Some(target)
+        );
+        assert_eq!(
+            resolve_expiry("replays_needed", Some("2026-01-04T00:00:00Z"), now()).unwrap(),
+            Some(target)
+        );
+    }
+
+    #[test]
+    fn permanent_has_no_expiry() {
+        assert_eq!(
+            resolve_expiry("replays_needed", Some("permanent"), now()).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_past_far_future_and_garbage() {
+        assert!(resolve_expiry("replays_needed", Some("2025-12-31T00:00:00Z"), now()).is_err());
+        assert!(resolve_expiry("replays_needed", Some("366d"), now()).is_err());
+        assert!(resolve_expiry("replays_needed", Some("soon"), now()).is_err());
+    }
+
+    #[test]
+    fn rejects_duration_on_other_tags() {
+        assert!(resolve_expiry("sniper", Some("10d"), now()).is_err());
+        assert_eq!(resolve_expiry("sniper", None, now()).unwrap(), None);
+    }
 }
