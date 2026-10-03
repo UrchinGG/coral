@@ -217,6 +217,11 @@ pub fn register() -> CreateCommand<'static> {
                 CommandOptionType::Boolean,
                 "hide",
                 "Hide your username (Staff only)",
+            ))
+            .add_sub_option(CreateCommandOption::new(
+                CommandOptionType::Boolean,
+                "review",
+                "Open a review instead of tagging directly, regardless of permissions",
             )),
         )
         .add_option(
@@ -609,6 +614,7 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     let tag_type = get_string(&options, "type");
     let reason = get_string(&options, "reason");
     let hide = get_bool(&options, "hide");
+    let always_review = get_bool(&options, "review");
 
     if tag_type == "confirmed_cheater" {
         return send_deferred_error(
@@ -646,7 +652,7 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         Err(_) => return send_deferred_error(ctx, command, "Error", "Player not found").await,
     };
 
-    if needs_review {
+    if needs_review || always_review {
         let current = match conflicting_tag(data, &player_info.uuid, tag_type).await {
             Some(tag) => Some(super::reviews::CurrentTag {
                 tag_type: tag.tag_type.clone().unwrap_or_default(),
