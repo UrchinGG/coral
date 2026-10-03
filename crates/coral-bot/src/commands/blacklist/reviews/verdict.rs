@@ -621,6 +621,7 @@ pub async fn handle_reject(
     );
     state.players[player_index].accept_votes = new_accepts;
     state.players[player_index].reject_votes = new_rejects;
+    state.ever_denied = true;
     let unanimous = state.players[player_index].accept_votes.is_empty()
         && state.players[player_index].reject_votes.len() >= super::REJECT_THRESHOLD;
 
@@ -658,7 +659,6 @@ pub async fn handle_reject(
     let losing_votes = state.players[player_index].accept_votes.clone();
 
     state.players[player_index].status = PlayerStatus::Rejected;
-    state.ever_denied = true;
     state.players[player_index].accept_votes.clear();
     state.players[player_index].reject_votes.clear();
 
