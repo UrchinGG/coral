@@ -216,7 +216,7 @@ pub fn register() -> CreateCommand<'static> {
             .add_sub_option(CreateCommandOption::new(
                 CommandOptionType::Boolean,
                 "hide",
-                "Hide your username",
+                "Hide your username (Staff only)",
             )),
         )
         .add_option(
