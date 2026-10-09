@@ -582,6 +582,16 @@ pub fn build_verdict_message(
                 PlayerStatus::Pending => "pending",
             };
             content.push_str(&format!("\n- {p_emote} `{}` — **{v}**", p.username));
+
+            if !p.reviewer_names.is_empty() {
+                let names = p
+                    .reviewer_names
+                    .iter()
+                    .map(|n| format!("`@{n}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                content.push_str(&format!("\n  -# **Reviewer(s)**: {names}"));
+            }
         }
     }
 
