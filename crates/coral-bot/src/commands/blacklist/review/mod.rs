@@ -22,8 +22,6 @@ pub mod vote;
 
 pub const ID_PREFIX: &str = "rv:";
 pub const REVIEW_TAGS: &[&str] = &["closet_cheater", "blatant_cheater"];
-pub const ACCEPT_THRESHOLD: i64 = 8;
-pub const REJECT_THRESHOLD: i64 = 3;
 pub const MAX_MEDIA: i64 = 9;
 pub const MAX_FILES_PER_UPLOAD: u8 = 4;
 pub const NOTE_MAX_CHARS: u16 = 75;

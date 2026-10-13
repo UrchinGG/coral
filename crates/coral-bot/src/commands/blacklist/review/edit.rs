@@ -143,6 +143,7 @@ async fn publish_session(ctx: &Context, data: &Data, loaded: &Loaded) -> Result<
             votes: &kept_votes,
             paused: false,
             edited_at: Some(chrono::Utc::now()),
+            rules: crate::utils::standing::rules(data).await?,
         },
         &urls,
     );

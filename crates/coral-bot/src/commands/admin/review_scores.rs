@@ -183,7 +183,8 @@ pub async fn build_view(data: &Data, target_id: u64) -> Vec<CreateComponent<'sta
         return vec![CreateComponent::Container(CreateContainer::new(parts))];
     };
 
-    let standing = database::standing::explain(&m);
+    let rules = crate::utils::standing::display_rules(data).await;
+    let standing = database::standing::explain(&m, &rules);
     parts.push(separator());
     parts.push(text(format!(
         "**{}** accepted tag reviews · **{}** rejected\n\

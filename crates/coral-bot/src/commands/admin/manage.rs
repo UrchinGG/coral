@@ -299,7 +299,8 @@ pub(crate) async fn build_main_view(
             .count_events_by_author(m.discord_id)
             .await
             .unwrap_or(0);
-        parts.push(standing_view::standing_section(m, target_rank));
+        let rules = crate::utils::standing::display_rules(data).await;
+        parts.push(standing_view::standing_section(m, target_rank, &rules));
         parts.push(standing_view::record_section(m, total_tags));
 
         if invoker_rank >= AccessRank::Admin {

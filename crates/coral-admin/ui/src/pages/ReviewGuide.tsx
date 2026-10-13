@@ -6,6 +6,7 @@ import { ConfirmButton } from "../components/ConfirmButton";
 import { Panel } from "../components/Panel";
 import { PickerSelect, type PickerItem } from "../components/PickerSelect";
 import { fmtDate, fmtNum } from "../format";
+import { ReviewRulesPanel } from "./ReviewRules";
 
 export function ReviewGuide() {
   const guide = useReviewGuide();
@@ -62,6 +63,7 @@ function ReviewGuideLoaded({ data }: { data: ReviewGuideResponse }) {
       <div className="flex flex-col gap-5">
         <PublishPanel data={data} dirty={dirty} />
         <PingRolesPanel data={data} />
+        <ReviewRulesPanel />
       </div>
     </div>
   );

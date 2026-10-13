@@ -17,6 +17,7 @@ mod periods;
 mod plugin_registry;
 mod pool;
 mod review_guide;
+mod review_rules;
 mod reviews;
 mod sessions;
 pub mod standing;
@@ -53,6 +54,7 @@ pub use plugin_registry::{
 };
 pub use pool::Database;
 pub use review_guide::{ReviewGuideConfig, ReviewGuideRepository};
+pub use review_rules::{ReviewRules, ReviewRulesRepository};
 pub use reviews::{
     CastOutcome, ContributedMedia, Evidence, EvidenceKind, PublishedAttachment, Review,
     ReviewError, ReviewRepository, ReviewStatus, Revision, StagedMedia, Tally, Vote, VoteKind,

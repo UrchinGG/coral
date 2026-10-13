@@ -262,6 +262,7 @@ async fn attach_to_post(
             edited_at: (repo.revision_count(review_id).await? > 1)
                 .then_some(loaded.revision.published_at)
                 .flatten(),
+            rules: crate::utils::standing::rules(data).await?,
         },
         &urls,
     );

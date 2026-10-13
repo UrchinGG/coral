@@ -289,6 +289,16 @@ impl<'a> MemberRepository<'a> {
         Ok(count)
     }
 
+    pub async fn with_review_standing(&self) -> Result<Vec<i64>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT discord_id FROM members
+             WHERE accepted_tags > 0 OR accurate_verdicts > 0 OR bonus_verdicts > 0
+                OR vote_granted OR tag_granted",
+        )
+        .fetch_all(self.pool)
+        .await
+    }
+
     pub async fn count_trusted(&self) -> Result<i64, sqlx::Error> {
         let (count,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM members WHERE tag_granted = TRUE")

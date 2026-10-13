@@ -16,6 +16,7 @@ mod plugins;
 mod requests;
 mod resolve;
 mod review_guide;
+mod review_rules;
 mod server;
 mod starfish;
 
@@ -33,6 +34,7 @@ pub fn api_router() -> Router<AppState> {
         .nest("/overview", overview::router())
         .nest("/server", server::router())
         .nest("/review-guide", review_guide::router())
+        .nest("/review-rules", review_rules::router())
 }
 
 #[derive(RustEmbed)]

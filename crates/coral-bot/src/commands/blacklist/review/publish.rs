@@ -249,6 +249,7 @@ async fn create_post(ctx: &Context, data: &Data, loaded: &Loaded) -> Result<Thre
             votes: &[],
             paused: false,
             edited_at: None,
+            rules: crate::utils::standing::rules(data).await?,
         },
         &MediaUrls::attached(),
     );
@@ -354,6 +355,7 @@ pub async fn try_rerender_post(ctx: &Context, data: &Data, review_id: i64) -> Re
             votes: &votes,
             paused,
             edited_at,
+            rules: crate::utils::standing::rules(data).await?,
         },
         &urls,
     );

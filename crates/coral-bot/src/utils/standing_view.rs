@@ -1,11 +1,8 @@
 use serenity::all::*;
 
 use database::{
-    Member, Strike,
-    standing::{
-        EARN_RATIO, REVOKE_STRIKES, TAG_GRANT_CORRECT, VOTE_GRANT_APPROVALS, correct_votes,
-        evaluate, strike_count, tag_target, vote_target,
-    },
+    Member, ReviewRules, Strike,
+    standing::{correct_votes, evaluate, strike_count, tag_target, vote_target},
 };
 
 use crate::framework::AccessRank;
@@ -24,14 +21,14 @@ pub enum Tier {
 }
 
 impl Tier {
-    pub fn of(member: &Member, rank: AccessRank) -> Self {
+    pub fn of(member: &Member, rank: AccessRank, rules: &ReviewRules) -> Self {
         if rank >= AccessRank::Helper {
             return Tier::Staff;
         }
-        if strike_count(member) >= REVOKE_STRIKES {
+        if rules.suspends(strike_count(member)) {
             return Tier::Suspended;
         }
-        let standing = evaluate(member);
+        let standing = evaluate(member, rules);
         if standing.can_tag {
             Tier::Trusted
         } else if standing.can_vote {
@@ -52,14 +49,18 @@ impl Tier {
     }
 }
 
-pub fn standing_section(member: &Member, rank: AccessRank) -> CreateContainerComponent<'static> {
-    let tier = Tier::of(member, rank);
+pub fn standing_section(
+    member: &Member,
+    rank: AccessRank,
+    rules: &ReviewRules,
+) -> CreateContainerComponent<'static> {
+    let tier = Tier::of(member, rank, rules);
     let mut lines = vec![format!("### Standing: {}", tier.label())];
-    lines.extend(capability_lines(member, tier));
+    lines.extend(capability_lines(member, rules, tier));
     if member.tagging_disabled {
         lines.push("-# `/tag add` is disabled for your account.".to_string());
     }
-    lines.extend(next_lines(member, tier));
+    lines.extend(next_lines(member, rules, tier));
     text(lines.join("\n"))
 }
 
@@ -69,6 +70,17 @@ pub fn record_section(member: &Member, tags_added: i64) -> CreateContainerCompon
         1 => " (1 on a review staff resolved)".to_string(),
         n => format!(" ({n} on reviews staff resolved)"),
     };
+    record(member, tags_added, &resolved)
+}
+
+pub fn public_record_section(
+    member: &Member,
+    tags_added: i64,
+) -> CreateContainerComponent<'static> {
+    record(member, tags_added, "")
+}
+
+fn record(member: &Member, tags_added: i64, resolved: &str) -> CreateContainerComponent<'static> {
     text(format!(
         "-# Tags added: {tags_added}\n\
          -# Submissions: {} accepted, {} rejected\n\
@@ -80,7 +92,10 @@ pub fn record_section(member: &Member, tags_added: i64) -> CreateContainerCompon
     ))
 }
 
-pub fn active_strikes_section(strikes: &[Strike]) -> Option<CreateContainerComponent<'static>> {
+pub fn active_strikes_section(
+    strikes: &[Strike],
+    rules: &ReviewRules,
+) -> Option<CreateContainerComponent<'static>> {
     let active: Vec<&Strike> = strikes.iter().filter(|s| s.is_active()).collect();
     if active.is_empty() {
         return None;
@@ -95,9 +110,10 @@ pub fn active_strikes_section(strikes: &[Strike]) -> Option<CreateContainerCompo
     }
     lines.push(format!(
         "-# While a strike is active on your account, you cannot earn tagging or voting \
-         permissions. After two active strikes, any existing permissions you have are \
+         permissions. After {} active strikes, any existing permissions you have are \
          suspended. If you believe a strike should be removed, please \
-         [open a ticket]({TICKET_URL})."
+         [open a ticket]({TICKET_URL}).",
+        rules.revoke_strikes
     ));
     Some(text(lines.join("\n")))
 }
@@ -109,8 +125,8 @@ pub fn expiry_phrase(strike: &Strike) -> String {
     }
 }
 
-fn capability_lines(member: &Member, tier: Tier) -> Vec<String> {
-    let standing = evaluate(member);
+fn capability_lines(member: &Member, rules: &ReviewRules, tier: Tier) -> Vec<String> {
+    let standing = evaluate(member, rules);
     let staff = tier == Tier::Staff;
     let mut lines = Vec::new();
     if !matches!(tier, Tier::Trusted | Tier::Staff) {
@@ -138,21 +154,23 @@ fn capability(label: &str, allowed: bool) -> String {
     }
 }
 
-fn next_lines(member: &Member, tier: Tier) -> Vec<String> {
+fn next_lines(member: &Member, rules: &ReviewRules, tier: Tier) -> Vec<String> {
     match tier {
         Tier::Submitter => progress_lines(
             "Reviewer",
             member.accepted_tags,
-            vote_target(member),
-            VOTE_GRANT_APPROVALS,
+            vote_target(member, rules),
+            rules.vote_grant_approvals,
+            rules.earn_ratio,
             "accepted submissions",
             "accepted to rejected submissions",
         ),
         Tier::Reviewer => progress_lines(
             "Trusted",
-            correct_votes(member),
-            tag_target(member),
-            TAG_GRANT_CORRECT,
+            correct_votes(member, rules),
+            tag_target(member, rules),
+            rules.tag_grant_correct,
+            rules.earn_ratio,
             "correct votes",
             "correct to incorrect votes",
         ),
@@ -165,6 +183,7 @@ fn progress_lines(
     count: i64,
     target: i64,
     base: i64,
+    ratio: i64,
     unit: &str,
     ratio_of: &str,
 ) -> Vec<String> {
@@ -174,7 +193,7 @@ fn progress_lines(
     ];
     if target > base {
         lines.push(format!(
-            "-# You must maintain a {EARN_RATIO}:1 ratio of {ratio_of} to earn {next}."
+            "-# You must maintain a {ratio}:1 ratio of {ratio_of} to earn {next}."
         ));
     }
     lines
@@ -185,6 +204,8 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use serde_json::json;
+
+    const R: ReviewRules = ReviewRules::DEFAULT;
 
     fn member() -> Member {
         Member {
@@ -213,13 +234,13 @@ mod tests {
     #[test]
     fn submitter_progress_has_no_ratio_line_until_a_rejection() {
         let m = member();
-        let lines = next_lines(&m, Tier::Submitter);
+        let lines = next_lines(&m, &R, Tier::Submitter);
         assert_eq!(lines[1], "**3** of **5** accepted submissions");
         assert_eq!(lines.len(), 2);
 
         let mut m = member();
         m.rejected_tags = 1;
-        let lines = next_lines(&m, Tier::Submitter);
+        let lines = next_lines(&m, &R, Tier::Submitter);
         assert_eq!(lines[1], "**3** of **12** accepted submissions");
         assert!(lines[2].contains("12:1 ratio of accepted to rejected submissions"));
     }
@@ -229,9 +250,9 @@ mod tests {
         let mut m = member();
         m.tag_granted = true;
         m.vote_granted = true;
-        let tier = Tier::of(&m, AccessRank::Default);
+        let tier = Tier::of(&m, AccessRank::Default, &R);
         assert_eq!(tier, Tier::Trusted);
-        let lines = capability_lines(&m, tier);
+        let lines = capability_lines(&m, &R, tier);
         assert_eq!(lines.len(), 2);
         assert!(lines.iter().all(|l| l.ends_with("**Yes**")));
     }
@@ -241,14 +262,14 @@ mod tests {
         let mut m = member();
         m.active_strikes = 2;
         m.tag_granted = true;
-        assert_eq!(Tier::of(&m, AccessRank::Default), Tier::Suspended);
+        assert_eq!(Tier::of(&m, AccessRank::Default, &R), Tier::Suspended);
     }
 
     #[test]
     fn disabled_tagging_turns_both_tag_lines_off() {
         let mut m = member();
         m.tagging_disabled = true;
-        let lines = capability_lines(&m, Tier::Submitter);
+        let lines = capability_lines(&m, &R, Tier::Submitter);
         assert_eq!(lines[0], "-# Report players for review: No");
         assert_eq!(lines[2], "-# Tag players directly: No");
     }

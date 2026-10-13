@@ -642,7 +642,8 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         .await;
     }
 
-    let effective = database::standing::effective_level(&member);
+    let rules = crate::utils::standing::rules(data).await?;
+    let effective = database::standing::effective_level(&member, &rules);
     let reviewable = super::review::REVIEW_TAGS.contains(&tag_type);
     if always_review && !reviewable {
         return send_deferred_error(
@@ -888,9 +889,10 @@ pub async fn handle_overwrite_button(
     let uuid = &overwrite.uuid;
     let discord_id = component.user.id.get();
     let (rank, member) = get_rank_and_member(data, discord_id).await?;
-    let effective = member
-        .as_ref()
-        .map_or(rank.to_level(), database::standing::effective_level);
+    let rules = crate::utils::standing::rules(data).await?;
+    let effective = member.as_ref().map_or(rank.to_level(), |m| {
+        database::standing::effective_level(m, &rules)
+    });
 
     let player_name = resolve_username_or_fetch(uuid, data)
         .await

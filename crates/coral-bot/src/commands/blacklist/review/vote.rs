@@ -2,7 +2,8 @@ use anyhow::Result;
 use serenity::all::*;
 
 use database::{
-    CastOutcome, MemberRepository, Review, ReviewError, ReviewRepository, ReviewStatus, VoteKind,
+    CastOutcome, MemberRepository, Review, ReviewError, ReviewRepository, ReviewRules,
+    ReviewStatus, VoteKind,
 };
 
 use super::resolve::{self, Outcome};
@@ -146,13 +147,14 @@ async fn bounce(ctx: &Context, data: &Data, review: &Review, voter: u64) -> Resu
     let member = MemberRepository::new(data.db.pool())
         .get_by_discord_id(voter as i64)
         .await?;
+    let rules = crate::utils::standing::rules(data).await?;
     if member
         .as_ref()
-        .is_some_and(|m| database::standing::evaluate(m).can_vote)
+        .is_some_and(|m| database::standing::evaluate(m, &rules).can_vote)
     {
         return Ok(None);
     }
-    Ok(Some(vote_access_hint(member.as_ref()).to_string()))
+    Ok(Some(vote_access_hint(member.as_ref(), &rules).to_string()))
 }
 
 pub async fn paused(ctx: &Context, data: &Data, review_id: i64) -> Result<bool> {
@@ -168,9 +170,9 @@ pub async fn paused(ctx: &Context, data: &Data, review_id: i64) -> Result<bool> 
     Ok(true)
 }
 
-fn vote_access_hint(member: Option<&database::Member>) -> &'static str {
+fn vote_access_hint(member: Option<&database::Member>, rules: &ReviewRules) -> &'static str {
     let strikes = member.map_or(0, database::standing::strike_count);
-    if strikes >= database::standing::REVOKE_STRIKES {
+    if rules.suspends(strikes) {
         "Voting is suspended while you have active strikes."
     } else {
         "You can't vote on tag reviews yet. Earn voting permissions by submitting tag reviews \
@@ -265,7 +267,12 @@ async fn resolve_now(
 ) -> Result<()> {
     let voter = component.user.id.get();
     if !is_staff(data, voter).await? {
-        return respond(ctx, component, vec![text("Only staff can resolve a review.")]).await;
+        return respond(
+            ctx,
+            component,
+            vec![text("Only staff can resolve a review.")],
+        )
+        .await;
     }
     let outcome = if kind == VoteKind::Reject {
         Outcome::Reject
@@ -401,7 +408,8 @@ async fn after_vote(
     if !resolve::is_contested(before) && resolve::is_contested(tally) {
         ping_dispute(ctx, data, review).await;
     }
-    match resolve::community_outcome(tally) {
+    let rules = crate::utils::standing::rules(data).await?;
+    match resolve::community_outcome(tally, &rules) {
         Some(outcome) => {
             resolve::resolve(ctx, data, review.id, outcome, None).await?;
         }

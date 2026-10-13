@@ -1,10 +1,4 @@
-use crate::{AccessRank, Member, MemberRepository};
-
-pub const VOTE_GRANT_APPROVALS: i64 = 5;
-pub const TAG_GRANT_CORRECT: i64 = 25;
-pub const EARN_RATIO: i64 = 12;
-pub const BONUS_WEIGHT: i64 = 5;
-pub const REVOKE_STRIKES: usize = 2;
+use crate::{AccessRank, Member, MemberRepository, ReviewRules};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Standing {
@@ -28,43 +22,47 @@ pub fn strike_count(member: &Member) -> usize {
     member.active_strikes.max(0) as usize
 }
 
-pub fn effective_level(member: &Member) -> i16 {
+pub fn effective_level(member: &Member, rules: &ReviewRules) -> i16 {
     if member.access_level >= AccessRank::Helper.to_level() {
         return member.access_level;
     }
-    if strike_count(member) >= REVOKE_STRIKES {
+    if rules.suspends(strike_count(member)) {
         return -1;
     }
     if member.tag_granted { 1 } else { 0 }
 }
 
-pub fn evaluate(member: &Member) -> Standing {
-    evaluate_with(member, Grants::Held)
+pub fn evaluate(member: &Member, rules: &ReviewRules) -> Standing {
+    evaluate_with(member, rules, Grants::Held)
 }
 
-pub fn evaluate_fresh(member: &Member) -> Standing {
-    evaluate_with(member, Grants::Ignored)
+pub fn evaluate_fresh(member: &Member, rules: &ReviewRules) -> Standing {
+    evaluate_with(member, rules, Grants::Ignored)
 }
 
-fn evaluate_with(member: &Member, grants: Grants) -> Standing {
+fn evaluate_with(member: &Member, rules: &ReviewRules, grants: Grants) -> Standing {
     let strikes = strike_count(member);
     let held = grants == Grants::Held;
     Standing {
-        can_vote: eval_vote(member, strikes, held && member.vote_granted),
-        can_tag: eval_tag(member, strikes, held && member.tag_granted),
+        can_vote: eval_vote(member, rules, strikes, held && member.vote_granted),
+        can_tag: eval_tag(member, rules, strikes, held && member.tag_granted),
     }
 }
 
-pub fn correct_votes(member: &Member) -> i64 {
-    member.accurate_verdicts + BONUS_WEIGHT * member.bonus_verdicts
+pub fn correct_votes(member: &Member, rules: &ReviewRules) -> i64 {
+    member.accurate_verdicts + rules.bonus_weight * member.bonus_verdicts
 }
 
-pub fn vote_target(member: &Member) -> i64 {
-    VOTE_GRANT_APPROVALS.max(EARN_RATIO * member.rejected_tags)
+pub fn vote_target(member: &Member, rules: &ReviewRules) -> i64 {
+    rules
+        .vote_grant_approvals
+        .max(rules.earn_ratio * member.rejected_tags)
 }
 
-pub fn tag_target(member: &Member) -> i64 {
-    TAG_GRANT_CORRECT.max(EARN_RATIO * member.incorrect_verdicts)
+pub fn tag_target(member: &Member, rules: &ReviewRules) -> i64 {
+    rules
+        .tag_grant_correct
+        .max(rules.earn_ratio * member.incorrect_verdicts)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -75,10 +73,10 @@ pub struct StandingExplanation {
     pub tag_reason: String,
 }
 
-pub fn explain(member: &Member) -> StandingExplanation {
+pub fn explain(member: &Member, rules: &ReviewRules) -> StandingExplanation {
     let strikes = strike_count(member);
-    let (can_vote, vote_reason) = explain_vote(member, strikes);
-    let (can_tag, tag_reason) = explain_tag(member, strikes);
+    let (can_vote, vote_reason) = explain_vote(member, rules, strikes);
+    let (can_tag, tag_reason) = explain_tag(member, rules, strikes);
     StandingExplanation {
         can_vote,
         vote_reason,
@@ -87,10 +85,11 @@ pub fn explain(member: &Member) -> StandingExplanation {
     }
 }
 
-fn explain_vote(member: &Member, strikes: usize) -> (bool, String) {
+fn explain_vote(member: &Member, rules: &ReviewRules, strikes: usize) -> (bool, String) {
     let (approved, rejected) = (member.accepted_tags, member.rejected_tags);
-    let target = vote_target(member);
+    let target = vote_target(member, rules);
     explain_grant(
+        rules,
         strikes,
         member.vote_granted,
         approved >= target,
@@ -98,10 +97,11 @@ fn explain_vote(member: &Member, strikes: usize) -> (bool, String) {
     )
 }
 
-fn explain_tag(member: &Member, strikes: usize) -> (bool, String) {
-    let correct = correct_votes(member);
-    let target = tag_target(member);
+fn explain_tag(member: &Member, rules: &ReviewRules, strikes: usize) -> (bool, String) {
+    let correct = correct_votes(member, rules);
+    let target = tag_target(member, rules);
     explain_grant(
+        rules,
         strikes,
         member.tag_granted,
         correct >= target,
@@ -112,12 +112,19 @@ fn explain_tag(member: &Member, strikes: usize) -> (bool, String) {
     )
 }
 
-fn explain_grant(strikes: usize, held: bool, earned: bool, progress: String) -> (bool, String) {
-    if strikes >= REVOKE_STRIKES {
+fn explain_grant(
+    rules: &ReviewRules,
+    strikes: usize,
+    held: bool,
+    earned: bool,
+    progress: String,
+) -> (bool, String) {
+    if rules.suspends(strikes) {
         return (
             false,
             format!(
-                "suspended: {strikes} active strikes (\u{2265}{REVOKE_STRIKES} suspend standing)"
+                "suspended: {strikes} active strikes (\u{2265}{} suspend standing)",
+                rules.revoke_strikes
             ),
         );
     }
@@ -139,27 +146,30 @@ fn explain_grant(strikes: usize, held: bool, earned: bool, progress: String) -> 
 
 pub async fn refresh(
     repo: &MemberRepository<'_>,
+    rules: &ReviewRules,
     discord_id: i64,
 ) -> Result<StandingChange, sqlx::Error> {
-    refresh_with(repo, discord_id, Grants::Held).await
+    refresh_with(repo, rules, discord_id, Grants::Held).await
 }
 
 pub async fn refresh_fresh(
     repo: &MemberRepository<'_>,
+    rules: &ReviewRules,
     discord_id: i64,
 ) -> Result<StandingChange, sqlx::Error> {
-    refresh_with(repo, discord_id, Grants::Ignored).await
+    refresh_with(repo, rules, discord_id, Grants::Ignored).await
 }
 
 async fn refresh_with(
     repo: &MemberRepository<'_>,
+    rules: &ReviewRules,
     discord_id: i64,
     grants: Grants,
 ) -> Result<StandingChange, sqlx::Error> {
     let Some(member) = repo.get_by_discord_id(discord_id).await? else {
         return Ok(StandingChange::default());
     };
-    let standing = evaluate_with(&member, grants);
+    let standing = evaluate_with(&member, rules, grants);
     let mut change = StandingChange::default();
     if standing.can_vote != member.vote_granted {
         repo.set_vote_granted(discord_id, standing.can_vote).await?;
@@ -172,18 +182,18 @@ async fn refresh_with(
     Ok(change)
 }
 
-fn eval_vote(member: &Member, strikes: usize, held: bool) -> bool {
-    if strikes >= REVOKE_STRIKES {
+fn eval_vote(member: &Member, rules: &ReviewRules, strikes: usize, held: bool) -> bool {
+    if rules.suspends(strikes) {
         return false;
     }
-    held || (strikes == 0 && member.accepted_tags >= vote_target(member))
+    held || (strikes == 0 && member.accepted_tags >= vote_target(member, rules))
 }
 
-fn eval_tag(member: &Member, strikes: usize, held: bool) -> bool {
-    if strikes >= REVOKE_STRIKES {
+fn eval_tag(member: &Member, rules: &ReviewRules, strikes: usize, held: bool) -> bool {
+    if rules.suspends(strikes) {
         return false;
     }
-    held || (strikes == 0 && correct_votes(member) >= tag_target(member))
+    held || (strikes == 0 && correct_votes(member, rules) >= tag_target(member, rules))
 }
 
 #[cfg(test)]
@@ -191,6 +201,8 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use serde_json::json;
+
+    const R: ReviewRules = ReviewRules::DEFAULT;
 
     fn member(level: i16, strikes: i64) -> Member {
         Member {
@@ -220,11 +232,11 @@ mod tests {
     fn vote_grant_needs_five_clean() {
         let mut m = member(0, 0);
         m.accepted_tags = 4;
-        assert!(!evaluate(&m).can_vote);
+        assert!(!evaluate(&m, &R).can_vote);
         m.accepted_tags = 5;
-        assert!(evaluate(&m).can_vote);
+        assert!(evaluate(&m, &R).can_vote);
         m.rejected_tags = 1;
-        assert!(!evaluate(&m).can_vote);
+        assert!(!evaluate(&m, &R).can_vote);
     }
 
     #[test]
@@ -232,9 +244,9 @@ mod tests {
         let mut m = member(0, 0);
         m.accepted_tags = 11;
         m.rejected_tags = 1;
-        assert!(!evaluate(&m).can_vote);
+        assert!(!evaluate(&m, &R).can_vote);
         m.accepted_tags = 12;
-        assert!(evaluate(&m).can_vote);
+        assert!(evaluate(&m, &R).can_vote);
     }
 
     #[test]
@@ -245,7 +257,7 @@ mod tests {
         m.accepted_tags = 1;
         m.rejected_tags = 9;
         m.incorrect_verdicts = 9;
-        let s = evaluate(&m);
+        let s = evaluate(&m, &R);
         assert!(s.can_vote);
         assert!(s.can_tag);
     }
@@ -254,15 +266,15 @@ mod tests {
     fn tag_grant_needs_volume_and_ratio() {
         let mut m = member(0, 0);
         m.accurate_verdicts = 25;
-        assert!(evaluate(&m).can_tag);
+        assert!(evaluate(&m, &R).can_tag);
         m.accurate_verdicts = 24;
-        assert!(!evaluate(&m).can_tag);
+        assert!(!evaluate(&m, &R).can_tag);
         m.bonus_verdicts = 1;
-        assert!(evaluate(&m).can_tag);
+        assert!(evaluate(&m, &R).can_tag);
         m.incorrect_verdicts = 2;
-        assert!(evaluate(&m).can_tag);
+        assert!(evaluate(&m, &R).can_tag);
         m.incorrect_verdicts = 3;
-        assert!(!evaluate(&m).can_tag);
+        assert!(!evaluate(&m, &R).can_tag);
     }
 
     #[test]
@@ -270,12 +282,12 @@ mod tests {
         let mut m = member(0, 1);
         m.accepted_tags = 50;
         m.accurate_verdicts = 50;
-        let s = evaluate(&m);
+        let s = evaluate(&m, &R);
         assert!(!s.can_vote);
         assert!(!s.can_tag);
         m.vote_granted = true;
         m.tag_granted = true;
-        let s = evaluate(&m);
+        let s = evaluate(&m, &R);
         assert!(s.can_vote);
         assert!(s.can_tag);
     }
@@ -287,10 +299,10 @@ mod tests {
         m.accurate_verdicts = 50;
         m.vote_granted = true;
         m.tag_granted = true;
-        let s = evaluate(&m);
+        let s = evaluate(&m, &R);
         assert!(!s.can_vote);
         assert!(!s.can_tag);
-        assert_eq!(effective_level(&m), -1);
+        assert_eq!(effective_level(&m, &R), -1);
     }
 
     #[test]
@@ -300,12 +312,12 @@ mod tests {
         m.tag_granted = true;
         m.accepted_tags = 2;
         m.accurate_verdicts = 3;
-        let s = evaluate_fresh(&m);
+        let s = evaluate_fresh(&m, &R);
         assert!(!s.can_vote);
         assert!(!s.can_tag);
         m.accepted_tags = 5;
         m.accurate_verdicts = 25;
-        let s = evaluate_fresh(&m);
+        let s = evaluate_fresh(&m, &R);
         assert!(s.can_vote);
         assert!(s.can_tag);
     }
@@ -313,22 +325,22 @@ mod tests {
     #[test]
     fn effective_level_reflects_standing_not_rank() {
         let mut m = member(0, 0);
-        assert_eq!(effective_level(&m), 0);
+        assert_eq!(effective_level(&m, &R), 0);
         m.tag_granted = true;
-        assert_eq!(effective_level(&m), 1);
+        assert_eq!(effective_level(&m, &R), 1);
         m.access_level = 3;
-        assert_eq!(effective_level(&m), 3);
+        assert_eq!(effective_level(&m, &R), 3);
     }
 
     #[test]
     fn targets_fold_the_ratio_into_one_number() {
         let mut m = member(0, 0);
-        assert_eq!(vote_target(&m), 5);
-        assert_eq!(tag_target(&m), 25);
+        assert_eq!(vote_target(&m, &R), 5);
+        assert_eq!(tag_target(&m, &R), 25);
         m.rejected_tags = 1;
         m.incorrect_verdicts = 3;
-        assert_eq!(vote_target(&m), 12);
-        assert_eq!(tag_target(&m), 36);
+        assert_eq!(vote_target(&m, &R), 12);
+        assert_eq!(tag_target(&m, &R), 36);
     }
 
     type Setup = Box<dyn Fn(&mut Member)>;
@@ -353,8 +365,8 @@ mod tests {
         for (strikes, setup) in scenarios {
             let mut m = member(0, strikes);
             setup(&mut m);
-            let evaluated = evaluate(&m);
-            let explanation = explain(&m);
+            let evaluated = evaluate(&m, &R);
+            let explanation = explain(&m, &R);
             assert_eq!(evaluated.can_vote, explanation.can_vote);
             assert_eq!(evaluated.can_tag, explanation.can_tag);
         }
@@ -362,7 +374,7 @@ mod tests {
 
     #[test]
     fn explain_suspended_mentions_strike_count() {
-        let explanation = explain(&member(0, 2));
+        let explanation = explain(&member(0, 2), &R);
         assert!(explanation.vote_reason.contains("2 active strikes"));
         assert!(explanation.tag_reason.contains("2 active strikes"));
     }

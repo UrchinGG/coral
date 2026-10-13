@@ -4,13 +4,10 @@ use blacklist::{EMOTE_EVIDENCE, EMOTE_NO_EVIDENCE, EMOTE_TAG, Replay, lookup as 
 use chrono::{DateTime, Utc};
 use serenity::all::*;
 
-use database::{Evidence, EvidenceKind, ReviewStatus, Tally, Vote, VoteKind};
+use database::{Evidence, EvidenceKind, ReviewRules, ReviewStatus, Tally, Vote, VoteKind};
 
 use super::super::channel::format_tag_block;
-use super::{
-    ACCEPT_THRESHOLD, Loaded, REJECT_THRESHOLD, REVIEW_TAGS, custom_id, custom_id_with,
-    face_filename, media_label,
-};
+use super::{Loaded, REVIEW_TAGS, custom_id, custom_id_with, face_filename, media_label};
 use crate::utils::{format_uuid_dashed, sanitize_reason, separator, text};
 
 pub const ANONYMITY_NOTE: &str =
@@ -261,6 +258,7 @@ pub struct PostState<'a> {
     pub votes: &'a [Vote],
     pub paused: bool,
     pub edited_at: Option<DateTime<Utc>>,
+    pub rules: ReviewRules,
 }
 
 pub fn public_post(
@@ -313,16 +311,16 @@ fn vote_sections(review_id: i64, state: &PostState) -> Vec<CreateContainerCompon
         format!("### {EMOTE_EVIDENCE} Accept [{}]", tally.accept)
     } else {
         format!(
-            "### {EMOTE_EVIDENCE} Accept [{}/{ACCEPT_THRESHOLD}]",
-            tally.accept
+            "### {EMOTE_EVIDENCE} Accept [{}/{}]",
+            tally.accept, state.rules.accept_threshold
         )
     };
     let reject_heading = if contested {
         format!("### {EMOTE_NO_EVIDENCE} Reject [{}]", tally.reject)
     } else {
         format!(
-            "### {EMOTE_NO_EVIDENCE} Reject [{}/{REJECT_THRESHOLD}]",
-            tally.reject
+            "### {EMOTE_NO_EVIDENCE} Reject [{}/{}]",
+            tally.reject, state.rules.reject_threshold
         )
     };
     let revise_heading = format!("### {revise_emote} Revise [{}]", tally.revise);

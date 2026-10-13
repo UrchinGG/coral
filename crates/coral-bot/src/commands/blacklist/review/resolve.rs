@@ -5,11 +5,10 @@ use serenity::all::*;
 
 use database::{
     AddOutcome, BlacklistRepository, MemberRepository, Review, ReviewError, ReviewRepository,
-    ReviewStatus, Tally, Vote, VoteKind,
+    ReviewRules, ReviewStatus, Tally, Vote, VoteKind,
 };
 
 use super::publish::{rerender_post, set_forum_tags, thread_link};
-use super::{ACCEPT_THRESHOLD, REJECT_THRESHOLD};
 use crate::framework::Data;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,10 +40,10 @@ impl Outcome {
     }
 }
 
-pub fn community_outcome(tally: Tally) -> Option<Outcome> {
-    if tally.accept >= ACCEPT_THRESHOLD && tally.reject == 0 && tally.revise == 0 {
+pub fn community_outcome(tally: Tally, rules: &ReviewRules) -> Option<Outcome> {
+    if tally.accept >= rules.accept_threshold && tally.reject == 0 && tally.revise == 0 {
         Some(Outcome::Accept)
-    } else if tally.reject >= REJECT_THRESHOLD && tally.accept == 0 {
+    } else if tally.reject >= rules.reject_threshold && tally.accept == 0 {
         Some(Outcome::Reject)
     } else {
         None
@@ -234,23 +233,41 @@ mod tests {
         }
     }
 
+    fn outcome(accept: i64, reject: i64, revise: i64) -> Option<Outcome> {
+        community_outcome(tally(accept, reject, revise), &ReviewRules::DEFAULT)
+    }
+
     #[test]
     fn eight_clean_accepts_resolve() {
-        assert_eq!(community_outcome(tally(7, 0, 0)), None);
-        assert_eq!(community_outcome(tally(8, 0, 0)), Some(Outcome::Accept));
+        assert_eq!(outcome(7, 0, 0), None);
+        assert_eq!(outcome(8, 0, 0), Some(Outcome::Accept));
+    }
+
+    #[test]
+    fn edited_thresholds_apply() {
+        let rules = ReviewRules {
+            accept_threshold: 4,
+            reject_threshold: 5,
+            ..ReviewRules::DEFAULT
+        };
+        assert_eq!(
+            community_outcome(tally(4, 0, 0), &rules),
+            Some(Outcome::Accept)
+        );
+        assert_eq!(community_outcome(tally(0, 4, 0), &rules), None);
     }
 
     #[test]
     fn any_reject_or_revise_blocks_acceptance() {
-        assert_eq!(community_outcome(tally(9, 1, 0)), None);
-        assert_eq!(community_outcome(tally(9, 0, 1)), None);
+        assert_eq!(outcome(9, 1, 0), None);
+        assert_eq!(outcome(9, 0, 1), None);
     }
 
     #[test]
     fn three_rejects_with_no_accepts_reject_and_revises_do_not_count() {
-        assert_eq!(community_outcome(tally(0, 3, 0)), Some(Outcome::Reject));
-        assert_eq!(community_outcome(tally(0, 2, 5)), None);
-        assert_eq!(community_outcome(tally(0, 3, 4)), Some(Outcome::Reject));
-        assert_eq!(community_outcome(tally(1, 3, 0)), None);
+        assert_eq!(outcome(0, 3, 0), Some(Outcome::Reject));
+        assert_eq!(outcome(0, 2, 5), None);
+        assert_eq!(outcome(0, 3, 4), Some(Outcome::Reject));
+        assert_eq!(outcome(1, 3, 0), None);
     }
 }

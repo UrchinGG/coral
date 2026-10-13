@@ -277,16 +277,15 @@ pub(crate) async fn build_dashboard_view(
         .count_events_by_author(member.discord_id)
         .await
         .unwrap_or(0);
-    parts.push(standing_view::standing_section(member, rank));
-    parts.push(text(format!(
-        "-# You have added {total_tags} tags to the blacklist."
-    )));
+    let rules = crate::utils::standing::display_rules(data).await;
+    parts.push(standing_view::standing_section(member, rank, &rules));
+    parts.push(standing_view::public_record_section(member, total_tags));
     if rank < AccessRank::Helper {
         let strikes = StrikeRepository::new(data.db.pool())
             .list_for_member(member.discord_id)
             .await
             .unwrap_or_default();
-        if let Some(section) = standing_view::active_strikes_section(&strikes) {
+        if let Some(section) = standing_view::active_strikes_section(&strikes, &rules) {
             parts.push(separator());
             parts.push(section);
         }

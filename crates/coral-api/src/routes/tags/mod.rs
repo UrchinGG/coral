@@ -7,7 +7,7 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 
 use coral_redis::{BlacklistEvent, RateLimitResult};
-use database::{TagOp, TagOpError};
+use database::{ReviewRulesRepository, TagOp, TagOpError};
 
 use crate::{
     auth::AuthenticatedMember,
@@ -174,13 +174,18 @@ fn map_op_error(e: TagOpError) -> ApiError {
     }
 }
 
+async fn effective_level(state: &AppState, member: &database::Member) -> Result<i16, ApiError> {
+    let rules = ReviewRulesRepository::new(state.db.pool())
+        .current()
+        .await
+        .map_err(|e| ApiError::Internal(format!("database error: {e}")))?;
+    Ok(database::standing::effective_level(member, &rules))
+}
+
 async fn enforce_tag_limit(state: &AppState, member: &database::Member) -> Result<(), ApiError> {
     match state
         .rate_limiter
-        .check_tag_limit(
-            member.discord_id,
-            database::standing::effective_level(member),
-        )
+        .check_tag_limit(member.discord_id, effective_level(state, member).await?)
         .await
     {
         Ok(RateLimitResult::Allowed { .. }) => Ok(()),
@@ -227,7 +232,7 @@ pub async fn add_tag(
             &body.tag_type,
             &body.reason,
             member.0.discord_id,
-            database::standing::effective_level(&member.0),
+            effective_level(&state, &member.0).await?,
             body.hide_username,
             None,
             expires_at,
@@ -344,7 +349,7 @@ pub async fn update_tag(
             &body.new_type,
             &body.new_reason,
             member.0.discord_id,
-            database::standing::effective_level(&member.0),
+            effective_level(&state, &member.0).await?,
             body.hide_username,
         )
         .await

@@ -7,8 +7,8 @@ use coral_redis::{
     BlacklistEvent, EventPublisher, RateLimiter, SESSION_RATE_LIMIT, SESSION_UUID_BUDGET,
 };
 use database::{
-    DeveloperKey, DeveloperKeyRepository, Member, MemberRepository, StarfishRepository, Strike,
-    StrikeRepository, StrikeStatus, standing,
+    DeveloperKey, DeveloperKeyRepository, Member, MemberRepository, ReviewRulesRepository,
+    StarfishRepository, Strike, StrikeRepository, StrikeStatus, standing,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -433,13 +433,17 @@ async fn detail(
         tag.minecraft_username = names.minecraft.get(&tag.uuid).cloned();
     }
 
-    let explanation = standing::explain(&member);
+    let rules = ReviewRulesRepository::new(state.db.pool())
+        .current()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let explanation = standing::explain(&member, &rules);
     let standing = StandingView {
         can_vote: explanation.can_vote,
         vote_reason: explanation.vote_reason,
         can_tag: explanation.can_tag,
         tag_reason: explanation.tag_reason,
-        effective_level: standing::effective_level(&member),
+        effective_level: standing::effective_level(&member, &rules),
         strike_count: standing::strike_count(&member),
         accepted_tags: member.accepted_tags,
         rejected_tags: member.rejected_tags,
