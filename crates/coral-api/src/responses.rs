@@ -89,11 +89,15 @@ pub struct SuccessResponse {
 
 impl TagResponse {
     pub fn from_db(tag: &database::PlayerEvent) -> Self {
+        Self::build(tag, false)
+    }
+
+    fn build(tag: &database::PlayerEvent, reveal_hidden: bool) -> Self {
         let hide_username = tag.hide_username.unwrap_or(false);
         Self {
             tag_type: tag.tag_type.clone().unwrap_or_default(),
             reason: tag.reason.clone().unwrap_or_default(),
-            added_by: tag.author.filter(|_| !hide_username),
+            added_by: tag.author.filter(|_| reveal_hidden || !hide_username),
             added_by_username: None,
             added_on: tag.ts.timestamp_millis(),
             hide_username,
@@ -106,10 +110,11 @@ pub async fn tag_responses(
     tags: &[database::PlayerEvent],
     discord: &DiscordResolver,
     names: &mut HashMap<i64, Option<String>>,
+    reveal_hidden: bool,
 ) -> Vec<TagResponse> {
     let mut out = Vec::with_capacity(tags.len());
     for tag in tags {
-        let mut resp = TagResponse::from_db(tag);
+        let mut resp = TagResponse::build(tag, reveal_hidden);
         if let Some(author) = resp.added_by {
             resp.added_by_username = match names.get(&author) {
                 Some(name) => name.clone(),
