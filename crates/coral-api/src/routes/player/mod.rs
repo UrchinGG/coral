@@ -16,7 +16,7 @@ use database::{BlacklistRepository, CacheRepository, permissions};
 use hypixel::extract_rank_prefix;
 
 use crate::{
-    auth::DeveloperKeyAuth,
+    auth::{AuthenticatedMember, DeveloperKeyAuth},
     cache::{SNAPSHOT_SOURCE, parse_cache_age, refresh_player_cache},
     error::{ApiError, ErrorResponse},
     responses::{PlayerStatsResponse, PlayerTagsResponse, tag_responses},
@@ -62,6 +62,15 @@ pub(crate) async fn resolve_player_data(
 
 pub fn public_router() -> Router<AppState> {
     Router::new().route("/player/tags", get(player_tags))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct PlayerTagsQuery {
+    pub player: Option<String>,
+    pub uuid: Option<String>,
+    pub name: Option<String>,
+    #[serde(default)]
+    pub reveal_hidden: bool,
 }
 
 #[derive(Deserialize)]
@@ -126,7 +135,7 @@ macro_rules! player_target {
     )+};
 }
 
-player_target!(PlayerQuery, FaceQuery, BodyQuery);
+player_target!(PlayerQuery, PlayerTagsQuery, FaceQuery, BodyQuery);
 
 pub(crate) fn format_display_name(player: &Value) -> Option<String> {
     let name = player.get("displayname").and_then(Value::as_str)?;
@@ -180,13 +189,16 @@ fn spawn_cache_update(state: &AppState, uuid: &str, data: &Value, username: &str
 #[utoipa::path(
     get,
     path = "/v3/player/tags",
-    description = "Returns the blacklist tags currently active on a player, plus their formatted Hypixel display name. Tags with `hide_username` set omit both `added_by` and `added_by_username`.",
+    description = "Returns the blacklist tags currently active on a player, plus their formatted Hypixel display name. Tags with `hide_username` set omit both `added_by` and `added_by_username`, unless the caller passes `reveal_hidden=true` with a key or session belonging to a member with the Helper rank or higher.",
     params(
         ("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID"),
+        ("reveal_hidden" = Option<bool>, Query, description = "Include the author of tags with a hidden username. Requires the Helper rank."),
     ),
     responses(
         (status = 200, description = "Player tags retrieved", body = PlayerTagsResponse),
         (status = 400, description = "Invalid identifier", body = ErrorResponse),
+        (status = 401, description = "`reveal_hidden` requested without credentials", body = ErrorResponse),
+        (status = 403, description = "`reveal_hidden` requested without the Helper rank", body = ErrorResponse),
         (status = 404, description = "Player not found", body = ErrorResponse),
         (status = 429, description = "Rate limited", body = ErrorResponse),
         (status = 502, description = "External API error", body = ErrorResponse),
@@ -195,14 +207,40 @@ fn spawn_cache_update(state: &AppState, uuid: &str, data: &Value, username: &str
 )]
 pub async fn player_tags(
     State(state): State<AppState>,
-    Query(query): Query<PlayerQuery>,
+    member: Option<Extension<AuthenticatedMember>>,
+    Query(query): Query<PlayerTagsQuery>,
 ) -> Result<Json<PlayerTagsResponse>, ApiError> {
+    if query.reveal_hidden {
+        match member {
+            None => {
+                return Err(ApiError::Unauthorized(
+                    "reveal_hidden requires authentication".into(),
+                ));
+            }
+            Some(Extension(AuthenticatedMember(ref m)))
+                if database::AccessRank::from_level(m.access_level)
+                    < database::AccessRank::Helper =>
+            {
+                return Err(ApiError::Forbidden(
+                    "reveal_hidden requires the Helper rank".into(),
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+
     let identifier = query.identifier()?;
     let (uuid, _) = resolve_identifier(&state, identifier).await?;
     let tags = BlacklistRepository::new(state.db.pool())
         .get_active_tags(&uuid)
         .await?;
-    let tags = tag_responses(&tags, &state.discord, &mut HashMap::new()).await;
+    let tags = tag_responses(
+        &tags,
+        &state.discord,
+        &mut HashMap::new(),
+        query.reveal_hidden,
+    )
+    .await;
     let displayname = player_display_name(&state, &uuid).await;
     Ok(Json(PlayerTagsResponse {
         uuid,
@@ -267,7 +305,7 @@ pub async fn player_stats(
     }
 
     let displayname = player_data.as_ref().and_then(format_display_name);
-    let tags = tag_responses(&tags, &state.discord, &mut HashMap::new()).await;
+    let tags = tag_responses(&tags, &state.discord, &mut HashMap::new(), false).await;
     Ok(Json(PlayerStatsResponse {
         uuid,
         username,

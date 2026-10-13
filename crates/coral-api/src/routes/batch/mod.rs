@@ -106,7 +106,10 @@ pub async fn batch_lookup(
     let mut names = HashMap::new();
     let mut players = HashMap::new();
     for (uuid, tags) in batch {
-        players.insert(uuid, tag_responses(&tags, &state.discord, &mut names).await);
+        players.insert(
+            uuid,
+            tag_responses(&tags, &state.discord, &mut names, false).await,
+        );
     }
 
     Ok(Json(BatchResponse { players }))
