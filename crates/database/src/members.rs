@@ -315,6 +315,26 @@ impl<'a> MemberRepository<'a> {
         .await
     }
 
+    pub async fn top_reviewers(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<(i64, i64, i64, i64)>, sqlx::Error> {
+        sqlx::query_as(
+            "SELECT
+                    discord_id,
+                    (accurate_verdicts + incorrect_verdicts) AS total,
+                    accurate_verdicts,
+                    incorrect_verdicts
+                 FROM members
+                 WHERE (accurate_verdicts + incorrect_verdicts) > 0
+                 ORDER BY total DESC, accurate_verdicts DESC
+                 LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(self.pool)
+        .await
+    }
+
     pub async fn record_ip(&self, member_id: i64, ip: &str) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT INTO api_key_ips (member_id, ip_address) VALUES ($1, $2::inet)

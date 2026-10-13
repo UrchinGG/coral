@@ -296,6 +296,9 @@ impl Handler {
             "info_taggers" => {
                 commands::admin::info::handle_taggers(ctx, component, &self.data).await
             }
+            "info_leaderboard_category" => {
+                commands::admin::info::handle_leaderboard_category(ctx, component, &self.data).await
+            }
             "prestige_color_codes" => {
                 commands::stats::prestiges::handle_color_codes(ctx, component, &self.data).await
             }
