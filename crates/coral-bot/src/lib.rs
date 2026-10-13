@@ -5,4 +5,5 @@ pub mod events;
 pub mod framework;
 pub mod interact;
 pub mod preview;
+pub mod strikes;
 pub mod utils;

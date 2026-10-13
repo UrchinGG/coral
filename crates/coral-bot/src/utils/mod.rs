@@ -6,6 +6,7 @@ use crate::framework::Data;
 
 mod minecraft;
 pub mod standing;
+pub mod standing_view;
 
 pub use minecraft::{
     format_number, format_tag_detail, format_uuid_dashed, generate_api_key, sanitize_reason,

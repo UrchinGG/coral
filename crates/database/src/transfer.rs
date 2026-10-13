@@ -14,6 +14,8 @@ const SNOWFLAKE_COLUMNS: &[(&str, &str)] = &[
     ("guild_sync_jobs", "created_by"),
     ("review_guide_config", "posted_by"),
     ("admin_actions", "actor"),
+    ("member_strike", "struck_by"),
+    ("member_strike", "revoked_by"),
 ];
 
 const SNOWFLAKE_ARRAYS: &[(&str, &str)] = &[("player_events", "reviewed_by")];
@@ -256,6 +258,13 @@ async fn repoint_member_rows(
     if source_key_left {
         outcome.dropped.push("developer_key");
     }
+
+    let moved = sqlx::query("UPDATE member_strike SET member_id = $2 WHERE member_id = $1")
+        .bind(source_id)
+        .bind(target_id)
+        .execute(&mut *conn)
+        .await?;
+    outcome.record("member_strike", moved.rows_affected());
 
     let moved = sqlx::query("UPDATE api_request_log SET member_id = $2 WHERE member_id = $1")
         .bind(source_id)

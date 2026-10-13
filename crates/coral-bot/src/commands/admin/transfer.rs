@@ -83,7 +83,7 @@ pub async fn handle_confirm(
         .await;
     let components = match result {
         Ok(_) => {
-            finish_transfer(ctx, data, source_id, target_id).await;
+            finish_transfer(data, source_id, target_id).await;
             result_view(source_id, target_id)
         }
         Err(e) => transfer_error_view(e, source_id, target_id),
@@ -118,8 +118,8 @@ pub async fn handle_cancel(
     .await
 }
 
-async fn finish_transfer(ctx: &Context, data: &Data, source_id: u64, target_id: u64) {
-    crate::utils::standing::refresh_and_sync(ctx, data, target_id).await;
+async fn finish_transfer(data: &Data, source_id: u64, target_id: u64) {
+    crate::utils::standing::refresh_and_sync(data, target_id).await;
     for discord_id in [source_id, target_id] {
         data.sync_event_publisher
             .publish(&SyncEvent::SyncUser { discord_id })

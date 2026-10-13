@@ -67,15 +67,18 @@ export function useSetTaggingDisabled(id: number) {
 }
 
 export function useAddStrike(id: number) {
-  return useAdminMutation((reason: string) => apiPost(`/members/${id}/strikes`, { reason }), {
-    successMessage: "Strike added",
-    invalidateKeys: memberKeys(id),
-  });
+  return useAdminMutation(
+    (strike: { reason: string; duration_days: number | null }) => apiPost(`/members/${id}/strikes`, strike),
+    {
+      successMessage: "Strike added",
+      invalidateKeys: memberKeys(id),
+    },
+  );
 }
 
-export function useRemoveStrike(id: number) {
-  return useAdminMutation((index: number) => apiDelete(`/members/${id}/strikes/${index}`), {
-    successMessage: "Strike removed",
+export function useRevokeStrike(id: number) {
+  return useAdminMutation((strikeId: number) => apiDelete(`/members/${id}/strikes/${strikeId}`), {
+    successMessage: "Strike revoked",
     invalidateKeys: memberKeys(id),
   });
 }

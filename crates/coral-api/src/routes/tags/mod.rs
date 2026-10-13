@@ -191,7 +191,7 @@ async fn enforce_tag_limit(state: &AppState, member: &database::Member) -> Resul
 
 #[utoipa::path(
     post, path = "/v3/tags",
-    description = "Adds a blacklist tag to a player. The tag types you may apply depend on your rank, which also determines whether `hide_username` is honored. Setting `silent` logs the tag only in the staff channel instead of the public blacklist channel, and requires the Helper rank. For `replays_needed` tags, `duration` sets when the tag expires: a relative duration (for example `48h`, `10d`, or `2w`), an absolute expiry as a Unix millisecond timestamp or RFC 3339 string, or `permanent`. It defaults to 14 days, must be in the future, and may be at most 365 days away. Sending `duration` with any other tag type is rejected.",
+    description = "Adds a blacklist tag to a player. The tag types you may apply depend on your rank. Setting `hide_username` hides your name on public surfaces. Setting `silent` logs the tag only in the staff channel instead of the public blacklist channel, and requires the Helper rank. For `replays_needed` tags, `duration` sets when the tag expires: a relative duration (for example `48h`, `10d`, or `2w`), an absolute expiry as a Unix millisecond timestamp or RFC 3339 string, or `permanent`. It defaults to 14 days, must be in the future, and may be at most 365 days away. Sending `duration` with any other tag type is rejected.",
     params(("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID")),
     request_body = AddTagBody,
     responses(

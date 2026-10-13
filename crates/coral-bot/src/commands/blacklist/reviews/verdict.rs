@@ -94,7 +94,7 @@ async fn settle_verdict(
         .chain(winning_votes.iter().copied())
         .chain(losing_votes.iter().copied())
     {
-        crate::utils::standing::refresh_and_sync(ctx, data, id).await;
+        crate::utils::standing::refresh_and_sync(data, id).await;
     }
 }
 

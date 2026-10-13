@@ -1,36 +1,37 @@
-use serenity::all::*;
-
-use database::{MemberRepository, standing};
+use coral_redis::SyncEvent;
+use database::{MemberRepository, standing, standing::StandingChange};
 
 use crate::framework::Data;
 
-pub async fn refresh_and_sync(ctx: &Context, data: &Data, discord_id: u64) {
+pub async fn refresh_and_sync(data: &Data, discord_id: u64) -> StandingChange {
     let repo = MemberRepository::new(data.db.pool());
-    match standing::refresh(&repo, discord_id as i64).await {
-        Ok(change) => {
-            if let Some(granted) = change.tag {
-                sync_trusted_role(ctx, data, discord_id, granted).await;
-            }
-        }
-        Err(e) => tracing::error!("Failed to refresh standing for {discord_id}: {e}"),
-    }
+    let change = standing::refresh(&repo, discord_id as i64).await;
+    publish_change(data, discord_id, change).await
 }
 
-async fn sync_trusted_role(ctx: &Context, data: &Data, discord_id: u64, granted: bool) {
-    let (Some(guild_id), Some(role_id)) = (data.home_guild_id, data.trusted_role_id) else {
-        return;
-    };
-    let user_id = UserId::new(discord_id);
-    let result = if granted {
-        ctx.http
-            .add_member_role(guild_id, user_id, role_id, Some("Earned tagging standing"))
-            .await
-    } else {
-        ctx.http
-            .remove_member_role(guild_id, user_id, role_id, Some("Lost tagging standing"))
-            .await
-    };
-    if let Err(e) = result {
-        tracing::warn!("Failed to sync trusted role for {discord_id}: {e}");
+pub async fn refresh_fresh_and_sync(data: &Data, discord_id: u64) -> StandingChange {
+    let repo = MemberRepository::new(data.db.pool());
+    let change = standing::refresh_fresh(&repo, discord_id as i64).await;
+    publish_change(data, discord_id, change).await
+}
+
+async fn publish_change(
+    data: &Data,
+    discord_id: u64,
+    change: Result<StandingChange, impl std::fmt::Display>,
+) -> StandingChange {
+    match change {
+        Ok(change) => {
+            if change.tag.is_some() {
+                data.sync_event_publisher
+                    .publish(&SyncEvent::SyncUser { discord_id })
+                    .await;
+            }
+            change
+        }
+        Err(e) => {
+            tracing::error!("Failed to refresh standing for {discord_id}: {e}");
+            StandingChange::default()
+        }
     }
 }

@@ -169,9 +169,14 @@ export type AuthoredTag = {
 };
 
 export type Strike = {
+  id: number;
   reason: string;
   struck_by: string;
-  timestamp: string;
+  issued_at: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  revoked_by: string | null;
+  status: "active" | "expired" | "revoked";
 };
 
 export type MemberDetail = {

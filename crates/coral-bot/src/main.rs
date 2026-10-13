@@ -94,10 +94,6 @@ async fn init_data() -> Result<Data> {
         guide_thread_id: Arc::new(RwLock::new(None)),
         sync_cooldowns: Arc::new(Mutex::new(HashMap::new())),
         active_interactions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-        trusted_role_id: env::var("TRUSTED_ROLE_ID")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .map(RoleId::new),
         vote_messages: Arc::new(Mutex::new(HashMap::new())),
         started_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

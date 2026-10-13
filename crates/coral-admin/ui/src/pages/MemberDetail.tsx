@@ -7,7 +7,7 @@ import {
   useLockMember,
   useMember,
   useRegenerateApiKey,
-  useRemoveStrike,
+  useRevokeStrike,
   useResetRateLimit,
   useSetAccessLevel,
   useSetDevKeyLocked,
@@ -16,7 +16,7 @@ import {
   useSetTaggingDisabled,
   useUnlockMember,
 } from "../api/members";
-import type { MemberDetail as MemberDetailType } from "../api/types";
+import type { MemberDetail as MemberDetailType, Strike } from "../api/types";
 import { Badge } from "../components/Badge";
 import { ConfirmButton } from "../components/ConfirmButton";
 import { Identity } from "../components/Identity";
@@ -180,28 +180,41 @@ function StandingPanel({ member }: { member: MemberDetailType }) {
   );
 }
 
+const STRIKE_REASON_MAX = 100;
+
+function strikeEnding(strike: Strike): string {
+  if (strike.status === "revoked" && strike.revoked_at) return `revoked ${fmtDate(strike.revoked_at)}`;
+  if (strike.status === "expired" && strike.expires_at) return `expired ${fmtDate(strike.expires_at)}`;
+  return strike.expires_at ? `expires ${fmtDate(strike.expires_at)}` : "no expiration";
+}
+
 function StrikesPanel({ member }: { member: MemberDetailType }) {
   const addStrike = useAddStrike(member.id);
-  const removeStrike = useRemoveStrike(member.id);
+  const revokeStrike = useRevokeStrike(member.id);
   const [reason, setReason] = useState("");
+  const [durationDays, setDurationDays] = useState("");
+  const active = member.strikes.filter((s) => s.status === "active");
+  const past = member.strikes.filter((s) => s.status !== "active");
 
   return (
-    <Panel title={`Strikes (${member.strikes.length})`}>
+    <Panel title={`Strikes (${active.length} active, ${past.length} past)`}>
       <div className="flex flex-col divide-y divide-white/5">
-        {member.strikes.map((strike, i) => (
-          <div key={i} className="flex items-start justify-between gap-2 py-2 text-sm first:pt-0">
-            <div>
+        {[...active, ...past].map((strike) => (
+          <div key={strike.id} className="flex items-start justify-between gap-2 py-2 text-sm first:pt-0">
+            <div className={strike.status === "active" ? "" : "text-gray-500"}>
               <div>{strike.reason}</div>
               <div className="text-xs text-gray-500">
-                {fmtDate(strike.timestamp)} · struck by <Identity id={strike.struck_by} />
+                {fmtDate(strike.issued_at)} by <Identity id={strike.struck_by} />, {strikeEnding(strike)}
               </div>
             </div>
-            <ConfirmButton
-              label="Remove"
-              tone="danger"
-              onConfirm={() => removeStrike.mutate(i)}
-              pending={removeStrike.isPending}
-            />
+            {strike.status === "active" && (
+              <ConfirmButton
+                label="Revoke"
+                tone="danger"
+                onConfirm={() => revokeStrike.mutate(strike.id)}
+                pending={revokeStrike.isPending}
+              />
+            )}
           </div>
         ))}
         {member.strikes.length === 0 && <div className="text-sm text-gray-500">No strikes on record.</div>}
@@ -209,16 +222,29 @@ function StrikesPanel({ member }: { member: MemberDetailType }) {
       <div className="mt-3 flex gap-2">
         <input
           className="flex-1 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-sm"
-          placeholder="Strike reason…"
+          placeholder="Strike reason, shown to the member…"
+          maxLength={STRIKE_REASON_MAX}
           value={reason}
           onChange={(e) => setReason(e.target.value)}
         />
+        <select
+          className="rounded-md border border-white/10 bg-black/30 px-2 py-1 text-sm"
+          value={durationDays}
+          onChange={(e) => setDurationDays(e.target.value)}
+        >
+          <option value="">No expiration</option>
+          <option value="14">14 days</option>
+          <option value="30">30 days</option>
+        </select>
         <ConfirmButton
           label="Add strike"
           tone="danger"
           disabled={!reason.trim()}
           onConfirm={() => {
-            addStrike.mutate(reason, { onSuccess: () => setReason("") });
+            addStrike.mutate(
+              { reason: reason.trim(), duration_days: durationDays ? Number(durationDays) : null },
+              { onSuccess: () => setReason("") },
+            );
           }}
           pending={addStrike.isPending}
         />

@@ -4,6 +4,7 @@ use serenity::all::*;
 use database::MemberRepository;
 
 use crate::framework::{AccessRank, AccessRankExt, Data};
+use crate::strikes;
 
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("strike")
@@ -15,10 +16,27 @@ pub fn register() -> CreateCommand<'static> {
                         .required(true),
                 )
                 .add_sub_option(
-                    CreateCommandOption::new(CommandOptionType::String, "reason", "Strike reason")
-                        .required(true),
-                ),
+                    CreateCommandOption::new(
+                        CommandOptionType::String,
+                        "reason",
+                        "Strike reason, shown to the member",
+                    )
+                    .required(true)
+                    .max_length(strikes::REASON_MAX_CHARS),
+                )
+                .add_sub_option(duration_option()),
         )
+}
+
+fn duration_option() -> CreateCommandOption<'static> {
+    strikes::DURATION_CHOICES.iter().fold(
+        CreateCommandOption::new(
+            CommandOptionType::Integer,
+            "duration",
+            "How long the strike lasts; leave unset for no expiration",
+        ),
+        |option, (label, days)| option.add_int_choice(*label, *days),
+    )
 }
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
@@ -74,6 +92,11 @@ async fn handle_add(
         .and_then(|o| o.value.as_str())
         .unwrap_or("No reason provided");
 
+    let days = sub_options
+        .iter()
+        .find(|o| o.name == "duration")
+        .and_then(|o| o.value.as_i64());
+
     let invoker_id = command.user.id.get();
     let target = repo.get_by_discord_id(target_id as i64).await?;
 
@@ -101,16 +124,34 @@ async fn handle_add(
         .await;
     }
 
-    repo.add_strike(target_id as i64, reason, invoker_id)
-        .await?;
-    crate::utils::standing::refresh_and_sync(ctx, data, target_id).await;
+    let issued = strikes::issue(
+        ctx,
+        data,
+        target_id,
+        reason,
+        invoker_id,
+        strikes::expiry_from_days(days),
+        None,
+    )
+    .await?;
     send_reply(
         ctx,
         command,
-        &format!("Strike added for <@{target_id}>: \"{reason}\""),
+        &issued_message(target_id, reason, issued),
         true,
     )
     .await
+}
+
+fn issued_message(target_id: u64, reason: &str, issued: Option<strikes::IssuedStrike>) -> String {
+    match issued {
+        Some(issued) if !issued.dm_delivered => format!(
+            "Strike added for <@{target_id}>: \"{reason}\"\n\
+             They couldn't be sent a DM; they'll see it in /dashboard."
+        ),
+        Some(_) => format!("Strike added for <@{target_id}>: \"{reason}\""),
+        None => format!("<@{target_id}> is not registered"),
+    }
 }
 
 pub async fn handle_strike_author_button(
@@ -133,12 +174,28 @@ pub async fn handle_strike_author_button(
     let reason_input = CreateInputText::new(InputTextStyle::Short, "reason")
         .placeholder("Why is this user being struck?")
         .min_length(1)
-        .max_length(100);
+        .max_length(strikes::REASON_MAX_CHARS);
+    let duration_options: Vec<_> = strikes::DURATION_CHOICES
+        .iter()
+        .map(|(label, days)| CreateSelectMenuOption::new(*label, days.to_string()))
+        .collect();
+    let duration_select = CreateSelectMenu::new(
+        "duration",
+        CreateSelectMenuKind::String {
+            options: duration_options.into(),
+        },
+    )
+    .placeholder("No expiration")
+    .min_values(0)
+    .required(false);
     let modal = CreateModal::new(format!("strike_author_modal:{target_id}"), "Strike User")
-        .components(vec![CreateModalComponent::Label(CreateLabel::input_text(
-            "Strike Reason",
-            reason_input,
-        ))]);
+        .components(vec![
+            CreateModalComponent::Label(
+                CreateLabel::input_text("Strike Reason", reason_input)
+                    .description("Shown to the member."),
+            ),
+            CreateModalComponent::Label(CreateLabel::select_menu("Duration", duration_select)),
+        ]);
     component
         .create_response(&ctx.http, CreateInteractionResponse::Modal(modal))
         .await?;
@@ -173,18 +230,37 @@ pub async fn handle_strike_author_modal(
         r => r,
     };
 
-    MemberRepository::new(data.db.pool())
-        .add_strike(target_id as i64, &reason, invoker_id)
-        .await?;
-    crate::utils::standing::refresh_and_sync(ctx, data, target_id).await;
+    let days = selected_days(&modal.data.components);
+    let issued = strikes::issue(
+        ctx,
+        data,
+        target_id,
+        &reason,
+        invoker_id,
+        strikes::expiry_from_days(days),
+        None,
+    )
+    .await?;
 
     let msg = CreateInteractionResponseMessage::new()
-        .content(format!("Strike added for <@{target_id}>: \"{reason}\""))
+        .content(issued_message(target_id, &reason, issued))
         .ephemeral(true);
     modal
         .create_response(&ctx.http, CreateInteractionResponse::Message(msg))
         .await?;
     Ok(())
+}
+
+fn selected_days(components: &[Component]) -> Option<i64> {
+    components.iter().find_map(|component| match component {
+        Component::Label(label) => match &label.component {
+            LabelComponent::SelectMenu(menu) if menu.custom_id == "duration" => {
+                menu.values.first()?.parse().ok()
+            }
+            _ => None,
+        },
+        _ => None,
+    })
 }
 
 async fn can_strike(data: &Data, invoker_id: u64, target_id: u64) -> Result<bool> {

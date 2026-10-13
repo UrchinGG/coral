@@ -61,7 +61,6 @@ pub struct Data {
     pub guide_thread_id: Arc<RwLock<Option<u64>>>,
     pub sync_cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
     pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
-    pub trusted_role_id: Option<RoleId>,
     pub vote_messages: Arc<Mutex<HashMap<(u64, usize, u64), u64>>>,
     pub started_at: i64,
     pub info_cache: Arc<Mutex<commands::admin::info::InfoCache>>,
@@ -569,8 +568,18 @@ impl Handler {
             _ if id.starts_with("manage_toggle_tagging:") => {
                 commands::admin::manage::handle_toggle_tagging(ctx, component, &self.data).await
             }
-            _ if id.starts_with("manage_remove_strike:") => {
-                commands::admin::manage::handle_remove_strike(ctx, component, &self.data).await
+            _ if id.starts_with("manage_strikes_back:") => {
+                commands::admin::strike_list::handle_back(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("manage_strikes:") => {
+                commands::admin::strike_list::handle_list(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("manage_strike_revoke_go:") => {
+                commands::admin::strike_list::handle_revoke_confirm(ctx, component, &self.data)
+                    .await
+            }
+            _ if id.starts_with("manage_strike_revoke:") => {
+                commands::admin::strike_list::handle_revoke_prompt(ctx, component, &self.data).await
             }
             _ if id.starts_with("strike_tag_author:") => {
                 commands::admin::strike::handle_strike_author_button(ctx, component, &self.data)
@@ -880,6 +889,10 @@ impl EventHandler for Handler {
                 let data = self.data.clone();
                 tokio::spawn(async move {
                     crate::events::hydrate_expiring_tags(data).await;
+                });
+                let data = self.data.clone();
+                tokio::spawn(async move {
+                    crate::strikes::hydrate_strikes(data).await;
                 });
             }
             FullEvent::ThreadCreate { thread, .. } => {

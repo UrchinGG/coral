@@ -8,16 +8,14 @@ use crate::utils::format_uuid_dashed;
 const TICKET_URL: &str = "https://discord.com/channels/1339318572069158962/1342235914746986556";
 
 /// Where the tag notice ended up for each member who has the tagged account
-/// linked, so the caller knows who still needs a ping on the blacklist post.
+/// linked.
 #[derive(Default)]
 pub struct NoticeDelivery {
     /// The tag type does not warrant a notice (e.g. Replays Needed).
     not_notifiable: bool,
     /// Members who got their DM.
     dmed: Vec<UserId>,
-    /// Members with DMs closed who are in the home guild; ping them instead.
-    pinged: Vec<UserId>,
-    /// Members with DMs closed who are not in the server; notice is queued.
+    /// Members with DMs closed; notice is queued.
     queued: Vec<UserId>,
 }
 
@@ -29,13 +27,8 @@ impl NoticeDelivery {
         }
     }
 
-    /// Members to mention on the blacklist post because DMs did not reach them.
-    pub fn pings(&self) -> &[UserId] {
-        &self.pinged
-    }
-
     fn no_owner(&self) -> bool {
-        self.dmed.is_empty() && self.pinged.is_empty() && self.queued.is_empty()
+        self.dmed.is_empty() && self.queued.is_empty()
     }
 
     /// Staff-log summary, so mods can see whether the tagged player heard about
@@ -53,12 +46,6 @@ impl NoticeDelivery {
             lines.push(format!(
                 "-# Player notice: DM delivered to {}",
                 mentions(&self.dmed)
-            ));
-        }
-        if !self.pinged.is_empty() {
-            lines.push(format!(
-                "-# Player notice: DMs closed for {}, pinged in server and queued for next command",
-                mentions(&self.pinged)
             ));
         }
         if !self.queued.is_empty() {
@@ -111,8 +98,8 @@ fn appeal_body(user_id: UserId, username: &str, uuid: &str, detail: &str) -> Str
 }
 
 /// DMs every member who has `uuid` linked an appeal notice for a freshly
-/// applied tag, falling back to a blacklist-post ping and/or a one-time
-/// in-command notice for anyone whose DMs are closed.
+/// applied tag, falling back to a one-time in-command notice for anyone whose
+/// DMs are closed.
 pub async fn notify_tagged_player(
     ctx: &Context,
     data: &Data,
@@ -162,21 +149,16 @@ pub async fn notify_tagged_player(
         {
             tracing::error!("Failed to queue tag notice for {owner}: {e}");
         }
-
-        if in_home_guild(ctx, data, user_id).await {
-            delivery.pinged.push(user_id);
-        } else {
-            delivery.queued.push(user_id);
-        }
+        delivery.queued.push(user_id);
     }
     delivery
 }
 
-async fn send_dm(ctx: &Context, user_id: UserId, content: &str) -> bool {
+pub(crate) async fn send_dm(ctx: &Context, user_id: UserId, content: &str) -> bool {
     let channel = match user_id.create_dm_channel(&ctx.http).await {
         Ok(channel) => channel,
         Err(e) => {
-            tracing::debug!("Could not open DM channel with {user_id}: {e}");
+            tracing::warn!("Could not open DM channel with {user_id}: {e}");
             return false;
         }
     };
@@ -191,17 +173,10 @@ async fn send_dm(ctx: &Context, user_id: UserId, content: &str) -> bool {
     {
         Ok(_) => true,
         Err(e) => {
-            tracing::debug!("Could not DM tag notice to {user_id}: {e}");
+            tracing::warn!("Could not send DM to {user_id}: {e}");
             false
         }
     }
-}
-
-async fn in_home_guild(ctx: &Context, data: &Data, user_id: UserId) -> bool {
-    let Some(guild_id) = data.home_guild_id else {
-        return false;
-    };
-    ctx.http.get_member(guild_id, user_id).await.is_ok()
 }
 
 /// Ephemeral one-time notice for tags applied while the user was unreachable.

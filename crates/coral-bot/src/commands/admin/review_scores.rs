@@ -386,12 +386,11 @@ pub async fn handle_modal(ctx: &Context, modal: &ModalInteraction, data: &Data) 
         tracing::error!("Failed to log review score correction for {target_id}: {e}");
     }
 
+    let change = crate::utils::standing::refresh_fresh_and_sync(data, target_id).await;
     channel::post_review_score_correction(
-        ctx, data, target_id, invoker_id, label, count, &reason, &member, &updated,
+        ctx, data, target_id, invoker_id, label, count, &reason, &member, &updated, change,
     )
     .await;
-
-    crate::utils::standing::refresh_and_sync(ctx, data, target_id).await;
 
     interact::update_modal(ctx, modal, build_view(data, target_id).await).await
 }

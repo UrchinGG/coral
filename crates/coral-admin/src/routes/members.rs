@@ -3,9 +3,12 @@ use std::collections::HashMap;
 use axum::http::StatusCode;
 use axum::{Extension, Json, Router, extract::*, routing::get, routing::post};
 use chrono::{DateTime, Utc};
-use coral_redis::{RateLimiter, SESSION_RATE_LIMIT, SESSION_UUID_BUDGET};
+use coral_redis::{
+    BlacklistEvent, EventPublisher, RateLimiter, SESSION_RATE_LIMIT, SESSION_UUID_BUDGET,
+};
 use database::{
-    DeveloperKey, DeveloperKeyRepository, Member, MemberRepository, StarfishRepository, standing,
+    DeveloperKey, DeveloperKeyRepository, Member, MemberRepository, StarfishRepository, Strike,
+    StrikeRepository, StrikeStatus, standing,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -53,8 +56,8 @@ pub fn router() -> Router<AppState> {
         .route("/{id}/tagging-disabled", post(set_tagging_disabled))
         .route("/{id}/strikes", post(add_strike))
         .route(
-            "/{id}/strikes/{index}",
-            axum::routing::delete(remove_strike),
+            "/{id}/strikes/{strike_id}",
+            axum::routing::delete(revoke_strike),
         )
         .route("/{id}/api-key/regenerate", post(regenerate_api_key))
         .route("/{id}/ratelimit/reset", post(reset_rate_limit))
@@ -208,7 +211,9 @@ async fn list(
     let mut q = QueryBuilder::<Postgres>::new(
         "SELECT id, discord_id, uuid, join_date, request_count, access_level, key_locked,
                 tagging_disabled, api_key IS NOT NULL as has_api_key,
-                COALESCE(jsonb_array_length(strikes), 0) AS strike_count,
+                (SELECT COUNT(*) FROM member_strike s WHERE s.member_id = members.id
+                   AND s.revoked_at IS NULL AND (s.expires_at IS NULL OR s.expires_at > NOW()))
+                   AS strike_count,
                 EXISTS(SELECT 1 FROM developer_keys dk WHERE dk.member_id = members.id) AS has_dev_key,
                 (SELECT ip_address::text FROM api_key_ips aki
                  WHERE aki.member_id = members.id ORDER BY last_seen DESC LIMIT 1) AS last_seen_ip
@@ -334,7 +339,7 @@ struct Detail {
     tagging_disabled: bool,
     is_owner: bool,
     standing: StandingView,
-    strikes: serde_json::Value,
+    strikes: Vec<StrikeView>,
     config: serde_json::Value,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -460,7 +465,13 @@ async fn detail(
         tagging_disabled: member.tagging_disabled,
         is_owner: state.owner_ids.contains(&member.discord_id),
         standing,
-        strikes: normalize_strikes(&member.strikes),
+        strikes: StrikeRepository::new(state.db.pool())
+            .list_for_member(member.discord_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .into_iter()
+            .map(StrikeView::from)
+            .collect(),
         config: member.config.clone(),
         created_at,
         updated_at,
@@ -480,27 +491,36 @@ async fn member_or_404(state: &AppState, id: i64) -> Result<Member, StatusCode> 
         .ok_or(StatusCode::NOT_FOUND)
 }
 
-fn normalize_strikes(strikes: &serde_json::Value) -> serde_json::Value {
-    let Some(array) = strikes.as_array() else {
-        return strikes.clone();
-    };
-    serde_json::Value::Array(
-        array
-            .iter()
-            .map(|strike| {
-                let mut strike = strike.clone();
-                if let Some(obj) = strike.as_object_mut() {
-                    if let Some(id) = obj.get("struck_by").and_then(|v| v.as_i64()) {
-                        obj.insert(
-                            "struck_by".to_string(),
-                            serde_json::Value::String(id.to_string()),
-                        );
-                    }
-                }
-                strike
-            })
-            .collect(),
-    )
+#[derive(Serialize)]
+struct StrikeView {
+    id: i64,
+    reason: String,
+    struck_by: String,
+    issued_at: DateTime<Utc>,
+    expires_at: Option<DateTime<Utc>>,
+    revoked_at: Option<DateTime<Utc>>,
+    revoked_by: Option<String>,
+    status: &'static str,
+}
+
+impl From<Strike> for StrikeView {
+    fn from(strike: Strike) -> Self {
+        let status = match strike.status_at(Utc::now()) {
+            StrikeStatus::Active => "active",
+            StrikeStatus::Expired => "expired",
+            StrikeStatus::Revoked => "revoked",
+        };
+        Self {
+            id: strike.id,
+            reason: strike.reason,
+            struck_by: strike.struck_by.to_string(),
+            issued_at: strike.issued_at,
+            expires_at: strike.expires_at,
+            revoked_at: strike.revoked_at,
+            revoked_by: strike.revoked_by.map(|id| id.to_string()),
+            status,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -590,9 +610,13 @@ async fn set_tagging_disabled(
     Ok(Json(OkResponse { ok: true }))
 }
 
+const STRIKE_REASON_MAX_CHARS: usize = 100;
+const STRIKE_DURATION_DAYS: &[i64] = &[14, 30];
+
 #[derive(Deserialize)]
 struct StrikeRequest {
     reason: String,
+    duration_days: Option<i64>,
 }
 
 async fn add_strike(
@@ -601,41 +625,87 @@ async fn add_strike(
     Path(id): Path<i64>,
     Json(req): Json<StrikeRequest>,
 ) -> Result<Json<OkResponse>, StatusCode> {
+    let reason = req.reason.trim();
+    if reason.is_empty() || reason.chars().count() > STRIKE_REASON_MAX_CHARS {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if req
+        .duration_days
+        .is_some_and(|days| !STRIKE_DURATION_DAYS.contains(&days))
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
     let member = member_or_404(&state, id).await?;
-    MemberRepository::new(state.db.pool())
-        .add_strike(member.discord_id, &req.reason, actor.discord_id as u64)
+    let expires_at = req
+        .duration_days
+        .map(|days| Utc::now() + chrono::Duration::days(days));
+    let strike = StrikeRepository::new(state.db.pool())
+        .issue(
+            member.discord_id,
+            reason,
+            actor.discord_id,
+            expires_at,
+            None,
+        )
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    publish_blacklist_event(
+        &state,
+        &BlacklistEvent::StrikeIssued {
+            strike_id: strike.id,
+        },
+    )
+    .await;
     audit(
         &state,
         actor,
         "add_strike",
         member.discord_id,
-        json!({"reason": req.reason}),
+        json!({"strike_id": strike.id, "reason": reason, "duration_days": req.duration_days}),
     )
     .await;
     Ok(Json(OkResponse { ok: true }))
 }
 
-async fn remove_strike(
+async fn revoke_strike(
     State(state): State<AppState>,
     Extension(actor): Extension<AdminActor>,
-    Path((id, index)): Path<(i64, i64)>,
+    Path((id, strike_id)): Path<(i64, i64)>,
 ) -> Result<Json<OkResponse>, StatusCode> {
     let member = member_or_404(&state, id).await?;
-    MemberRepository::new(state.db.pool())
-        .remove_strike(member.discord_id, index.max(0) as usize)
+    let repo = StrikeRepository::new(state.db.pool());
+    let belongs = repo
+        .get(strike_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .is_some_and(|s| s.member_id == member.id);
+    if !belongs {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let revoked = repo
+        .revoke(strike_id, actor.discord_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    audit(
-        &state,
-        actor,
-        "remove_strike",
-        member.discord_id,
-        json!({"index": index}),
-    )
-    .await;
+    if revoked.is_some() {
+        publish_blacklist_event(&state, &BlacklistEvent::StrikeRevoked { strike_id }).await;
+        audit(
+            &state,
+            actor,
+            "revoke_strike",
+            member.discord_id,
+            json!({"strike_id": strike_id}),
+        )
+        .await;
+    }
     Ok(Json(OkResponse { ok: true }))
+}
+
+async fn publish_blacklist_event(state: &AppState, event: &BlacklistEvent) {
+    match &state.redis {
+        Some(pool) => EventPublisher::new(pool.clone()).publish(event).await,
+        None => tracing::warn!("Redis unavailable, blacklist event not published: {event:?}"),
+    }
 }
 
 #[derive(Serialize)]
@@ -842,31 +912,4 @@ async fn audit(
         details,
     )
     .await;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalize_strikes_stringifies_struck_by() {
-        let strikes = json!([
-            {"reason": "abuse", "struck_by": 1_547_000_000_000_000_000i64, "timestamp": "2026-01-01T00:00:00Z"},
-        ]);
-        let normalized = normalize_strikes(&strikes);
-        assert_eq!(normalized[0]["struck_by"], json!("1547000000000000000"));
-        assert_eq!(normalized[0]["reason"], json!("abuse"));
-    }
-
-    #[test]
-    fn normalize_strikes_handles_empty_array() {
-        let strikes = json!([]);
-        assert_eq!(normalize_strikes(&strikes), json!([]));
-    }
-
-    #[test]
-    fn normalize_strikes_passes_through_non_array() {
-        let value = json!({"unexpected": true});
-        assert_eq!(normalize_strikes(&value), value);
-    }
 }

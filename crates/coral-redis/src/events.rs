@@ -51,6 +51,12 @@ pub enum BlacklistEvent {
         uuid: String,
         unlocked_by: i64,
     },
+    StrikeIssued {
+        strike_id: i64,
+    },
+    StrikeRevoked {
+        strike_id: i64,
+    },
 }
 
 #[derive(Clone)]

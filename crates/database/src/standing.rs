@@ -1,9 +1,8 @@
 use crate::{AccessRank, Member, MemberRepository};
 
 pub const VOTE_GRANT_APPROVALS: i64 = 5;
-pub const TAG_GRANT_CORRECT: i64 = 15;
-pub const KEEP_RATIO: i64 = 7;
-pub const EARN_RATIO: i64 = 10;
+pub const TAG_GRANT_CORRECT: i64 = 25;
+pub const EARN_RATIO: i64 = 12;
 pub const BONUS_WEIGHT: i64 = 5;
 pub const REVOKE_STRIKES: usize = 2;
 
@@ -19,8 +18,14 @@ pub struct StandingChange {
     pub tag: Option<bool>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Grants {
+    Held,
+    Ignored,
+}
+
 pub fn strike_count(member: &Member) -> usize {
-    member.strikes.as_array().map_or(0, Vec::len)
+    member.active_strikes.max(0) as usize
 }
 
 pub fn effective_level(member: &Member) -> i16 {
@@ -34,11 +39,32 @@ pub fn effective_level(member: &Member) -> i16 {
 }
 
 pub fn evaluate(member: &Member) -> Standing {
+    evaluate_with(member, Grants::Held)
+}
+
+pub fn evaluate_fresh(member: &Member) -> Standing {
+    evaluate_with(member, Grants::Ignored)
+}
+
+fn evaluate_with(member: &Member, grants: Grants) -> Standing {
     let strikes = strike_count(member);
+    let held = grants == Grants::Held;
     Standing {
-        can_vote: eval_vote(member, strikes),
-        can_tag: eval_tag(member, strikes),
+        can_vote: eval_vote(member, strikes, held && member.vote_granted),
+        can_tag: eval_tag(member, strikes, held && member.tag_granted),
     }
+}
+
+pub fn correct_votes(member: &Member) -> i64 {
+    member.accurate_verdicts + BONUS_WEIGHT * member.bonus_verdicts
+}
+
+pub fn vote_target(member: &Member) -> i64 {
+    VOTE_GRANT_APPROVALS.max(EARN_RATIO * member.rejected_tags)
+}
+
+pub fn tag_target(member: &Member) -> i64 {
+    TAG_GRANT_CORRECT.max(EARN_RATIO * member.incorrect_verdicts)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -62,118 +88,52 @@ pub fn explain(member: &Member) -> StandingExplanation {
 }
 
 fn explain_vote(member: &Member, strikes: usize) -> (bool, String) {
-    if strikes >= REVOKE_STRIKES {
-        return (
-            false,
-            format!("revoked — {strikes} strikes (≥{REVOKE_STRIKES} revokes standing)"),
-        );
-    }
     let (approved, rejected) = (member.accepted_tags, member.rejected_tags);
-    if member.vote_granted {
-        if rejected == 0 {
-            (true, format!("kept — {approved} accepted, no rejections"))
-        } else if approved >= KEEP_RATIO * rejected {
-            (
-                true,
-                format!(
-                    "kept — {approved} accepted / {rejected} rejected (≥{KEEP_RATIO}:1 keep threshold)"
-                ),
-            )
-        } else {
-            (
-                false,
-                format!(
-                    "lost — {approved} accepted / {rejected} rejected (below {KEEP_RATIO}:1 keep threshold)"
-                ),
-            )
-        }
-    } else if rejected == 0 {
-        if approved >= VOTE_GRANT_APPROVALS {
-            (
-                true,
-                format!(
-                    "granted — {approved} accepted, no rejections (≥{VOTE_GRANT_APPROVALS} required)"
-                ),
-            )
-        } else {
-            (
-                false,
-                format!(
-                    "not yet — {approved}/{VOTE_GRANT_APPROVALS} accepted needed, no rejections"
-                ),
-            )
-        }
-    } else if approved >= EARN_RATIO * rejected {
-        (
-            true,
-            format!(
-                "granted — {approved} accepted / {rejected} rejected (≥{EARN_RATIO}:1 earn threshold)"
-            ),
-        )
-    } else {
-        (
-            false,
-            format!(
-                "not yet — {approved} accepted / {rejected} rejected (below {EARN_RATIO}:1 earn threshold)"
-            ),
-        )
-    }
+    let target = vote_target(member);
+    explain_grant(
+        strikes,
+        member.vote_granted,
+        approved >= target,
+        format!("{approved}/{target} accepted submissions ({rejected} rejected)"),
+    )
 }
 
 fn explain_tag(member: &Member, strikes: usize) -> (bool, String) {
+    let correct = correct_votes(member);
+    let target = tag_target(member);
+    explain_grant(
+        strikes,
+        member.tag_granted,
+        correct >= target,
+        format!(
+            "{correct}/{target} correct votes ({} incorrect)",
+            member.incorrect_verdicts
+        ),
+    )
+}
+
+fn explain_grant(strikes: usize, held: bool, earned: bool, progress: String) -> (bool, String) {
     if strikes >= REVOKE_STRIKES {
         return (
             false,
-            format!("revoked — {strikes} strikes (≥{REVOKE_STRIKES} revokes standing)"),
+            format!(
+                "suspended: {strikes} active strikes (\u{2265}{REVOKE_STRIKES} suspend standing)"
+            ),
         );
     }
-    let correct = member.accurate_verdicts + BONUS_WEIGHT * member.bonus_verdicts;
-    let incorrect = member.incorrect_verdicts;
-    if member.tag_granted {
-        if incorrect == 0 {
-            (
-                true,
-                format!("kept — {correct} correct, no incorrect verdicts"),
-            )
-        } else if correct >= KEEP_RATIO * incorrect {
-            (
-                true,
-                format!(
-                    "kept — {correct} correct / {incorrect} incorrect (≥{KEEP_RATIO}:1 keep threshold)"
-                ),
-            )
-        } else {
-            (
-                false,
-                format!(
-                    "lost — {correct} correct / {incorrect} incorrect (below {KEEP_RATIO}:1 keep threshold)"
-                ),
-            )
-        }
-    } else if strikes != 0 {
-        (
+    if held {
+        return (true, format!("held: {progress}"));
+    }
+    if strikes > 0 {
+        return (
             false,
-            format!("not yet — {strikes} strike(s) block a fresh grant"),
-        )
-    } else if correct < TAG_GRANT_CORRECT {
-        (
-            false,
-            format!("not yet — {correct}/{TAG_GRANT_CORRECT} correct verdicts needed"),
-        )
-    } else if incorrect == 0 || correct >= EARN_RATIO * incorrect {
-        (
-            true,
-            format!(
-                "granted — {correct} correct / {incorrect} incorrect (≥{TAG_GRANT_CORRECT} correct, ≥{EARN_RATIO}:1 earn threshold)"
-            ),
-        )
+            format!("not yet: an active strike blocks a fresh grant, {progress}"),
+        );
+    }
+    if earned {
+        (true, format!("earned: {progress}"))
     } else {
-        (
-            false,
-            format!(
-                "not yet — {correct} correct / {incorrect} incorrect (below {EARN_RATIO}:1 earn threshold)"
-            ),
-        )
+        (false, format!("not yet: {progress}"))
     }
 }
 
@@ -181,10 +141,25 @@ pub async fn refresh(
     repo: &MemberRepository<'_>,
     discord_id: i64,
 ) -> Result<StandingChange, sqlx::Error> {
+    refresh_with(repo, discord_id, Grants::Held).await
+}
+
+pub async fn refresh_fresh(
+    repo: &MemberRepository<'_>,
+    discord_id: i64,
+) -> Result<StandingChange, sqlx::Error> {
+    refresh_with(repo, discord_id, Grants::Ignored).await
+}
+
+async fn refresh_with(
+    repo: &MemberRepository<'_>,
+    discord_id: i64,
+    grants: Grants,
+) -> Result<StandingChange, sqlx::Error> {
     let Some(member) = repo.get_by_discord_id(discord_id).await? else {
         return Ok(StandingChange::default());
     };
-    let standing = evaluate(&member);
+    let standing = evaluate_with(&member, grants);
     let mut change = StandingChange::default();
     if standing.can_vote != member.vote_granted {
         repo.set_vote_granted(discord_id, standing.can_vote).await?;
@@ -197,33 +172,18 @@ pub async fn refresh(
     Ok(change)
 }
 
-fn eval_vote(member: &Member, strikes: usize) -> bool {
+fn eval_vote(member: &Member, strikes: usize, held: bool) -> bool {
     if strikes >= REVOKE_STRIKES {
         return false;
     }
-    let (approved, rejected) = (member.accepted_tags, member.rejected_tags);
-    if member.vote_granted {
-        rejected == 0 || approved >= KEEP_RATIO * rejected
-    } else if rejected == 0 {
-        approved >= VOTE_GRANT_APPROVALS
-    } else {
-        approved >= EARN_RATIO * rejected
-    }
+    held || (strikes == 0 && member.accepted_tags >= vote_target(member))
 }
 
-fn eval_tag(member: &Member, strikes: usize) -> bool {
+fn eval_tag(member: &Member, strikes: usize, held: bool) -> bool {
     if strikes >= REVOKE_STRIKES {
         return false;
     }
-    let correct = member.accurate_verdicts + BONUS_WEIGHT * member.bonus_verdicts;
-    let incorrect = member.incorrect_verdicts;
-    if member.tag_granted {
-        incorrect == 0 || correct >= KEEP_RATIO * incorrect
-    } else {
-        strikes == 0
-            && correct >= TAG_GRANT_CORRECT
-            && (incorrect == 0 || correct >= EARN_RATIO * incorrect)
-    }
+    held || (strikes == 0 && correct_votes(member) >= tag_target(member))
 }
 
 #[cfg(test)]
@@ -232,7 +192,7 @@ mod tests {
     use chrono::Utc;
     use serde_json::json;
 
-    fn member(level: i16, strikes: usize) -> Member {
+    fn member(level: i16, strikes: i64) -> Member {
         Member {
             id: 1,
             discord_id: 1,
@@ -251,7 +211,8 @@ mod tests {
             vote_granted: false,
             tag_granted: false,
             config: json!({}),
-            strikes: json!(vec![json!({}); strikes]),
+            strikes: json!([]),
+            active_strikes: strikes,
         }
     }
 
@@ -267,48 +228,56 @@ mod tests {
     }
 
     #[test]
-    fn vote_reearn_at_ten_to_one() {
+    fn vote_earn_at_twelve_to_one() {
         let mut m = member(0, 0);
-        m.accepted_tags = 9;
+        m.accepted_tags = 11;
         m.rejected_tags = 1;
         assert!(!evaluate(&m).can_vote);
-        m.accepted_tags = 10;
+        m.accepted_tags = 12;
         assert!(evaluate(&m).can_vote);
     }
 
     #[test]
-    fn vote_kept_until_below_seven_to_one() {
+    fn held_grants_survive_any_ratio() {
         let mut m = member(0, 0);
         m.vote_granted = true;
-        m.accepted_tags = 7;
-        m.rejected_tags = 1;
-        assert!(evaluate(&m).can_vote);
-        m.accepted_tags = 6;
-        assert!(!evaluate(&m).can_vote);
+        m.tag_granted = true;
+        m.accepted_tags = 1;
+        m.rejected_tags = 9;
+        m.incorrect_verdicts = 9;
+        let s = evaluate(&m);
+        assert!(s.can_vote);
+        assert!(s.can_tag);
     }
 
     #[test]
-    fn tag_grant_needs_volume_ratio_and_no_strikes() {
+    fn tag_grant_needs_volume_and_ratio() {
         let mut m = member(0, 0);
-        m.accurate_verdicts = 15;
+        m.accurate_verdicts = 25;
         assert!(evaluate(&m).can_tag);
-        m.accurate_verdicts = 14;
+        m.accurate_verdicts = 24;
         assert!(!evaluate(&m).can_tag);
         m.bonus_verdicts = 1;
         assert!(evaluate(&m).can_tag);
-        m.incorrect_verdicts = 1;
-        assert!(evaluate(&m).can_tag);
         m.incorrect_verdicts = 2;
+        assert!(evaluate(&m).can_tag);
+        m.incorrect_verdicts = 3;
         assert!(!evaluate(&m).can_tag);
     }
 
     #[test]
-    fn one_strike_blocks_tag_grant_but_not_keep() {
+    fn one_strike_blocks_both_fresh_grants_but_keeps_held_ones() {
         let mut m = member(0, 1);
-        m.accurate_verdicts = 20;
-        assert!(!evaluate(&m).can_tag);
+        m.accepted_tags = 50;
+        m.accurate_verdicts = 50;
+        let s = evaluate(&m);
+        assert!(!s.can_vote);
+        assert!(!s.can_tag);
+        m.vote_granted = true;
         m.tag_granted = true;
-        assert!(evaluate(&m).can_tag);
+        let s = evaluate(&m);
+        assert!(s.can_vote);
+        assert!(s.can_tag);
     }
 
     #[test]
@@ -325,6 +294,23 @@ mod tests {
     }
 
     #[test]
+    fn fresh_evaluation_can_revoke_a_held_grant() {
+        let mut m = member(0, 0);
+        m.vote_granted = true;
+        m.tag_granted = true;
+        m.accepted_tags = 2;
+        m.accurate_verdicts = 3;
+        let s = evaluate_fresh(&m);
+        assert!(!s.can_vote);
+        assert!(!s.can_tag);
+        m.accepted_tags = 5;
+        m.accurate_verdicts = 25;
+        let s = evaluate_fresh(&m);
+        assert!(s.can_vote);
+        assert!(s.can_tag);
+    }
+
+    #[test]
     fn effective_level_reflects_standing_not_rank() {
         let mut m = member(0, 0);
         assert_eq!(effective_level(&m), 0);
@@ -335,76 +321,49 @@ mod tests {
     }
 
     #[test]
+    fn targets_fold_the_ratio_into_one_number() {
+        let mut m = member(0, 0);
+        assert_eq!(vote_target(&m), 5);
+        assert_eq!(tag_target(&m), 25);
+        m.rejected_tags = 1;
+        m.incorrect_verdicts = 3;
+        assert_eq!(vote_target(&m), 12);
+        assert_eq!(tag_target(&m), 36);
+    }
+
+    type Setup = Box<dyn Fn(&mut Member)>;
+
+    #[test]
     fn explain_matches_evaluate_across_scenarios() {
-        let scenarios: Vec<Box<dyn Fn(&mut Member)>> = vec![
-            Box::new(|m| {
-                m.accepted_tags = 4;
-            }),
-            Box::new(|m| {
-                m.accepted_tags = 5;
-            }),
-            Box::new(|m| {
-                m.vote_granted = true;
-                m.accepted_tags = 7;
-                m.rejected_tags = 1;
-            }),
-            Box::new(|m| {
-                m.vote_granted = true;
-                m.accepted_tags = 6;
-                m.rejected_tags = 1;
-            }),
-            Box::new(|m| {
-                m.accurate_verdicts = 15;
-            }),
-            Box::new(|m| {
-                m.accurate_verdicts = 14;
-            }),
-            Box::new(|m| {
-                m.tag_granted = true;
-                m.accurate_verdicts = 20;
-                m.incorrect_verdicts = 3;
-            }),
+        let scenarios: Vec<(i64, Setup)> = vec![
+            (0, Box::new(|m| m.accepted_tags = 4)),
+            (0, Box::new(|m| m.accepted_tags = 5)),
+            (
+                0,
+                Box::new(|m| {
+                    m.vote_granted = true;
+                    m.rejected_tags = 3;
+                }),
+            ),
+            (0, Box::new(|m| m.accurate_verdicts = 25)),
+            (0, Box::new(|m| m.accurate_verdicts = 24)),
+            (1, Box::new(|m| m.accurate_verdicts = 30)),
+            (2, Box::new(|m| m.tag_granted = true)),
         ];
-        for setup in scenarios {
-            let mut m = member(0, 0);
+        for (strikes, setup) in scenarios {
+            let mut m = member(0, strikes);
             setup(&mut m);
             let evaluated = evaluate(&m);
             let explanation = explain(&m);
             assert_eq!(evaluated.can_vote, explanation.can_vote);
             assert_eq!(evaluated.can_tag, explanation.can_tag);
-            assert!(!explanation.vote_reason.is_empty());
-            assert!(!explanation.tag_reason.is_empty());
         }
     }
 
     #[test]
-    fn explain_revoked_mentions_strike_count() {
-        let m = member(0, 2);
-        let explanation = explain(&m);
-        assert!(!explanation.can_vote);
-        assert!(!explanation.can_tag);
-        assert!(explanation.vote_reason.contains("2 strikes"));
-        assert!(explanation.tag_reason.contains("2 strikes"));
-    }
-
-    #[test]
-    fn explain_vote_kept_reason_shows_ratio() {
-        let mut m = member(0, 0);
-        m.vote_granted = true;
-        m.accepted_tags = 14;
-        m.rejected_tags = 2;
-        let explanation = explain(&m);
-        assert!(explanation.can_vote);
-        assert!(explanation.vote_reason.contains("14 accepted"));
-        assert!(explanation.vote_reason.contains("2 rejected"));
-    }
-
-    #[test]
-    fn explain_tag_not_yet_blocked_by_strike() {
-        let mut m = member(0, 1);
-        m.accurate_verdicts = 20;
-        let explanation = explain(&m);
-        assert!(!explanation.can_tag);
-        assert!(explanation.tag_reason.contains("strike"));
+    fn explain_suspended_mentions_strike_count() {
+        let explanation = explain(&member(0, 2));
+        assert!(explanation.vote_reason.contains("2 active strikes"));
+        assert!(explanation.tag_reason.contains("2 active strikes"));
     }
 }

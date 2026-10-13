@@ -22,11 +22,15 @@ pub struct Member {
     pub tag_granted: bool,
     pub config: Value,
     pub strikes: Value,
+    pub active_strikes: i64,
 }
 
 pub(crate) const COLUMNS: &str = "id, discord_id, uuid, api_key, join_date, request_count, access_level, \
     key_locked, tagging_disabled, accepted_tags, rejected_tags, accurate_verdicts, \
-    incorrect_verdicts, bonus_verdicts, vote_granted, tag_granted, config, strikes";
+    incorrect_verdicts, bonus_verdicts, vote_granted, tag_granted, config, strikes, \
+    (SELECT COUNT(*) FROM member_strike s WHERE s.member_id = members.id \
+        AND s.revoked_at IS NULL AND (s.expires_at IS NULL OR s.expires_at > NOW())) \
+        AS active_strikes";
 
 /// Signed adjustments to a member's tag-review counters.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -276,34 +280,6 @@ impl<'a> MemberRepository<'a> {
             .execute(self.pool)
             .await?;
         Ok(())
-    }
-
-    pub async fn add_strike(
-        &self,
-        discord_id: i64,
-        reason: &str,
-        struck_by: u64,
-    ) -> Result<bool, sqlx::Error> {
-        let strike = serde_json::json!({
-            "reason": reason,
-            "struck_by": struck_by,
-            "timestamp": Utc::now().to_rfc3339(),
-        });
-        sqlx::query("UPDATE members SET strikes = strikes || $2::jsonb WHERE discord_id = $1")
-            .bind(discord_id)
-            .bind(strike)
-            .execute(self.pool)
-            .await
-            .map(|r| r.rows_affected() > 0)
-    }
-
-    pub async fn remove_strike(&self, discord_id: i64, index: usize) -> Result<bool, sqlx::Error> {
-        sqlx::query("UPDATE members SET strikes = strikes - $2::int WHERE discord_id = $1")
-            .bind(discord_id)
-            .bind(index as i32)
-            .execute(self.pool)
-            .await
-            .map(|r| r.rows_affected() > 0)
     }
 
     pub async fn count(&self) -> Result<i64, sqlx::Error> {

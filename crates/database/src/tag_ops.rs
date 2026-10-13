@@ -57,15 +57,13 @@ impl<'a> TagOp<'a> {
         }
         self.check_lock(uuid).await?;
 
-        let hide = permissions::can_set_hide(actor_level) && hide_username;
-
         match self
             .repo
             .add_event(
                 uuid,
                 tag_type,
                 reason,
-                hide,
+                hide_username,
                 expires_at,
                 reviewed_by,
                 Some(actor_id),
@@ -149,7 +147,6 @@ impl<'a> TagOp<'a> {
         let old_preview = self.require_active_tag(uuid, old_tag_type).await?;
         self.authorize_overwrite(&old_preview, actor_id, actor_level)?;
 
-        let hide = permissions::can_set_hide(actor_level) && hide_username;
         let blocking = if new_tag_type == old_tag_type {
             Vec::new()
         } else {
@@ -163,7 +160,7 @@ impl<'a> TagOp<'a> {
                 old_tag_type,
                 new_tag_type,
                 new_reason,
-                hide,
+                hide_username,
                 None,
                 None,
                 Some(actor_id),

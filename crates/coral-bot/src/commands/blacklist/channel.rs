@@ -5,7 +5,9 @@ use blacklist::{
     EMOTE_ADDTAG, EMOTE_EDITTAG, EMOTE_EVIDENCE, EMOTE_NO_EVIDENCE, EMOTE_REMOVETAG, EMOTE_TAG,
     lookup as lookup_tag,
 };
-use database::{BlacklistRepository, GuildSubscriptionRepository, PlayerEvent};
+use database::{
+    BlacklistRepository, GuildSubscriptionRepository, PlayerEvent, standing::StandingChange,
+};
 
 use super::appeal;
 use super::evidence::evidence_thread_url;
@@ -68,6 +70,22 @@ pub async fn format_added_line(ctx: &Context, tag: &PlayerEvent) -> String {
     }
 }
 
+async fn format_mod_added_line(ctx: &Context, tag: &PlayerEvent) -> String {
+    let ts = tag.ts.timestamp();
+    match tag.author {
+        Some(author) => {
+            let username = get_username(ctx, author as u64).await;
+            let hidden = if tag.hide_username.unwrap_or(false) {
+                " (hidden)"
+            } else {
+                ""
+            };
+            format!("> -# **\\- Added by `@{username}`{hidden} <t:{ts}:R>**")
+        }
+        None => format!("> -# **\\- <t:{ts}:R>**"),
+    }
+}
+
 pub fn tag_label(tag_type: &str) -> String {
     let def = lookup_tag(tag_type);
     let emote = def.map(|d| d.emote).unwrap_or("");
@@ -106,6 +124,7 @@ fn render_history_entry(
     event: &PlayerEvent,
     all_events: &[PlayerEvent],
     names: &std::collections::HashMap<i64, String>,
+    reveal_hidden: bool,
 ) -> String {
     let (action_emote, action) = if event.kind == "tag_set" {
         (EMOTE_ADDTAG, "Added")
@@ -118,16 +137,18 @@ fn render_history_entry(
     let display = def.map(|d| d.display_name).unwrap_or(tag_type);
     let ts = event.ts.timestamp();
 
+    let hidden = event.hide_username.unwrap_or(false);
     let attribution = match event.author {
+        Some(_) if hidden && !reveal_hidden => None,
         Some(id) => {
             let name = names.get(&id).cloned().unwrap_or_else(|| id.to_string());
-            if event.hide_username.unwrap_or(false) {
-                format!("**`@{name}`** (hidden)")
+            if hidden {
+                Some(format!("**`@{name}`** (hidden)"))
             } else {
-                format!("**`@{name}`**")
+                Some(format!("**`@{name}`**"))
             }
         }
-        None => "**system**".to_string(),
+        None => Some("**system**".to_string()),
     };
 
     let mut lines = vec![
@@ -138,7 +159,10 @@ fn render_history_entry(
     if !reason.is_empty() {
         lines.push(format!("> -# {reason}"));
     }
-    lines.push(format!("> -# \\- {action} by {attribution} <t:{ts}:R>"));
+    lines.push(match attribution {
+        Some(attribution) => format!("> -# \\- {action} by {attribution} <t:{ts}:R>"),
+        None => format!("> -# \\- <t:{ts}:R>"),
+    });
     lines.join("\n")
 }
 
@@ -147,6 +171,7 @@ async fn render_tag_history(
     username: &str,
     events: &[PlayerEvent],
     page: usize,
+    reveal_hidden: bool,
 ) -> (String, usize) {
     let header = format!("## Tag History — `{username}`");
     let mut tag_events: Vec<&PlayerEvent> = events
@@ -172,7 +197,7 @@ async fn render_tag_history(
 
     let mut out = vec![header];
     for event in slice {
-        out.push(render_history_entry(event, events, &names));
+        out.push(render_history_entry(event, events, &names, reveal_hidden));
     }
     (out.join("\n\n"), total_pages)
 }
@@ -192,7 +217,10 @@ async fn respond_history(
     let username = resolve_username_or_fetch(uuid, data)
         .await
         .unwrap_or_else(|| uuid.to_string());
-    let (content, total_pages) = render_tag_history(ctx, &username, &events, page).await;
+    let reveal_hidden =
+        super::tag::get_rank(data, component.user.id.get()).await? >= AccessRank::Helper;
+    let (content, total_pages) =
+        render_tag_history(ctx, &username, &events, page, reveal_hidden).await;
     let page = page.min(total_pages.saturating_sub(1));
 
     let mut parts = vec![CreateContainerComponent::TextDisplay(
@@ -318,7 +346,11 @@ pub async fn post_new_tag(
     silent: bool,
     review_url: Option<&str>,
 ) -> Option<MessageId> {
-    let notice = appeal::notify_tagged_player(ctx, data, uuid, name, tag).await;
+    let notice = if silent {
+        None
+    } else {
+        Some(appeal::notify_tagged_player(ctx, data, uuid, name, tag).await)
+    };
     post_tag_to_log(
         ctx,
         data,
@@ -328,18 +360,13 @@ pub async fn post_new_tag(
         "New Tag",
         EMOTE_ADDTAG,
         review_url,
-        &notice,
+        notice.as_ref(),
     )
     .await;
     if silent {
         return None;
     }
-    let mut mentions = guild_watchers(data, uuid, tag.tag_type.as_deref()).await;
-    for tagged in notice.pings() {
-        if !mentions.contains(tagged) {
-            mentions.push(*tagged);
-        }
-    }
+    let mentions = guild_watchers(data, uuid, tag.tag_type.as_deref()).await;
     post_to_blacklist_channel(
         ctx,
         data,
@@ -365,7 +392,11 @@ pub async fn post_overwritten_tag(
     silent: bool,
     review_url: Option<&str>,
 ) -> Option<MessageId> {
-    let notice = appeal::notify_tagged_player(ctx, data, uuid, name, tag).await;
+    let notice = if silent {
+        None
+    } else {
+        Some(appeal::notify_tagged_player(ctx, data, uuid, name, tag).await)
+    };
     post_tag_to_log(
         ctx,
         data,
@@ -375,18 +406,13 @@ pub async fn post_overwritten_tag(
         "Tag Overwritten",
         EMOTE_EDITTAG,
         review_url,
-        &notice,
+        notice.as_ref(),
     )
     .await;
     if silent {
         return None;
     }
-    let mut mentions = guild_watchers(data, uuid, tag.tag_type.as_deref()).await;
-    for tagged in notice.pings() {
-        if !mentions.contains(tagged) {
-            mentions.push(*tagged);
-        }
-    }
+    let mentions = guild_watchers(data, uuid, tag.tag_type.as_deref()).await;
     post_to_blacklist_channel(
         ctx,
         data,
@@ -431,26 +457,22 @@ pub async fn post_tag_removed(
     silent: bool,
 ) {
     let dashed_uuid = format_uuid_dashed(uuid);
-    let added_line = format_added_line(ctx, tag).await;
     let username = get_username(ctx, removed_by).await;
     let detail = format_tag_detail(tag);
+    let tag_type = tag.tag_type.as_deref().unwrap_or("");
 
-    let block = format_tag_block(
-        tag.tag_type.as_deref().unwrap_or(""),
-        &detail,
-        "",
-        Some(&added_line),
-        None,
-        true,
-    );
+    let make_block =
+        |added_line: String| format_tag_block(tag_type, &detail, "", Some(&added_line), None, true);
+    let log_block = make_block(format_mod_added_line(ctx, tag).await);
+    let pub_block = make_block(format_added_line(ctx, tag).await);
     let log_footer = format!("-# Removed by `@{username}`\n-# UUID: {dashed_uuid}");
     let pub_footer = format!("-# UUID: {dashed_uuid}");
 
-    let make_container = |footer: String| {
+    let make_container = |block: String, footer: String| {
         CreateContainer::new(vec![
             face_section(vec![
                 format!("## {} Tag Removed\nIGN - `{name}`\n", EMOTE_REMOVETAG),
-                block.clone(),
+                block,
                 footer,
             ]),
             CreateContainerComponent::Separator(CreateSeparator::new(true)),
@@ -461,7 +483,7 @@ pub async fn post_tag_removed(
     send_to_mod_channel(
         ctx,
         data,
-        make_container(log_footer).accent_color(COLOR_ERROR),
+        make_container(log_block, log_footer).accent_color(COLOR_ERROR),
         vec![log_face],
     )
     .await;
@@ -476,7 +498,7 @@ pub async fn post_tag_removed(
     send_container(
         ctx,
         channel_id,
-        make_container(pub_footer),
+        make_container(pub_block, pub_footer),
         vec![public_face],
         &[],
     )
@@ -494,8 +516,8 @@ pub async fn post_tag_changed(
     changed_by: u64,
 ) {
     let dashed_uuid = format_uuid_dashed(uuid);
-    let old_added = format_added_line(ctx, old_tag).await;
-    let new_added = format_added_line(ctx, new_tag).await;
+    let old_added = format_mod_added_line(ctx, old_tag).await;
+    let new_added = format_mod_added_line(ctx, new_tag).await;
     let username = get_username(ctx, changed_by).await;
 
     let old_block = format_tag_block(
@@ -657,9 +679,10 @@ pub async fn post_review_score_correction(
     reason: &str,
     before: &database::Member,
     after: &database::Member,
+    change: StandingChange,
 ) {
     let invoker = get_username(ctx, invoker_id).await;
-    let container = CreateContainer::new(vec![
+    let mut parts = vec![
         CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
             "## Tag Review Score Corrected\n<@{target_id}>"
         ))),
@@ -681,13 +704,81 @@ pub async fn post_review_score_correction(
             after.incorrect_verdicts,
             after.bonus_verdicts,
         ))),
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
-            "-# Corrected by `@{invoker}`"
-        ))),
-        CreateContainerComponent::Separator(CreateSeparator::new(true)),
-    ]);
+    ];
+    if let Some(line) = standing_change_line(change) {
+        parts.push(CreateContainerComponent::TextDisplay(
+            CreateTextDisplay::new(line),
+        ));
+    }
+    parts.push(CreateContainerComponent::TextDisplay(
+        CreateTextDisplay::new(format!("-# Corrected by `@{invoker}`")),
+    ));
+    parts.push(CreateContainerComponent::Separator(CreateSeparator::new(
+        true,
+    )));
+    let container = CreateContainer::new(parts);
 
     send_to_mod_channel(ctx, data, container, vec![]).await;
+}
+
+fn standing_change_line(change: StandingChange) -> Option<String> {
+    let describe = |grant: &str, held: Option<bool>| {
+        held.map(|held| format!("{grant} {}", if held { "granted" } else { "removed" }))
+    };
+    let changes: Vec<String> = [
+        describe("Voting", change.vote),
+        describe("Direct tagging", change.tag),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    (!changes.is_empty()).then(|| format!("Standing changed: {}.", changes.join(", ")))
+}
+
+pub async fn post_strike_issued(ctx: &Context, data: &Data, strike: &database::Strike) {
+    let issuer = get_username(ctx, strike.struck_by as u64).await;
+    let container = strike_container("Strike Issued", strike, format!("-# Issued by `@{issuer}`"))
+        .accent_color(COLOR_ERROR);
+    send_to_mod_channel(ctx, data, container, vec![]).await;
+}
+
+pub async fn post_strike_revoked(ctx: &Context, data: &Data, strike: &database::Strike) {
+    let revoker = match strike.revoked_by {
+        Some(id) => get_username(ctx, id as u64).await,
+        None => "staff".to_string(),
+    };
+    let container = strike_container(
+        "Strike Revoked",
+        strike,
+        format!("-# Revoked by `@{revoker}`"),
+    );
+    send_to_mod_channel(ctx, data, container, vec![]).await;
+}
+
+fn strike_container(
+    title: &str,
+    strike: &database::Strike,
+    actor_line: String,
+) -> CreateContainer<'static> {
+    let duration = match strike.expires_at {
+        Some(at) => {
+            let days = (at - strike.issued_at).num_days();
+            format!("Duration: **{days} days**, until <t:{}:D>", at.timestamp())
+        }
+        None => "Duration: **No expiration**".to_string(),
+    };
+    CreateContainer::new(vec![
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "## {title}\n<@{}>",
+            strike.discord_id
+        ))),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "> {}\n{duration}",
+            sanitize_reason(&strike.reason)
+        ))),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(actor_line)),
+        CreateContainerComponent::Separator(CreateSeparator::new(true)),
+    ])
 }
 
 async fn post_key_change(
@@ -732,10 +823,10 @@ async fn post_tag_to_log(
     title: &str,
     emote: &str,
     review_url: Option<&str>,
-    notice: &appeal::NoticeDelivery,
+    notice: Option<&appeal::NoticeDelivery>,
 ) {
     let dashed_uuid = format_uuid_dashed(uuid);
-    let added_line = format_added_line(ctx, tag).await;
+    let added_line = format_mod_added_line(ctx, tag).await;
     let reviewed_line = format_reviewed_line(ctx, tag.reviewed_by.as_deref()).await;
     let evidence_url = evidence_thread_url(data, uuid);
     let face = face_attachment(data, uuid).await;
@@ -749,15 +840,15 @@ async fn post_tag_to_log(
         false,
     );
 
+    let footer = tag_footer(&dashed_uuid, review_url, evidence_url.as_deref());
     let container = CreateContainer::new(vec![
         face_section(vec![
             format!("## {emote} {title}\nIGN - `{name}`\n"),
             block,
-            format!(
-                "{}\n{}",
-                tag_footer(&dashed_uuid, review_url, evidence_url.as_deref()),
-                notice.log_line()
-            ),
+            match notice {
+                Some(notice) => format!("{footer}\n{}", notice.log_line()),
+                None => footer,
+            },
         ]),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
     ]);
@@ -878,5 +969,61 @@ async fn send_container(
             tracing::error!("Failed to post to channel {}: {}", channel_id, e);
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use chrono::{TimeZone, Utc};
+
+    use super::*;
+
+    const AUTHOR: i64 = 42;
+
+    fn tag_event(hide_username: bool) -> PlayerEvent {
+        PlayerEvent {
+            id: 1,
+            uuid: "uuid".to_string(),
+            kind: "tag_set".to_string(),
+            tag_type: Some("sniper".to_string()),
+            reason: Some("keepy".to_string()),
+            hide_username: Some(hide_username),
+            expires_at: None,
+            reviewed_by: None,
+            author: Some(AUTHOR),
+            displaced_author: None,
+            ts: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
+        }
+    }
+
+    fn last_line(event: &PlayerEvent, reveal_hidden: bool) -> String {
+        let names = HashMap::from([(AUTHOR, "aiden".to_string())]);
+        let rendered = render_history_entry(event, &[], &names, reveal_hidden);
+        rendered.lines().last().unwrap().to_string()
+    }
+
+    #[test]
+    fn hidden_entry_reveals_author_to_staff() {
+        assert_eq!(
+            last_line(&tag_event(true), true),
+            "> -# \\- Added by **`@aiden`** (hidden) <t:1700000000:R>"
+        );
+    }
+
+    #[test]
+    fn hidden_entry_omits_author_for_members() {
+        assert_eq!(
+            last_line(&tag_event(true), false),
+            "> -# \\- <t:1700000000:R>"
+        );
+    }
+
+    #[test]
+    fn visible_entry_shows_author_to_everyone() {
+        let expected = "> -# \\- Added by **`@aiden`** <t:1700000000:R>";
+        assert_eq!(last_line(&tag_event(false), true), expected);
+        assert_eq!(last_line(&tag_event(false), false), expected);
     }
 }

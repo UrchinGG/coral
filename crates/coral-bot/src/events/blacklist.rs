@@ -2,7 +2,7 @@ use chrono::Utc;
 use serenity::all::*;
 
 use coral_redis::{BlacklistEvent, EventSubscriber};
-use database::{BlacklistRepository, PlayerEvent};
+use database::{BlacklistRepository, PlayerEvent, StrikeRepository};
 
 use crate::commands::blacklist::channel;
 use crate::framework::Data;
@@ -150,6 +150,18 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
         }
 
         BlacklistEvent::TagEdited { .. } => {}
+
+        BlacklistEvent::StrikeIssued { strike_id } => {
+            if let Some(strike) = StrikeRepository::new(data.db.pool()).get(strike_id).await? {
+                crate::strikes::after_issue(ctx, data, &strike).await;
+            }
+        }
+
+        BlacklistEvent::StrikeRevoked { strike_id } => {
+            if let Some(strike) = StrikeRepository::new(data.db.pool()).get(strike_id).await? {
+                crate::strikes::after_revoke(ctx, data, &strike).await;
+            }
+        }
     }
 
     Ok(())

@@ -1,13 +1,13 @@
 use anyhow::{Result, anyhow};
 use serenity::all::*;
 
-use database::{DeveloperKeyRepository, MemberRepository, permissions};
+use database::{DeveloperKeyRepository, MemberRepository, StrikeRepository, permissions};
 
 use crate::{
     commands::blacklist::channel,
     framework::{AccessRank, AccessRankExt, Data},
     interact,
-    utils::{format_number, generate_api_key, resolve_username, separator, text},
+    utils::{format_number, generate_api_key, resolve_username, separator, standing_view, text},
 };
 
 pub fn register() -> CreateCommand<'static> {
@@ -299,31 +299,8 @@ pub(crate) async fn build_main_view(
             .count_events_by_author(m.discord_id)
             .await
             .unwrap_or(0);
-
-        let standing = database::standing::evaluate(m);
-        let tier = if m.access_level >= AccessRank::Helper.to_level() {
-            "staff"
-        } else if standing.can_tag {
-            "trusted"
-        } else if standing.can_vote {
-            "reviewer"
-        } else {
-            "submitter"
-        };
-        parts.push(text(format!(
-            "Added **{}** tags to the blacklist\n\
-             **{}** accepted tag reviews · **{}** rejected\n\
-             **{}** accurate verdicts · **{}** inaccurate · **{}** bonus\n\
-             Standing: **{tier}** (vote: {}, tag: {})",
-            total_tags,
-            m.accepted_tags,
-            m.rejected_tags,
-            m.accurate_verdicts,
-            m.incorrect_verdicts,
-            m.bonus_verdicts,
-            standing.can_vote,
-            standing.can_tag,
-        )));
+        parts.push(standing_view::standing_section(m, target_rank));
+        parts.push(standing_view::record_section(m, total_tags));
 
         if invoker_rank >= AccessRank::Admin {
             parts.push(CreateContainerComponent::ActionRow(
@@ -339,40 +316,12 @@ pub(crate) async fn build_main_view(
             ));
         }
 
-        let strikes = m.strikes.as_array().cloned().unwrap_or_default();
-        if strikes.is_empty() {
-            parts.push(text("-# No strikes"));
-        } else {
-            let strike_text = strikes.iter().enumerate().fold(
-                format!("### Strikes ({})", strikes.len()),
-                |mut acc, (i, strike)| {
-                    let reason = strike
-                        .get("reason")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("Unknown");
-                    let struck_by = strike
-                        .get("struck_by")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
-                    acc.push_str(&format!("\n{}. \"{}\" — <@{}>", i + 1, reason, struck_by));
-                    acc
-                },
-            );
-            parts.push(text(strike_text));
-
-            if can_modify {
-                let buttons: Vec<_> = (0..strikes.len().min(5))
-                    .map(|i| {
-                        CreateButton::new(format!("manage_remove_strike:{target_id}:{i}"))
-                            .label(format!("Remove #{}", i + 1))
-                            .style(ButtonStyle::Danger)
-                    })
-                    .collect();
-                parts.push(CreateContainerComponent::ActionRow(
-                    CreateActionRow::buttons(buttons),
-                ));
-            }
-        }
+        parts.push(separator());
+        let strikes = StrikeRepository::new(data.db.pool())
+            .list_for_member(m.discord_id)
+            .await
+            .unwrap_or_default();
+        parts.push(super::strike_list::summary_section(target_id, &strikes));
 
         if invoker_rank >= AccessRank::Owner {
             let pause_name_updates = m
@@ -536,7 +485,7 @@ async fn refresh_main_from_modal(
     .await
 }
 
-fn require_mod_over(invoker_rank: AccessRank, target_rank: AccessRank) -> bool {
+pub(crate) fn require_mod_over(invoker_rank: AccessRank, target_rank: AccessRank) -> bool {
     invoker_rank >= AccessRank::Owner
         || (invoker_rank >= AccessRank::Moderator && invoker_rank > target_rank)
 }
@@ -797,31 +746,6 @@ pub async fn handle_toggle_tagging(
         .set_tagging_disabled(target_id as i64, new_state)
         .await?;
     channel::post_tagging_toggled(ctx, data, target_id, new_state, invoker_id).await;
-    refresh_main(ctx, component, data, invoker_rank, target_id).await
-}
-
-pub async fn handle_remove_strike(
-    ctx: &Context,
-    component: &ComponentInteraction,
-    data: &Data,
-) -> Result<()> {
-    let (target_id, strike_index_str) = interact::parse_ids(&component.data.custom_id)
-        .ok_or_else(|| anyhow!("Invalid button ID"))?;
-    let strike_index: usize = strike_index_str
-        .parse()
-        .map_err(|_| anyhow!("Invalid strike index"))?;
-    let invoker_id = component.user.id.get();
-    let (invoker_rank, _, target_rank) = fetch_context(data, invoker_id, target_id).await?;
-
-    if !require_mod_over(invoker_rank, target_rank) {
-        return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
-            .await;
-    }
-
-    MemberRepository::new(data.db.pool())
-        .remove_strike(target_id as i64, strike_index)
-        .await?;
-    crate::utils::standing::refresh_and_sync(ctx, data, target_id).await;
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }
 
