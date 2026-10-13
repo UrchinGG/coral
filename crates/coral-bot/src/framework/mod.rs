@@ -54,7 +54,7 @@ pub struct Data {
     pub sync_cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
     pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
     pub started_at: i64,
-    pub info_cache: Arc<Mutex<commands::admin::info::InfoCache>>,
+    pub info_cache: Arc<commands::admin::info::InfoCache>,
 }
 
 impl Data {
