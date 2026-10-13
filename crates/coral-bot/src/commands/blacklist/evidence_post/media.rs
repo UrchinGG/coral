@@ -4,7 +4,7 @@ use serenity::all::*;
 
 use database::EvidencePost;
 
-use super::render::{self, TagView};
+use super::render::{self, Refs, TagView};
 use super::{FACE_FILENAME, face_attachment};
 use crate::framework::Data;
 use crate::utils::discord_media::{MessageMedia, message_media};
@@ -111,10 +111,22 @@ pub async fn edit_post(
     let mut files: Vec<String> = kept.iter().map(|m| m.filename.clone()).collect();
     files.extend(new_files.iter().map(|f| f.filename.clone()));
 
-    let components = match view {
-        View::Live => render::live(username, &post.uuid, tag, &files),
-        View::Archived => render::archived(username, &post.uuid, &files),
+    let refs = Refs {
+        gallery: kept
+            .iter()
+            .map(|m| m.url.clone())
+            .chain(
+                new_files
+                    .iter()
+                    .map(|f| format!("attachment://{}", f.filename)),
+            )
+            .collect(),
+        face: face.map_or_else(
+            || format!("attachment://{FACE_FILENAME}"),
+            |f| f.url.clone(),
+        ),
     };
+    let components = render_view(view, username, &post.uuid, tag, &refs);
     let mut attachments = EditAttachments::new();
     for media in &kept {
         attachments = attachments.keep(media.attachment_id);
@@ -129,7 +141,7 @@ pub async fn edit_post(
             file.filename.clone(),
         ));
     }
-    write(ctx, post.thread_id, components.clone(), attachments).await?;
+    write(ctx, post.thread_id, components, attachments).await?;
 
     let mut report = EditReport {
         files: files.clone(),
@@ -137,14 +149,19 @@ pub async fn edit_post(
         ..Default::default()
     };
     if rewrites_files {
+        let page = Page {
+            view,
+            username,
+            tag,
+        };
         verify(
             ctx,
             data,
             post,
+            &page,
             &kept,
             &new_files,
             &held,
-            components,
             &mut report,
         )
         .await?;
@@ -152,15 +169,34 @@ pub async fn edit_post(
     Ok(report)
 }
 
+struct Page<'a> {
+    view: View,
+    username: &'a str,
+    tag: &'a TagView,
+}
+
+fn render_view(
+    view: View,
+    username: &str,
+    uuid: &str,
+    tag: &TagView,
+    refs: &Refs,
+) -> Vec<CreateComponent<'static>> {
+    match view {
+        View::Live => render::live(username, uuid, tag, refs),
+        View::Archived => render::archived(username, uuid, refs),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn verify(
     ctx: &Context,
     data: &Data,
     post: &EvidencePost,
+    page: &Page<'_>,
     kept: &[&MessageMedia],
     new_files: &[NewFile],
     held: &HashMap<u64, Vec<u8>>,
-    components: Vec<CreateComponent<'static>>,
     report: &mut EditReport,
 ) -> Result<(), EditError> {
     let after = current_media(ctx, post.thread_id).await?;
@@ -193,9 +229,34 @@ async fn verify(
             ));
         }
     }
-    if !after.iter().any(|m| m.filename == FACE_FILENAME) {
+    let after_face = after.iter().find(|m| !m.in_gallery);
+    if after_face.is_none() {
         attachments = attachments.add(face_attachment(data, &post.uuid).await);
     }
+    let by_name: HashMap<&str, &str> = after
+        .iter()
+        .filter(|m| m.in_gallery)
+        .map(|m| (m.filename.as_str(), m.url.as_str()))
+        .collect();
+    let refs = Refs {
+        gallery: report
+            .files
+            .iter()
+            .filter(|f| {
+                by_name.contains_key(f.as_str()) || missing.iter().any(|m| &m.filename == *f)
+            })
+            .map(|f| {
+                by_name
+                    .get(f.as_str())
+                    .map_or_else(|| format!("attachment://{f}"), |url| url.to_string())
+            })
+            .collect(),
+        face: after_face.map_or_else(
+            || format!("attachment://{FACE_FILENAME}"),
+            |m| m.url.clone(),
+        ),
+    };
+    let components = render_view(page.view, page.username, &post.uuid, page.tag, &refs);
     match write(ctx, post.thread_id, components, attachments).await {
         Ok(()) => report
             .reattached

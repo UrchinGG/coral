@@ -175,7 +175,12 @@ async fn create_post(
                 title.clone(),
                 CreateMessage::new()
                     .flags(MessageFlags::IS_COMPONENTS_V2)
-                    .components(render::live(&target.username, &target.uuid, &tag, &[]))
+                    .components(render::live(
+                        &target.username,
+                        &target.uuid,
+                        &tag,
+                        &render::Refs::fresh(),
+                    ))
                     .add_file(face_attachment(data, &target.uuid).await),
             ),
         )

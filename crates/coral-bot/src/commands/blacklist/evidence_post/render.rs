@@ -49,7 +49,7 @@ pub fn live(
     username: &str,
     uuid: &str,
     tag: &TagView,
-    files: &[String],
+    refs: &Refs,
 ) -> Vec<CreateComponent<'static>> {
     let block = format_tag_block(
         "confirmed_cheater",
@@ -61,16 +61,16 @@ pub fn live(
     );
     let mut parts = vec![text(format!(
         "## {} Evidence — `{username}`",
-        header_emote(files)
+        header_emote(&refs.gallery)
     ))];
-    match gallery(files) {
+    match gallery(&refs.gallery) {
         Some(gallery) => parts.push(gallery),
         None => parts.push(text("-# No evidence added yet")),
     }
-    parts.push(face_section(format!(
-        "{block}\n-# UUID: {}",
-        format_uuid_dashed(uuid)
-    )));
+    parts.push(face_section_with(
+        format!("{block}\n-# UUID: {}", format_uuid_dashed(uuid)),
+        &refs.face,
+    ));
     parts.push(history_row(uuid));
     parts.push(separator());
     let mut buttons = vec![
@@ -78,7 +78,7 @@ pub fn live(
             .label("Add Media")
             .style(ButtonStyle::Primary),
     ];
-    if !files.is_empty() {
+    if !refs.gallery.is_empty() {
         buttons.push(
             CreateButton::new(format!("evidence_manage:{uuid}"))
                 .label("Remove Media")
@@ -91,13 +91,16 @@ pub fn live(
     vec![CreateComponent::Container(CreateContainer::new(parts))]
 }
 
-pub fn archived(username: &str, uuid: &str, files: &[String]) -> Vec<CreateComponent<'static>> {
-    let mut parts = vec![face_section(format!(
-        "## {} Evidence — `{username}` (Archived)\n-# UUID: {}",
-        header_emote(files),
-        format_uuid_dashed(uuid)
-    ))];
-    if let Some(gallery) = gallery(files) {
+pub fn archived(username: &str, uuid: &str, refs: &Refs) -> Vec<CreateComponent<'static>> {
+    let mut parts = vec![face_section_with(
+        format!(
+            "## {} Evidence — `{username}` (Archived)\n-# UUID: {}",
+            header_emote(&refs.gallery),
+            format_uuid_dashed(uuid)
+        ),
+        &refs.face,
+    )];
+    if let Some(gallery) = gallery(&refs.gallery) {
         parts.push(gallery);
     }
     parts.push(history_row(uuid));
@@ -105,13 +108,31 @@ pub fn archived(username: &str, uuid: &str, files: &[String]) -> Vec<CreateCompo
     vec![CreateComponent::Container(CreateContainer::new(parts))]
 }
 
+pub struct Refs {
+    pub gallery: Vec<String>,
+    pub face: String,
+}
+
+impl Refs {
+    pub fn fresh() -> Self {
+        Self {
+            gallery: Vec::new(),
+            face: format!("attachment://{FACE_FILENAME}"),
+        }
+    }
+}
+
 pub fn face_section(content: String) -> CreateContainerComponent<'static> {
+    face_section_with(content, &format!("attachment://{FACE_FILENAME}"))
+}
+
+fn face_section_with(content: String, face: &str) -> CreateContainerComponent<'static> {
     CreateContainerComponent::Section(CreateSection::new(
         vec![CreateSectionComponent::TextDisplay(CreateTextDisplay::new(
             content,
         ))],
         CreateSectionAccessory::Thumbnail(CreateThumbnail::new(CreateUnfurledMediaItem::new(
-            format!("attachment://{FACE_FILENAME}"),
+            face.to_string(),
         ))),
     ))
 }
@@ -127,9 +148,7 @@ fn header_emote(files: &[String]) -> &'static str {
 fn gallery(files: &[String]) -> Option<CreateContainerComponent<'static>> {
     let items: Vec<CreateMediaGalleryItem> = files
         .iter()
-        .map(|f| {
-            CreateMediaGalleryItem::new(CreateUnfurledMediaItem::new(format!("attachment://{f}")))
-        })
+        .map(|f| CreateMediaGalleryItem::new(CreateUnfurledMediaItem::new(f.clone())))
         .collect();
     (!items.is_empty())
         .then(|| CreateContainerComponent::MediaGallery(CreateMediaGallery::new(items)))
