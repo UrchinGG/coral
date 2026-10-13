@@ -16,11 +16,18 @@ const SNOWFLAKE_COLUMNS: &[(&str, &str)] = &[
     ("admin_actions", "actor"),
     ("member_strike", "struck_by"),
     ("member_strike", "revoked_by"),
+    ("review", "resolved_by"),
+    ("review", "voided_by"),
+    ("review_evidence", "added_by"),
+    ("evidence_post", "pending_by"),
 ];
 
 const SNOWFLAKE_ARRAYS: &[(&str, &str)] = &[("player_events", "reviewed_by")];
 
 const KEYED_TABLES: &[&str] = &["session_markers", "guild_subscriptions"];
+
+const REVIEW_PARTICIPANT_COLUMNS: &[(&str, &str)] =
+    &[("review", "submitter_id"), ("review_vote", "voter_id")];
 
 const DISCARDED_TABLES: &[&str] = &["discord_username_cache"];
 
@@ -115,6 +122,7 @@ impl<'a> TransferRepository<'a> {
         merge_members(&mut tx, source, target, &mut outcome).await?;
         rewrite_snowflakes(&mut tx, source, target, &mut outcome).await?;
         merge_keyed_tables(&mut tx, source, target, &mut outcome).await?;
+        merge_review_participation(&mut tx, source, target, &mut outcome).await?;
         rewrite_strike_actors(&mut tx, source, target, &mut outcome).await?;
         merge_starfish(&mut tx, source, target, &mut outcome).await?;
         discard_source_rows(&mut tx, source, &mut outcome).await?;
@@ -144,6 +152,11 @@ async fn source_has_data(conn: &mut PgConnection, source: i64) -> Result<bool, s
         KEYED_TABLES
             .iter()
             .map(|table| format!("SELECT 1 FROM {table} WHERE discord_id = $1")),
+    );
+    checks.extend(
+        REVIEW_PARTICIPANT_COLUMNS
+            .iter()
+            .map(|(table, column)| format!("SELECT 1 FROM {table} WHERE {column} = $1")),
     );
     checks.push("SELECT 1 FROM starfish_users WHERE discord_id = $1".to_string());
 
@@ -421,6 +434,44 @@ async fn merge_keyed_tables(
         .execute(&mut *conn)
         .await?;
         outcome.record(*table, moved.rows_affected());
+    }
+    Ok(())
+}
+
+async fn merge_review_participation(
+    conn: &mut PgConnection,
+    source: i64,
+    target: i64,
+    outcome: &mut TransferOutcome,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "DELETE FROM review s WHERE s.submitter_id = $1 AND s.status = 'draft'
+           AND EXISTS (SELECT 1 FROM review t WHERE t.submitter_id = $2 AND t.status = 'draft'
+                       AND t.player_uuid = s.player_uuid)",
+    )
+    .bind(source)
+    .bind(target)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "UPDATE review_vote s SET disposition = 'superseded'
+         WHERE s.voter_id = $1 AND s.disposition = 'active'
+           AND EXISTS (SELECT 1 FROM review_vote t WHERE t.voter_id = $2
+                       AND t.disposition = 'active' AND t.review_id = s.review_id)",
+    )
+    .bind(source)
+    .bind(target)
+    .execute(&mut *conn)
+    .await?;
+    for (table, column) in REVIEW_PARTICIPANT_COLUMNS {
+        let moved = sqlx::query(&format!(
+            "UPDATE {table} SET {column} = $2 WHERE {column} = $1"
+        ))
+        .bind(source)
+        .bind(target)
+        .execute(&mut *conn)
+        .await?;
+        outcome.record(format!("{table}.{column}"), moved.rows_affected());
     }
     Ok(())
 }

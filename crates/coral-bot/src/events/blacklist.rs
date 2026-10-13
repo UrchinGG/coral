@@ -76,6 +76,9 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
         } => {
             let new_tag = fetch_event(&repo, new_tag_id, "TagOverwritten").await?;
             let old_tag = fetch_event(&repo, old_tag_id, "TagOverwritten").await?;
+            if is_confirmed(&old_tag) && !is_confirmed(&new_tag) {
+                archive_evidence(ctx, data, &uuid).await;
+            }
             let all_tags = repo.get_active_tags(&uuid).await.unwrap_or_default();
             let name = resolve_name(data, &uuid).await;
             channel::post_tag_changed(
@@ -105,6 +108,9 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
                 tracing::warn!("event {tag_id} not found for TagRemoved");
                 return Ok(());
             };
+            if is_confirmed(&tag) {
+                archive_evidence(ctx, data, &uuid).await;
+            }
             let name = resolve_name(data, &uuid).await;
             channel::post_tag_removed(ctx, data, &uuid, &name, &tag, removed_by as u64, silent)
                 .await;
@@ -165,6 +171,18 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
     }
 
     Ok(())
+}
+
+fn is_confirmed(tag: &PlayerEvent) -> bool {
+    tag.tag_type.as_deref() == Some("confirmed_cheater")
+}
+
+async fn archive_evidence(ctx: &Context, data: &Data, uuid: &str) {
+    if let Err(e) =
+        crate::commands::blacklist::evidence_post::ops::archive_for_player(ctx, data, uuid).await
+    {
+        tracing::error!("Archiving the evidence post for {uuid} failed: {e}");
+    }
 }
 
 async fn fetch_event(

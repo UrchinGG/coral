@@ -91,8 +91,10 @@ struct GuideStatus {
 struct PingRolesView {
     review_role_id: Option<String>,
     dispute_role_id: Option<String>,
+    confirm_role_id: Option<String>,
     review_opt_ins: usize,
     dispute_opt_ins: usize,
+    confirm_opt_ins: usize,
 }
 
 #[derive(Serialize)]
@@ -136,7 +138,7 @@ async fn get_guide(State(state): State<AppState>) -> Result<Json<ReviewGuideResp
             fetch_home_roles(&http, guild_id),
             fetch_opt_in_counts(&http, guild_id, &config),
         ),
-        None => (Vec::new(), (0, 0)),
+        None => (Vec::new(), (0, 0, 0)),
     };
 
     let forum_channel_name = match state.review_forum_id {
@@ -176,8 +178,10 @@ async fn get_guide(State(state): State<AppState>) -> Result<Json<ReviewGuideResp
         ping_roles: PingRolesView {
             review_role_id: config.review_ping_role_id.map(|v| v.to_string()),
             dispute_role_id: config.dispute_ping_role_id.map(|v| v.to_string()),
+            confirm_role_id: config.confirm_ping_role_id.map(|v| v.to_string()),
             review_opt_ins: opt_ins.0,
             dispute_opt_ins: opt_ins.1,
+            confirm_opt_ins: opt_ins.2,
         },
         home_roles,
     }))
@@ -187,6 +191,7 @@ async fn get_guide(State(state): State<AppState>) -> Result<Json<ReviewGuideResp
 struct PingRolesRequest {
     review_role_id: Option<String>,
     dispute_role_id: Option<String>,
+    confirm_role_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -218,7 +223,8 @@ async fn update_guide(
     if let Some(ping_roles) = &req.ping_roles {
         let review = parse_optional_id(ping_roles.review_role_id.as_deref())?;
         let dispute = parse_optional_id(ping_roles.dispute_role_id.as_deref())?;
-        repo.set_ping_roles(review, dispute)
+        let confirm = parse_optional_id(ping_roles.confirm_role_id.as_deref())?;
+        repo.set_ping_roles(review, dispute, confirm)
             .await
             .map_err(internal)?;
         crate::audit::log(
@@ -226,7 +232,11 @@ async fn update_guide(
             actor.discord_id,
             "set_review_ping_roles",
             "review_guide",
-            json!({"review_role_id": review, "dispute_role_id": dispute}),
+            json!({
+                "review_role_id": review,
+                "dispute_role_id": dispute,
+                "confirm_role_id": confirm,
+            }),
         )
         .await;
     }
@@ -405,12 +415,15 @@ async fn fetch_opt_in_counts(
     http: &Http,
     guild_id: GuildId,
     config: &database::ReviewGuideConfig,
-) -> (usize, usize) {
-    if config.review_ping_role_id.is_none() && config.dispute_ping_role_id.is_none() {
-        return (0, 0);
+) -> (usize, usize, usize) {
+    if config.review_ping_role_id.is_none()
+        && config.dispute_ping_role_id.is_none()
+        && config.confirm_ping_role_id.is_none()
+    {
+        return (0, 0, 0);
     }
     let Ok(members) = discord::list_guild_members(http, guild_id).await else {
-        return (0, 0);
+        return (0, 0, 0);
     };
 
     let count = |role: Option<i64>| {
@@ -423,6 +436,7 @@ async fn fetch_opt_in_counts(
     (
         count(config.review_ping_role_id),
         count(config.dispute_ping_role_id),
+        count(config.confirm_ping_role_id),
     )
 }
 

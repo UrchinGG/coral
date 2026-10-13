@@ -21,7 +21,7 @@ export function useSaveGuideContent() {
 
 export function useSetPingRoles() {
   return useAdminMutation(
-    (config: { review_role_id: string | null; dispute_role_id: string | null }) =>
+    (config: { review_role_id: string | null; dispute_role_id: string | null; confirm_role_id: string | null }) =>
       apiPut<void>("/review-guide", { ping_roles: config }),
     {
       successMessage: "Ping roles updated",

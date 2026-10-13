@@ -1,139 +1,43 @@
-use std::time::{Duration, Instant};
-
 use anyhow::Result;
+use redis::AsyncCommands;
 use serenity::all::*;
 
-use super::evidence::{
-    ALLOWED_MEDIA_EXTENSIONS, ThreadState, append_media_to_op, evidence_thread_entry,
-    evidence_thread_state, face_attachment, recent_evidence_threads, search_evidence_threads,
-};
+use database::{EvidencePost, EvidencePostRepository, PostStatus, ReviewRepository};
+
+use super::evidence_post::menu::add_sources;
+use super::evidence_post::render::face_section;
+use super::evidence_post::{face_attachment, is_media_filename, normalize};
 use super::tag::get_rank;
-use crate::framework::{AccessRank, Data, EvidenceThread};
+use crate::framework::{AccessRank, Data};
+use crate::interact;
 use crate::utils::text;
 
 pub const COMMAND_NAME: &str = "Add to Evidence Post";
 
-const RECENT_LIMIT: usize = 5;
-const SEARCH_LIMIT: usize = 25;
-const SOURCE_TTL: Duration = Duration::from_secs(30 * 60);
-const EXPIRED: &str = "This picker expired — run the command again";
+const RECENT_LIMIT: i64 = 5;
+const SEARCH_LIMIT: i64 = 25;
+const SOURCE_TTL_SECS: u64 = 30 * 60;
+const EXPIRED: &str = "This picker expired. Run the command again.";
 
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new(COMMAND_NAME).kind(CommandType::Message)
 }
 
-fn is_media(filename: &str) -> bool {
-    let ext = filename
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    ALLOWED_MEDIA_EXTENSIONS.contains(&ext.as_str())
-}
-
-fn media_sources(message: &Message) -> Vec<(String, String)> {
-    message
-        .attachments
-        .iter()
-        .filter(|a| is_media(&a.filename))
-        .map(|a| (a.filename.to_string(), a.url.to_string()))
-        .collect()
-}
-
-fn remember_sources(
-    data: &Data,
-    channel_id: GenericChannelId,
-    message_id: MessageId,
-    sources: Vec<(String, String)>,
-) {
-    let mut cache = data.pending_attach_sources.lock().unwrap();
-    cache.retain(|_, (at, _)| at.elapsed() < SOURCE_TTL);
-    cache.insert(
-        (channel_id.get(), message_id.get()),
-        (Instant::now(), sources),
-    );
-}
-
-fn recall_sources(
-    data: &Data,
-    channel_id: GenericChannelId,
-    message_id: MessageId,
-) -> Option<Vec<(String, String)>> {
-    let cache = data.pending_attach_sources.lock().unwrap();
-    let (at, sources) = cache.get(&(channel_id.get(), message_id.get()))?;
-    (at.elapsed() < SOURCE_TTL).then(|| sources.clone())
-}
-
-fn parse_source(custom_id: &str, prefix: &str) -> Option<(GenericChannelId, MessageId)> {
-    let (channel, message) = custom_id.strip_prefix(prefix)?.split_once(':')?;
-    Some((
-        GenericChannelId::new(channel.parse().ok()?),
-        MessageId::new(message.parse().ok()?),
-    ))
-}
-
-fn picker(
-    source: &str,
-    count: usize,
-    entries: &[(String, EvidenceThread)],
-    empty_note: &str,
-) -> Vec<CreateComponent<'static>> {
-    let mut parts = vec![
-        text("## Add to Evidence Post"),
-        text(format!(
-            "-# {count} attachment{} from that message",
-            if count == 1 { "" } else { "s" }
-        )),
-    ];
-
-    if entries.is_empty() {
-        parts.push(text(empty_note));
-    } else {
-        let options: Vec<CreateSelectMenuOption<'static>> = entries
-            .iter()
-            .map(|(uuid, entry)| {
-                CreateSelectMenuOption::new(entry.name.clone(), uuid.clone())
-                    .description(format!("{}…", &uuid[..8.min(uuid.len())]))
-            })
-            .collect();
-        parts.push(CreateContainerComponent::ActionRow(
-            CreateActionRow::SelectMenu(
-                CreateSelectMenu::new(
-                    format!("evid_pick:{source}"),
-                    CreateSelectMenuKind::String {
-                        options: options.into(),
-                    },
-                )
-                .placeholder("Pick an evidence post..."),
-            ),
-        ));
-    }
-
-    parts.push(CreateContainerComponent::ActionRow(
-        CreateActionRow::buttons(vec![
-            CreateButton::new(format!("evid_search:{source}"))
-                .label("Search")
-                .style(ButtonStyle::Secondary),
-        ]),
-    ));
-
-    vec![CreateComponent::Container(CreateContainer::new(parts))]
-}
-
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
     if get_rank(data, command.user.id.get()).await? < AccessRank::Helper {
-        return crate::interact::send_error(ctx, command, "Error", "Only staff can add evidence")
-            .await;
+        return interact::send_error(ctx, command, "Error", "Only staff can add evidence").await;
     }
-
     let Some(ResolvedTarget::Message(message)) = command.data.target() else {
-        return crate::interact::send_error(ctx, command, "Error", "Could not read that message")
-            .await;
+        return interact::send_error(ctx, command, "Error", "Could not read that message").await;
     };
-
-    let sources = media_sources(message);
+    let sources: Vec<(String, String)> = message
+        .attachments
+        .iter()
+        .filter(|a| is_media_filename(&a.filename))
+        .map(|a| (a.filename.to_string(), a.url.to_string()))
+        .collect();
     if sources.is_empty() {
-        return crate::interact::send_error(
+        return interact::send_error(
             ctx,
             command,
             "No Media",
@@ -142,11 +46,26 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         .await;
     }
 
-    let count = sources.len();
-    remember_sources(data, command.channel_id, message.id, sources);
+    if let Some(post) = detect_target(data, command.channel_id.get() as i64).await? {
+        command.defer_ephemeral(&ctx.http).await?;
+        let view = add_to(ctx, data, &post, &sources, command.user.id.get()).await;
+        command
+            .edit_response(
+                &ctx.http,
+                EditInteractionResponse::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2)
+                    .components(view)
+                    .new_attachment(face_attachment(data, &post.uuid).await),
+            )
+            .await?;
+        return Ok(());
+    }
 
-    let source = format!("{}:{}", command.channel_id.get(), message.id.get());
-    let recent = recent_evidence_threads(data, RECENT_LIMIT);
+    let key = command.id.get();
+    remember_sources(data, key, &sources).await?;
+    let recent = EvidencePostRepository::new(data.db.pool())
+        .recent_coral(RECENT_LIMIT)
+        .await?;
     command
         .create_response(
             &ctx.http,
@@ -154,10 +73,10 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
                 CreateInteractionResponseMessage::new()
                     .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
                     .components(picker(
-                        &source,
-                        count,
+                        key,
+                        sources.len(),
                         &recent,
-                        "No evidence posts indexed yet — try searching.",
+                        "No evidence posts yet. Try searching.",
                     )),
             ),
         )
@@ -170,25 +89,16 @@ pub async fn handle_search_button(
     component: &ComponentInteraction,
     _data: &Data,
 ) -> Result<()> {
-    let Some((channel_id, message_id)) = parse_source(&component.data.custom_id, "evid_search:")
-    else {
-        return crate::interact::send_component_error(
-            ctx,
-            component,
-            "Error",
-            "Could not read that message",
-        )
-        .await;
+    let Some(key) = parse_key(&component.data.custom_id, "evid_search:") else {
+        return Ok(());
     };
-
-    let modal = CreateModal::new(
-        format!("evid_query:{}:{}", channel_id.get(), message_id.get()),
-        "Find Evidence Post",
-    )
-    .components(vec![CreateModalComponent::Label(CreateLabel::input_text(
-        "Player name or UUID",
-        CreateInputText::new(InputTextStyle::Short, "query").required(true),
-    ))]);
+    let modal =
+        CreateModal::new(format!("evid_query:{key}"), "Find Evidence Post").components(vec![
+            CreateModalComponent::Label(CreateLabel::input_text(
+                "Player name or UUID",
+                CreateInputText::new(InputTextStyle::Short, "query").required(true),
+            )),
+        ]);
     component
         .create_response(&ctx.http, CreateInteractionResponse::Modal(modal))
         .await?;
@@ -200,42 +110,23 @@ pub async fn handle_search_modal(
     modal: &ModalInteraction,
     data: &Data,
 ) -> Result<()> {
-    modal.defer_ephemeral(&ctx.http).await?;
-
-    let Some((channel_id, message_id)) = parse_source(&modal.data.custom_id, "evid_query:") else {
-        return edit_error(ctx, modal, "Could not read that message").await;
+    let Some(key) = parse_key(&modal.data.custom_id, "evid_query:") else {
+        return Ok(());
     };
-
-    let query = crate::interact::extract_modal_value(&modal.data.components, "query");
-    let mut hits = search_evidence_threads(data, &query, SEARCH_LIMIT);
-
+    let Some(sources) = recall_sources(data, key).await? else {
+        return interact::update_modal(ctx, modal, simple(EXPIRED)).await;
+    };
+    let query = interact::extract_modal_value(&modal.data.components, "query");
+    let repo = EvidencePostRepository::new(data.db.pool());
+    let mut hits = repo.search_coral(&query, SEARCH_LIMIT).await?;
     if hits.is_empty()
         && let Ok(info) = data.api.resolve(query.trim()).await
-        && let Some(entry) = evidence_thread_entry(data, &info.uuid)
+        && let Some(post) = repo.canonical(&normalize(&info.uuid)).await?
     {
-        hits.push((info.uuid.replace('-', "").to_ascii_lowercase(), entry));
+        hits.push(post);
     }
-
-    let Some(sources) = recall_sources(data, channel_id, message_id) else {
-        return edit_error(ctx, modal, EXPIRED).await;
-    };
-    let count = sources.len();
-
-    let source = format!("{}:{}", channel_id.get(), message_id.get());
-    modal
-        .edit_response(
-            &ctx.http,
-            EditInteractionResponse::new()
-                .flags(MessageFlags::IS_COMPONENTS_V2)
-                .components(picker(
-                    &source,
-                    count,
-                    &hits,
-                    &format!("No evidence posts matched `{}`.", sanitize(&query)),
-                )),
-        )
-        .await?;
-    Ok(())
+    let empty = format!("No evidence posts matched `{}`.", sanitize(&query));
+    interact::update_modal(ctx, modal, picker(key, sources.len(), &hits, &empty)).await
 }
 
 pub async fn handle_pick(
@@ -243,24 +134,8 @@ pub async fn handle_pick(
     component: &ComponentInteraction,
     data: &Data,
 ) -> Result<()> {
-    let uuid = match &component.data.kind {
-        ComponentInteractionDataKind::StringSelect { values } => values.first().cloned(),
-        _ => None,
-    };
-    let (Some(uuid), Some((channel_id, message_id))) =
-        (uuid, parse_source(&component.data.custom_id, "evid_pick:"))
-    else {
-        return crate::interact::send_component_error(
-            ctx,
-            component,
-            "Error",
-            "Could not read that selection",
-        )
-        .await;
-    };
-
     if get_rank(data, component.user.id.get()).await? < AccessRank::Helper {
-        return crate::interact::send_component_error(
+        return interact::send_component_error(
             ctx,
             component,
             "Error",
@@ -268,89 +143,168 @@ pub async fn handle_pick(
         )
         .await;
     }
-
-    component.defer(&ctx.http).await?;
-
-    let Some(entry) = evidence_thread_entry(data, &uuid) else {
-        return edit_component_error(ctx, component, "That evidence post no longer exists").await;
+    let Some(key) = parse_key(&component.data.custom_id, "evid_pick:") else {
+        return Ok(());
     };
-
-    let Some(sources) = recall_sources(data, channel_id, message_id) else {
-        return edit_component_error(ctx, component, EXPIRED).await;
+    let thread_id = match &component.data.kind {
+        ComponentInteractionDataKind::StringSelect { values } => {
+            values.first().and_then(|v| v.parse::<i64>().ok())
+        }
+        _ => None,
     };
-
-    match evidence_thread_state(ctx, entry.id).await {
-        ThreadState::Missing => {
-            return edit_component_error(ctx, component, "That evidence post no longer exists")
-                .await;
+    let Some(thread_id) = thread_id else {
+        return Ok(());
+    };
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await?;
+    let view = match (
+        recall_sources(data, key).await?,
+        EvidencePostRepository::new(data.db.pool())
+            .get(thread_id)
+            .await?,
+    ) {
+        (None, _) => simple(EXPIRED),
+        (_, None) => error_view("That evidence post no longer exists."),
+        (Some(sources), Some(post)) => {
+            add_to(ctx, data, &post, &sources, component.user.id.get()).await
         }
-        ThreadState::Closed => {
-            return edit_component_error(
-                ctx,
-                component,
-                "That evidence post is archived. Restore it before adding evidence.",
-            )
-            .await;
-        }
-        ThreadState::IdleArchived => {
-            if let Err(e) = entry
-                .id
-                .edit(&ctx.http, EditThread::new().archived(false))
-                .await
-            {
-                tracing::warn!(
-                    "could not unarchive evidence thread {}: {e}",
-                    entry.id.get()
-                );
-                return edit_component_error(
-                    ctx,
-                    component,
-                    "Could not reopen that evidence post. Try again.",
-                )
-                .await;
-            }
-        }
-        ThreadState::Open => {}
-    }
-
-    let outcome =
-        match append_media_to_op(ctx, data, entry.id, component.user.id.get(), &sources).await {
-            Ok(outcome) => outcome,
-            Err(e) => return edit_component_error(ctx, component, &e.message()).await,
-        };
-
-    let body = format!(
-        "## Evidence Added\nIGN - `{}`\nAdded {} attachment{} to <#{}>{}",
-        outcome.username,
-        outcome.added,
-        if outcome.added == 1 { "" } else { "s" },
-        entry.id.get(),
-        outcome.notes()
-    );
-
+    };
     component
         .edit_response(
             &ctx.http,
             EditInteractionResponse::new()
                 .flags(MessageFlags::IS_COMPONENTS_V2)
-                .components(vec![CreateComponent::Container(CreateContainer::new(
-                    vec![face_section(body)],
-                ))])
-                .new_attachment(face_attachment(data, &uuid).await),
+                .components(view),
         )
         .await?;
     Ok(())
 }
 
-fn face_section(content: String) -> CreateContainerComponent<'static> {
-    CreateContainerComponent::Section(CreateSection::new(
-        vec![CreateSectionComponent::TextDisplay(CreateTextDisplay::new(
-            content,
-        ))],
-        CreateSectionAccessory::Thumbnail(CreateThumbnail::new(CreateUnfurledMediaItem::new(
-            "attachment://face.png",
-        ))),
-    ))
+async fn detect_target(data: &Data, channel_id: i64) -> Result<Option<EvidencePost>> {
+    let repo = EvidencePostRepository::new(data.db.pool());
+    if let Some(post) = repo.get(channel_id).await?.filter(|p| p.status.is_some()) {
+        return Ok(Some(post));
+    }
+    let Some(review) = ReviewRepository::new(data.db.pool())
+        .get_by_thread(channel_id)
+        .await?
+    else {
+        return Ok(None);
+    };
+    Ok(repo.canonical(&review.player_uuid).await?)
+}
+
+async fn add_to(
+    ctx: &Context,
+    data: &Data,
+    post: &EvidencePost,
+    sources: &[(String, String)],
+    actor: u64,
+) -> Vec<CreateComponent<'static>> {
+    if post.status == Some(PostStatus::Archived) {
+        return error_view(
+            "That evidence post is archived. Run /confirm on the player to restore it.",
+        );
+    }
+    let summary = add_sources(ctx, data, post.thread_id, sources, actor).await;
+    let username = super::evidence_post::ops::username(data, post).await;
+    vec![CreateComponent::Container(CreateContainer::new(vec![
+        face_section(format!(
+            "## Evidence Added\nIGN - `{username}`\nThread: <#{}>\n{summary}",
+            post.thread_id
+        )),
+    ]))]
+}
+
+fn picker(
+    key: u64,
+    count: usize,
+    posts: &[EvidencePost],
+    empty_note: &str,
+) -> Vec<CreateComponent<'static>> {
+    let mut parts = vec![
+        text("## Add to Evidence Post"),
+        text(format!(
+            "-# {count} attachment{} from that message",
+            if count == 1 { "" } else { "s" }
+        )),
+    ];
+    if posts.is_empty() {
+        parts.push(text(empty_note.to_string()));
+    } else {
+        let options: Vec<CreateSelectMenuOption> = posts
+            .iter()
+            .map(|post| {
+                CreateSelectMenuOption::new(
+                    post.player_name().to_string(),
+                    post.thread_id.to_string(),
+                )
+                .description(status_label(post.status))
+            })
+            .collect();
+        parts.push(CreateContainerComponent::ActionRow(
+            CreateActionRow::SelectMenu(
+                CreateSelectMenu::new(
+                    format!("evid_pick:{key}"),
+                    CreateSelectMenuKind::String {
+                        options: options.into(),
+                    },
+                )
+                .placeholder("Pick an evidence post..."),
+            ),
+        ));
+    }
+    parts.push(CreateContainerComponent::ActionRow(
+        CreateActionRow::buttons(vec![
+            CreateButton::new(format!("evid_search:{key}"))
+                .label("Search")
+                .style(ButtonStyle::Secondary),
+        ]),
+    ));
+    vec![CreateComponent::Container(CreateContainer::new(parts))]
+}
+
+fn status_label(status: Option<PostStatus>) -> &'static str {
+    match status {
+        Some(PostStatus::Pending) => "Waiting for media",
+        Some(PostStatus::Confirmed) => "Confirmed",
+        Some(PostStatus::Archived) => "Archived",
+        None => "",
+    }
+}
+
+async fn remember_sources(data: &Data, key: u64, sources: &[(String, String)]) -> Result<()> {
+    let payload = serde_json::to_string(sources)?;
+    let _: () = data
+        .redis
+        .connection()
+        .set_ex(source_key(key), payload, SOURCE_TTL_SECS)
+        .await?;
+    Ok(())
+}
+
+async fn recall_sources(data: &Data, key: u64) -> Result<Option<Vec<(String, String)>>> {
+    let payload: Option<String> = data.redis.connection().get(source_key(key)).await?;
+    Ok(payload.and_then(|raw| serde_json::from_str(&raw).ok()))
+}
+
+fn source_key(key: u64) -> String {
+    format!("evidence_attach:{key}")
+}
+
+fn parse_key(custom_id: &str, prefix: &str) -> Option<u64> {
+    custom_id.strip_prefix(prefix)?.parse().ok()
+}
+
+fn simple(message: &str) -> Vec<CreateComponent<'static>> {
+    vec![CreateComponent::Container(CreateContainer::new(vec![
+        text(message.to_string()),
+    ]))]
+}
+
+fn error_view(message: &str) -> Vec<CreateComponent<'static>> {
+    vec![interact::error_container("Error", message)]
 }
 
 fn sanitize(s: &str) -> String {
@@ -358,33 +312,4 @@ fn sanitize(s: &str) -> String {
         .filter(|c| !matches!(c, '`' | '\n' | '\r'))
         .take(32)
         .collect()
-}
-
-async fn edit_error(ctx: &Context, modal: &ModalInteraction, message: &str) -> Result<()> {
-    modal
-        .edit_response(
-            &ctx.http,
-            EditInteractionResponse::new().content(message.to_string()),
-        )
-        .await?;
-    Ok(())
-}
-
-async fn edit_component_error(
-    ctx: &Context,
-    component: &ComponentInteraction,
-    message: &str,
-) -> Result<()> {
-    component
-        .edit_response(
-            &ctx.http,
-            EditInteractionResponse::new()
-                .flags(MessageFlags::IS_COMPONENTS_V2)
-                .components(vec![CreateComponent::Container(
-                    CreateContainer::new(vec![text(format!("## Error\n{message}"))])
-                        .accent_color(super::channel::COLOR_ERROR),
-                )]),
-        )
-        .await?;
-    Ok(())
 }

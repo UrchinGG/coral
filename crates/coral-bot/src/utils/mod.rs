@@ -4,6 +4,7 @@ use database::CacheRepository;
 
 use crate::framework::Data;
 
+pub mod discord_media;
 mod minecraft;
 pub mod standing;
 pub mod standing_view;

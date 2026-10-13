@@ -202,6 +202,11 @@ function PingRolesPanel({ data }: { data: ReviewGuideResponse }) {
     disabled: !role.assignable,
     hint: role.managed ? "managed" : !role.assignable ? "not manageable" : undefined,
   }));
+  const currentRoles = {
+    review_role_id: ping_roles.review_role_id,
+    dispute_role_id: ping_roles.dispute_role_id,
+    confirm_role_id: ping_roles.confirm_role_id,
+  };
 
   return (
     <Panel
@@ -215,7 +220,7 @@ function PingRolesPanel({ data }: { data: ReviewGuideResponse }) {
           optIns={ping_roles.review_opt_ins}
           items={roleItems}
           value={ping_roles.review_role_id}
-          onChange={(id) => setPingRoles.mutate({ review_role_id: id, dispute_role_id: ping_roles.dispute_role_id })}
+          onChange={(id) => setPingRoles.mutate({ ...currentRoles, review_role_id: id })}
         />
         <PingRoleRow
           label="Disputes only"
@@ -223,7 +228,15 @@ function PingRolesPanel({ data }: { data: ReviewGuideResponse }) {
           optIns={ping_roles.dispute_opt_ins}
           items={roleItems}
           value={ping_roles.dispute_role_id}
-          onChange={(id) => setPingRoles.mutate({ review_role_id: ping_roles.review_role_id, dispute_role_id: id })}
+          onChange={(id) => setPingRoles.mutate({ ...currentRoles, dispute_role_id: id })}
+        />
+        <PingRoleRow
+          label="Confirm ping role"
+          description="Pinged when a review is accepted with media and its tag can be confirmed."
+          optIns={ping_roles.confirm_opt_ins}
+          items={roleItems}
+          value={ping_roles.confirm_role_id}
+          onChange={(id) => setPingRoles.mutate({ ...currentRoles, confirm_role_id: id })}
         />
       </div>
     </Panel>

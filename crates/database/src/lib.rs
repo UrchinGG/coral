@@ -6,6 +6,7 @@ mod cache;
 mod delta;
 mod developer_keys;
 mod discord_cache;
+mod evidence_posts;
 mod flag_dismissals;
 mod guild_cache;
 mod guild_config;
@@ -16,6 +17,7 @@ mod periods;
 mod plugin_registry;
 mod pool;
 mod review_guide;
+mod reviews;
 mod sessions;
 pub mod standing;
 pub mod starfish;
@@ -33,6 +35,10 @@ pub use cache::{CacheRepository, SnapshotResult, calculate_delta, reconstruct};
 pub use delta::session_delta;
 pub use developer_keys::{DeveloperKey, DeveloperKeyRepository, permissions};
 pub use discord_cache::{CachedDiscordUsername, DiscordUsernameCacheRepository};
+pub use evidence_posts::{
+    EvidencePost, EvidencePostRepository, NewPost, Origin, PendingTag, PostStatus, get_locked,
+    lock_player, set_pending, set_status,
+};
 pub use flag_dismissals::{FlagDismissal, FlagDismissalRepository};
 pub use guild_cache::GuildCacheRepository;
 pub use guild_config::{GuildConfig, GuildConfigRepository, GuildRoleRule};
@@ -47,7 +53,12 @@ pub use plugin_registry::{
 };
 pub use pool::Database;
 pub use review_guide::{ReviewGuideConfig, ReviewGuideRepository};
+pub use reviews::{
+    CastOutcome, ContributedMedia, Evidence, EvidenceKind, PublishedAttachment, Review,
+    ReviewError, ReviewRepository, ReviewStatus, Revision, StagedMedia, Tally, Vote, VoteKind,
+};
 pub use sessions::{SessionMarker, SessionRepository};
+pub use sqlx::{Error as SqlxError, PgConnection, Postgres, Transaction};
 pub use starfish::StarfishRepository;
 pub use strikes::{IMPORTED_STRIKE_DAYS, Strike, StrikeRepository, StrikeStatus};
 pub use sync_jobs::{GuildSyncJob, GuildSyncJobRepository};

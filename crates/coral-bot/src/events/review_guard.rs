@@ -11,17 +11,7 @@ pub async fn on_message(ctx: &Context, data: &Data, message: &Message) {
     // the bot has to keep it clear of replies itself.
     if data.guide_thread() == Some(message.channel_id.get()) {
         delete(ctx, message, "review guide thread").await;
-        return;
     }
-
-    let Some(submitter_id) = data.assembling_submitter(message.channel_id.get()) else {
-        return;
-    };
-    if message.author.id.get() == submitter_id {
-        return;
-    }
-
-    delete(ctx, message, "assembling review").await;
 }
 
 async fn delete(ctx: &Context, message: &Message, context: &str) {

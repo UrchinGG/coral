@@ -5,5 +5,6 @@ pub mod events;
 pub mod framework;
 pub mod interact;
 pub mod jobs;
+pub mod review_media;
 pub mod sync;
 pub mod utils;

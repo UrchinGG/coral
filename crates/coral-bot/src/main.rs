@@ -89,20 +89,14 @@ async fn init_data() -> Result<Data> {
         session_images: Arc::new(Mutex::new(HashMap::new())),
         session_duels_images: Arc::new(Mutex::new(HashMap::new())),
         pending_overwrites: Arc::new(Mutex::new(HashMap::new())),
-        pending_review_votes: Arc::new(Mutex::new(HashMap::new())),
-        evidence_threads: Arc::new(RwLock::new(HashMap::new())),
         guide_thread_id: Arc::new(RwLock::new(None)),
         sync_cooldowns: Arc::new(Mutex::new(HashMap::new())),
         active_interactions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-        vote_messages: Arc::new(Mutex::new(HashMap::new())),
         started_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0),
         info_cache: Arc::new(Mutex::new(Default::default())),
-        review_locks: Arc::new(Mutex::new(HashMap::new())),
-        assembling_reviews: Arc::new(RwLock::new(HashMap::new())),
-        pending_attach_sources: Arc::new(Mutex::new(HashMap::new())),
     })
 }
 

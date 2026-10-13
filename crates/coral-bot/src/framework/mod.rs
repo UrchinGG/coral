@@ -31,12 +31,6 @@ impl AccessRankExt for AccessRank {
 }
 
 #[derive(Clone)]
-pub struct EvidenceThread {
-    pub id: ThreadId,
-    pub name: String,
-}
-
-#[derive(Clone)]
 pub struct Data {
     pub db: Arc<Database>,
     pub api: Arc<CoralApiClient>,
@@ -56,17 +50,11 @@ pub struct Data {
     pub session_duels_images: Arc<Mutex<HashMap<String, SessionCacheEntry<Duels>>>>,
     pub home_guild_id: Option<GuildId>,
     pub pending_overwrites: Arc<Mutex<HashMap<String, PendingOverwrite>>>,
-    pub pending_review_votes: Arc<Mutex<HashMap<u64, HashMap<usize, (Vec<u64>, Vec<u64>)>>>>,
-    pub evidence_threads: Arc<RwLock<HashMap<String, EvidenceThread>>>,
     pub guide_thread_id: Arc<RwLock<Option<u64>>>,
     pub sync_cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
     pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
-    pub vote_messages: Arc<Mutex<HashMap<(u64, usize, u64), u64>>>,
     pub started_at: i64,
     pub info_cache: Arc<Mutex<commands::admin::info::InfoCache>>,
-    pub review_locks: Arc<Mutex<HashMap<u64, Arc<tokio::sync::Mutex<()>>>>>,
-    pub assembling_reviews: Arc<RwLock<HashMap<u64, u64>>>,
-    pub pending_attach_sources: Arc<Mutex<HashMap<(u64, u64), (Instant, Vec<(String, String)>)>>>,
 }
 
 impl Data {
@@ -77,76 +65,6 @@ impl Data {
     pub fn guide_thread(&self) -> Option<u64> {
         *self.guide_thread_id.read().unwrap()
     }
-
-    pub fn evidence_thread_for(&self, uuid: &str) -> Option<ThreadId> {
-        let key = uuid.replace('-', "").to_ascii_lowercase();
-        self.evidence_threads
-            .read()
-            .unwrap()
-            .get(&key)
-            .map(|e| e.id)
-    }
-
-    pub fn begin_assembling(&self, thread_id: u64, submitter_id: u64) {
-        self.assembling_reviews
-            .write()
-            .unwrap()
-            .insert(thread_id, submitter_id);
-    }
-
-    pub fn finish_assembling(&self, thread_id: u64) {
-        self.assembling_reviews.write().unwrap().remove(&thread_id);
-    }
-
-    pub fn assembling_submitter(&self, thread_id: u64) -> Option<u64> {
-        self.assembling_reviews
-            .read()
-            .unwrap()
-            .get(&thread_id)
-            .copied()
-    }
-
-    pub fn review_lock(&self, thread_id: u64) -> Arc<tokio::sync::Mutex<()>> {
-        self.review_locks
-            .lock()
-            .unwrap()
-            .entry(thread_id)
-            .or_default()
-            .clone()
-    }
-}
-
-const REVIEW_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
-
-async fn acquire_review_lock(
-    data: &Data,
-    thread_id: u64,
-) -> Option<tokio::sync::OwnedMutexGuard<()>> {
-    let lock = data.review_lock(thread_id);
-    match tokio::time::timeout(REVIEW_LOCK_WAIT, lock.lock_owned()).await {
-        Ok(guard) => Some(guard),
-        Err(_) => {
-            tracing::warn!("review lock busy for thread {thread_id}, rejecting interaction");
-            None
-        }
-    }
-}
-
-fn review_busy_response() -> CreateInteractionResponse<'static> {
-    CreateInteractionResponse::Message(
-        CreateInteractionResponseMessage::new()
-            .content(
-                "Another action on this submission is still processing. Try again in a moment.",
-            )
-            .ephemeral(true),
-    )
-}
-
-async fn send_review_busy(ctx: &Context, component: &ComponentInteraction) -> anyhow::Result<()> {
-    component
-        .create_response(&ctx.http, review_busy_response())
-        .await?;
-    Ok(())
 }
 
 fn strip_panel_prefix(id: &str) -> Option<&str> {
@@ -181,7 +99,7 @@ impl Handler {
             commands::admin::info::register(),
             commands::admin::manage::register(),
             commands::admin::strike::register(),
-            commands::blacklist::evidence::register(),
+            commands::blacklist::evidence_post::confirm::register(),
             commands::blacklist::guild::register(),
             commands::blacklist::watch::register(),
         ]
@@ -194,6 +112,9 @@ impl Handler {
                     InteractionContext::PrivateChannel,
                 ])
         })
+        .chain(std::iter::once(
+            commands::blacklist::review::void::register(),
+        ))
         .collect();
 
         cmds
@@ -255,7 +176,12 @@ impl Handler {
             "info" => commands::admin::info::run(ctx, command, &self.data).await,
             "manage" => commands::admin::manage::run(ctx, command, &self.data).await,
             "strike" => commands::admin::strike::run(ctx, command, &self.data).await,
-            "confirm" => commands::blacklist::evidence::run(ctx, command, &self.data).await,
+            "confirm" => {
+                commands::blacklist::evidence_post::confirm::run(ctx, command, &self.data).await
+            }
+            commands::blacklist::review::void::COMMAND_NAME => {
+                commands::blacklist::review::void::run(ctx, command, &self.data).await
+            }
             "guild" => commands::blacklist::guild::run(ctx, command, &self.data).await,
             "watch" => commands::blacklist::watch::run(ctx, command, &self.data).await,
             commands::blacklist::evidence_attach::COMMAND_NAME => {
@@ -343,16 +269,13 @@ impl Handler {
         component: &ComponentInteraction,
         id: &str,
     ) -> anyhow::Result<()> {
-        let _review_guard = if id.starts_with("review_") {
-            match acquire_review_lock(&self.data, component.channel_id.get()).await {
-                Some(guard) => Some(guard),
-                None => return send_review_busy(ctx, component).await,
-            }
-        } else {
-            None
-        };
-
         match id {
+            _ if id.starts_with(commands::blacklist::review::ID_PREFIX) => {
+                commands::blacklist::review::handle_component(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("review_") => {
+                commands::blacklist::review::reply_retired_button(ctx, component).await
+            }
             "regenerate_key" => {
                 commands::user::dashboard::handle_regenerate_key(ctx, component, &self.data).await
             }
@@ -390,10 +313,12 @@ impl Handler {
                 commands::user::guild_notifs::handle_open(ctx, component, &self.data).await
             }
             "guide_ping_toggle" => {
-                commands::blacklist::reviews::handle_ping_toggle(ctx, component, &self.data).await
+                commands::blacklist::review::guide::handle_ping_toggle(ctx, component, &self.data)
+                    .await
             }
             _ if id.starts_with("guide_ping_choice:") => {
-                commands::blacklist::reviews::handle_ping_choice(ctx, component, &self.data).await
+                commands::blacklist::review::guide::handle_ping_choice(ctx, component, &self.data)
+                    .await
             }
             "gn_account" => {
                 commands::user::guild_notifs::handle_account(ctx, component, &self.data).await
@@ -495,6 +420,10 @@ impl Handler {
                 commands::blacklist::tag::handle_manage_edit_type_button(ctx, component, &self.data)
                     .await
             }
+            _ if id.starts_with("mt_etypego:") => {
+                commands::blacklist::tag::handle_manage_edit_type_go(ctx, component, &self.data)
+                    .await
+            }
             _ if id.starts_with("mt_etypesel:") => {
                 commands::blacklist::tag::handle_manage_edit_type_select(ctx, component, &self.data)
                     .await
@@ -503,30 +432,43 @@ impl Handler {
                 commands::blacklist::tag::handle_manage_back(ctx, component, &self.data).await
             }
             _ if id.starts_with("evidence_add_media") => {
-                commands::blacklist::evidence::handle_add_media(ctx, component, &self.data).await
+                commands::blacklist::evidence_post::menu::handle_add_media(
+                    ctx, component, &self.data,
+                )
+                .await
             }
             _ if id.starts_with("evidence_manage:") => {
-                commands::blacklist::evidence::handle_manage(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("evidence_msel:") => {
-                commands::blacklist::evidence::handle_manage_select(ctx, component, &self.data)
+                commands::blacklist::evidence_post::menu::handle_manage(ctx, component, &self.data)
                     .await
             }
-            _ if id.starts_with("evidence_mrem:") => {
-                commands::blacklist::evidence::handle_manage_remove(ctx, component, &self.data)
-                    .await
-            }
-            _ if id.starts_with("evidence_mclose:") => {
-                commands::blacklist::evidence::handle_manage_close(ctx, component, &self.data).await
+            _ if id.starts_with("evidence_msel:")
+                || id.starts_with("evidence_mrem:")
+                || id.starts_with("evidence_mrem_go:")
+                || id.starts_with("evidence_mpick:") =>
+            {
+                commands::blacklist::evidence_post::menu::handle_menu_action(
+                    ctx, component, &self.data,
+                )
+                .await
             }
             _ if id.starts_with("evidence_restore:") => {
-                commands::blacklist::evidence::handle_restore(ctx, component, &self.data).await
+                commands::blacklist::evidence_post::confirm::handle_restore(
+                    ctx, component, &self.data,
+                )
+                .await
             }
-            _ if id.starts_with("evidence_change:") => {
-                commands::blacklist::evidence::handle_change_tag(ctx, component, &self.data).await
+            _ if id.starts_with("evc_type:") => {
+                commands::blacklist::evidence_post::confirm::handle_type_select(
+                    ctx, component, &self.data,
+                )
+                .await
             }
-            _ if id.starts_with("evidence_archive") => {
-                commands::blacklist::evidence::handle_archive(ctx, component, &self.data).await
+            _ if id.starts_with("evidence_change:")
+                || id.starts_with("evidence_archive")
+                || id.starts_with("evidence_mclose:") =>
+            {
+                commands::blacklist::evidence_post::menu::handle_retired_button(ctx, component)
+                    .await
             }
             _ if id.starts_with("evid_pick:") => {
                 commands::blacklist::evidence_attach::handle_pick(ctx, component, &self.data).await
@@ -642,68 +584,6 @@ impl Handler {
                 commands::admin::manage::handle_toggle_name_updates(ctx, component, &self.data)
                     .await
             }
-            _ if id.starts_with("review_add_replay:") => {
-                commands::blacklist::reviews::handle_add_replay(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("review_attach_media:") => {
-                commands::blacklist::reviews::handle_attach_media(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("review_edit_tag:") => {
-                commands::blacklist::reviews::handle_edit_tag(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("review_edit_reason:") => {
-                commands::blacklist::reviews::handle_edit_reason(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("review_edit_done:") => {
-                commands::blacklist::reviews::handle_edit_done(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("review_remove_player:") => {
-                commands::blacklist::reviews::handle_remove_player(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("review_remove_evidence:") => {
-                commands::blacklist::reviews::handle_remove_evidence(ctx, component, &self.data)
-                    .await
-            }
-            _ if id.starts_with("review_edit_replay:") => {
-                commands::blacklist::reviews::handle_edit_replay(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("review_evsel:") => {
-                commands::blacklist::reviews::handle_evidence_select(ctx, component, &self.data)
-                    .await
-            }
-            _ if id.starts_with("review_add_player:") => {
-                commands::blacklist::reviews::handle_add_player(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("review_pending_tag:") => {
-                commands::blacklist::reviews::handle_pending_tag_select(ctx, component, &self.data)
-                    .await
-            }
-            _ if id.starts_with("review_tag_select_edit:") => {
-                commands::blacklist::reviews::handle_tag_select_edit(ctx, component, &self.data)
-                    .await
-            }
-            _ if id.starts_with("review_edit_submitted:") => {
-                commands::blacklist::reviews::handle_edit_submitted(ctx, component, &self.data)
-                    .await
-            }
-            _ if id.starts_with("review_submit:") => {
-                commands::blacklist::reviews::handle_submit(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("review_approve:") => {
-                commands::blacklist::reviews::handle_approve(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("review_reject:") => {
-                commands::blacklist::reviews::handle_reject(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("review_confirm:") => {
-                commands::blacklist::reviews::handle_confirm(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("review_cancel_thread:") => {
-                commands::blacklist::reviews::handle_cancel_thread(ctx, component, &self.data).await
-            }
-            _ if id.starts_with("review_abort_delete:") => {
-                commands::blacklist::reviews::handle_abort_delete(ctx, component, &self.data).await
-            }
             _ => {
                 tracing::warn!("unhandled component interaction: {id}");
                 Ok(())
@@ -713,21 +593,10 @@ impl Handler {
 
     async fn handle_modal(&self, ctx: &Context, modal: &ModalInteraction) -> anyhow::Result<()> {
         let id = modal.data.custom_id.as_str();
-        let _review_guard = if id.starts_with("review_") {
-            match acquire_review_lock(&self.data, modal.channel_id.get()).await {
-                Some(guard) => Some(guard),
-                None => {
-                    modal
-                        .create_response(&ctx.http, review_busy_response())
-                        .await?;
-                    return Ok(());
-                }
-            }
-        } else {
-            None
-        };
-
         match id {
+            _ if id.starts_with(commands::blacklist::review::ID_PREFIX) => {
+                commands::blacklist::review::handle_modal(ctx, modal, &self.data).await
+            }
             _ if id.starts_with("session_rename_modal:") => {
                 commands::stats::bedwars::handle_rename_modal(ctx, modal, &self.data).await
             }
@@ -737,38 +606,19 @@ impl Handler {
             _ if id.starts_with("session_duels_rename_modal:") => {
                 commands::stats::duels::handle_rename_modal(ctx, modal, &self.data).await
             }
-            _ if id.starts_with("review_addplayer_name:") => {
-                commands::blacklist::reviews::handle_addplayer_name_modal(ctx, modal, &self.data)
+            _ if id.starts_with("evidence_media_modal:") => {
+                commands::blacklist::evidence_post::menu::handle_media_modal(ctx, modal, &self.data)
                     .await
             }
-            _ if id.starts_with("review_addplayer_reason:") => {
-                commands::blacklist::reviews::handle_addplayer_reason_modal(ctx, modal, &self.data)
-                    .await
-            }
-            _ if id.starts_with("review_replay_modal:") => {
-                commands::blacklist::reviews::handle_replay_modal(ctx, modal, &self.data).await
-            }
-            _ if id.starts_with("review_media_modal:") => {
-                commands::blacklist::reviews::handle_media_modal(ctx, modal, &self.data).await
-            }
-            _ if id.starts_with("evidence_change_modal:") => {
-                commands::blacklist::evidence::handle_change_modal(ctx, modal, &self.data).await
-            }
-            _ if id.starts_with("evidence_media_modal") => {
-                commands::blacklist::evidence::handle_media_modal(ctx, modal, &self.data).await
+            _ if id.starts_with("evc_reason:") => {
+                commands::blacklist::evidence_post::confirm::handle_reason_modal(
+                    ctx, modal, &self.data,
+                )
+                .await
             }
             _ if id.starts_with("evid_query:") => {
                 commands::blacklist::evidence_attach::handle_search_modal(ctx, modal, &self.data)
                     .await
-            }
-            _ if id.starts_with("review_reject_modal:") => {
-                commands::blacklist::reviews::handle_reject_modal(ctx, modal, &self.data).await
-            }
-            _ if id.starts_with("review_edit_reason_modal:") => {
-                commands::blacklist::reviews::handle_edit_reason_modal(ctx, modal, &self.data).await
-            }
-            _ if id.starts_with("review_edit_replay_modal:") => {
-                commands::blacklist::reviews::handle_edit_replay_modal(ctx, modal, &self.data).await
             }
             _ if id.starts_with("mt_reason:") => {
                 commands::blacklist::tag::handle_manage_reason_modal(ctx, modal, &self.data).await
@@ -880,11 +730,19 @@ impl EventHandler for Handler {
                     tracing::error!("Failed to register evidence context menu: {}", e);
                 }
                 crate::events::spawn_subscriber(ctx.clone(), self.data.clone());
-                commands::blacklist::reviews::spawn_guide_watcher(ctx.clone(), self.data.clone());
+                crate::events::spawn_sync_subscriber(ctx.clone(), self.data.clone());
+                commands::blacklist::review::guide::spawn_guide_watcher(
+                    ctx.clone(),
+                    self.data.clone(),
+                );
+                tokio::spawn(commands::blacklist::review::deadline::hydrate(
+                    ctx.clone(),
+                    self.data.clone(),
+                ));
                 let data = self.data.clone();
                 let ctx = ctx.clone();
                 tokio::spawn(async move {
-                    commands::blacklist::evidence::populate_thread_index(&ctx, &data).await;
+                    commands::blacklist::evidence_post::index::reconcile(&ctx, &data).await;
                 });
                 let data = self.data.clone();
                 tokio::spawn(async move {
@@ -896,25 +754,14 @@ impl EventHandler for Handler {
                 });
             }
             FullEvent::ThreadCreate { thread, .. } => {
-                commands::blacklist::evidence::thread_index_insert(
-                    &self.data,
-                    &thread.base.name,
-                    thread.id,
-                    thread.parent_id,
-                );
-            }
-            FullEvent::ThreadUpdate { new, .. } => {
-                commands::blacklist::evidence::thread_index_remove(&self.data, new.id);
-                commands::blacklist::evidence::thread_index_insert(
-                    &self.data,
-                    &new.base.name,
-                    new.id,
-                    new.parent_id,
-                );
+                commands::blacklist::evidence_post::index::on_thread_create(
+                    ctx, &self.data, thread,
+                )
+                .await;
             }
             FullEvent::ThreadDelete { thread, .. } => {
-                commands::blacklist::evidence::thread_index_remove(&self.data, thread.id);
-                self.data.finish_assembling(thread.id.get());
+                commands::blacklist::evidence_post::index::on_thread_delete(&self.data, thread.id)
+                    .await;
             }
             FullEvent::Message { new_message, .. } => {
                 crate::events::review_guard_message(ctx, &self.data, new_message).await;

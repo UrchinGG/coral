@@ -10,7 +10,7 @@ use database::{
 };
 
 use super::appeal;
-use super::evidence::evidence_thread_url;
+use super::evidence_post::evidence_thread_url;
 
 use crate::framework::{AccessRank, Data};
 use crate::utils::{
@@ -327,10 +327,10 @@ pub async fn format_reviewed_line(ctx: &Context, reviewed_by: Option<&[i64]>) ->
 fn tag_footer(dashed_uuid: &str, review_url: Option<&str>, evidence_url: Option<&str>) -> String {
     let mut footer = format!("-# UUID: {dashed_uuid}");
     if let Some(url) = review_url {
-        footer.push_str(&format!(" | [Review]({url})"));
+        footer.push_str(&format!("\n-# [Review]({url})"));
     }
     if let Some(url) = evidence_url {
-        footer.push_str(&format!(" | [Evidence]({url})"));
+        footer.push_str(&format!("\n-# [Evidence]({url})"));
     }
     footer
 }
@@ -828,7 +828,7 @@ async fn post_tag_to_log(
     let dashed_uuid = format_uuid_dashed(uuid);
     let added_line = format_mod_added_line(ctx, tag).await;
     let reviewed_line = format_reviewed_line(ctx, tag.reviewed_by.as_deref()).await;
-    let evidence_url = evidence_thread_url(data, uuid);
+    let evidence_url = evidence_thread_url(data, uuid).await;
     let face = face_attachment(data, uuid).await;
 
     let block = format_tag_block(
@@ -887,7 +887,7 @@ async fn post_to_blacklist_channel(
 ) -> Option<MessageId> {
     let channel_id = data.blacklist_channel_id?;
     let dashed_uuid = format_uuid_dashed(uuid);
-    let evidence_url = evidence_thread_url(data, uuid);
+    let evidence_url = evidence_thread_url(data, uuid).await;
 
     let face = face_attachment(data, uuid).await;
 

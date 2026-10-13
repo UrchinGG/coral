@@ -582,8 +582,10 @@ export type GuideStatus = {
 export type PingRolesConfig = {
   review_role_id: string | null;
   dispute_role_id: string | null;
+  confirm_role_id: string | null;
   review_opt_ins: number;
   dispute_opt_ins: number;
+  confirm_opt_ins: number;
 };
 
 export type ReviewGuideResponse = {

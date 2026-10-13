@@ -51,15 +51,23 @@ async fn refresh_guide_thread(ctx: &Context, data: &Data) {
     }
 }
 
-async fn ping_roles(data: &Data) -> (Option<RoleId>, Option<RoleId>) {
-    let (review, dispute) = ReviewGuideRepository::new(data.db.pool())
+struct PingRoles {
+    review: Option<RoleId>,
+    dispute: Option<RoleId>,
+    confirm: Option<RoleId>,
+}
+
+async fn ping_roles(data: &Data) -> PingRoles {
+    let (review, dispute, confirm) = ReviewGuideRepository::new(data.db.pool())
         .get_ping_roles()
         .await
-        .unwrap_or((None, None));
-    (
-        review.map(|id| RoleId::new(id as u64)),
-        dispute.map(|id| RoleId::new(id as u64)),
-    )
+        .unwrap_or((None, None, None));
+    let role = |id: Option<i64>| id.map(|id| RoleId::new(id as u64));
+    PingRoles {
+        review: role(review),
+        dispute: role(dispute),
+        confirm: role(confirm),
+    }
 }
 
 pub async fn handle_ping_toggle(
@@ -70,9 +78,10 @@ pub async fn handle_ping_toggle(
     let discord_id = component.user.id.get();
     let rank = super::super::tag::get_rank(data, discord_id).await?;
     let is_staff = rank >= AccessRank::Helper;
-    let (review_role, dispute_role) = ping_roles(data).await;
+    let roles = ping_roles(data).await;
 
-    if review_role.is_none() && (dispute_role.is_none() || !is_staff) {
+    if roles.review.is_none() && ((roles.dispute.is_none() && roles.confirm.is_none()) || !is_staff)
+    {
         return send_component_error(
             ctx,
             component,
@@ -86,8 +95,7 @@ pub async fn handle_ping_toggle(
         return send_component_error(ctx, component, "Error", "Home guild is not configured").await;
     };
 
-    let message =
-        toggle_panel_message(ctx, guild_id, user_id, review_role, dispute_role, is_staff).await;
+    let message = toggle_panel_message(ctx, guild_id, user_id, &roles, is_staff).await;
     component
         .create_response(&ctx.http, CreateInteractionResponse::Message(message))
         .await?;
@@ -108,15 +116,15 @@ pub async fn handle_ping_choice(
     let discord_id = component.user.id.get();
     let rank = super::super::tag::get_rank(data, discord_id).await?;
     let is_staff = rank >= AccessRank::Helper;
-    let (review_role, dispute_role) = ping_roles(data).await;
+    let roles = ping_roles(data).await;
 
     let Some(guild_id) = data.home_guild_id else {
         return send_component_error(ctx, component, "Error", "Home guild is not configured").await;
     };
-    let target_role = if choice == "disputes" {
-        dispute_role
-    } else {
-        review_role
+    let target_role = match choice {
+        "disputes" => roles.dispute,
+        "confirm" => roles.confirm,
+        _ => roles.review,
     };
     let Some(role_id) = target_role else {
         return send_component_error(ctx, component, "Error", "That ping role is not configured")
@@ -135,8 +143,7 @@ pub async fn handle_ping_choice(
     }
 
     let user_id = component.user.id;
-    let message =
-        toggle_panel_message(ctx, guild_id, user_id, review_role, dispute_role, is_staff).await;
+    let message = toggle_panel_message(ctx, guild_id, user_id, &roles, is_staff).await;
     component
         .create_response(&ctx.http, CreateInteractionResponse::UpdateMessage(message))
         .await?;
@@ -175,8 +182,7 @@ async fn toggle_panel_message(
     ctx: &Context,
     guild_id: GuildId,
     user_id: UserId,
-    review_role: Option<RoleId>,
-    dispute_role: Option<RoleId>,
+    roles: &PingRoles,
     is_staff: bool,
 ) -> CreateInteractionResponseMessage<'static> {
     let current_roles = ctx
@@ -190,7 +196,7 @@ async fn toggle_panel_message(
     let mut lines = Vec::new();
     let mut buttons = Vec::new();
 
-    if let Some(role) = review_role {
+    if let Some(role) = roles.review {
         let on = has(role);
         lines.push(format!(
             "All reviews: **{}**",
@@ -211,7 +217,7 @@ async fn toggle_panel_message(
         );
     }
 
-    if is_staff && let Some(role) = dispute_role {
+    if is_staff && let Some(role) = roles.dispute {
         let on = has(role);
         lines.push(format!(
             "Disputes only: **{}**",
@@ -223,6 +229,27 @@ async fn toggle_panel_message(
                     "Turn Off Disputes Only"
                 } else {
                     "Turn On Disputes Only"
+                })
+                .style(if on {
+                    ButtonStyle::Success
+                } else {
+                    ButtonStyle::Secondary
+                }),
+        );
+    }
+
+    if is_staff && let Some(role) = roles.confirm {
+        let on = has(role);
+        lines.push(format!(
+            "Reviews to confirm: **{}**",
+            if on { "on" } else { "off" }
+        ));
+        buttons.push(
+            CreateButton::new("guide_ping_choice:confirm")
+                .label(if on {
+                    "Turn Off Reviews to Confirm"
+                } else {
+                    "Turn On Reviews to Confirm"
                 })
                 .style(if on {
                     ButtonStyle::Success

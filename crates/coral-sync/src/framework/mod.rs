@@ -228,6 +228,7 @@ impl EventHandler for Handler {
             }
             FullEvent::Message { new_message, .. } => {
                 crate::sync::handle_message_activity(ctx, &self.data, new_message);
+                crate::review_media::relay_thread_media(&self.data, new_message);
             }
             _ => {}
         }

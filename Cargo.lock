@@ -784,6 +784,7 @@ dependencies = [
  "image",
  "mctext",
  "rand 0.8.5",
+ "redis",
  "render",
  "reqwest",
  "serde",

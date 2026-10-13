@@ -140,6 +140,21 @@ pub enum SyncEvent {
         guild_id: u64,
         status: String,
     },
+    ReviewThreadMedia {
+        review_id: i64,
+        thread_id: u64,
+        message_id: u64,
+        author_id: u64,
+        attachments: Vec<ThreadAttachment>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadAttachment {
+    pub url: String,
+    pub filename: String,
+    #[serde(default)]
+    pub content_type: Option<String>,
 }
 
 #[derive(Clone)]

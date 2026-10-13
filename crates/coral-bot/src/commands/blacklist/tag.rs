@@ -13,7 +13,7 @@ use crate::framework::{AccessRank, AccessRankExt, Data};
 use crate::interact;
 use crate::interact::send_deferred_error;
 use crate::utils::{
-    format_tag_detail, format_uuid_dashed, resolve_username_or_fetch, sanitize_reason,
+    format_tag_detail, format_uuid_dashed, resolve_username_or_fetch, sanitize_reason, text,
 };
 
 const FACE_SIZE: u32 = 128;
@@ -505,7 +505,7 @@ async fn run_view(ctx: &Context, command: &CommandInteraction, data: &Data) -> R
         return Ok(());
     }
 
-    let evidence_url = super::evidence::evidence_thread_url(data, &player_info.uuid);
+    let evidence_url = super::evidence_post::evidence_thread_url(data, &player_info.uuid).await;
     let lock_indicator = if is_locked { " \u{1F512}" } else { "" };
 
     let adders = player_tags
@@ -621,7 +621,7 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
             ctx,
             command,
             "Error",
-            "Confirmed cheater tags can only be applied through the review system",
+            "Confirmed cheater tags are applied with /confirm",
         )
         .await;
     }
@@ -645,44 +645,66 @@ async fn run_add(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
     }
 
     let effective = database::standing::effective_level(&member);
-    let needs_review = effective < 1 && super::reviews::REVIEW_TAGS.contains(&tag_type);
+    let reviewable = super::review::REVIEW_TAGS.contains(&tag_type);
+    if always_review && !reviewable {
+        return send_deferred_error(
+            ctx,
+            command,
+            "Error",
+            "Only Closet Cheater and Blatant Cheater tags can be reviewed.",
+        )
+        .await;
+    }
+    let needs_review = (effective < 1 || always_review) && reviewable;
 
     let player_info = match data.api.resolve(player).await {
         Ok(info) => info,
         Err(_) => return send_deferred_error(ctx, command, "Error", "Player not found").await,
     };
 
-    if needs_review || always_review {
+    if needs_review {
         let current = match conflicting_tag(data, &player_info.uuid, tag_type).await {
-            Some(tag) => Some(super::reviews::CurrentTag {
-                tag_type: tag.tag_type.clone().unwrap_or_default(),
-                detail: format_tag_detail(&tag),
-                added_line: format_added_line(ctx, &tag).await,
-            }),
+            Some(tag) => Some((
+                tag.tag_type.clone().unwrap_or_default(),
+                format_tag_detail(&tag),
+                format_added_line(ctx, &tag).await,
+            )),
             None => None,
         };
-        let components = super::reviews::build_confirmation_message(
-            discord_id,
-            &player_info.username,
-            &player_info.uuid,
+        let request = super::review::publish::TagAddRequest {
+            submitter_id: discord_id,
+            player_uuid: &player_info.uuid,
+            player_name: &player_info.username,
             tag_type,
             reason,
-            data.review_forum_id,
-            current,
-        );
-        let png = data
-            .skin_provider
-            .fetch_face(&player_info.uuid, super::reviews::FACE_SIZE)
-            .await
-            .unwrap_or_else(default_face);
-        let face = CreateAttachment::bytes(png, super::reviews::face_filename(&player_info.uuid));
+            hide_username: hide,
+        };
+        let route = super::review::publish::route_tag_add(ctx, data, request, current).await?;
+        let view = match route {
+            super::review::publish::TagAddRoute::Refused(message) => {
+                return send_deferred_error(ctx, command, "Error", message).await;
+            }
+            super::review::publish::TagAddRoute::OpenReview(view) => {
+                command
+                    .edit_response(
+                        &ctx.http,
+                        EditInteractionResponse::new()
+                            .flags(MessageFlags::IS_COMPONENTS_V2)
+                            .components(view),
+                    )
+                    .await?;
+                return Ok(());
+            }
+            super::review::publish::TagAddRoute::Console(view)
+            | super::review::publish::TagAddRoute::Confirmation(view) => view,
+        };
         command
             .edit_response(
                 &ctx.http,
                 EditInteractionResponse::new()
                     .flags(MessageFlags::IS_COMPONENTS_V2)
-                    .components(components)
-                    .new_attachment(face),
+                    .components(view)
+                    .new_attachment(super::review::face_attachment(data, &player_info.uuid).await),
             )
             .await?;
         return Ok(());
@@ -812,13 +834,19 @@ async fn show_overwrite_prompt(
             "## {} Tag Overwrite",
             EMOTE_EDITTAG
         ))),
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "{}{}",
             if conflict_type == tag_type {
                 "This player already has this tag. Overwriting replaces it with your tag."
             } else {
                 "This player already has an incompatible tag. Overwriting replaces it with your tag."
             },
-        )),
+            if conflict_type == "confirmed_cheater" {
+                " This also archives the evidence post."
+            } else {
+                ""
+            },
+        ))),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
         CreateContainerComponent::TextDisplay(CreateTextDisplay::new("-# Current")),
         face_section(vec![
@@ -983,7 +1011,7 @@ async fn run_remove(ctx: &Context, command: &CommandInteraction, data: &Data) ->
     };
 
     if tag_type == "confirmed_cheater" {
-        super::evidence::archive_evidence_for_uuid(ctx, data, &player_info.uuid).await?;
+        super::evidence_post::ops::archive_for_player(ctx, data, &player_info.uuid).await?;
     }
 
     let dashed_uuid = format_uuid_dashed(&player_info.uuid);
@@ -1185,7 +1213,7 @@ async fn run_unlock(ctx: &Context, command: &CommandInteraction, data: &Data) ->
 }
 
 async fn try_archive_evidence(ctx: &Context, data: &Data, uuid: &str) {
-    if let Err(e) = super::evidence::archive_evidence_for_uuid(ctx, data, uuid).await {
+    if let Err(e) = super::evidence_post::ops::archive_for_player(ctx, data, uuid).await {
         tracing::error!("Failed to archive evidence for {uuid}: {e}");
     }
 }
@@ -1311,7 +1339,7 @@ async fn build_manage_main(
     let lock_state = lock_state?;
     let username = username.unwrap_or_else(|| uuid.to_string());
     let dashed_uuid = format_uuid_dashed(uuid);
-    let evidence_url = super::evidence::evidence_thread_url(data, uuid);
+    let evidence_url = super::evidence_post::evidence_thread_url(data, uuid).await;
     let adders = active.iter().filter_map(|t| t.author);
     let reviewers = active
         .iter()
@@ -1391,6 +1419,9 @@ async fn build_manage_main(
         ));
 
         if confirming == Some(tag.id) {
+            if tag.tag_type.as_deref() == Some("confirmed_cheater") {
+                parts.push(text("-# This also archives the evidence post."));
+            }
             parts.push(CreateContainerComponent::ActionRow(
                 CreateActionRow::buttons(vec![
                     CreateButton::new(format!("mt_confirm:{uuid}:{}", tag.id))
@@ -1567,7 +1598,14 @@ pub async fn handle_manage_hide(
 
     let ops = TagOp::new(data.db.pool());
     match ops.set_hide_username(tag_id, hide, rank.to_level()).await {
-        Ok(_) => update_manage_view(ctx, component, data, uuid).await,
+        Ok(tag) => {
+            if tag.tag_type.as_deref() == Some("confirmed_cheater")
+                && let Err(e) = super::evidence_post::ops::refresh_for_player(ctx, data, uuid).await
+            {
+                tracing::error!("Failed to refresh the evidence post for {uuid}: {e}");
+            }
+            update_manage_view(ctx, component, data, uuid).await
+        }
         Err(e) => send_component_message(ctx, component, op_error_message(&e)).await,
     }
 }
@@ -1787,9 +1825,7 @@ async fn apply_tag_edit(
 
     if old_tag_type == "confirmed_cheater" {
         if new_tag_type == "confirmed_cheater" {
-            if let Err(e) =
-                super::evidence::refresh_evidence_reason(ctx, data, uuid, &new_tag).await
-            {
+            if let Err(e) = super::evidence_post::ops::refresh_for_player(ctx, data, uuid).await {
                 tracing::error!("Failed to refresh evidence post for {uuid}: {e}");
             }
         } else {
@@ -1989,9 +2025,94 @@ pub async fn handle_manage_edit_type_select(
         return Ok(());
     }
 
+    if tag.tag_type.as_deref() == Some("confirmed_cheater") {
+        return confirm_type_change(ctx, component, data, uuid, tag_id, new_tag_type).await;
+    }
+
     let discord_id = component.user.id.get();
     let rank = get_rank(data, discord_id).await?;
 
+    match apply_tag_edit(
+        ctx,
+        data,
+        uuid,
+        &tag,
+        new_tag_type,
+        &reason,
+        discord_id,
+        rank,
+    )
+    .await
+    {
+        Ok(()) => update_manage_view(ctx, component, data, uuid).await,
+        Err(e) => send_component_message(ctx, component, &e.to_string()).await,
+    }
+}
+
+async fn confirm_type_change(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+    uuid: &str,
+    tag_id: i64,
+    new_tag_type: &str,
+) -> Result<()> {
+    let username = resolve_username_or_fetch(uuid, data)
+        .await
+        .unwrap_or_else(|| uuid.to_string());
+    let display = lookup_tag(new_tag_type).map_or(new_tag_type, |d| d.display_name);
+    let container = CreateContainer::new(vec![
+        text(format!(
+            "Change the Confirmed Cheater tag on `{username}` to {display}? This also archives the evidence post."
+        )),
+        CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
+            CreateButton::new(format!("mt_etypego:{uuid}:{tag_id}:{new_tag_type}"))
+                .label("Change Type")
+                .style(ButtonStyle::Danger),
+            CreateButton::new(format!("mt_back:{uuid}"))
+                .label("Cancel")
+                .style(ButtonStyle::Secondary),
+        ])),
+    ]);
+    component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2)
+                    .components(vec![CreateComponent::Container(container)]),
+            ),
+        )
+        .await?;
+    Ok(())
+}
+
+pub async fn handle_manage_edit_type_go(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    let payload = component
+        .data
+        .custom_id
+        .strip_prefix("mt_etypego:")
+        .unwrap_or("");
+    let mut segments = payload.splitn(3, ':');
+    let uuid = segments.next().unwrap_or("");
+    let tag_id: i64 = segments.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let new_tag_type = segments.next().unwrap_or("");
+    if !edit_type_targets("confirmed_cheater")
+        .iter()
+        .any(|t| t.name == new_tag_type)
+    {
+        return Ok(());
+    }
+    let Some(tag) = load_editable_tag(data, uuid, tag_id).await? else {
+        return send_component_message(ctx, component, STALE_TAG_MESSAGE).await;
+    };
+    let discord_id = component.user.id.get();
+    let rank = get_rank(data, discord_id).await?;
+    let reason = tag.reason.clone().unwrap_or_default();
     match apply_tag_edit(
         ctx,
         data,
@@ -2147,9 +2268,14 @@ async fn show_manage_replace_prompt(
             "## {} Replace Tag",
             EMOTE_EDITTAG
         ))),
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
-            "Replaces the current tag. Recorded in tag history; no public log entry.",
-        )),
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(format!(
+            "Replaces the current tag. Recorded in tag history; no public log entry.{}",
+            if conflict_type == "confirmed_cheater" {
+                " This also archives the evidence post."
+            } else {
+                ""
+            },
+        ))),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
         CreateContainerComponent::TextDisplay(CreateTextDisplay::new("-# Current")),
         CreateContainerComponent::TextDisplay(CreateTextDisplay::new(current_block)),

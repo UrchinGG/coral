@@ -26,8 +26,9 @@ pub fn spawn_sync_subscriber(ctx: Context, data: Data) {
                         SyncEvent::GuildJobCancelRequested { job_id } => {
                             crate::jobs::request_cancel(&data, job_id);
                         }
-                        SyncEvent::GuildJobProgress { .. } | SyncEvent::GuildJobFinished { .. } => {
-                        }
+                        SyncEvent::GuildJobProgress { .. }
+                        | SyncEvent::GuildJobFinished { .. }
+                        | SyncEvent::ReviewThreadMedia { .. } => {}
                     }
                 }
             })

@@ -7,6 +7,7 @@ pub struct ReviewGuideConfig {
     pub content: Value,
     pub review_ping_role_id: Option<i64>,
     pub dispute_ping_role_id: Option<i64>,
+    pub confirm_ping_role_id: Option<i64>,
     pub posted_channel_id: Option<i64>,
     pub posted_thread_id: Option<i64>,
     pub posted_message_id: Option<i64>,
@@ -16,8 +17,8 @@ pub struct ReviewGuideConfig {
 }
 
 const GUIDE_COLUMNS: &str = "content, review_ping_role_id, dispute_ping_role_id,
-    posted_channel_id, posted_thread_id, posted_message_id, posted_at, posted_by,
-    content_updated_at";
+    confirm_ping_role_id, posted_channel_id, posted_thread_id, posted_message_id, posted_at,
+    posted_by, content_updated_at";
 
 pub struct ReviewGuideRepository<'a> {
     pool: &'a PgPool,
@@ -36,14 +37,16 @@ impl<'a> ReviewGuideRepository<'a> {
         .await
     }
 
-    pub async fn get_ping_roles(&self) -> Result<(Option<i64>, Option<i64>), sqlx::Error> {
-        let row: Option<(Option<i64>, Option<i64>)> = sqlx::query_as(
-            "SELECT review_ping_role_id, dispute_ping_role_id
+    pub async fn get_ping_roles(
+        &self,
+    ) -> Result<(Option<i64>, Option<i64>, Option<i64>), sqlx::Error> {
+        let row: Option<(Option<i64>, Option<i64>, Option<i64>)> = sqlx::query_as(
+            "SELECT review_ping_role_id, dispute_ping_role_id, confirm_ping_role_id
              FROM review_guide_config WHERE id = 1",
         )
         .fetch_optional(self.pool)
         .await?;
-        Ok(row.unwrap_or((None, None)))
+        Ok(row.unwrap_or_default())
     }
 
     pub async fn update_content(&self, content: &Value) -> Result<(), sqlx::Error> {
@@ -61,13 +64,16 @@ impl<'a> ReviewGuideRepository<'a> {
         &self,
         review_role_id: Option<i64>,
         dispute_role_id: Option<i64>,
+        confirm_role_id: Option<i64>,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
             "UPDATE review_guide_config
-             SET review_ping_role_id = $1, dispute_ping_role_id = $2 WHERE id = 1",
+             SET review_ping_role_id = $1, dispute_ping_role_id = $2, confirm_ping_role_id = $3
+             WHERE id = 1",
         )
         .bind(review_role_id)
         .bind(dispute_role_id)
+        .bind(confirm_role_id)
         .execute(self.pool)
         .await?;
         Ok(())

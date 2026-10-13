@@ -7,15 +7,12 @@ use crate::utils::format_uuid_dashed;
 
 const TICKET_URL: &str = "https://discord.com/channels/1339318572069158962/1342235914746986556";
 
-/// Where the tag notice ended up for each member who has the tagged account
-/// linked.
 #[derive(Default)]
 pub struct NoticeDelivery {
     /// The tag type does not warrant a notice (e.g. Replays Needed).
     not_notifiable: bool,
     /// Members who got their DM.
     dmed: Vec<UserId>,
-    /// Members with DMs closed; notice is queued.
     queued: Vec<UserId>,
 }
 
@@ -97,9 +94,6 @@ fn appeal_body(user_id: UserId, username: &str, uuid: &str, detail: &str) -> Str
     )
 }
 
-/// DMs every member who has `uuid` linked an appeal notice for a freshly
-/// applied tag, falling back to a one-time in-command notice for anyone whose
-/// DMs are closed.
 pub async fn notify_tagged_player(
     ctx: &Context,
     data: &Data,
