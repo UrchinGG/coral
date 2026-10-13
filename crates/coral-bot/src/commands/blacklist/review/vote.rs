@@ -420,28 +420,39 @@ async fn notify_revise(ctx: &Context, review: &Review, reason: &str, updated: bo
     let what = if updated {
         "a revision request was updated"
     } else {
-        "a revision was requested"
+        "a revision has been requested"
     };
     let reason = crate::utils::sanitize_reason(reason);
-    let thread = GenericChannelId::new(thread_id as u64);
-    let message = if review.hide_username {
+    let submitter = UserId::new(review.submitter_id as u64);
+    let lead = if review.hide_username {
         let mut sentence = what.to_string();
         sentence[..1].make_ascii_uppercase();
         let dm = format!("{sentence}: {reason}\nThread: <#{thread_id}>");
-        if !appeal::send_dm(ctx, UserId::new(review.submitter_id as u64), &dm).await {
+        if !appeal::send_dm(ctx, submitter, &dm).await {
             tracing::warn!("Anonymous review {} revise DM was not delivered", review.id);
         }
-        CreateMessage::new().content(format!("{sentence}: {reason}"))
+        format!("{sentence}:")
     } else {
-        CreateMessage::new()
-            .content(format!("<@{}>, {what}: {reason}", review.submitter_id))
-            .allowed_mentions(
-                CreateAllowedMentions::new().users(vec![UserId::new(review.submitter_id as u64)]),
-            )
+        format!("<@{submitter}> {what}:")
     };
+    let mentions = if review.hide_username {
+        CreateAllowedMentions::new()
+    } else {
+        CreateAllowedMentions::new().users(vec![submitter])
+    };
+    let message = CreateMessage::new()
+        .flags(MessageFlags::IS_COMPONENTS_V2)
+        .components(vec![CreateComponent::Container(CreateContainer::new(
+            vec![text(format!("{lead}\n> {reason}"))],
+        ))])
+        .allowed_mentions(mentions);
     if let Err(e) = ctx
         .http
-        .send_message(thread, Vec::<CreateAttachment>::new(), &message)
+        .send_message(
+            GenericChannelId::new(thread_id as u64),
+            Vec::<CreateAttachment>::new(),
+            &message,
+        )
         .await
     {
         tracing::warn!("Failed to post revise notice in review {}: {e}", review.id);
