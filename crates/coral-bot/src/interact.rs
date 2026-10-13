@@ -135,7 +135,7 @@ pub async fn send_modal_error(
     Ok(())
 }
 
-fn error_container(title: &str, description: &str) -> CreateComponent<'static> {
+pub fn error_container(title: &str, description: &str) -> CreateComponent<'static> {
     let body = if description.is_empty() {
         format!("## {title}")
     } else {

@@ -22,6 +22,7 @@ pub mod starfish;
 mod sync_jobs;
 mod tag_notices;
 mod tag_ops;
+mod transfer;
 
 pub use access::AccessRank;
 pub use accounts::{AccountRepository, MinecraftAccount};
@@ -50,3 +51,4 @@ pub use starfish::StarfishRepository;
 pub use sync_jobs::{GuildSyncJob, GuildSyncJobRepository};
 pub use tag_notices::{PendingTagNotice, TagNoticeRepository};
 pub use tag_ops::{TagOp, TagOpError};
+pub use transfer::{TransferError, TransferOutcome, TransferPreview, TransferRepository};

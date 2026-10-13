@@ -620,6 +620,15 @@ impl Handler {
             _ if id.starts_with("manage_reviews:") => {
                 commands::admin::review_scores::handle_open(ctx, component, &self.data).await
             }
+            _ if id.starts_with("manage_transfer_go:") => {
+                commands::admin::transfer::handle_confirm(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("manage_transfer_cancel:") => {
+                commands::admin::transfer::handle_cancel(ctx, component, &self.data).await
+            }
+            _ if id.starts_with("manage_transfer:") => {
+                commands::admin::transfer::handle_open(ctx, component, &self.data).await
+            }
             _ if id.starts_with("manage_toggle_name_updates:") => {
                 commands::admin::manage::handle_toggle_name_updates(ctx, component, &self.data)
                     .await
@@ -768,6 +777,9 @@ impl Handler {
             }
             _ if id.starts_with("manage_register_modal:") => {
                 commands::admin::manage::handle_register_modal(ctx, modal, &self.data).await
+            }
+            _ if id.starts_with("manage_transfer_modal:") => {
+                commands::admin::transfer::handle_modal(ctx, modal, &self.data).await
             }
             _ if id.starts_with("manage_reviews_modal:") => {
                 commands::admin::review_scores::handle_modal(ctx, modal, &self.data).await

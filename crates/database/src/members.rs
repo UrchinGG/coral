@@ -24,7 +24,7 @@ pub struct Member {
     pub strikes: Value,
 }
 
-const COLUMNS: &str = "id, discord_id, uuid, api_key, join_date, request_count, access_level, \
+pub(crate) const COLUMNS: &str = "id, discord_id, uuid, api_key, join_date, request_count, access_level, \
     key_locked, tagging_disabled, accepted_tags, rejected_tags, accurate_verdicts, \
     incorrect_verdicts, bonus_verdicts, vote_granted, tag_granted, config, strikes";
 

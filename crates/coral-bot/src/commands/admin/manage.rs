@@ -86,13 +86,17 @@ pub(crate) async fn build_main_view(
                 }
                 None => parts.push(text("### Account\nNo account linked")),
             }
+            let mut account_buttons = vec![
+                CreateButton::new(format!("manage_accounts:{target_id}"))
+                    .label("Accounts")
+                    .style(ButtonStyle::Secondary)
+                    .disabled(!can_modify),
+            ];
+            if invoker_rank >= AccessRank::Owner {
+                account_buttons.push(transfer_button(target_id));
+            }
             parts.push(CreateContainerComponent::ActionRow(
-                CreateActionRow::buttons(vec![
-                    CreateButton::new(format!("manage_accounts:{target_id}"))
-                        .label("Accounts")
-                        .style(ButtonStyle::Secondary)
-                        .disabled(!can_modify),
-                ]),
+                CreateActionRow::buttons(account_buttons),
             ));
         }
         None => {
@@ -106,6 +110,11 @@ pub(crate) async fn build_main_view(
                         .disabled(!can_modify),
                 ),
             )));
+            if invoker_rank >= AccessRank::Owner {
+                parts.push(CreateContainerComponent::ActionRow(
+                    CreateActionRow::buttons(vec![transfer_button(target_id)]),
+                ));
+            }
         }
     }
 
@@ -451,6 +460,12 @@ pub(crate) async fn build_main_view(
     }
 
     vec![CreateComponent::Container(CreateContainer::new(parts))]
+}
+
+fn transfer_button(target_id: u64) -> CreateButton<'static> {
+    CreateButton::new(format!("manage_transfer:{target_id}"))
+        .label("Transfer Data")
+        .style(ButtonStyle::Secondary)
 }
 
 fn access_level_options(
