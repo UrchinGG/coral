@@ -127,21 +127,16 @@ pub async fn edit_post(
         ),
     };
     let components = render_view(view, username, &post.uuid, tag, &refs);
-    let mut attachments = EditAttachments::new();
-    for media in &kept {
-        attachments = attachments.keep(media.attachment_id);
-    }
+    let mut keep: Vec<AttachmentId> = kept.iter().map(|m| m.attachment_id).collect();
+    let mut uploads: Vec<CreateAttachment<'static>> = new_files
+        .iter()
+        .map(|file| CreateAttachment::bytes(file.bytes.clone(), file.filename.clone()))
+        .collect();
     match face {
-        Some(face) => attachments = attachments.keep(face.attachment_id),
-        None => attachments = attachments.add(face_attachment(data, &post.uuid).await),
+        Some(face) => keep.push(face.attachment_id),
+        None => uploads.push(face_attachment(data, &post.uuid).await),
     }
-    for file in &new_files {
-        attachments = attachments.add(CreateAttachment::bytes(
-            file.bytes.clone(),
-            file.filename.clone(),
-        ));
-    }
-    write(ctx, post.thread_id, components, attachments).await?;
+    write(ctx, post.thread_id, components, &keep, uploads).await?;
 
     let mut report = EditReport {
         files: files.clone(),
@@ -217,21 +212,20 @@ async fn verify(
         return Ok(());
     }
 
-    let mut attachments = EditAttachments::new();
-    for media in &after {
-        attachments = attachments.keep(media.attachment_id);
-    }
-    for media in &missing {
-        if let Some(bytes) = held.get(&media.attachment_id.get()) {
-            attachments = attachments.add(CreateAttachment::bytes(
+    let keep: Vec<AttachmentId> = after.iter().map(|m| m.attachment_id).collect();
+    let mut uploads: Vec<CreateAttachment<'static>> = missing
+        .iter()
+        .filter_map(|media| {
+            let bytes = held.get(&media.attachment_id.get())?;
+            Some(CreateAttachment::bytes(
                 bytes.clone(),
                 media.filename.clone(),
-            ));
-        }
-    }
+            ))
+        })
+        .collect();
     let after_face = after.iter().find(|m| !m.in_gallery);
     if after_face.is_none() {
-        attachments = attachments.add(face_attachment(data, &post.uuid).await);
+        uploads.push(face_attachment(data, &post.uuid).await);
     }
     let by_name: HashMap<&str, &str> = after
         .iter()
@@ -257,7 +251,7 @@ async fn verify(
         ),
     };
     let components = render_view(page.view, page.username, &post.uuid, page.tag, &refs);
-    match write(ctx, post.thread_id, components, attachments).await {
+    match write(ctx, post.thread_id, components, &keep, uploads).await {
         Ok(()) => report
             .reattached
             .extend(missing.iter().map(|m| m.filename.clone())),
@@ -301,8 +295,16 @@ async fn write(
     ctx: &Context,
     thread_id: i64,
     components: Vec<CreateComponent<'static>>,
-    attachments: EditAttachments<'static>,
+    kept: &[AttachmentId],
+    uploads: Vec<CreateAttachment<'static>>,
 ) -> Result<(), EditError> {
+    let mut attachments = EditAttachments::new();
+    for id in kept {
+        attachments = attachments.keep(*id);
+    }
+    for upload in &uploads {
+        attachments = attachments.add(upload.clone());
+    }
     ctx.http
         .edit_message(
             GenericChannelId::new(thread_id as u64),
@@ -311,7 +313,7 @@ async fn write(
                 .flags(MessageFlags::IS_COMPONENTS_V2)
                 .components(components)
                 .attachments(attachments),
-            Vec::new(),
+            uploads,
         )
         .await
         .map(|_| ())

@@ -272,11 +272,12 @@ async fn attach_to_post(
     for item in &existing {
         attachments = attachments.keep(item.attachment_id);
     }
-    for file in downloads {
-        attachments = attachments.add(CreateAttachment::bytes(
-            file.bytes.clone(),
-            file.filename.clone(),
-        ));
+    let uploads: Vec<CreateAttachment<'static>> = downloads
+        .iter()
+        .map(|file| CreateAttachment::bytes(file.bytes.clone(), file.filename.clone()))
+        .collect();
+    for upload in &uploads {
+        attachments = attachments.add(upload.clone());
     }
     ctx.http
         .edit_message(
@@ -286,7 +287,7 @@ async fn attach_to_post(
                 .flags(MessageFlags::IS_COMPONENTS_V2)
                 .components(components)
                 .attachments(attachments),
-            Vec::new(),
+            uploads,
         )
         .await?;
     let media = message_media(&ctx.http, channel_id, message_id).await?;
