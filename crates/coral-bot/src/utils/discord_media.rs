@@ -100,6 +100,7 @@ fn read_media(media: &Value, in_gallery: bool) -> Result<MessageMedia, MediaRead
         .get("attachment_id")
         .and_then(Value::as_str)
         .and_then(|raw| raw.parse::<u64>().ok())
+        .or_else(|| attachment_id_from_url(&url))
         .ok_or_else(|| MediaReadError::MissingAttachmentId(url.clone()))?;
     Ok(MessageMedia {
         attachment_id: AttachmentId::new(attachment_id),
@@ -107,6 +108,13 @@ fn read_media(media: &Value, in_gallery: bool) -> Result<MessageMedia, MediaRead
         url,
         in_gallery,
     })
+}
+
+fn attachment_id_from_url(url: &str) -> Option<u64> {
+    let path = url.split('?').next()?;
+    let mut segments = path.split("/attachments/").nth(1)?.split('/');
+    segments.next()?;
+    segments.next()?.parse().ok()
 }
 
 fn filename_from_url(url: &str) -> String {
@@ -149,7 +157,17 @@ mod tests {
     }
 
     #[test]
-    fn an_item_without_an_attachment_id_is_an_error() {
+    fn falls_back_to_the_id_in_the_cdn_url() {
+        let components = json!([{"type": 12, "items": [{"media": {
+            "url": "https://cdn.discordapp.com/attachments/1559641120630374500/1559641122119360663/RaconAPI_1.gif?ex=6a&is=6a&hm=83"
+        }}]}]);
+        let media = media_from_components(&components).unwrap();
+        assert_eq!(media[0].attachment_id.get(), 1559641122119360663);
+        assert_eq!(media[0].filename, "RaconAPI_1.gif");
+    }
+
+    #[test]
+    fn an_item_without_any_attachment_id_is_an_error() {
         let components = json!([{"type": 12, "items": [{"media": {"url": "https://x/y.png"}}]}]);
         assert!(matches!(
             media_from_components(&components),
