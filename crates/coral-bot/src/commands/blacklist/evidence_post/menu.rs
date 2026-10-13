@@ -191,19 +191,10 @@ pub async fn handle_manage(
     if get_rank(data, component.user.id.get()).await? < AccessRank::Helper {
         return interact::send_component_error(ctx, component, "Error", STAFF_ONLY).await;
     }
+    component.defer_ephemeral(&ctx.http).await?;
     let thread_id = component.channel_id.get() as i64;
     let view = picker(ctx, thread_id, None).await;
-    component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
-                    .components(view),
-            ),
-        )
-        .await?;
-    Ok(())
+    interact::edit_component(ctx, component, view).await
 }
 
 pub async fn handle_menu_action(
@@ -223,6 +214,9 @@ pub async fn handle_menu_action(
         return Ok(());
     };
     let item: Option<u64> = parts.next().and_then(|raw| raw.parse().ok());
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await?;
     let view = match action {
         "evidence_msel" => {
             let selected = match &component.data.kind {
@@ -239,26 +233,14 @@ pub async fn handle_menu_action(
             let Some(item) = item else {
                 return Ok(());
             };
-            component
-                .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
-                .await?;
-            let view = match ops::remove(ctx, data, thread_id, AttachmentId::new(item)).await {
+            match ops::remove(ctx, data, thread_id, AttachmentId::new(item)).await {
                 Ok(_) => picker(ctx, thread_id, None).await,
                 Err(e) => vec![interact::error_container("Error", &e.to_string())],
-            };
-            component
-                .edit_response(
-                    &ctx.http,
-                    EditInteractionResponse::new()
-                        .flags(MessageFlags::IS_COMPONENTS_V2)
-                        .components(view),
-                )
-                .await?;
-            return Ok(());
+            }
         }
         _ => return Ok(()),
     };
-    interact::update_message(ctx, component, view).await
+    interact::edit_component(ctx, component, view).await
 }
 
 async fn gallery(ctx: &Context, thread_id: i64) -> Vec<MessageMedia> {

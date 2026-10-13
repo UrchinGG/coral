@@ -55,6 +55,39 @@ pub async fn update_message(
     Ok(())
 }
 
+pub async fn edit_component(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    components: Vec<CreateComponent<'static>>,
+) -> Result<()> {
+    component
+        .edit_response(
+            &ctx.http,
+            EditInteractionResponse::new()
+                .flags(MessageFlags::IS_COMPONENTS_V2)
+                .components(components),
+        )
+        .await?;
+    Ok(())
+}
+
+pub async fn followup_component_error(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    title: &str,
+    description: &str,
+) -> Result<()> {
+    component
+        .create_followup(
+            &ctx.http,
+            CreateInteractionResponseFollowup::new()
+                .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
+                .components(vec![error_container(title, description)]),
+        )
+        .await?;
+    Ok(())
+}
+
 pub async fn update_modal(
     ctx: &Context,
     modal: &ModalInteraction,

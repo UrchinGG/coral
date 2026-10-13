@@ -19,6 +19,7 @@ pub async fn handle_edit_click(
     data: &Data,
     review_id: i64,
 ) -> Result<()> {
+    component.defer_ephemeral(&ctx.http).await?;
     let repo = ReviewRepository::new(data.db.pool());
     let Some(review) = repo.get(review_id).await? else {
         return Ok(());
@@ -44,18 +45,17 @@ pub async fn handle_edit_click(
     }
     if started_new {
         deadline::arm(ctx.clone(), data.clone(), review_id, deadline::Kind::Edit);
-        rerender_post(ctx, data, review_id).await;
+        let (ctx, data) = (ctx.clone(), data.clone());
+        tokio::spawn(async move { rerender_post(&ctx, &data, review_id).await });
     }
     let view = super::console::console_view(ctx, data, review_id, None).await?;
     component
-        .create_response(
+        .edit_response(
             &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
-                    .components(view)
-                    .add_file(face_attachment(data, &review.player_uuid).await),
-            ),
+            EditInteractionResponse::new()
+                .flags(MessageFlags::IS_COMPONENTS_V2)
+                .components(view)
+                .new_attachment(face_attachment(data, &review.player_uuid).await),
         )
         .await?;
     Ok(())
@@ -74,9 +74,6 @@ pub async fn save(
     {
         return super::console::show_console(ctx, component, data, loaded.review.id, None).await;
     }
-    component
-        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
-        .await?;
     let outcome = publish_session(ctx, data, &loaded).await;
     let reply = match outcome {
         Ok(()) => render::simple(format!("Your review of `{}` was updated.", loaded.username)),
@@ -192,7 +189,7 @@ pub async fn withdraw_prompt(
     {
         return super::console::show_console(ctx, component, data, loaded.review.id, None).await;
     }
-    interact::update_message(
+    interact::edit_component(
         ctx,
         component,
         vec![CreateComponent::Container(CreateContainer::new(vec![
@@ -236,19 +233,9 @@ pub async fn withdraw(
         Err(ReviewError::WrongStatus(_)) => "This review is already resolved.".to_string(),
         Err(e) => return Err(anyhow::anyhow!("{e:?}")),
     };
-    interact::update_message(ctx, component, render::simple(message)).await
+    interact::edit_component(ctx, component, render::simple(message)).await
 }
 
 async fn reply(ctx: &Context, component: &ComponentInteraction, message: &str) -> Result<()> {
-    component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
-                    .components(render::simple(message)),
-            ),
-        )
-        .await?;
-    Ok(())
+    interact::edit_component(ctx, component, render::simple(message)).await
 }

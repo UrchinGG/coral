@@ -15,6 +15,7 @@ use crate::interact;
 
 const EXPIRED_DRAFT: &str = "This draft expired. Run /tag add again to start a new one.";
 const NOT_YOURS: &str = "Only the submitter can use this.";
+const MODAL_ACTIONS: &[&str] = &["replay", "media", "evnote", "evreplay", "reason"];
 
 pub async fn handle_component(
     ctx: &Context,
@@ -24,12 +25,23 @@ pub async fn handle_component(
     let Some(id) = parse_id(&component.data.custom_id) else {
         return Ok(());
     };
+    let opens_modal = MODAL_ACTIONS.contains(&id.action);
+    if !opens_modal {
+        acknowledge(ctx, component).await?;
+    }
     let Some(loaded) = authorized(ctx, data, id.review_id, component.user.id).await? else {
-        return deny(ctx, component).await;
+        if opens_modal {
+            acknowledge(ctx, component).await?;
+        }
+        return interact::followup_component_error(ctx, component, "Error", NOT_YOURS).await;
     };
-    let Some(loaded) = live_console(ctx, component, data, loaded).await? else {
-        return Ok(());
-    };
+    if !session_alive(ctx, data, &loaded).await? {
+        if opens_modal {
+            acknowledge(ctx, component).await?;
+        }
+        return interact::edit_component(ctx, component, render::simple(gone_message(&loaded)))
+            .await;
+    }
     let repo = ReviewRepository::new(data.db.pool());
     repo.touch(loaded.review.id, loaded.revision.revision)
         .await?;
@@ -85,11 +97,29 @@ pub async fn handle_modal(ctx: &Context, modal: &ModalInteraction, data: &Data) 
     let Some(id) = parse_id(&modal.data.custom_id) else {
         return Ok(());
     };
+    modal
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await?;
     let Some(loaded) = authorized(ctx, data, id.review_id, modal.user.id).await? else {
-        return interact::send_modal_error(ctx, modal, "Error", NOT_YOURS).await;
+        modal
+            .create_followup(
+                &ctx.http,
+                CreateInteractionResponseFollowup::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
+                    .components(vec![interact::error_container("Error", NOT_YOURS)]),
+            )
+            .await?;
+        return Ok(());
     };
     if !session_alive(ctx, data, &loaded).await? {
-        return respond_modal(ctx, modal, render::simple(gone_message(&loaded))).await;
+        return present_modal(
+            ctx,
+            modal,
+            data,
+            render::simple(gone_message(&loaded)),
+            None,
+        )
+        .await;
     }
     let repo = ReviewRepository::new(data.db.pool());
     let review_id = loaded.review.id;
@@ -148,18 +178,23 @@ pub async fn handle_modal(ctx: &Context, modal: &ModalInteraction, data: &Data) 
     };
     repo.touch(review_id, revision).await?;
     let view = console_view(ctx, data, review_id, notice).await?;
-    let face = face_attachment(data, &loaded.review.player_uuid).await;
-    modal
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::UpdateMessage(
-                CreateInteractionResponseMessage::new()
-                    .flags(MessageFlags::IS_COMPONENTS_V2)
-                    .components(view)
-                    .add_file(face),
-            ),
-        )
-        .await?;
+    present_modal(ctx, modal, data, view, Some(&loaded.review.player_uuid)).await
+}
+
+async fn present_modal(
+    ctx: &Context,
+    modal: &ModalInteraction,
+    data: &Data,
+    view: Vec<CreateComponent<'static>>,
+    face_uuid: Option<&str>,
+) -> Result<()> {
+    let mut message = EditInteractionResponse::new()
+        .flags(MessageFlags::IS_COMPONENTS_V2)
+        .components(view);
+    if let Some(uuid) = face_uuid {
+        message = message.new_attachment(face_attachment(data, uuid).await);
+    }
+    modal.edit_response(&ctx.http, message).await?;
     Ok(())
 }
 
@@ -204,15 +239,13 @@ pub async fn show_console(
 ) -> Result<()> {
     let view = console_view(ctx, data, review_id, notice).await?;
     let review = ReviewRepository::new(data.db.pool()).get(review_id).await?;
-    let mut message = CreateInteractionResponseMessage::new()
+    let mut message = EditInteractionResponse::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
         .components(view);
     if let Some(review) = review {
-        message = message.add_file(face_attachment(data, &review.player_uuid).await);
+        message = message.new_attachment(face_attachment(data, &review.player_uuid).await);
     }
-    component
-        .create_response(&ctx.http, CreateInteractionResponse::UpdateMessage(message))
-        .await?;
+    component.edit_response(&ctx.http, message).await?;
     Ok(())
 }
 
@@ -227,7 +260,7 @@ async fn show_manager(
         Some(loaded) => render::evidence_manager(&loaded, selected),
         None => render::simple(EXPIRED_DRAFT),
     };
-    interact::update_message(ctx, component, view).await
+    interact::edit_component(ctx, component, view).await
 }
 
 async fn open_replay_modal(
@@ -318,6 +351,7 @@ async fn open_media_modal(
 ) -> Result<()> {
     let room = room_left(data, loaded).await?;
     if room == 0 {
+        acknowledge(ctx, component).await?;
         return show_console(
             ctx,
             component,
@@ -354,9 +388,6 @@ async fn receive_media(
     data: &Data,
     loaded: &Loaded,
 ) -> Result<()> {
-    modal
-        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
-        .await?;
     let note = optional(interact::extract_modal_value(
         &modal.data.components,
         "note",
@@ -366,16 +397,7 @@ async fn receive_media(
     repo.touch(loaded.review.id, loaded.revision.revision)
         .await?;
     let view = console_view(ctx, data, loaded.review.id, notice.as_deref()).await?;
-    modal
-        .edit_response(
-            &ctx.http,
-            EditInteractionResponse::new()
-                .flags(MessageFlags::IS_COMPONENTS_V2)
-                .components(view)
-                .new_attachment(face_attachment(data, &loaded.review.player_uuid).await),
-        )
-        .await?;
-    Ok(())
+    present_modal(ctx, modal, data, view, Some(&loaded.review.player_uuid)).await
 }
 
 async fn stage_uploads(
@@ -494,7 +516,7 @@ async fn discard(
     if loaded.review.status == ReviewStatus::Draft {
         repo.discard_draft(loaded.review.id, loaded.review.submitter_id)
             .await?;
-        return interact::update_message(
+        return interact::edit_component(
             ctx,
             component,
             render::simple(format!(
@@ -506,7 +528,7 @@ async fn discard(
     }
     repo.cancel_edit(loaded.review.id).await?;
     super::publish::rerender_post(ctx, data, loaded.review.id).await;
-    interact::update_message(
+    interact::edit_component(
         ctx,
         component,
         render::simple(format!(
@@ -534,19 +556,6 @@ async fn authorized(
         Some(loaded) => Ok(Some(loaded)),
         None => Ok(super::load_live(ctx, data, review_id).await?),
     }
-}
-
-async fn live_console(
-    ctx: &Context,
-    component: &ComponentInteraction,
-    data: &Data,
-    loaded: Loaded,
-) -> Result<Option<Loaded>> {
-    if session_alive(ctx, data, &loaded).await? {
-        return Ok(Some(loaded));
-    }
-    interact::update_message(ctx, component, render::simple(gone_message(&loaded))).await?;
-    Ok(None)
 }
 
 async fn session_alive(ctx: &Context, data: &Data, loaded: &Loaded) -> Result<bool> {
@@ -582,16 +591,11 @@ fn gone_message(loaded: &Loaded) -> String {
     }
 }
 
-async fn deny(ctx: &Context, component: &ComponentInteraction) -> Result<()> {
-    interact::send_component_error(ctx, component, "Error", NOT_YOURS).await
-}
-
-async fn respond_modal(
-    ctx: &Context,
-    modal: &ModalInteraction,
-    view: Vec<CreateComponent<'static>>,
-) -> Result<()> {
-    interact::update_modal(ctx, modal, view).await
+async fn acknowledge(ctx: &Context, component: &ComponentInteraction) -> Result<()> {
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await?;
+    Ok(())
 }
 
 fn piece_of<'a>(loaded: &'a Loaded, extra: Option<&str>) -> Option<&'a database::Evidence> {

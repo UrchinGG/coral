@@ -112,6 +112,9 @@ pub async fn handle_component(
     let Some(source_id) = extra.and_then(|e| e.parse::<u64>().ok()) else {
         return Ok(());
     };
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await?;
     let Some(review) = ReviewRepository::new(data.db.pool()).get(review_id).await? else {
         return Ok(());
     };
@@ -124,9 +127,6 @@ pub async fn handle_component(
         return Ok(());
     }
     if action == DISMISS {
-        component
-            .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
-            .await?;
         remove_prompt(ctx, data, component, source_id).await;
         return Ok(());
     }
@@ -157,19 +157,16 @@ async fn add(
     if files.len() as i64 > room {
         return reply(ctx, component, &room_notice(room)).await;
     }
-    component
-        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
-        .await?;
     let Some(downloads) = download(ctx, data, review.id, &files).await? else {
-        followup(ctx, component, MESSAGE_GONE).await?;
+        reply(ctx, component, MESSAGE_GONE).await?;
         remove_prompt(ctx, data, component, source_id).await;
         return Ok(());
     };
     match contribute(ctx, data, review, source.author.id, &downloads).await {
         Ok(()) => {}
-        Err(Refusal::Reply(message)) => return followup(ctx, component, &message).await,
+        Err(Refusal::Reply(message)) => return reply(ctx, component, &message).await,
         Err(Refusal::Closed(message)) => {
-            followup(ctx, component, message).await?;
+            reply(ctx, component, message).await?;
             remove_prompt(ctx, data, component, source_id).await;
             return Ok(());
         }
@@ -466,20 +463,6 @@ fn extension(filename: &str) -> String {
 }
 
 async fn reply(ctx: &Context, component: &ComponentInteraction, message: &str) -> Result<()> {
-    component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
-                    .components(render::simple(message)),
-            ),
-        )
-        .await?;
-    Ok(())
-}
-
-async fn followup(ctx: &Context, component: &ComponentInteraction, message: &str) -> Result<()> {
     component
         .create_followup(
             &ctx.http,

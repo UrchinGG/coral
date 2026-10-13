@@ -62,8 +62,11 @@ pub async fn confirm(
     review_id: i64,
 ) -> Result<()> {
     let staff = component.user.id.get();
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await?;
     if super::super::tag::get_rank(data, staff).await? < AccessRank::Helper {
-        return interact::update_message(
+        return interact::edit_component(
             ctx,
             component,
             render::simple("Only helpers and above can use /void"),
@@ -90,7 +93,7 @@ pub async fn confirm(
         Err(ReviewError::WrongStatus(_)) => "Only open reviews can be voided.".to_string(),
         Err(e) => return Err(anyhow::anyhow!("{e:?}")),
     };
-    interact::update_message(ctx, component, render::simple(message)).await
+    interact::edit_component(ctx, component, render::simple(message)).await
 }
 
 async fn check(data: &Data, user: u64, channel_id: i64) -> Result<Result<Review, &'static str>> {

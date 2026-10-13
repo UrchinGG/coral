@@ -174,14 +174,14 @@ pub async fn submit(
         return super::console::show_console(ctx, component, data, loaded.review.id, None).await;
     }
     if is_confirmed(data, &loaded.review.player_uuid).await? {
-        return interact::update_message(ctx, component, render::simple(CONFIRMED_REFUSAL)).await;
+        return interact::edit_component(ctx, component, render::simple(CONFIRMED_REFUSAL)).await;
     }
     let repo = ReviewRepository::new(data.db.pool());
     let claimed = match repo.claim_open(loaded.review.id).await {
         Ok(review) => review,
         Err(ReviewError::OpenReviewExists) => {
             let open = repo.open_for_player(&loaded.review.player_uuid).await?;
-            return interact::update_message(
+            return interact::edit_component(
                 ctx,
                 component,
                 someone_published_first(&loaded, thread_link(data, open.and_then(|r| r.thread_id))),
@@ -189,7 +189,7 @@ pub async fn submit(
             .await;
         }
         Err(_) => {
-            return interact::update_message(
+            return interact::edit_component(
                 ctx,
                 component,
                 render::simple("This draft expired. Run /tag add again to start a new one."),
@@ -197,10 +197,6 @@ pub async fn submit(
             .await;
         }
     };
-    component
-        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
-        .await?;
-
     let loaded = Loaded {
         review: claimed,
         ..loaded
@@ -208,7 +204,7 @@ pub async fn submit(
     let result = create_post(ctx, data, &loaded).await;
     let reply = match result {
         Ok(thread_id) => {
-            ping_reviewers(ctx, data, thread_id).await;
+            tokio::spawn(ping_reviewers(ctx.clone(), data.clone(), thread_id));
             render::simple(format!(
                 "## {EMOTE_TAG} Review Submitted\nYour review of `{}` is open for voting in <#{thread_id}>.",
                 loaded.username
@@ -392,7 +388,7 @@ pub async fn set_forum_tags(ctx: &Context, data: &Data, thread_id: i64, status: 
     }
 }
 
-async fn ping_reviewers(ctx: &Context, data: &Data, thread_id: ThreadId) {
+async fn ping_reviewers(ctx: Context, data: Data, thread_id: ThreadId) {
     let (review_role, _, _) = database::ReviewGuideRepository::new(data.db.pool())
         .get_ping_roles()
         .await

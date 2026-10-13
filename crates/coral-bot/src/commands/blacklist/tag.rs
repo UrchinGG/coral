@@ -26,9 +26,7 @@ fn face_thumbnail() -> CreateThumbnail<'static> {
 }
 
 async fn face_attachment(data: &Data, uuid: &str) -> CreateAttachment<'static> {
-    let png = data
-        .skin_provider
-        .fetch_face(uuid, FACE_SIZE)
+    let png = crate::utils::face::face_png(data, uuid, FACE_SIZE)
         .await
         .unwrap_or_else(default_face);
     CreateAttachment::bytes(png, FACE_FILENAME)

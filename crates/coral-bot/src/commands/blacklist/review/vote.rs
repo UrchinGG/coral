@@ -25,12 +25,19 @@ pub async fn handle_component(
     let Some(review) = ReviewRepository::new(data.db.pool()).get(review_id).await? else {
         return Ok(());
     };
-    let in_prompt = matches!(action, "switch" | "addvote" | "resolve");
+    let opens_modal = action == "revise";
+    if matches!(action, "switch" | "addvote" | "resolve") {
+        component
+            .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+            .await?;
+    } else if !opens_modal {
+        component.defer_ephemeral(&ctx.http).await?;
+    }
     if let Some(bounce) = bounce(ctx, data, &review, voter).await? {
-        return if in_prompt {
-            update(ctx, component, bounce).await
-        } else {
+        return if opens_modal {
             reply(ctx, component, bounce).await
+        } else {
+            respond(ctx, component, vec![text(bounce)]).await
         };
     }
     let kind = match action {
@@ -53,13 +60,16 @@ pub async fn handle_component(
     match held.map(|v| v.kind) {
         None => {
             let message = cast(ctx, data, &review, voter, kind, None).await?;
-            reply(ctx, component, message).await
+            respond(ctx, component, vec![text(message)]).await
         }
         Some(held) if held == kind => {
-            reply(
+            respond(
                 ctx,
                 component,
-                format!("You have already voted to {} this player", verb(kind)),
+                vec![text(format!(
+                    "You have already voted to {} this player",
+                    verb(kind)
+                ))],
             )
             .await
         }
@@ -68,14 +78,16 @@ pub async fn handle_component(
                 VoteKind::Revise => "You've asked for a revision of this review.".to_string(),
                 _ => format!("You've voted to {} this review.", verb(held)),
             };
-            reply_with_buttons(
+            respond(
                 ctx,
                 component,
-                format!("{lead} Switch to {}?", verb(kind)),
                 vec![
-                    CreateButton::new(custom_id_with("switch", review.id, verb(kind)))
-                        .label("Switch")
-                        .style(ButtonStyle::Primary),
+                    text(format!("{lead} Switch to {}?", verb(kind))),
+                    CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
+                        CreateButton::new(custom_id_with("switch", review.id, verb(kind)))
+                            .label("Switch")
+                            .style(ButtonStyle::Primary),
+                    ])),
                 ],
             )
             .await
@@ -90,6 +102,7 @@ pub async fn handle_revise_modal(
     review_id: i64,
 ) -> Result<()> {
     let voter = modal.user.id.get();
+    modal.defer_ephemeral(&ctx.http).await?;
     let Some(review) = ReviewRepository::new(data.db.pool()).get(review_id).await? else {
         return Ok(());
     };
@@ -101,9 +114,11 @@ pub async fn handle_revise_modal(
         None => cast(ctx, data, &review, voter, VoteKind::Revise, Some(reason)).await?,
     };
     modal
-        .create_response(
+        .edit_response(
             &ctx.http,
-            CreateInteractionResponse::Message(ephemeral(vec![text(message)])),
+            EditInteractionResponse::new()
+                .flags(MessageFlags::IS_COMPONENTS_V2)
+                .components(container(vec![text(message)])),
         )
         .await?;
     Ok(())
@@ -146,7 +161,8 @@ pub async fn paused(ctx: &Context, data: &Data, review_id: i64) -> Result<bool> 
         return Ok(false);
     }
     if repo.cancel_idle_edit(review_id, edit_idle_window()).await? {
-        super::publish::rerender_post(ctx, data, review_id).await;
+        let (ctx, data) = (ctx.clone(), data.clone());
+        tokio::spawn(async move { super::publish::rerender_post(&ctx, &data, review_id).await });
         return Ok(false);
     }
     Ok(true)
@@ -225,13 +241,7 @@ async fn staff_prompt(
                 .style(resolve_style),
         ]),
     ));
-    component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(ephemeral(parts)),
-        )
-        .await?;
-    Ok(())
+    respond(ctx, component, parts).await
 }
 
 async fn record_from_prompt(
@@ -243,7 +253,7 @@ async fn record_from_prompt(
     kind: VoteKind,
 ) -> Result<()> {
     let message = cast(ctx, data, review, voter, kind, None).await?;
-    update(ctx, component, message).await
+    respond(ctx, component, vec![text(message)]).await
 }
 
 async fn resolve_now(
@@ -255,16 +265,8 @@ async fn resolve_now(
 ) -> Result<()> {
     let voter = component.user.id.get();
     if !is_staff(data, voter).await? {
-        return update(
-            ctx,
-            component,
-            "Only staff can resolve a review.".to_string(),
-        )
-        .await;
+        return respond(ctx, component, vec![text("Only staff can resolve a review.")]).await;
     }
-    component
-        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
-        .await?;
     let outcome = if kind == VoteKind::Reject {
         Outcome::Reject
     } else {
@@ -283,17 +285,7 @@ async fn resolve_now(
     } else {
         "This review is already resolved.".to_string()
     };
-    component
-        .edit_response(
-            &ctx.http,
-            EditInteractionResponse::new()
-                .flags(MessageFlags::IS_COMPONENTS_V2)
-                .components(vec![CreateComponent::Container(CreateContainer::new(
-                    vec![text(message)],
-                ))]),
-        )
-        .await?;
-    Ok(())
+    respond(ctx, component, vec![text(message)]).await
 }
 
 async fn open_revise_modal(
@@ -389,7 +381,12 @@ async fn cast(
             )
         }
     };
-    after_vote(ctx, data, review, before).await?;
+    let (ctx, data, review) = (ctx.clone(), data.clone(), review.clone());
+    tokio::spawn(async move {
+        if let Err(e) = after_vote(&ctx, &data, &review, before).await {
+            tracing::error!("Failed to settle votes on review {}: {e:?}", review.id);
+        }
+    });
     Ok(message)
 }
 
@@ -541,9 +538,11 @@ fn ephemeral(
 ) -> CreateInteractionResponseMessage<'static> {
     CreateInteractionResponseMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
-        .components(vec![CreateComponent::Container(CreateContainer::new(
-            parts,
-        ))])
+        .components(container(parts))
+}
+
+fn container(parts: Vec<CreateContainerComponent<'static>>) -> Vec<CreateComponent<'static>> {
+    vec![CreateComponent::Container(CreateContainer::new(parts))]
 }
 
 async fn reply(ctx: &Context, component: &ComponentInteraction, message: String) -> Result<()> {
@@ -556,32 +555,10 @@ async fn reply(ctx: &Context, component: &ComponentInteraction, message: String)
     Ok(())
 }
 
-async fn reply_with_buttons(
+async fn respond(
     ctx: &Context,
     component: &ComponentInteraction,
-    message: String,
-    buttons: Vec<CreateButton<'static>>,
+    parts: Vec<CreateContainerComponent<'static>>,
 ) -> Result<()> {
-    let parts = vec![
-        text(message),
-        CreateContainerComponent::ActionRow(CreateActionRow::buttons(buttons)),
-    ];
-    component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(ephemeral(parts)),
-        )
-        .await?;
-    Ok(())
-}
-
-async fn update(ctx: &Context, component: &ComponentInteraction, message: String) -> Result<()> {
-    crate::interact::update_message(
-        ctx,
-        component,
-        vec![CreateComponent::Container(CreateContainer::new(vec![
-            text(message),
-        ]))],
-    )
-    .await
+    crate::interact::edit_component(ctx, component, container(parts)).await
 }

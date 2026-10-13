@@ -29,9 +29,7 @@ fn face_thumbnail() -> CreateThumbnail<'static> {
 }
 
 async fn face_attachment(data: &Data, uuid: &str) -> CreateAttachment<'static> {
-    let png = data
-        .skin_provider
-        .fetch_face(uuid, FACE_SIZE)
+    let png = crate::utils::face::face_png(data, uuid, FACE_SIZE)
         .await
         .unwrap_or_else(|| {
             let img = image::RgbaImage::from_pixel(FACE_SIZE, FACE_SIZE, image::Rgba([0, 0, 0, 0]));
@@ -51,12 +49,28 @@ fn face_section(parts: Vec<String>) -> CreateContainerComponent<'static> {
     ))
 }
 
+static USERNAMES: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<u64, (String, std::time::Instant)>>,
+> = std::sync::LazyLock::new(Default::default);
+const USERNAME_TTL: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
 pub async fn get_username(ctx: &Context, user_id: u64) -> String {
-    ctx.http
-        .get_user(UserId::new(user_id))
-        .await
-        .map(|u| u.name.to_string())
-        .unwrap_or_else(|_| user_id.to_string())
+    if let Some((name, at)) = USERNAMES.lock().unwrap().get(&user_id)
+        && at.elapsed() < USERNAME_TTL
+    {
+        return name.clone();
+    }
+    match ctx.http.get_user(UserId::new(user_id)).await {
+        Ok(user) => {
+            let name = user.name.to_string();
+            USERNAMES
+                .lock()
+                .unwrap()
+                .insert(user_id, (name.clone(), std::time::Instant::now()));
+            name
+        }
+        Err(_) => user_id.to_string(),
+    }
 }
 
 pub async fn format_added_line(ctx: &Context, tag: &PlayerEvent) -> String {
