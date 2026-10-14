@@ -45,6 +45,7 @@ pub const DETAIL_RETENTION_DAYS: u64 = 14;
 pub const SUBJECT_RETENTION_DAYS: u64 = 14;
 pub const PARTITIONS_AHEAD_DAYS: u64 = 3;
 pub const DDL_LOCK_TIMEOUT: &str = "3s";
+pub const PARTITION_LOCK_KEY: i64 = 7_210_002;
 pub const DROP_LOCK_TIMEOUT: &str = "1s";
 pub const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(6 * 3600);
 pub const CREATION_RETRY: Duration = Duration::from_secs(5);

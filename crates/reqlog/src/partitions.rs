@@ -4,7 +4,7 @@ use tokio::sync::watch;
 
 use crate::{
     CREATION_RETRY, DDL_LOCK_TIMEOUT, DETAIL_RETENTION_DAYS, DROP_LOCK_TIMEOUT, LOG_RETENTION_DAYS,
-    MAINTENANCE_INTERVAL, PARTITIONS_AHEAD_DAYS, SUBJECT_RETENTION_DAYS,
+    MAINTENANCE_INTERVAL, PARTITION_LOCK_KEY, PARTITIONS_AHEAD_DAYS, SUBJECT_RETENTION_DAYS,
 };
 
 pub const PARTITIONED_TABLES: [(&str, u64); 3] = [
@@ -94,6 +94,10 @@ fn spawn_index_catch_up(pool: PgPool) {
 async fn create_partition(pool: &PgPool, table: &str, day: NaiveDate) -> Result<(), sqlx::Error> {
     let partition = partition_name(table, day);
     let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(PARTITION_LOCK_KEY)
+        .execute(&mut *tx)
+        .await?;
     if is_attached(&mut tx, table, &partition).await? {
         return Ok(());
     }
