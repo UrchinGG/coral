@@ -21,7 +21,7 @@ const KEY_PREFIX_CHARS: usize = 8;
 const LOG_TABLE: &str = "api_request_log";
 const LOG_RETENTION_DAYS: i32 = 14;
 const DETAIL_TABLE: &str = "api_request_detail";
-const DETAIL_RETENTION_DAYS: i32 = 3;
+const DETAIL_RETENTION_DAYS: i32 = 14;
 
 pub struct LogEntry {
     request_id: Uuid,
