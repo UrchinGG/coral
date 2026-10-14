@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use redis::AsyncCommands;
 
 use crate::RedisPool;
@@ -8,6 +10,44 @@ const KEY_PREFIX: &str = "ratelimit:";
 pub const PERSONAL_RATE_LIMIT: i64 = 600;
 pub const SESSION_RATE_LIMIT: i64 = 300;
 pub const SESSION_UUID_BUDGET: i64 = 2000;
+pub const KEY_DISTINCT_UUID_BUDGET: i64 = 1000;
+
+static ACQUIRE: LazyLock<redis::Script> = LazyLock::new(|| {
+    redis::Script::new(
+        r"
+        redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1] - ARGV[2])
+        if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[3]) then
+            return 0
+        end
+        redis.call('ZADD', KEYS[1], ARGV[1], ARGV[4])
+        redis.call('EXPIRE', KEYS[1], ARGV[2] + 10)
+        return 1
+        ",
+    )
+});
+
+static ADMIT_DISTINCT: LazyLock<redis::Script> = LazyLock::new(|| {
+    redis::Script::new(
+        r"
+        redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1] - ARGV[2])
+        local fresh = 0
+        for i = 4, #ARGV do
+            if not redis.call('ZSCORE', KEYS[1], ARGV[i]) then
+                fresh = fresh + 1
+            end
+        end
+        local used = redis.call('ZCARD', KEYS[1])
+        if used + fresh > tonumber(ARGV[3]) then
+            return -1
+        end
+        for i = 4, #ARGV do
+            redis.call('ZADD', KEYS[1], ARGV[1], ARGV[i])
+        end
+        redis.call('EXPIRE', KEYS[1], ARGV[2] + 10)
+        return tonumber(ARGV[3]) - used - fresh
+        ",
+    )
+});
 
 pub enum RateLimitResult {
     Allowed { remaining: i64 },
@@ -87,6 +127,40 @@ impl RateLimiter {
                 remaining: limit - count,
             }),
         }
+    }
+
+    pub async fn try_acquire(&self, name: &str, limit: i64) -> Result<bool, redis::RedisError> {
+        let now = chrono::Utc::now().timestamp();
+        let granted: i64 = ACQUIRE
+            .key(key(name))
+            .arg(now)
+            .arg(WINDOW_SECS)
+            .arg(limit)
+            .arg(format!("{now}:{}", uuid::Uuid::new_v4()))
+            .invoke_async(&mut self.pool.connection())
+            .await?;
+        Ok(granted == 1)
+    }
+
+    pub async fn admit_distinct(
+        &self,
+        name: &str,
+        members: &[String],
+        limit: i64,
+    ) -> Result<RateLimitResult, redis::RedisError> {
+        let now = chrono::Utc::now().timestamp();
+        let remaining: i64 = ADMIT_DISTINCT
+            .key(key(name))
+            .arg(now)
+            .arg(WINDOW_SECS)
+            .arg(limit)
+            .arg(members)
+            .invoke_async(&mut self.pool.connection())
+            .await?;
+        Ok(match remaining {
+            ..0 => RateLimitResult::Exceeded,
+            remaining => RateLimitResult::Allowed { remaining },
+        })
     }
 
     pub async fn check_tag_limit(

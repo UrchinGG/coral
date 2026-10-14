@@ -8,6 +8,9 @@ use crate::state::AppState;
 pub const SNAPSHOT_SOURCE: &str = "api";
 
 const GUILD_REFRESH_AGE_MINUTES: i64 = 5;
+const BACKGROUND_FRESH_MINUTES: i64 = 10;
+const BACKGROUND_HYPIXEL_BUDGET: i64 = 600;
+const BACKGROUND_BUDGET_NAME: &str = "hypixel:background";
 
 pub fn parse_cache_age(raw: &str) -> Result<Duration, ApiError> {
     let invalid = || {
@@ -50,6 +53,9 @@ pub fn spawn_guild_refresh(state: &AppState, uuid: &str) {
             return;
         };
         for guild_id in guild_ids {
+            if !take_background_budget(&state).await {
+                return;
+            }
             if let Ok(Some(raw)) = hypixel.get_guild_by_id(&guild_id).await {
                 cache_guild(&state, &raw).await;
             }
@@ -84,6 +90,9 @@ async fn discover_members(state: &AppState, raw: &Value) {
         return;
     };
     for uuid in undiscovered {
+        if !take_background_budget(state).await {
+            return;
+        }
         if let Ok(Some(player)) = hypixel.get_player(&uuid).await {
             let username = player["displayname"].as_str();
             let _ = cache
@@ -91,6 +100,16 @@ async fn discover_members(state: &AppState, raw: &Value) {
                 .await;
         }
     }
+}
+
+pub fn spawn_background_refresh(state: &AppState, uuid: &str) {
+    let (state, uuid) = (state.clone(), uuid.to_string());
+    tokio::spawn(async move {
+        if is_fresh(&state, &uuid).await || !take_background_budget(&state).await {
+            return;
+        }
+        refresh_player_cache(&state, &uuid, None).await;
+    });
 }
 
 pub async fn refresh_player_cache(
@@ -104,4 +123,28 @@ pub async fn refresh_player_cache(
         .store_snapshot(uuid, &data, None, Some(SNAPSHOT_SOURCE), username)
         .await;
     Some(data)
+}
+
+async fn is_fresh(state: &AppState, uuid: &str) -> bool {
+    let cutoff = Utc::now() - Duration::minutes(BACKGROUND_FRESH_MINUTES);
+    matches!(
+        CacheRepository::new(state.db.pool())
+            .get_latest_timestamp(uuid)
+            .await,
+        Ok(Some(ts)) if ts > cutoff
+    )
+}
+
+async fn take_background_budget(state: &AppState) -> bool {
+    match state
+        .rate_limiter
+        .try_acquire(BACKGROUND_BUDGET_NAME, BACKGROUND_HYPIXEL_BUDGET)
+        .await
+    {
+        Ok(granted) => granted,
+        Err(e) => {
+            tracing::warn!("Background Hypixel budget unavailable: {e}");
+            false
+        }
+    }
 }

@@ -11,8 +11,11 @@ use coral_redis::RateLimitResult;
 use database::BlacklistRepository;
 
 use crate::{
-    auth::{SESSION_UUID_BUDGET, SessionAuth},
-    cache::refresh_player_cache,
+    auth::{
+        AuthenticatedMember, DeveloperKeyAuth, KEY_DISTINCT_UUID_BUDGET, SESSION_UUID_BUDGET,
+        SessionAuth,
+    },
+    cache::spawn_background_refresh,
     error::ApiError,
     responses::{TagResponse, tag_responses},
     state::AppState,
@@ -54,10 +57,30 @@ async fn enforce_uuid_budget(
     }
 }
 
+async fn enforce_distinct_uuid_budget(
+    state: &AppState,
+    discord_id: i64,
+    uuids: &[String],
+) -> Result<(), ApiError> {
+    match state
+        .rate_limiter
+        .admit_distinct(
+            &format!("keyuuids:{discord_id}"),
+            uuids,
+            KEY_DISTINCT_UUID_BUDGET,
+        )
+        .await
+    {
+        Ok(RateLimitResult::Allowed { .. }) => Ok(()),
+        Ok(RateLimitResult::Exceeded) => Err(ApiError::RateLimited),
+        Err(e) => Err(ApiError::Internal(format!("uuid budget check failed: {e}"))),
+    }
+}
+
 #[utoipa::path(
     post,
     path = "/v3/players",
-    description = "Looks up blacklist tags for up to 100 players in a single request. Only UUIDs are accepted; usernames are not resolved, and malformed entries are skipped. Each queried player also triggers a background snapshot refresh to help saturate the player cache. Tags with `hide_username` set omit both `added_by` and `added_by_username`.",
+    description = "Looks up blacklist tags for up to 100 players in a single request. Only UUIDs are accepted; usernames are not resolved, and malformed entries are skipped. Personal API keys may query up to 1000 distinct players per 5 minutes; repeat lookups of the same players do not count again. Queried players may also be refreshed in the background. Tags with `hide_username` set omit both `added_by` and `added_by_username`.",
     request_body = BatchRequest,
     responses(
         (status = 200, description = "Batch lookup completed", body = BatchResponse),
@@ -69,6 +92,8 @@ async fn enforce_uuid_budget(
 pub async fn batch_lookup(
     State(state): State<AppState>,
     session: Option<Extension<SessionAuth>>,
+    member: Option<Extension<AuthenticatedMember>>,
+    developer: Option<Extension<DeveloperKeyAuth>>,
     Json(req): Json<BatchRequest>,
 ) -> Result<Json<BatchResponse>, ApiError> {
     if req.uuids.is_empty() {
@@ -90,11 +115,11 @@ pub async fn batch_lookup(
     if let Some(Extension(session)) = &session {
         enforce_uuid_budget(&state, session.discord_id, uuids.len()).await?;
     } else {
+        if let (Some(Extension(member)), None) = (&member, &developer) {
+            enforce_distinct_uuid_budget(&state, member.0.discord_id, &uuids).await?;
+        }
         for uuid in &uuids {
-            let (state, uuid) = (state.clone(), uuid.clone());
-            tokio::spawn(async move {
-                refresh_player_cache(&state, &uuid, None).await;
-            });
+            spawn_background_refresh(&state, uuid);
         }
     }
 

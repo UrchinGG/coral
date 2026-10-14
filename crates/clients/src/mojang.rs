@@ -26,6 +26,7 @@ const STALE_FALLBACK_SECS: u64 = 7 * 24 * 60 * 60;
 
 const PROFILE_RENDER_TTL_SECS: u64 = 45;
 const PROFILE_METADATA_TTL_SECS: u64 = IDENTITY_TTL_SECS as u64;
+const MAX_USERNAME_LEN: usize = 25;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerIdentity {
@@ -119,8 +120,10 @@ impl MojangClient {
             self.get_profile_metadata(identifier)
                 .await
                 .map(|p| (normalize_uuid(&p.uuid), p.username))
-        } else {
+        } else if is_valid_username(identifier) {
             self.fetch_identity_by_name(identifier).await
+        } else {
+            return Err(ClientError::PlayerNotFound(identifier.to_string()));
         };
 
         let (uuid, username) = match result {
@@ -153,7 +156,9 @@ impl MojangClient {
         }
         if !status.is_success() {
             return Err(match status {
-                StatusCode::NOT_FOUND => ClientError::PlayerNotFound(name.to_string()),
+                StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST => {
+                    ClientError::PlayerNotFound(name.to_string())
+                }
                 StatusCode::TOO_MANY_REQUESTS => ClientError::RateLimited,
                 other => ClientError::MojangApi(other.as_u16()),
             });
@@ -345,6 +350,11 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
+fn is_valid_username(s: &str) -> bool {
+    (1..=MAX_USERNAME_LEN).contains(&s.len())
+        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
 pub fn is_uuid(s: &str) -> bool {
     let stripped = s.replace('-', "");
     stripped.len() == 32 && stripped.chars().all(|c| c.is_ascii_hexdigit())
@@ -352,4 +362,19 @@ pub fn is_uuid(s: &str) -> bool {
 
 pub fn normalize_uuid(uuid: &str) -> String {
     uuid.replace('-', "").to_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usernames_must_be_plain_ascii_words() {
+        assert!(is_valid_username("Technoblade"));
+        assert!(is_valid_username("a_b_1"));
+        assert!(!is_valid_username("§edoorman"));
+        assert!(!is_valid_username("general daku"));
+        assert!(!is_valid_username(""));
+        assert!(!is_valid_username(&"a".repeat(26)));
+    }
 }

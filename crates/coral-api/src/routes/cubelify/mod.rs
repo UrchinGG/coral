@@ -11,7 +11,7 @@ use coral_redis::RateLimitResult;
 use database::{BlacklistRepository, Member, MemberRepository, PlayerEvent};
 
 use crate::auth::RequestIdentity;
-use crate::cache::refresh_player_cache;
+use crate::cache::spawn_background_refresh;
 use crate::responses::{CubelifyResponse, CubelifyScore, CubelifyTag};
 use crate::state::AppState;
 
@@ -71,8 +71,7 @@ async fn run_cubelify(
 ) -> Result<CubelifyResponse, CubelifyResponse> {
     check_rate_limit(state, &query.key, member).await?;
     let uuid = normalize_uuid(&query.uuid);
-    let (bg_state, bg_uuid) = (state.clone(), uuid.clone());
-    tokio::spawn(async move { refresh_player_cache(&bg_state, &bg_uuid, None).await });
+    spawn_background_refresh(state, &uuid);
     let tags = fetch_tags(state, &uuid).await?;
     Ok(build_response(state, &tags).await)
 }

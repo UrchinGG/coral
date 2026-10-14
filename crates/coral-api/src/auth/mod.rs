@@ -479,7 +479,9 @@ async fn check_rate_limit(state: &AppState, api_key: &str, limit: i64) -> Result
     }
 }
 
-pub use coral_redis::{PERSONAL_RATE_LIMIT, SESSION_RATE_LIMIT, SESSION_UUID_BUDGET};
+pub use coral_redis::{
+    KEY_DISTINCT_UUID_BUDGET, PERSONAL_RATE_LIMIT, SESSION_RATE_LIMIT, SESSION_UUID_BUDGET,
+};
 
 fn is_internal_key(state: &AppState, api_key: &str) -> bool {
     state
