@@ -117,7 +117,6 @@ jobs:
             done
             if [ "$h" != "healthy" ]; then
               echo "new replica never healthy ($h), reverting"
-              docker logs "$NEW" --tail 80 || true
               docker stop "$NEW" && docker rm -f "$NEW"
               exit 1
             fi
