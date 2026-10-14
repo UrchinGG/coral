@@ -11,6 +11,7 @@ use serenity::all::*;
 use database::{MemberRepository, ReviewCounterDelta};
 
 use crate::{
+    audit,
     commands::blacklist::channel,
     framework::{AccessRank, Data},
     interact,
@@ -368,24 +369,21 @@ pub async fn handle_modal(ctx: &Context, modal: &ModalInteraction, data: &Data) 
         return interact::send_modal_error(ctx, modal, "Error", "User is not registered").await;
     };
 
-    if let Err(e) = database::AdminActionRepository::new(data.db.pool())
-        .log(
-            invoker_id as i64,
-            "review_score_correction",
-            &target_id.to_string(),
-            &serde_json::json!({
-                "correction": action,
-                "label": label,
-                "count": count,
-                "reason": reason,
-                "before": counter_snapshot(&member),
-                "after": counter_snapshot(&updated),
-            }),
-        )
-        .await
-    {
-        tracing::error!("Failed to log review score correction for {target_id}: {e}");
-    }
+    audit::record(
+        data,
+        invoker_id,
+        "review_score_correction",
+        target_id,
+        serde_json::json!({
+            "correction": action,
+            "label": label,
+            "count": count,
+            "reason": reason,
+            "before": counter_snapshot(&member),
+            "after": counter_snapshot(&updated),
+        }),
+    )
+    .await;
 
     let change = crate::utils::standing::refresh_fresh_and_sync(data, target_id).await;
     channel::post_review_score_correction(

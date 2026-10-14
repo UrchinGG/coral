@@ -10,15 +10,18 @@ use coral_redis::{EventPublisher, RedisPool, SyncEventPublisher};
 use database::{Database, Member};
 
 use crate::{
-    api::CoralApiClient,
+    api::{CoralApiClient, Invocation},
     commands::{
         self,
         blacklist::tag::PendingOverwrite,
         stats::{OverallCache, SessionCacheEntry, bedwars::Bedwars, duels::Duels},
     },
+    interact::custom_id_name,
 };
 
 pub use database::AccessRank;
+
+const SUBCOMMAND_SEPARATOR: char = ' ';
 
 pub trait AccessRankExt {
     fn of(data: &Data, user_id: u64, member: Option<&Member>) -> AccessRank;
@@ -71,6 +74,43 @@ fn strip_panel_prefix(id: &str) -> Option<&str> {
     id.strip_prefix("manage_")
         .or_else(|| id.strip_prefix("dashboard_"))
         .or_else(|| id.strip_prefix("link_"))
+}
+
+fn invocation_of(interaction: &Interaction) -> Option<Invocation> {
+    let (user, name) = match interaction {
+        Interaction::Command(command) | Interaction::Autocomplete(command) => {
+            (&command.user, command_name(&command.data))
+        }
+        Interaction::Component(component) => (
+            &component.user,
+            custom_id_name(&component.data.custom_id).to_owned(),
+        ),
+        Interaction::Modal(modal) => (
+            &modal.user,
+            custom_id_name(&modal.data.custom_id).to_owned(),
+        ),
+        _ => return None,
+    };
+    Some(Invocation::new(user.id.get(), &name))
+}
+
+fn command_name(command: &CommandData) -> String {
+    let mut name = command.name.to_string();
+    let mut options: &[CommandDataOption] = &command.options;
+    while let Some((subcommand, nested)) = options.first().and_then(subcommand_of) {
+        name.push(SUBCOMMAND_SEPARATOR);
+        name.push_str(subcommand);
+        options = nested;
+    }
+    name
+}
+
+fn subcommand_of(option: &CommandDataOption) -> Option<(&str, &[CommandDataOption])> {
+    match &option.value {
+        CommandDataOptionValue::SubCommand(nested)
+        | CommandDataOptionValue::SubCommandGroup(nested) => Some((option.name.as_str(), nested)),
+        _ => None,
+    }
 }
 
 pub struct Handler {
@@ -767,15 +807,59 @@ impl EventHandler for Handler {
                 crate::events::review_guard_message(ctx, &self.data, new_message).await;
             }
             FullEvent::InteractionCreate { interaction, .. } => {
+                let Some(invocation) = invocation_of(interaction) else {
+                    return;
+                };
                 self.data
                     .active_interactions
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                self.handle_interaction(ctx, interaction.clone()).await;
+                invocation
+                    .scope(self.handle_interaction(ctx, interaction.clone()))
+                    .await;
                 self.data
                     .active_interactions
                     .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    const SLASH_COMMAND: u8 = 1;
+    const SUBCOMMAND: u8 = 1;
+    const STRING_OPTION: u8 = 3;
+
+    fn command_data(options: serde_json::Value) -> CommandData {
+        serde_json::from_value(json!({
+            "id": "1",
+            "name": "tag",
+            "type": SLASH_COMMAND,
+            "options": options,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn command_names_include_the_subcommand_but_not_its_values() {
+        let data = command_data(json!([{
+            "name": "add",
+            "type": SUBCOMMAND,
+            "options": [{"name": "player", "type": STRING_OPTION, "value": "Coral"}],
+        }]));
+        assert_eq!(command_name(&data), "tag add");
+    }
+
+    #[test]
+    fn command_names_without_a_subcommand_stay_bare() {
+        let data = command_data(json!([
+            {"name": "player", "type": STRING_OPTION, "value": "Coral"},
+        ]));
+        assert_eq!(command_name(&data), "tag");
     }
 }

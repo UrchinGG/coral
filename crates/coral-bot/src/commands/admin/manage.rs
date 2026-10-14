@@ -1,14 +1,24 @@
 use anyhow::{Result, anyhow};
+use serde_json::json;
 use serenity::all::*;
 
 use database::{DeveloperKeyRepository, MemberRepository, StrikeRepository, permissions};
 
 use crate::{
+    audit,
     commands::blacklist::channel,
     framework::{AccessRank, AccessRankExt, Data},
     interact,
     utils::{format_number, generate_api_key, resolve_username, separator, standing_view, text},
 };
+
+const NEW_DEV_KEY_LABEL: &str = "Developer Key";
+const NEW_DEV_KEY_PERMISSIONS: i64 = 0;
+const NEW_DEV_KEY_RATE_LIMIT: i32 = 600;
+const LICENSE_ACTIVE: &str = "active";
+const LICENSE_SUSPENDED: &str = "suspended";
+const VERIFIED_LINK_ACTION: &str = "link_member";
+const FORCED_LINK_ACTION: &str = "force_link_member";
 
 pub fn register() -> CreateCommand<'static> {
     CreateCommand::new("manage")
@@ -370,8 +380,8 @@ pub(crate) async fn build_main_view(
         match &sf_user {
             Some(u) => {
                 let status_label = match u.license_status.as_str() {
-                    "active" => "Active",
-                    "suspended" => "Suspended",
+                    LICENSE_ACTIVE => "Active",
+                    LICENSE_SUSPENDED => "Suspended",
                     _ => "Inactive",
                 };
                 parts.push(text(format!(
@@ -379,7 +389,7 @@ pub(crate) async fn build_main_view(
                 )));
 
                 let mut buttons = Vec::new();
-                if u.license_status == "active" {
+                if u.license_status == LICENSE_ACTIVE {
                     buttons.push(
                         CreateButton::new(format!("manage_sf_revoke:{target_id}"))
                             .label("Revoke License")
@@ -486,6 +496,18 @@ async fn refresh_main_from_modal(
     .await
 }
 
+async fn link_member(
+    data: &Data,
+    invoker_id: u64,
+    target_id: u64,
+    uuid: &str,
+    action: &str,
+) -> Result<()> {
+    crate::accounts::link_primary(data, target_id, uuid).await?;
+    audit::record(data, invoker_id, action, target_id, json!({"uuid": uuid})).await;
+    Ok(())
+}
+
 pub(crate) fn require_mod_over(invoker_rank: AccessRank, target_rank: AccessRank) -> bool {
     invoker_rank >= AccessRank::Owner
         || (invoker_rank >= AccessRank::Moderator && invoker_rank > target_rank)
@@ -547,6 +569,14 @@ pub async fn handle_access_select(
     MemberRepository::new(data.db.pool())
         .set_access_level(target_id as i64, new_level)
         .await?;
+    audit::record(
+        data,
+        invoker_id,
+        "set_access_level",
+        target_id,
+        json!({"level": new_level}),
+    )
+    .await;
     channel::post_access_changed(ctx, data, target_id, target_rank, new_rank, invoker_id).await;
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }
@@ -569,6 +599,7 @@ pub async fn handle_lock_button(
     MemberRepository::new(data.db.pool())
         .lock_key(target_id as i64)
         .await?;
+    audit::record(data, invoker_id, "lock_member", target_id, json!({})).await;
     channel::post_key_locked(ctx, data, target_id, invoker_id).await;
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }
@@ -591,6 +622,7 @@ pub async fn handle_unlock_button(
     MemberRepository::new(data.db.pool())
         .unlock_key(target_id as i64)
         .await?;
+    audit::record(data, invoker_id, "unlock_member", target_id, json!({})).await;
     channel::post_key_unlocked(ctx, data, target_id, invoker_id).await;
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }
@@ -668,7 +700,7 @@ pub async fn handle_register_modal(
         .unwrap_or(false);
 
     if verified {
-        crate::accounts::link_primary(data, target_id, &uuid).await?;
+        link_member(data, invoker_id, target_id, &uuid, VERIFIED_LINK_ACTION).await?;
         return refresh_main_from_modal(ctx, modal, data, invoker_rank, target_id).await;
     }
 
@@ -716,7 +748,7 @@ pub async fn handle_force_link(
             .await;
     }
 
-    crate::accounts::link_primary(data, target_id, &uuid).await?;
+    link_member(data, invoker_id, target_id, &uuid, FORCED_LINK_ACTION).await?;
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }
 
@@ -746,6 +778,14 @@ pub async fn handle_toggle_tagging(
     MemberRepository::new(data.db.pool())
         .set_tagging_disabled(target_id as i64, new_state)
         .await?;
+    audit::record(
+        data,
+        invoker_id,
+        "set_tagging_disabled",
+        target_id,
+        json!({"disabled": new_state}),
+    )
+    .await;
     channel::post_tagging_toggled(ctx, data, target_id, new_state, invoker_id).await;
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }
@@ -769,8 +809,26 @@ pub async fn handle_create_dev_key(
     };
 
     DeveloperKeyRepository::new(data.db.pool())
-        .create(m.id, &generate_api_key(), "Developer Key", 0, 600)
+        .create(
+            m.id,
+            &generate_api_key(),
+            NEW_DEV_KEY_LABEL,
+            NEW_DEV_KEY_PERMISSIONS,
+            NEW_DEV_KEY_RATE_LIMIT,
+        )
         .await?;
+    audit::record(
+        data,
+        invoker_id,
+        "create_dev_key",
+        target_id,
+        json!({
+            "label": NEW_DEV_KEY_LABEL,
+            "permissions": NEW_DEV_KEY_PERMISSIONS,
+            "rate_limit": NEW_DEV_KEY_RATE_LIMIT,
+        }),
+    )
+    .await;
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }
 
@@ -793,6 +851,14 @@ pub async fn handle_lock_dev_key(
     DeveloperKeyRepository::new(data.db.pool())
         .set_locked(m.id, true)
         .await?;
+    audit::record(
+        data,
+        invoker_id,
+        "set_dev_key_locked",
+        target_id,
+        json!({"locked": true}),
+    )
+    .await;
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }
 
@@ -815,6 +881,14 @@ pub async fn handle_unlock_dev_key(
     DeveloperKeyRepository::new(data.db.pool())
         .set_locked(m.id, false)
         .await?;
+    audit::record(
+        data,
+        invoker_id,
+        "set_dev_key_locked",
+        target_id,
+        json!({"locked": false}),
+    )
+    .await;
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }
 
@@ -837,6 +911,7 @@ pub async fn handle_delete_dev_key(
     DeveloperKeyRepository::new(data.db.pool())
         .delete(m.id)
         .await?;
+    audit::record(data, invoker_id, "delete_dev_key", target_id, json!({})).await;
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }
 
@@ -910,6 +985,14 @@ pub async fn handle_dev_rate_limit_modal(
     DeveloperKeyRepository::new(data.db.pool())
         .set_rate_limit(m.id, rate_limit)
         .await?;
+    audit::record(
+        data,
+        invoker_id,
+        "set_dev_key_rate_limit",
+        target_id,
+        json!({"rate_limit": rate_limit}),
+    )
+    .await;
 
     let components = build_main_view(data, invoker_rank, target_id).await;
     modal
@@ -948,9 +1031,18 @@ pub async fn handle_dev_perms_select(
     }
     let Some(m) = target else { return Ok(()) };
 
+    let permissions = selected.iter().fold(0i64, |acc, &p| acc | p);
     DeveloperKeyRepository::new(data.db.pool())
-        .set_permissions(m.id, selected.iter().fold(0i64, |acc, &p| acc | p))
+        .set_permissions(m.id, permissions)
         .await?;
+    audit::record(
+        data,
+        invoker_id,
+        "set_dev_key_permissions",
+        target_id,
+        json!({"permissions": permissions}),
+    )
+    .await;
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }
 
@@ -961,7 +1053,8 @@ pub async fn handle_sf_grant(
 ) -> Result<()> {
     let target_id = interact::parse_id(&component.data.custom_id)
         .ok_or_else(|| anyhow!("Invalid button ID"))?;
-    let (invoker_rank, _, _) = fetch_context(data, component.user.id.get(), target_id).await?;
+    let invoker_id = component.user.id.get();
+    let (invoker_rank, _, _) = fetch_context(data, invoker_id, target_id).await?;
 
     if invoker_rank < AccessRank::Owner {
         return interact::send_component_error(ctx, component, "Error", "Owner only").await;
@@ -969,7 +1062,16 @@ pub async fn handle_sf_grant(
 
     let repo = database::starfish::StarfishRepository::new(data.db.pool());
     repo.upsert_user(target_id as i64).await?;
-    repo.set_license_status(target_id as i64, "active").await?;
+    repo.set_license_status(target_id as i64, LICENSE_ACTIVE)
+        .await?;
+    audit::record(
+        data,
+        invoker_id,
+        "set_license_status",
+        target_id,
+        json!({"status": LICENSE_ACTIVE}),
+    )
+    .await;
 
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }
@@ -981,20 +1083,40 @@ pub async fn handle_sf_revoke(
 ) -> Result<()> {
     let target_id = interact::parse_id(&component.data.custom_id)
         .ok_or_else(|| anyhow!("Invalid button ID"))?;
-    let (invoker_rank, _, _) = fetch_context(data, component.user.id.get(), target_id).await?;
+    let invoker_id = component.user.id.get();
+    let (invoker_rank, _, _) = fetch_context(data, invoker_id, target_id).await?;
 
     if invoker_rank < AccessRank::Owner {
         return interact::send_component_error(ctx, component, "Error", "Owner only").await;
     }
 
     let repo = database::starfish::StarfishRepository::new(data.db.pool());
-    repo.set_license_status(target_id as i64, "suspended")
-        .await?;
+    let Some(user) = repo.get_user_by_discord_id(target_id as i64).await? else {
+        return interact::send_component_error(ctx, component, "Error", "No Starfish account")
+            .await;
+    };
 
-    if let Some(user) = repo.get_user_by_discord_id(target_id as i64).await? {
-        repo.delete_user_sessions(user.id).await.ok();
-        repo.delete_user_refresh_tokens(user.id).await.ok();
-    }
+    repo.set_license_status(target_id as i64, LICENSE_SUSPENDED)
+        .await?;
+    audit::record(
+        data,
+        invoker_id,
+        "set_license_status",
+        target_id,
+        json!({"status": LICENSE_SUSPENDED}),
+    )
+    .await;
+
+    repo.delete_user_sessions(user.id).await?;
+    repo.delete_user_refresh_tokens(user.id).await?;
+    audit::record(
+        data,
+        invoker_id,
+        "revoke_starfish_sessions",
+        target_id,
+        json!({}),
+    )
+    .await;
 
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }

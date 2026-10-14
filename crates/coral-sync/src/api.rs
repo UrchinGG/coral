@@ -6,6 +6,7 @@ use serde::de::DeserializeOwned;
 use thiserror::Error;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const USER_AGENT: &str = "coral-sync";
 
 #[derive(Error, Debug)]
 pub enum ApiError {
@@ -52,6 +53,7 @@ impl CoralApiClient {
     pub fn new(base_url: String, api_key: String) -> Self {
         let http = Client::builder()
             .timeout(REQUEST_TIMEOUT)
+            .user_agent(USER_AGENT)
             .build()
             .expect("failed to create HTTP client");
         Self {

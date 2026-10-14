@@ -1,9 +1,10 @@
 use anyhow::Result;
 use serenity::all::*;
 
-use database::{AdminActionRepository, Review, ReviewError, ReviewRepository, ReviewStatus};
+use database::{Review, ReviewError, ReviewRepository, ReviewStatus};
 
 use super::{custom_id, render};
+use crate::audit;
 use crate::commands::blacklist::channel::tag_label;
 use crate::framework::{AccessRank, Data};
 use crate::interact;
@@ -76,7 +77,14 @@ pub async fn confirm(
     let repo = ReviewRepository::new(data.db.pool());
     let message = match repo.void(review_id, staff as i64).await {
         Ok(review) => {
-            log_void(data, staff, &review).await;
+            audit::record(
+                data,
+                staff,
+                "void_review",
+                review.id,
+                serde_json::json!({ "player": review.player_uuid }),
+            )
+            .await;
             super::resolve::close_out(ctx, data, &review).await;
             let label = match repo.live_revision(review.id).await? {
                 Some(revision) => tag_label(&revision.tag_type),
@@ -113,20 +121,6 @@ async fn check(data: &Data, user: u64, channel_id: i64) -> Result<Result<Review,
         ReviewStatus::Open => Ok(review),
         _ => Err("Only open reviews can be voided."),
     })
-}
-
-async fn log_void(data: &Data, staff: u64, review: &Review) {
-    if let Err(e) = AdminActionRepository::new(data.db.pool())
-        .log(
-            staff as i64,
-            "void_review",
-            &review.id.to_string(),
-            &serde_json::json!({ "player": review.player_uuid }),
-        )
-        .await
-    {
-        tracing::error!("Failed to log void of review {}: {e}", review.id);
-    }
 }
 
 async fn player_name(ctx: &Context, data: &Data, review: &Review) -> Result<String> {

@@ -2,26 +2,32 @@ use anyhow::Result;
 use serenity::all::*;
 
 use crate::commands::blacklist::channel::COLOR_ERROR;
+use crate::commands::blacklist::review;
 use crate::utils::text;
+
+pub const CUSTOM_ID_SEPARATOR: char = ':';
 
 pub fn section_text(s: &str) -> CreateSectionComponent<'static> {
     CreateSectionComponent::TextDisplay(CreateTextDisplay::new(s.to_string()))
 }
 
 pub fn parse_id(custom_id: &str) -> Option<u64> {
-    custom_id
-        .splitn(2, ':')
-        .nth(1)?
-        .split(':')
-        .next()?
-        .parse()
-        .ok()
+    let (_, payload) = custom_id.split_once(CUSTOM_ID_SEPARATOR)?;
+    leading_segment(payload).parse().ok()
 }
 
 pub fn parse_ids(custom_id: &str) -> Option<(u64, String)> {
-    let payload = custom_id.splitn(2, ':').nth(1)?;
-    let mut parts = payload.splitn(2, ':');
-    Some((parts.next()?.parse().ok()?, parts.next()?.to_string()))
+    let (_, payload) = custom_id.split_once(CUSTOM_ID_SEPARATOR)?;
+    let (id, rest) = payload.split_once(CUSTOM_ID_SEPARATOR)?;
+    Some((id.parse().ok()?, rest.to_string()))
+}
+
+pub fn custom_id_name(custom_id: &str) -> &str {
+    let name_end = match custom_id.strip_prefix(review::ID_PREFIX) {
+        Some(review_payload) => review::ID_PREFIX.len() + leading_segment(review_payload).len(),
+        None => leading_segment(custom_id).len(),
+    };
+    &custom_id[..name_end]
 }
 
 pub fn extract_modal_value(components: &[Component], field_id: &str) -> String {
@@ -181,4 +187,59 @@ fn error_response(title: &str, description: &str) -> CreateInteractionResponseMe
     CreateInteractionResponseMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
         .components(vec![error_container(title, description)])
+}
+
+fn leading_segment(custom_id: &str) -> &str {
+    custom_id
+        .split_once(CUSTOM_ID_SEPARATOR)
+        .map_or(custom_id, |(segment, _)| segment)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TARGET_ID: u64 = 123_456_789_012_345_678;
+    const REVIEW_ID: i64 = 42;
+    const UUID: &str = "0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn ids_parse_from_the_segments_after_the_name() {
+        assert_eq!(
+            parse_id(&format!("manage_lock:{TARGET_ID}")),
+            Some(TARGET_ID)
+        );
+        assert_eq!(
+            parse_id(&format!("manage_force_link:{TARGET_ID}:{UUID}")),
+            Some(TARGET_ID)
+        );
+        assert_eq!(parse_id("help_button"), None);
+        assert_eq!(
+            parse_ids(&format!("manage_force_link:{TARGET_ID}:{UUID}")),
+            Some((TARGET_ID, UUID.to_string()))
+        );
+        assert_eq!(parse_ids(&format!("manage_lock:{TARGET_ID}")), None);
+    }
+
+    #[test]
+    fn custom_id_names_drop_ids_and_typed_text() {
+        assert_eq!(custom_id_name("guild_pg:2:some guild"), "guild_pg");
+        assert_eq!(
+            custom_id_name(&format!("manage_lock:{TARGET_ID}")),
+            "manage_lock"
+        );
+        assert_eq!(custom_id_name("help_button"), "help_button");
+    }
+
+    #[test]
+    fn review_custom_id_names_keep_the_action() {
+        assert_eq!(
+            custom_id_name(&review::custom_id("accept", REVIEW_ID)),
+            "rv:accept"
+        );
+        assert_eq!(
+            custom_id_name(&review::custom_id_with("switch", REVIEW_ID, "reject")),
+            "rv:switch"
+        );
+    }
 }

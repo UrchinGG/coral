@@ -1,8 +1,10 @@
 use anyhow::{Result, bail};
 use rand::Rng;
 use reqwest::Client;
+use reqwest::header;
 use uuid::Uuid;
 
+const USER_AGENT: &str = "mc-verify";
 const CODE_MIN: u16 = 1000;
 const CODE_MAX: u16 = 9999;
 const MAX_ATTEMPTS: usize = 100;
@@ -31,6 +33,7 @@ impl CodeStore {
                 .http
                 .post(&url)
                 .header("X-API-Key", &self.api_key)
+                .header(header::USER_AGENT, USER_AGENT)
                 .json(&serde_json::json!({
                     "code": code,
                     "uuid": uuid.simple().to_string(),
