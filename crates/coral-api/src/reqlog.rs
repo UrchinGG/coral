@@ -1,17 +1,30 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use axum::body::{Body, Bytes};
 use axum::extract::{Request, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::Next;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
 use database::Database;
+use serde_json::{Map, Value};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 use crate::auth::RequestIdentity;
 
+const MAX_REQUEST_BODY: usize = 2 * 1024 * 1024;
+const STORED_BODY_BYTES: usize = 64 * 1024;
+const KEY_PREFIX_CHARS: usize = 8;
+const LOG_TABLE: &str = "api_request_log";
+const LOG_RETENTION_DAYS: i32 = 14;
+const DETAIL_TABLE: &str = "api_request_detail";
+const DETAIL_RETENTION_DAYS: i32 = 3;
+
 pub struct LogEntry {
+    request_id: Uuid,
     ts: DateTime<Utc>,
     ip: Option<String>,
     member_id: Option<i64>,
@@ -24,6 +37,13 @@ pub struct LogEntry {
     status: i16,
     latency_ms: i32,
     error: Option<String>,
+    detail: RequestDetail,
+}
+
+struct RequestDetail {
+    headers: Value,
+    body: Option<String>,
+    body_bytes: i32,
 }
 
 pub type LogSender = mpsc::Sender<LogEntry>;
@@ -47,10 +67,18 @@ pub async fn log_requests(State(tx): State<LogSender>, req: Request, next: Next)
         .map(|s| s.chars().take(256).collect());
     let key = extract_key(&req);
     let key_kind = if key.is_some() { "key" } else { "none" };
-    let key_prefix = key.map(|k| k.chars().take(8).collect());
+    let key_prefix = key.map(|k| k.chars().take(KEY_PREFIX_CHARS).collect());
+    let headers = header_json(req.headers());
     let start = Instant::now();
 
-    let res = next.run(req).await;
+    let (parts, body) = req.into_parts();
+    let (res, body) = match axum::body::to_bytes(body, MAX_REQUEST_BODY).await {
+        Ok(bytes) => {
+            let req = Request::from_parts(parts, Body::from(bytes.clone()));
+            (next.run(req).await, bytes)
+        }
+        Err(_) => (StatusCode::PAYLOAD_TOO_LARGE.into_response(), Bytes::new()),
+    };
     let member_id = res
         .extensions()
         .get::<RequestIdentity>()
@@ -60,7 +88,13 @@ pub async fn log_requests(State(tx): State<LogSender>, req: Request, next: Next)
 
     let (res, error) = capture_error(res, status).await;
 
+    let detail = RequestDetail {
+        headers,
+        body: stored_body(&body),
+        body_bytes: body.len().min(i32::MAX as usize) as i32,
+    };
     let _ = tx.try_send(LogEntry {
+        request_id: Uuid::new_v4(),
         ts: Utc::now(),
         ip,
         member_id,
@@ -73,8 +107,34 @@ pub async fn log_requests(State(tx): State<LogSender>, req: Request, next: Next)
         status,
         latency_ms,
         error,
+        detail,
     });
     res
+}
+
+fn header_json(headers: &HeaderMap) -> Value {
+    let mut out = Map::new();
+    for (name, value) in headers {
+        let value = String::from_utf8_lossy(value.as_bytes());
+        match out.get_mut(name.as_str()) {
+            Some(Value::String(existing)) => {
+                existing.push_str(", ");
+                existing.push_str(&value);
+            }
+            _ => {
+                out.insert(name.as_str().to_owned(), Value::String(value.into_owned()));
+            }
+        }
+    }
+    Value::Object(out)
+}
+
+fn stored_body(body: &Bytes) -> Option<String> {
+    if body.is_empty() {
+        return None;
+    }
+    let end = body.len().min(STORED_BODY_BYTES);
+    Some(String::from_utf8_lossy(&body[..end]).into_owned())
 }
 
 async fn capture_error(res: Response, status: i16) -> (Response, Option<String>) {
@@ -127,11 +187,17 @@ pub fn spawn_writer(db: Arc<Database>, mut rx: mpsc::Receiver<LogEntry>) {
 }
 
 async fn insert_batch(pool: &PgPool, entries: &[LogEntry]) -> Result<(), sqlx::Error> {
+    insert_log(pool, entries).await?;
+    insert_detail(pool, entries).await
+}
+
+async fn insert_log(pool: &PgPool, entries: &[LogEntry]) -> Result<(), sqlx::Error> {
     let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
-        "INSERT INTO api_request_log (ts, ip, member_id, key_prefix, key_kind, method, path, query, user_agent, status, latency_ms, error) ",
+        "INSERT INTO api_request_log (request_id, ts, ip, member_id, key_prefix, key_kind, method, path, query, user_agent, status, latency_ms, error) ",
     );
     qb.push_values(entries, |mut b, e| {
-        b.push_bind(e.ts)
+        b.push_bind(e.request_id)
+            .push_bind(e.ts)
             .push_bind(e.ip.clone())
             .push_bind(e.member_id)
             .push_bind(e.key_prefix.clone())
@@ -148,38 +214,63 @@ async fn insert_batch(pool: &PgPool, entries: &[LogEntry]) -> Result<(), sqlx::E
     Ok(())
 }
 
+async fn insert_detail(pool: &PgPool, entries: &[LogEntry]) -> Result<(), sqlx::Error> {
+    let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
+        "INSERT INTO api_request_detail (request_id, ts, member_id, headers, body, body_bytes) ",
+    );
+    qb.push_values(entries, |mut b, e| {
+        b.push_bind(e.request_id)
+            .push_bind(e.ts)
+            .push_bind(e.member_id)
+            .push_bind(&e.detail.headers)
+            .push_bind(e.detail.body.clone())
+            .push_bind(e.detail.body_bytes);
+    });
+    qb.build().execute(pool).await?;
+    Ok(())
+}
+
 pub fn spawn_partition_maintenance(db: Arc<Database>) {
     tokio::spawn(async move {
         loop {
-            if let Err(e) = maintain_partitions(db.pool()).await {
-                tracing::warn!("api request-log partition maintenance failed: {e}");
+            for (table, keep_days) in [
+                (LOG_TABLE, LOG_RETENTION_DAYS),
+                (DETAIL_TABLE, DETAIL_RETENTION_DAYS),
+            ] {
+                if let Err(e) = maintain_partitions(db.pool(), table, keep_days).await {
+                    tracing::warn!("{table} partition maintenance failed: {e}");
+                }
             }
             tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
         }
     });
 }
 
-async fn maintain_partitions(pool: &PgPool) -> Result<(), sqlx::Error> {
-    sqlx::query(
+async fn maintain_partitions(
+    pool: &PgPool,
+    table: &str,
+    keep_days: i32,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(&format!(
         r#"DO $$
         DECLARE d date := current_date; r record;
         BEGIN
           FOR i IN 0..2 LOOP
             EXECUTE format(
-              'CREATE TABLE IF NOT EXISTS api_request_log_%s PARTITION OF api_request_log FOR VALUES FROM (%L) TO (%L)',
+              'CREATE TABLE IF NOT EXISTS {table}_%s PARTITION OF {table} FOR VALUES FROM (%L) TO (%L)',
               to_char(d + i, 'YYYYMMDD'), (d + i)::text, (d + i + 1)::text);
           END LOOP;
           FOR r IN
             SELECT c.relname AS name FROM pg_inherits inh
             JOIN pg_class c ON c.oid = inh.inhrelid
-            WHERE inh.inhparent = 'api_request_log'::regclass
-              AND c.relname ~ '^api_request_log_[0-9]{8}$'
-              AND to_date(right(c.relname, 8), 'YYYYMMDD') < current_date - 14
+            WHERE inh.inhparent = '{table}'::regclass
+              AND c.relname ~ '^{table}_[0-9]{{8}}$'
+              AND to_date(right(c.relname, 8), 'YYYYMMDD') < current_date - {keep_days}
           LOOP
             EXECUTE format('DROP TABLE IF EXISTS %I', r.name);
           END LOOP;
-        END $$;"#,
-    )
+        END $$;"#
+    ))
     .execute(pool)
     .await?;
     Ok(())

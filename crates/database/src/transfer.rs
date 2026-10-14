@@ -285,6 +285,13 @@ async fn repoint_member_rows(
         .execute(&mut *conn)
         .await?;
     outcome.record("api_request_log", moved.rows_affected());
+
+    let moved = sqlx::query("UPDATE api_request_detail SET member_id = $2 WHERE member_id = $1")
+        .bind(source_id)
+        .bind(target_id)
+        .execute(&mut *conn)
+        .await?;
+    outcome.record("api_request_detail", moved.rows_affected());
     Ok(())
 }
 
