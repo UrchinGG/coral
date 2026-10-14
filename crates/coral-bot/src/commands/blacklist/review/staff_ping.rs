@@ -160,6 +160,7 @@ async fn post_ping(ctx: &Context, data: &Data, review: &Review) -> Result<bool> 
             .label("Confirm Tag")
             .style(ButtonStyle::Primary),
     ]));
+    let face_file = face_attachment(data, &review.player_uuid).await;
     let message = CreateMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
         .components(notice_components(
@@ -168,11 +169,11 @@ async fn post_ping(ctx: &Context, data: &Data, review: &Review) -> Result<bool> 
             &format!("{HEADING}\n{QUESTION}"),
             Some(button),
         ))
-        .add_file(face_attachment(data, &review.player_uuid).await);
+        .add_file(face_file.clone());
     ctx.http
         .send_message(
             GenericChannelId::new(thread_id as u64),
-            Vec::<CreateAttachment>::new(),
+            vec![face_file],
             &message,
         )
         .await?;
