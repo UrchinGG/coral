@@ -19,13 +19,10 @@ use crate::identity;
 use crate::state::AppState;
 
 async fn compute_budget_utilization(state: &AppState, discord_ids: &[i64]) -> HashMap<i64, f64> {
-    let Some(redis) = &state.redis else {
-        return HashMap::new();
-    };
     if discord_ids.is_empty() {
         return HashMap::new();
     }
-    let limiter = RateLimiter::new(redis.clone());
+    let limiter = RateLimiter::new(state.redis.clone());
     let names: Vec<String> = discord_ids
         .iter()
         .flat_map(|id| [format!("sf:{id}"), format!("sfuuids:{id}")])
@@ -230,7 +227,7 @@ async fn list(
         .await
         .unwrap_or_default();
     for m in &mut members {
-        m.is_owner = state.owner_ids.contains(&m.discord_id);
+        m.is_owner = state.auth.owner_ids.contains(&m.discord_id);
     }
 
     let discord_ids: Vec<i64> = members.iter().map(|m| m.discord_id).collect();
@@ -467,7 +464,7 @@ async fn detail(
         access_level: member.access_level,
         key_locked: member.key_locked,
         tagging_disabled: member.tagging_disabled,
-        is_owner: state.owner_ids.contains(&member.discord_id),
+        is_owner: state.auth.owner_ids.contains(&member.discord_id),
         standing,
         strikes: StrikeRepository::new(state.db.pool())
             .list_for_member(member.discord_id)
@@ -706,10 +703,9 @@ async fn revoke_strike(
 }
 
 async fn publish_blacklist_event(state: &AppState, event: &BlacklistEvent) {
-    match &state.redis {
-        Some(pool) => EventPublisher::new(pool.clone()).publish(event).await,
-        None => tracing::warn!("Redis unavailable, blacklist event not published: {event:?}"),
-    }
+    EventPublisher::new(state.redis.clone())
+        .publish(event)
+        .await;
 }
 
 #[derive(Serialize)]
@@ -745,16 +741,15 @@ async fn reset_rate_limit(
     Path(id): Path<i64>,
 ) -> Result<Json<OkResponse>, StatusCode> {
     let member = member_or_404(&state, id).await?;
-    if let Some(redis) = &state.redis {
-        let limiter = RateLimiter::new(redis.clone());
-        limiter
-            .reset(&format!("sf:{}", member.discord_id))
-            .await
-            .ok();
-        limiter
-            .reset(&format!("sfuuids:{}", member.discord_id))
-            .await
-            .ok();
+    let limiter = RateLimiter::new(state.redis.clone());
+    for name in [
+        format!("sf:{}", member.discord_id),
+        format!("sfuuids:{}", member.discord_id),
+    ] {
+        limiter.reset(&name).await.map_err(|error| {
+            tracing::error!("reset rate limit {name}: {error}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     }
     audit(
         &state,

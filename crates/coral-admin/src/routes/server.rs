@@ -638,10 +638,7 @@ async fn job_events(
     Path(job_id): Path<i64>,
 ) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>>, ApiError> {
     let guild_id = home_guild(&state)?;
-    let redis_url = state
-        .redis_url
-        .clone()
-        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "Redis unavailable".into()))?;
+    let redis_url = state.redis_url.clone();
     let db = state.db.clone();
 
     let (tx, rx) = tokio::sync::mpsc::channel::<Event>(32);
@@ -761,10 +758,9 @@ async fn enqueue_job(
 }
 
 async fn publish_sync_event(state: &AppState, event: &SyncEvent) {
-    match &state.redis {
-        Some(pool) => SyncEventPublisher::new(pool.clone()).publish(event).await,
-        None => tracing::warn!("Redis unavailable — sync event not published: {event:?}"),
-    }
+    SyncEventPublisher::new(state.redis.clone())
+        .publish(event)
+        .await;
 }
 
 async fn swap_label(

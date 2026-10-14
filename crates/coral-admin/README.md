@@ -14,7 +14,7 @@ cargo run -p coral-admin
 cd ui && npm run dev
 ```
 
-`ui/vite.config.ts` proxies `/api` and `/auth` to `http://localhost:8080`, so the dev server (`http://localhost:5173` by default) behaves exactly like the production app — sign in once, then edit any `.tsx`/`.ts` file and see it update instantly without a page reload, let alone a Rust recompile.
+`ui/vite.config.ts` proxies `/api`, `/auth` and `/login` to `http://localhost:8080`, so the dev server (`http://localhost:5173` by default) behaves exactly like the production app — sign in once, then edit any `.tsx`/`.ts` file and see it update instantly without a page reload, let alone a Rust recompile.
 
 ## Production build
 

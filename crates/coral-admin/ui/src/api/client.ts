@@ -1,3 +1,5 @@
+const LOGIN_PATH = "/login";
+
 export class ApiError extends Error {
   status: number;
 
@@ -13,6 +15,9 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json" },
     ...init,
   });
+  if (res.status === 401) {
+    redirectToLogin();
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new ApiError(res.status, body || res.statusText);
@@ -45,10 +50,7 @@ export function apiDelete<T>(path: string): Promise<T> {
   return request<T>(`/api${path}`, { method: "DELETE" });
 }
 
-export function authGet<T>(path: string): Promise<T> {
-  return request<T>(path);
-}
-
-export function isUnauthorized(error: unknown): boolean {
-  return error instanceof ApiError && (error.status === 401 || error.status === 403);
+function redirectToLogin() {
+  const next = window.location.pathname + window.location.search;
+  window.location.assign(`${LOGIN_PATH}?next=${encodeURIComponent(next)}`);
 }

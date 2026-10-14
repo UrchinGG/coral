@@ -92,10 +92,9 @@ async fn reevaluate_members(
 
 async fn publish_sync_user(state: &AppState, discord_id: u64) {
     let event = SyncEvent::SyncUser { discord_id };
-    match &state.redis {
-        Some(pool) => SyncEventPublisher::new(pool.clone()).publish(&event).await,
-        None => tracing::warn!("Redis unavailable, sync event not published: {event:?}"),
-    }
+    SyncEventPublisher::new(state.redis.clone())
+        .publish(&event)
+        .await;
 }
 
 fn internal(e: impl std::fmt::Display) -> ApiError {

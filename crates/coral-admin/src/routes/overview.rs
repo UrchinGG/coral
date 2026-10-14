@@ -102,10 +102,7 @@ fn is_budget_flagged(utilization: f64) -> bool {
 }
 
 async fn budget_flags(state: &AppState) -> Vec<Flag> {
-    let Some(redis) = &state.redis else {
-        return vec![];
-    };
-    let limiter = RateLimiter::new(redis.clone());
+    let limiter = RateLimiter::new(state.redis.clone());
     let (session, uuid_batch) = tokio::join!(
         limiter.scan_budgets("sf:", SESSION_RATE_LIMIT),
         limiter.scan_budgets("sfuuids:", SESSION_UUID_BUDGET),

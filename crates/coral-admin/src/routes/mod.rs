@@ -1,9 +1,12 @@
+use axum::Router;
 use axum::body::Body;
-use axum::http::{Uri, header};
+use axum::extract::Path;
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::{Router, http::StatusCode};
+use axum::routing::get;
 use rust_embed::RustEmbed;
 
+use crate::security::json_error;
 use crate::state::AppState;
 
 mod actions;
@@ -19,6 +22,14 @@ mod review_guide;
 mod review_rules;
 mod server;
 mod starfish;
+
+const ASSETS_DIR: &str = "assets";
+const INDEX_HTML: &str = "index.html";
+const PRIVATE_IMMUTABLE: &str = "private, max-age=31536000, immutable";
+
+#[derive(RustEmbed)]
+#[folder = "ui/dist/"]
+struct Assets;
 
 pub fn api_router() -> Router<AppState> {
     Router::new()
@@ -37,38 +48,40 @@ pub fn api_router() -> Router<AppState> {
         .nest("/review-rules", review_rules::router())
 }
 
-#[derive(RustEmbed)]
-#[folder = "ui/dist/"]
-struct Assets;
-
-pub fn ui_router() -> Router<AppState> {
-    Router::new().fallback(serve_asset)
+pub fn ui_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    Router::new()
+        .route("/assets/{*path}", get(serve_asset))
+        .fallback(get(serve_index))
 }
 
-async fn serve_asset(uri: Uri) -> Response {
-    let path = uri.path().trim_start_matches('/');
-    match Assets::get(path) {
-        Some(asset) => asset_response(path, asset),
-        None => match Assets::get("index.html") {
-            Some(asset) => asset_response("index.html", asset),
-            None => StatusCode::NOT_FOUND.into_response(),
-        },
-    }
+pub async fn api_not_found() -> Response {
+    json_error(StatusCode::NOT_FOUND, "not_found", "No such endpoint")
 }
 
-fn asset_response(path: &str, asset: rust_embed::EmbeddedFile) -> Response {
-    let mime = asset.metadata.mimetype();
-    let cache_control = if path == "index.html" {
-        "no-store"
-    } else {
-        "public, max-age=31536000, immutable"
+async fn serve_asset(Path(path): Path<String>) -> Response {
+    let Some(asset) = Assets::get(&format!("{ASSETS_DIR}/{path}")) else {
+        return StatusCode::NOT_FOUND.into_response();
     };
     (
         [
-            (header::CONTENT_TYPE, mime.to_string()),
-            (header::CACHE_CONTROL, cache_control.to_string()),
+            (header::CONTENT_TYPE, asset.metadata.mimetype()),
+            (header::CACHE_CONTROL, PRIVATE_IMMUTABLE),
         ],
         Body::from(asset.data),
+    )
+        .into_response()
+}
+
+async fn serve_index() -> Response {
+    let Some(index) = Assets::get(INDEX_HTML) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    (
+        [(header::CONTENT_TYPE, index.metadata.mimetype())],
+        Body::from(index.data),
     )
         .into_response()
 }

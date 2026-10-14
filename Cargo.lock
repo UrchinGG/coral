@@ -694,6 +694,7 @@ name = "coral-admin"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "base64",
  "blacklist",
@@ -705,6 +706,7 @@ dependencies = [
  "expr",
  "futures-util",
  "hex",
+ "hkdf",
  "hmac",
  "hypixel",
  "rand 0.8.5",
@@ -716,11 +718,15 @@ dependencies = [
  "serenity",
  "sha2 0.10.9",
  "sqlx",
+ "subtle",
+ "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
+ "tower",
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "url",
  "urlencoding",
  "uuid",
 ]

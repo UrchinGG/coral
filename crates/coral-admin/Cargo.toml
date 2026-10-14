@@ -35,12 +35,21 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 dotenvy.workspace = true
 anyhow.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
 
 hmac = "0.12"
+hkdf = "0.12"
 sha2 = "0.10"
+subtle = "2"
 hex.workspace = true
 base64.workspace = true
 rand.workspace = true
 uuid.workspace = true
 urlencoding = "2"
+url = "2"
 rust-embed = { version = "8", features = ["mime-guess"] }
+
+[dev-dependencies]
+tower = { workspace = true, features = ["util"] }
+tokio = { workspace = true, features = ["test-util"] }

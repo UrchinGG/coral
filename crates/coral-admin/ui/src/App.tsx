@@ -1,7 +1,5 @@
 import { BrowserRouter, Route, Routes } from "react-router-dom";
-import { useMe } from "./api/auth";
 import { AppShell } from "./layout/AppShell";
-import { Login } from "./layout/Login";
 import { Data } from "./pages/Data";
 import { Diagnostics } from "./pages/Diagnostics";
 import { MemberDetail } from "./pages/MemberDetail";
@@ -16,16 +14,6 @@ import { Starfish } from "./pages/Starfish";
 import { StarfishUserDetail } from "./pages/StarfishUserDetail";
 
 function App() {
-  const me = useMe();
-
-  if (me.isLoading) {
-    return <div className="flex min-h-screen items-center justify-center bg-[#0b0e14] text-gray-500">Loading…</div>;
-  }
-
-  if (me.isError || !me.data?.authenticated) {
-    return <Login />;
-  }
-
   return (
     <BrowserRouter>
       <Routes>

@@ -8,6 +8,10 @@ import { PickerSelect, type PickerItem } from "../components/PickerSelect";
 import { fmtDate, fmtNum } from "../format";
 import { ReviewRulesPanel } from "./ReviewRules";
 
+const GUIDE_DRAFT_KEY = "coral.guide-draft.v1";
+
+type GuideDraft = { base: string; content: GuideContent };
+
 export function ReviewGuide() {
   const guide = useReviewGuide();
 
@@ -22,11 +26,20 @@ export function ReviewGuide() {
 }
 
 function ReviewGuideLoaded({ data }: { data: ReviewGuideResponse }) {
-  const [content, setContent] = useState<GuideContent>(data.content);
+  const [content, setContent] = useState<GuideContent>(() => draftOver(data.content) ?? data.content);
   const [tab, setTab] = useState<"edit" | "preview">("edit");
   const save = useSaveGuideContent();
 
   const dirty = content.body !== data.content.body;
+
+  const editContent = (next: GuideContent) => {
+    setContent(next);
+    keepDraft(data.content, next);
+  };
+
+  const saveContent = () => {
+    save.mutate(content, { onSuccess: discardDraft });
+  };
 
   return (
     <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
@@ -49,7 +62,7 @@ function ReviewGuideLoaded({ data }: { data: ReviewGuideResponse }) {
             </div>
             <button
               disabled={!dirty || save.isPending}
-              onClick={() => save.mutate(content)}
+              onClick={saveContent}
               className="rounded-md bg-accent/15 px-3 py-1 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-40"
             >
               {save.isPending ? "Saving…" : "Save"}
@@ -57,7 +70,7 @@ function ReviewGuideLoaded({ data }: { data: ReviewGuideResponse }) {
           </div>
         }
       >
-        {tab === "edit" ? <ContentEditor content={content} onChange={setContent} /> : <GuidePreview content={content} />}
+        {tab === "edit" ? <ContentEditor content={content} onChange={editContent} /> : <GuidePreview content={content} />}
       </Panel>
 
       <div className="flex flex-col gap-5">
@@ -67,6 +80,28 @@ function ReviewGuideLoaded({ data }: { data: ReviewGuideResponse }) {
       </div>
     </div>
   );
+}
+
+function draftOver(saved: GuideContent): GuideContent | null {
+  const stored = sessionStorage.getItem(GUIDE_DRAFT_KEY);
+  if (stored === null) {
+    return null;
+  }
+  const draft = JSON.parse(stored) as GuideDraft;
+  return draft.base === saved.body ? draft.content : null;
+}
+
+function keepDraft(saved: GuideContent, edited: GuideContent) {
+  if (edited.body === saved.body) {
+    discardDraft();
+    return;
+  }
+  const draft: GuideDraft = { base: saved.body, content: edited };
+  sessionStorage.setItem(GUIDE_DRAFT_KEY, JSON.stringify(draft));
+}
+
+function discardDraft() {
+  sessionStorage.removeItem(GUIDE_DRAFT_KEY);
 }
 
 function ContentEditor({ content, onChange }: { content: GuideContent; onChange: (c: GuideContent) => void }) {

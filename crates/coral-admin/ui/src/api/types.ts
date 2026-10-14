@@ -1,8 +1,3 @@
-export type MeResponse = {
-  authenticated: boolean;
-  discord_id: string | null;
-};
-
 export type RequestRow = {
   ts: string;
   method: string | null;

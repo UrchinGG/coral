@@ -333,10 +333,7 @@ async fn hypixel_series(
     Query(p): Query<HoursParam>,
 ) -> Json<Vec<Bucket>> {
     let hours = p.hours.unwrap_or(24).clamp(1, 336);
-    let Some(redis) = state.redis.clone() else {
-        return Json(vec![]);
-    };
-    let mut conn = redis.connection();
+    let mut conn = state.redis.connection();
 
     let now = Utc::now().timestamp();
     let start = now - hours * 3600;
@@ -587,10 +584,7 @@ async fn ratelimits(State(state): State<AppState>) -> Json<RateLimits> {
 }
 
 pub(crate) async fn hypixel_ratelimits(state: &AppState) -> RateLimits {
-    let Some(redis) = state.redis.clone() else {
-        return RateLimits::default();
-    };
-    let mut conn = redis.connection();
+    let mut conn = state.redis.connection();
 
     let mut cursor: u64 = 0;
     let mut lim_keys: Vec<String> = Vec::new();
@@ -637,10 +631,7 @@ struct BudgetRow {
 }
 
 async fn budgets(State(state): State<AppState>) -> Json<Vec<BudgetRow>> {
-    let Some(redis) = state.redis.clone() else {
-        return Json(vec![]);
-    };
-    let limiter = RateLimiter::new(redis);
+    let limiter = RateLimiter::new(state.redis.clone());
 
     let (session_usage, uuid_usage) = tokio::join!(
         limiter.scan_budgets("sf:", SESSION_RATE_LIMIT),

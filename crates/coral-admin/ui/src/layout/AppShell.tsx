@@ -37,11 +37,14 @@ export function AppShell() {
             );
           })}
         </nav>
-        <div className="mt-auto">
-          <a href="/auth/logout" className="block rounded-md px-3 py-2 text-sm text-gray-500 hover:bg-white/5 hover:text-gray-300">
+        <form method="post" action="/auth/logout" className="mt-auto">
+          <button
+            type="submit"
+            className="block w-full rounded-md px-3 py-2 text-left text-sm text-gray-500 hover:bg-white/5 hover:text-gray-300"
+          >
             Log out
-          </a>
-        </div>
+          </button>
+        </form>
       </aside>
       <main className="min-w-0 flex-1 overflow-auto p-8">
         <Outlet />
