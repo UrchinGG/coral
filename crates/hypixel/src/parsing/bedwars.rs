@@ -267,7 +267,7 @@ pub fn combined_mode_name(modes: &[Mode]) -> String {
 
 pub fn extract(username: &str, player: &Value, guild: Option<GuildInfo>) -> Option<Stats> {
     let bw = player.get("stats")?.get("Bedwars")?;
-    let experience_stat = bw.get("Experience").and_then(|v| v.as_u64());
+    let experience_stat = bedwars_experience(bw);
     let experience = experience_stat.unwrap_or(0);
 
     let achievement_level = player
@@ -457,6 +457,13 @@ pub fn extract_winstreak_snapshot(player: &Value) -> Option<WinstreakSnapshot> {
     })
 }
 
+pub fn bedwars_experience(bw: &Value) -> Option<u64> {
+    let value = bw.get("Experience")?;
+    value
+        .as_u64()
+        .or_else(|| value.as_f64().filter(|v| *v >= 0.0).map(|v| v as u64))
+}
+
 pub fn calculate_level(experience: u64) -> u64 {
     let level = 100 * (experience / 487000);
     let exp = experience % 487000;
@@ -517,6 +524,16 @@ pub fn nickname_bracket_glyphs(active: Option<&str>) -> (&'static str, &'static 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn experience_reads_integer_and_float_values() {
+        let int = serde_json::json!({ "Experience": 5187929 });
+        let float = serde_json::json!({ "Experience": 5187929.0 });
+        assert_eq!(bedwars_experience(&int), Some(5187929));
+        assert_eq!(bedwars_experience(&float), Some(5187929));
+        assert_eq!(bedwars_experience(&serde_json::json!({})), None);
+        assert_eq!(calculate_level(5187929), 1066);
+    }
 
     #[test]
     fn experience_for_level_roundtrip() {

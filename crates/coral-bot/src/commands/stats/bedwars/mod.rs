@@ -7,8 +7,8 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use hypixel::parsing::winstreaks;
 use hypixel::{
-    BedwarsPlayerStats, GuildInfo, Mode, WinstreakSnapshot, experience_for_level,
-    extract_bedwars_stats,
+    BedwarsPlayerStats, GuildInfo, Mode, WinstreakSnapshot, bedwars_experience,
+    experience_for_level, extract_bedwars_stats,
 };
 use image::DynamicImage;
 use serenity::all::*;
@@ -297,7 +297,7 @@ async fn detect_auto_presets_bedwars(
         .get_all_snapshots_mapped(uuid, |v| {
             let bw = v.get("stats")?.get("Bedwars")?;
             Some(SnapshotFields {
-                experience: bw.get("Experience").and_then(|e| e.as_u64()).unwrap_or(0),
+                experience: bedwars_experience(bw).unwrap_or(0),
                 losses: bw
                     .get("losses_bedwars")
                     .and_then(|e| e.as_u64())
