@@ -98,6 +98,10 @@ async fn init_state() -> Result<AppState> {
     };
     let starfish = parse_starfish_config();
     let home_guild_id = env::var("HOME_GUILD_ID").ok().and_then(|v| v.parse().ok());
+    let background_refresh_budget = env::var("BACKGROUND_REFRESH_BUDGET")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(crate::cache::DEFAULT_BACKGROUND_REFRESH_BUDGET);
 
     Ok(AppState::new(
         db,
@@ -109,6 +113,7 @@ async fn init_state() -> Result<AppState> {
         env::var("DISCORD_TOKEN").ok(),
         starfish,
         home_guild_id,
+        background_refresh_budget,
     ))
 }
 

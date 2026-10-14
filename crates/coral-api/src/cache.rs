@@ -9,7 +9,7 @@ pub const SNAPSHOT_SOURCE: &str = "api";
 
 const GUILD_REFRESH_AGE_MINUTES: i64 = 5;
 const BACKGROUND_FRESH_MINUTES: i64 = 10;
-const BACKGROUND_HYPIXEL_BUDGET: i64 = 600;
+pub const DEFAULT_BACKGROUND_REFRESH_BUDGET: i64 = 90;
 const BACKGROUND_BUDGET_NAME: &str = "hypixel:background";
 
 pub fn parse_cache_age(raw: &str) -> Result<Duration, ApiError> {
@@ -138,7 +138,7 @@ async fn is_fresh(state: &AppState, uuid: &str) -> bool {
 async fn take_background_budget(state: &AppState) -> bool {
     match state
         .rate_limiter
-        .try_acquire(BACKGROUND_BUDGET_NAME, BACKGROUND_HYPIXEL_BUDGET)
+        .try_acquire(BACKGROUND_BUDGET_NAME, state.background_refresh_budget)
         .await
     {
         Ok(granted) => granted,

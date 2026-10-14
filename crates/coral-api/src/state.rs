@@ -29,6 +29,7 @@ pub struct AppState {
     pub discord: Arc<DiscordResolver>,
     pub starfish: Option<Arc<StarfishConfig>>,
     pub home_guild_id: Option<u64>,
+    pub background_refresh_budget: i64,
 }
 
 impl AppState {
@@ -42,6 +43,7 @@ impl AppState {
         discord_token: Option<String>,
         starfish: Option<StarfishConfig>,
         home_guild_id: Option<u64>,
+        background_refresh_budget: i64,
     ) -> Self {
         Self {
             event_publisher: EventPublisher::new(redis.clone()),
@@ -58,6 +60,7 @@ impl AppState {
             redis,
             starfish: starfish.map(Arc::new),
             home_guild_id,
+            background_refresh_budget,
         }
     }
 
