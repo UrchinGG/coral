@@ -98,12 +98,12 @@ async fn request_device_code(
         .form(&[("scope", "identify")])
         .send()
         .await
-        .map_err(|e| ApiError::ExternalApi(format!("Discord API error: {e}")))?;
+        .map_err(|e| ApiError::Upstream(format!("Discord API error: {e}")))?;
 
     if !response.status().is_success() {
         let body = response.text().await.unwrap_or_default();
         tracing::error!("Discord device code error: {body}");
-        return Err(ApiError::ExternalApi(
+        return Err(ApiError::Upstream(
             "Failed to get device code from Discord".into(),
         ));
     }
@@ -111,7 +111,7 @@ async fn request_device_code(
     let discord: DiscordDeviceCodeResponse = response
         .json()
         .await
-        .map_err(|e| ApiError::ExternalApi(format!("Failed to parse Discord response: {e}")))?;
+        .map_err(|e| ApiError::Upstream(format!("Failed to parse Discord response: {e}")))?;
 
     let expires_at = Utc::now() + Duration::seconds(discord.expires_in as i64);
     let repo = StarfishRepository::new(state.db.pool());
@@ -253,7 +253,7 @@ async fn poll_for_token(
         ])
         .send()
         .await
-        .map_err(|e| ApiError::ExternalApi(format!("Discord API error: {e}")))?;
+        .map_err(|e| ApiError::Upstream(format!("Discord API error: {e}")))?;
 
     let body = response.text().await.unwrap_or_default();
 
@@ -316,7 +316,7 @@ async fn oauth_callback(
         ])
         .send()
         .await
-        .map_err(|e| ApiError::ExternalApi(format!("Discord API error: {e}")))?;
+        .map_err(|e| ApiError::Upstream(format!("Discord API error: {e}")))?;
 
     if !response.status().is_success() {
         let body = response.text().await.unwrap_or_default();
@@ -350,7 +350,7 @@ pub async fn fetch_discord_user(access_token: &str) -> Result<DiscordUser, ApiEr
         .bearer_auth(access_token)
         .send()
         .await
-        .map_err(|e| ApiError::ExternalApi(format!("Discord API error: {e}")))?;
+        .map_err(|e| ApiError::Upstream(format!("Discord API error: {e}")))?;
 
     if !response.status().is_success() {
         return Err(ApiError::Unauthorized("Invalid Discord token".into()));
@@ -359,7 +359,7 @@ pub async fn fetch_discord_user(access_token: &str) -> Result<DiscordUser, ApiEr
     response
         .json()
         .await
-        .map_err(|e| ApiError::ExternalApi(format!("Failed to parse Discord response: {e}")))
+        .map_err(|e| ApiError::Upstream(format!("Failed to parse Discord response: {e}")))
 }
 
 pub fn build_unlock_key(

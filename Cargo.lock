@@ -747,12 +747,14 @@ dependencies = [
  "dotenvy",
  "ed25519-dalek",
  "form_urlencoded",
+ "futures-util",
  "hex",
  "hypixel",
  "image",
  "rand 0.8.5",
  "redis",
  "regex",
+ "reqlog",
  "reqwest",
  "semver",
  "serde",
@@ -3625,6 +3627,23 @@ name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
+
+[[package]]
+name = "reqlog"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dotenvy",
+ "form_urlencoded",
+ "percent-encoding",
+ "redis",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
+]
 
 [[package]]
 name = "reqwest"

@@ -211,10 +211,10 @@ async fn download_latest(
         .header("User-Agent", "coral-api")
         .send()
         .await
-        .map_err(|e| ApiError::ExternalApi(format!("GitHub API error: {e}")))?;
+        .map_err(|e| ApiError::Upstream(format!("GitHub API error: {e}")))?;
 
     if !response.status().is_success() && response.status() != reqwest::StatusCode::FOUND {
-        return Err(ApiError::ExternalApi(
+        return Err(ApiError::Upstream(
             "Failed to fetch release from GitHub".into(),
         ));
     }
@@ -222,7 +222,7 @@ async fn download_latest(
     let bytes = response
         .bytes()
         .await
-        .map_err(|e| ApiError::ExternalApi(format!("Failed to download release: {e}")))?;
+        .map_err(|e| ApiError::Upstream(format!("Failed to download release: {e}")))?;
 
     Ok(Response::builder()
         .status(StatusCode::OK)
@@ -298,12 +298,12 @@ async fn fetch_releases(config: &StarfishConfig) -> Result<Vec<GitHubRelease>, A
         .header("X-GitHub-Api-Version", "2022-11-28")
         .send()
         .await
-        .map_err(|e| ApiError::ExternalApi(format!("GitHub API error: {e}")))?;
+        .map_err(|e| ApiError::Upstream(format!("GitHub API error: {e}")))?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(ApiError::ExternalApi(format!(
+        return Err(ApiError::Upstream(format!(
             "GitHub API returned {status}: {body}"
         )));
     }
@@ -311,7 +311,7 @@ async fn fetch_releases(config: &StarfishConfig) -> Result<Vec<GitHubRelease>, A
     let mut releases: Vec<GitHubRelease> = response
         .json()
         .await
-        .map_err(|e| ApiError::ExternalApi(format!("Failed to parse GitHub response: {e}")))?;
+        .map_err(|e| ApiError::Upstream(format!("Failed to parse GitHub response: {e}")))?;
 
     releases.sort_by_key(|r| std::cmp::Reverse(release_version(r)));
     Ok(releases)

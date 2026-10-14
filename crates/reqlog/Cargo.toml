@@ -1,0 +1,22 @@
+[package]
+name = "reqlog"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+chrono.workspace = true
+form_urlencoded = "1"
+percent-encoding = "2"
+redis.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+sqlx.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+dotenvy.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

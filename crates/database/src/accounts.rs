@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool};
 
+use crate::history::History;
+
 #[derive(Debug, Clone, FromRow)]
 pub struct MinecraftAccount {
     pub id: i64,
@@ -19,7 +21,8 @@ impl<'a> AccountRepository<'a> {
     }
 
     pub async fn add(&self, member_id: i64, uuid: &str) -> Result<MinecraftAccount, sqlx::Error> {
-        sqlx::query_as(
+        let mut tx = self.pool.begin().await?;
+        let account = sqlx::query_as(
             "INSERT INTO minecraft_accounts (member_id, uuid)
              VALUES ($1, $2)
              ON CONFLICT (member_id, uuid) DO UPDATE SET member_id = EXCLUDED.member_id
@@ -27,17 +30,26 @@ impl<'a> AccountRepository<'a> {
         )
         .bind(member_id)
         .bind(uuid)
-        .fetch_one(self.pool)
-        .await
+        .fetch_one(&mut *tx)
+        .await?;
+        History::Links.sync(&mut tx, member_id).await?;
+        tx.commit().await?;
+        Ok(account)
     }
 
     pub async fn remove(&self, member_id: i64, uuid: &str) -> Result<bool, sqlx::Error> {
-        sqlx::query("DELETE FROM minecraft_accounts WHERE member_id = $1 AND uuid = $2")
-            .bind(member_id)
-            .bind(uuid)
-            .execute(self.pool)
-            .await
-            .map(|r| r.rows_affected() > 0)
+        let mut tx = self.pool.begin().await?;
+        let removed =
+            sqlx::query("DELETE FROM minecraft_accounts WHERE member_id = $1 AND uuid = $2")
+                .bind(member_id)
+                .bind(uuid)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected()
+                > 0;
+        History::Links.sync(&mut tx, member_id).await?;
+        tx.commit().await?;
+        Ok(removed)
     }
 
     pub async fn list(&self, member_id: i64) -> Result<Vec<MinecraftAccount>, sqlx::Error> {

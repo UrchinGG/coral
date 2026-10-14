@@ -16,6 +16,7 @@ members = [
     "crates/starfish-crypto",
     "crates/coral-sync",
     "crates/expr",
+    "crates/reqlog",
 ]
 
 [workspace.package]
@@ -61,7 +62,7 @@ redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
 thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
@@ -81,6 +82,7 @@ render = { path = "crates/render" }
 starfish-crypto = { path = "crates/starfish-crypto" }
 mc-proto = { path = "crates/mc-proto" }
 expr = { path = "crates/expr" }
+reqlog = { path = "crates/reqlog" }
 
 # Crypto & encoding
 hex = "0.4"

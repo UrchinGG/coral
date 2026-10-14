@@ -89,7 +89,7 @@ pub(crate) async fn fetch_github_user(access_token: &str) -> Result<GitHubUser, 
         .header("X-GitHub-Api-Version", "2022-11-28")
         .send()
         .await
-        .map_err(|e| ApiError::ExternalApi(format!("GitHub API error: {e}")))?;
+        .map_err(|e| ApiError::Upstream(format!("GitHub API error: {e}")))?;
 
     if !response.status().is_success() {
         return Err(ApiError::Unauthorized("invalid_github_token".into()));
@@ -98,5 +98,5 @@ pub(crate) async fn fetch_github_user(access_token: &str) -> Result<GitHubUser, 
     response
         .json()
         .await
-        .map_err(|e| ApiError::ExternalApi(format!("Failed to parse GitHub response: {e}")))
+        .map_err(|e| ApiError::Upstream(format!("Failed to parse GitHub response: {e}")))
 }

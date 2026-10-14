@@ -1,19 +1,68 @@
+use std::fmt::Display;
+
 use axum::extract::{Query, State};
-use axum::response::IntoResponse;
+use axum::http::StatusCode;
 use axum::routing::get;
-use axum::{Extension, Json, Router};
+use axum::{Json, Router};
 use chrono::Utc;
 use serde::Deserialize;
 use utoipa::ToSchema;
 
 use clients::normalize_uuid;
 use coral_redis::RateLimitResult;
-use database::{BlacklistRepository, Member, MemberRepository, PlayerEvent};
+use database::{BlacklistRepository, MemberRepository, PlayerEvent};
+use reqlog::{Caller, Cause, KeyKind, Outcome, record_caller, record_outcome};
 
-use crate::auth::RequestIdentity;
 use crate::cache::spawn_background_refresh;
+use crate::error::report_server_error;
 use crate::responses::{CubelifyResponse, CubelifyScore, CubelifyTag};
 use crate::state::AppState;
+
+struct Rejection {
+    outcome: Outcome,
+    message: &'static str,
+    icon: &'static str,
+}
+
+const INVALID_KEY: Rejection = Rejection {
+    outcome: Outcome {
+        status: StatusCode::UNAUTHORIZED.as_u16(),
+        cause: Cause::Auth,
+        reason: "invalid_key",
+    },
+    message: "Invalid Key",
+    icon: "mdi-key-remove",
+};
+
+const KEY_LOCKED: Rejection = Rejection {
+    outcome: Outcome {
+        status: StatusCode::FORBIDDEN.as_u16(),
+        cause: Cause::Auth,
+        reason: "key_locked",
+    },
+    message: "Your key has been locked",
+    icon: "mdi-account-lock-outline",
+};
+
+const RATE_LIMITED: Rejection = Rejection {
+    outcome: Outcome {
+        status: StatusCode::TOO_MANY_REQUESTS.as_u16(),
+        cause: Cause::CallerLimit,
+        reason: "rate_limited",
+    },
+    message: "Rate limit exceeded",
+    icon: "mdi-speedometer",
+};
+
+const INTERNAL_ERROR: Rejection = Rejection {
+    outcome: Outcome {
+        status: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+        cause: Cause::Internal,
+        reason: "internal_error",
+    },
+    message: "Internal Error",
+    icon: "mdi-alert-circle",
+};
 
 #[derive(Deserialize, ToSchema, utoipa::IntoParams)]
 pub(crate) struct CubelifyQuery {
@@ -40,77 +89,52 @@ pub fn router(_state: AppState) -> Router<AppState> {
 pub async fn get_cubelify(
     State(state): State<AppState>,
     Query(query): Query<CubelifyQuery>,
-) -> impl IntoResponse {
-    let (response, member_id) = process_cubelify(&state, &query).await;
-    match member_id {
-        Some(member_id) => {
-            (Extension(RequestIdentity { member_id }), Json(response)).into_response()
-        }
-        None => Json(response).into_response(),
-    }
-}
-
-async fn process_cubelify(
-    state: &AppState,
-    query: &CubelifyQuery,
-) -> (CubelifyResponse, Option<i64>) {
-    let member = match validate_api_key(state, &query.key).await {
-        Ok(member) => member,
-        Err(response) => return (response, None),
-    };
-    let response = run_cubelify(state, query, &member)
-        .await
-        .unwrap_or_else(|e| e);
-    (response, Some(member.id))
+) -> Json<CubelifyResponse> {
+    Json(
+        run_cubelify(&state, &query)
+            .await
+            .unwrap_or_else(|rejection| rejection),
+    )
 }
 
 async fn run_cubelify(
     state: &AppState,
     query: &CubelifyQuery,
-    member: &Member,
 ) -> Result<CubelifyResponse, CubelifyResponse> {
-    check_rate_limit(state, &query.key, member).await?;
+    validate_api_key(state, &query.key).await?;
+    check_rate_limit(state, &query.key).await?;
     let uuid = normalize_uuid(&query.uuid);
     spawn_background_refresh(state, &uuid);
     let tags = fetch_tags(state, &uuid).await?;
     Ok(build_response(state, &tags).await)
 }
 
-async fn validate_api_key(state: &AppState, api_key: &str) -> Result<Member, CubelifyResponse> {
-    let member = MemberRepository::new(state.db.pool())
+async fn validate_api_key(state: &AppState, api_key: &str) -> Result<(), CubelifyResponse> {
+    let Some(member) = MemberRepository::new(state.db.pool())
         .get_by_api_key(api_key)
         .await
-        .map_err(|_| CubelifyResponse::error("Internal Error", "mdi-alert-circle"))?
-        .ok_or_else(|| CubelifyResponse::error("Invalid Key", "mdi-key-remove"))?;
+        .map_err(|e| internal_failure("member key lookup failed", e))?
+    else {
+        record_caller(Caller::anonymous(KeyKind::Invalid));
+        return Err(reject(&INVALID_KEY));
+    };
+    record_caller(Caller::member(KeyKind::Personal, member.id));
 
     if member.key_locked {
-        return Err(CubelifyResponse::error(
-            "Your key has been locked",
-            "mdi-account-lock-outline",
-        ));
+        return Err(reject(&KEY_LOCKED));
     }
-    Ok(member)
+    Ok(())
 }
 
-async fn check_rate_limit(
-    state: &AppState,
-    api_key: &str,
-    member: &Member,
-) -> Result<(), CubelifyResponse> {
+async fn check_rate_limit(state: &AppState, api_key: &str) -> Result<(), CubelifyResponse> {
     match state
         .rate_limiter
         .check_and_record(api_key, crate::auth::PERSONAL_RATE_LIMIT)
         .await
     {
         Ok(RateLimitResult::Allowed { .. }) => Ok(()),
-        Ok(RateLimitResult::Exceeded) => Err(CubelifyResponse::error(
-            "Rate limit exceeded",
-            "mdi-speedometer",
-        )),
-        Err(_) => Err(CubelifyResponse::error(
-            "Internal Error",
-            "mdi-alert-circle",
-        )),
+        Ok(RateLimitResult::Exceeded) => Err(reject(&RATE_LIMITED)),
+        Err(e) => Err(internal_failure("rate limit check failed", e)),
     }
 }
 
@@ -118,7 +142,17 @@ async fn fetch_tags(state: &AppState, uuid: &str) -> Result<Vec<PlayerEvent>, Cu
     BlacklistRepository::new(state.db.pool())
         .get_active_tags(uuid)
         .await
-        .map_err(|_| CubelifyResponse::error("Internal Error", "mdi-alert-circle"))
+        .map_err(|e| internal_failure("tag lookup failed", e))
+}
+
+fn reject(rejection: &Rejection) -> CubelifyResponse {
+    record_outcome(rejection.outcome);
+    CubelifyResponse::error(rejection.message, rejection.icon)
+}
+
+fn internal_failure(context: &str, error: impl Display) -> CubelifyResponse {
+    report_server_error(&format!("{context}: {error}"));
+    reject(&INTERNAL_ERROR)
 }
 
 async fn build_response(state: &AppState, tags: &[PlayerEvent]) -> CubelifyResponse {

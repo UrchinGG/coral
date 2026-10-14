@@ -9,6 +9,7 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use tokio::net::TcpListener;
+use tokio::signal::unix::{SignalKind, signal};
 use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
 use utoipa_scalar::{Scalar, Servable};
@@ -41,10 +42,10 @@ async fn main() -> Result<()> {
             state.db.clone(),
         ));
     }
-    reqlog::spawn_partition_maintenance(state.db.clone());
-    let (log_tx, log_rx) = reqlog::channel();
-    reqlog::spawn_writer(state.db.clone(), log_rx);
-    serve(build_router(state, log_tx)).await
+    let (request_log, writer) = reqlog::start(&state)?;
+    serve(build_router(state, request_log)).await?;
+    reqlog::drain(writer).await;
+    Ok(())
 }
 
 fn spawn_starfish_cleanup(db: std::sync::Arc<database::Database>) {
@@ -68,9 +69,7 @@ fn init_logging() {
 
 async fn init_state() -> Result<AppState> {
     let db = Database::connect(&env::var("DATABASE_URL").expect("DATABASE_URL required")).await?;
-    if let Err(e) = db.migrate().await {
-        tracing::warn!("Migration skipped: {e}");
-    }
+    db.migrate_tolerating_newer_schema().await?;
     let redis = RedisPool::connect(&env::var("REDIS_URL").expect("REDIS_URL required")).await?;
     let hypixel = env::var("HYPIXEL_API_KEY")
         .ok()
@@ -148,7 +147,7 @@ fn parse_starfish_config() -> Option<StarfishConfig> {
     Some(config)
 }
 
-fn build_router(state: AppState, log_tx: reqlog::LogSender) -> Router {
+fn build_router(state: AppState, request_log: reqlog::RequestLog) -> Router {
     let api = openapi::ApiDoc::openapi();
     Router::new()
         .route("/health", get(health_check))
@@ -173,7 +172,7 @@ fn build_router(state: AppState, log_tx: reqlog::LogSender) -> Router {
             routes::starfish::router(state.clone()),
         )
         .layer(axum::middleware::from_fn_with_state(
-            log_tx,
+            request_log,
             reqlog::log_requests,
         ))
         .with_state(state)
@@ -218,6 +217,16 @@ async fn serve(app: Router) -> Result<()> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!("Coral API listening on {addr}");
     let listener = TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    let mut terminate = signal(SignalKind::terminate())?;
+    let mut interrupt = signal(SignalKind::interrupt())?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            tokio::select! {
+                _ = terminate.recv() => {}
+                _ = interrupt.recv() => {}
+            }
+            tracing::info!("Shutdown signal received; draining requests");
+        })
+        .await?;
     Ok(())
 }

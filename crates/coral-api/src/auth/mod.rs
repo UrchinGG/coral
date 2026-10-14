@@ -9,31 +9,21 @@ use database::{
     AccessRank, DeveloperKeyRepository, Member, MemberRepository, PluginRegistryRepository,
     StarfishRepository,
 };
+use reqlog::{Caller, Cause, KeyKind, record_caller, record_cause};
 
+use crate::error::{ApiError, report_server_error};
 use crate::routes::starfish::auth::validate_hwid;
 use crate::routes::starfish::session_auth::resolve_verified_session;
 use crate::routes::starfish::{is_owner, require_starfish};
-use crate::{error::ApiError, state::AppState};
+use crate::state::AppState;
 
 const ELEVATED_CANONICAL_PATH: &str = "/v3/hypixel/player";
 const ELEVATED_STRIPPED_PATH: &str = "/hypixel/player";
 const ATTEST_MAX_SKEW_SECS: i64 = 120;
+const ACTOR_HEADER: &str = "X-Coral-Actor";
 
 #[derive(Clone)]
 pub struct AuthenticatedMember(pub Member);
-
-#[derive(Clone, Copy)]
-pub struct RequestIdentity {
-    pub member_id: i64,
-}
-
-impl From<&Member> for RequestIdentity {
-    fn from(member: &Member) -> Self {
-        Self {
-            member_id: member.id,
-        }
-    }
-}
 
 #[derive(Clone)]
 pub struct SessionAuth {
@@ -81,19 +71,7 @@ pub async fn require_internal_or_developer(
             .await
             .map_err(IntoResponse::into_response)?;
     }
-    Ok(run_with_identity(request, next).await)
-}
-
-async fn run_with_identity(request: Request, next: Next) -> Response {
-    let identity = request
-        .extensions()
-        .get::<AuthenticatedMember>()
-        .map(|m| RequestIdentity::from(&m.0));
-    let mut response = next.run(request).await;
-    if let Some(identity) = identity {
-        response.extensions_mut().insert(identity);
-    }
-    response
+    Ok(next.run(request).await)
 }
 
 async fn authorize_developer_or_internal(
@@ -102,7 +80,7 @@ async fn authorize_developer_or_internal(
     request: &mut Request,
 ) -> Result<(), StatusCode> {
     if is_internal_key(state, api_key) {
-        request.extensions_mut().insert(InternalAuth);
+        grant_internal(request);
         return Ok(());
     }
 
@@ -161,7 +139,7 @@ pub async fn require_moderator(
         return Err(StatusCode::FORBIDDEN);
     }
     request.extensions_mut().insert(AuthenticatedMember(member));
-    Ok(run_with_identity(request, next).await)
+    Ok(next.run(request).await)
 }
 
 pub async fn allow_key_or_starfish_session(
@@ -178,7 +156,7 @@ pub async fn allow_key_or_starfish_session(
             .await
             .map_err(IntoResponse::into_response)?;
     }
-    Ok(run_with_identity(request, next).await)
+    Ok(next.run(request).await)
 }
 
 async fn authorize_with_key(
@@ -187,7 +165,7 @@ async fn authorize_with_key(
     request: &mut Request,
 ) -> Result<(), StatusCode> {
     if is_internal_key(state, api_key) {
-        request.extensions_mut().insert(InternalAuth);
+        grant_internal(request);
         return Ok(());
     }
 
@@ -258,13 +236,19 @@ async fn resolve_session_member(
         resolve_verified_session(&sessions, &triad.token, &triad.hwid, &triad.signature).await?;
     let discord_id = verified.user.discord_id;
 
+    let members = MemberRepository::new(state.db.pool());
+    let existing = members.get_by_discord_id(discord_id).await?;
+    record_caller(Caller::session(
+        existing.as_ref().map(|member| member.id),
+        discord_id,
+    ));
     session_rate_limit(state, discord_id).await?;
 
-    let members = MemberRepository::new(state.db.pool());
-    let member = match members.get_by_discord_id(discord_id).await? {
+    let member = match existing {
         Some(member) => member,
         None => members.create(discord_id).await?,
     };
+    record_caller(Caller::session(Some(member.id), discord_id));
 
     if member.key_locked {
         return Err(ApiError::Forbidden("account locked".into()));
@@ -416,8 +400,9 @@ async fn authenticate_key(state: &AppState, api_key: &str) -> Result<AuthResult,
     if let Some(member) = MemberRepository::new(state.db.pool())
         .get_by_api_key(api_key)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|e| internal_failure("member key lookup failed", e))?
     {
+        record_caller(Caller::member(KeyKind::Personal, member.id));
         if member.key_locked {
             return Err(StatusCode::FORBIDDEN);
         }
@@ -434,16 +419,19 @@ async fn authenticate_key(state: &AppState, api_key: &str) -> Result<AuthResult,
     if let Some(dev_key) = DeveloperKeyRepository::new(state.db.pool())
         .get_by_api_key(api_key)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|e| internal_failure("developer key lookup failed", e))?
     {
+        record_caller(Caller::member(KeyKind::Developer, dev_key.member_id));
         if dev_key.locked {
             return Err(StatusCode::FORBIDDEN);
         }
         let member = MemberRepository::new(state.db.pool())
             .get_by_id(dev_key.member_id)
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|e| internal_failure("developer key member lookup failed", e))?
+            .ok_or_else(|| {
+                internal_failure("developer key member lookup failed", "member row missing")
+            })?;
         check_rate_limit(state, api_key, dev_key.rate_limit as i64).await?;
         if let Err(e) = DeveloperKeyRepository::new(state.db.pool())
             .increment_request_count(api_key)
@@ -454,15 +442,20 @@ async fn authenticate_key(state: &AppState, api_key: &str) -> Result<AuthResult,
         return Ok(AuthResult::Developer(member, dev_key.permissions));
     }
 
+    record_caller(Caller::anonymous(KeyKind::Invalid));
     Err(StatusCode::UNAUTHORIZED)
 }
 
 async fn authenticate_personal_key(state: &AppState, api_key: &str) -> Result<Member, StatusCode> {
-    let member = MemberRepository::new(state.db.pool())
+    let Some(member) = MemberRepository::new(state.db.pool())
         .get_by_api_key(api_key)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+        .map_err(|e| internal_failure("member key lookup failed", e))?
+    else {
+        record_caller(Caller::anonymous(KeyKind::Invalid));
+        return Err(StatusCode::UNAUTHORIZED);
+    };
+    record_caller(Caller::member(KeyKind::Personal, member.id));
 
     if member.key_locked {
         return Err(StatusCode::FORBIDDEN);
@@ -474,9 +467,17 @@ async fn authenticate_personal_key(state: &AppState, api_key: &str) -> Result<Me
 async fn check_rate_limit(state: &AppState, api_key: &str, limit: i64) -> Result<(), StatusCode> {
     match state.rate_limiter.check_and_record(api_key, limit).await {
         Ok(RateLimitResult::Allowed { .. }) => Ok(()),
-        Ok(RateLimitResult::Exceeded) => Err(StatusCode::TOO_MANY_REQUESTS),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Ok(RateLimitResult::Exceeded) => {
+            record_cause(Cause::CallerLimit);
+            Err(StatusCode::TOO_MANY_REQUESTS)
+        }
+        Err(e) => Err(internal_failure("rate limit check failed", e)),
     }
+}
+
+fn internal_failure(context: &str, error: impl std::fmt::Display) -> StatusCode {
+    report_server_error(&format!("{context}: {error}"));
+    StatusCode::INTERNAL_SERVER_ERROR
 }
 
 pub use coral_redis::{
@@ -488,6 +489,16 @@ fn is_internal_key(state: &AppState, api_key: &str) -> bool {
         .internal_api_key
         .as_ref()
         .is_some_and(|k| k == api_key)
+}
+
+fn grant_internal(request: &mut Request) {
+    let actor = request
+        .headers()
+        .get(ACTOR_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse().ok());
+    record_caller(Caller::internal(actor));
+    request.extensions_mut().insert(InternalAuth);
 }
 
 fn extract_api_key(request: &Request) -> Option<String> {

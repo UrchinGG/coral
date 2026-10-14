@@ -7,6 +7,7 @@ use database::{
     StarfishRepository,
     starfish::{StarfishSession, StarfishUser},
 };
+use reqlog::{Caller, record_caller};
 
 use crate::{error::ApiError, state::AppState};
 
@@ -35,6 +36,12 @@ pub async fn resolve_verified_session(
         .await?
         .ok_or_else(|| ApiError::Unauthorized("invalid_session".into()))?;
 
+    let user = repo
+        .get_user_by_id(session.user_id)
+        .await?
+        .ok_or_else(|| ApiError::Internal("session references missing user".into()))?;
+    record_caller(Caller::session(None, user.discord_id));
+
     if Utc::now() > session.expires_at {
         return Err(ApiError::Unauthorized("invalid_session".into()));
     }
@@ -52,11 +59,6 @@ pub async fn resolve_verified_session(
     if expected_sig.as_deref() != Some(session.signature.as_slice()) {
         return Err(ApiError::Unauthorized("invalid_session".into()));
     }
-
-    let user = repo
-        .get_user_by_id(session.user_id)
-        .await?
-        .ok_or_else(|| ApiError::Internal("session references missing user".into()))?;
 
     if user.license_status != "active" {
         return Err(ApiError::Forbidden("license_inactive".into()));

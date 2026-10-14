@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool};
 
+use crate::history::History;
+
 pub mod permissions {
     pub const PLAYER_DATA: i64 = 1 << 0;
     pub const HYPIXEL: i64 = 1 << 1;
@@ -77,7 +79,8 @@ impl<'a> DeveloperKeyRepository<'a> {
         permissions: i64,
         rate_limit: i32,
     ) -> Result<DeveloperKey, sqlx::Error> {
-        sqlx::query_as(
+        let mut tx = self.pool.begin().await?;
+        let key = sqlx::query_as(
             "INSERT INTO developer_keys (member_id, api_key, label, permissions, rate_limit)
              VALUES ($1, $2, $3, $4, $5)
              RETURNING id, member_id, api_key, label, permissions, rate_limit, request_count, locked, created_at",
@@ -87,17 +90,25 @@ impl<'a> DeveloperKeyRepository<'a> {
         .bind(label)
         .bind(permissions)
         .bind(rate_limit)
-        .fetch_one(self.pool)
-        .await
+        .fetch_one(&mut *tx)
+        .await?;
+        History::Keys.sync(&mut tx, member_id).await?;
+        tx.commit().await?;
+        Ok(key)
     }
 
     pub async fn set_api_key(&self, member_id: i64, api_key: &str) -> Result<bool, sqlx::Error> {
-        sqlx::query("UPDATE developer_keys SET api_key = $2 WHERE member_id = $1")
+        let mut tx = self.pool.begin().await?;
+        let updated = sqlx::query("UPDATE developer_keys SET api_key = $2 WHERE member_id = $1")
             .bind(member_id)
             .bind(api_key)
-            .execute(self.pool)
-            .await
-            .map(|r| r.rows_affected() > 0)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+            > 0;
+        History::Keys.sync(&mut tx, member_id).await?;
+        tx.commit().await?;
+        Ok(updated)
     }
 
     pub async fn set_locked(&self, member_id: i64, locked: bool) -> Result<bool, sqlx::Error> {
@@ -136,11 +147,16 @@ impl<'a> DeveloperKeyRepository<'a> {
     }
 
     pub async fn delete(&self, member_id: i64) -> Result<bool, sqlx::Error> {
-        sqlx::query("DELETE FROM developer_keys WHERE member_id = $1")
+        let mut tx = self.pool.begin().await?;
+        let deleted = sqlx::query("DELETE FROM developer_keys WHERE member_id = $1")
             .bind(member_id)
-            .execute(self.pool)
-            .await
-            .map(|r| r.rows_affected() > 0)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+            > 0;
+        History::Keys.sync(&mut tx, member_id).await?;
+        tx.commit().await?;
+        Ok(deleted)
     }
 
     pub async fn increment_request_count(&self, api_key: &str) -> Result<(), sqlx::Error> {

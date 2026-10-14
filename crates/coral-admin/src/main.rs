@@ -39,9 +39,7 @@ async fn main() -> Result<()> {
         .init();
 
     let db = database::Database::connect(&required_env("DATABASE_URL")?).await?;
-    if let Err(e) = db.migrate().await {
-        tracing::warn!("Migration skipped: {e}");
-    }
+    db.migrate_tolerating_newer_schema().await?;
 
     let redis_url = required_env("REDIS_URL")?;
     let redis = time::timeout(REDIS_CONNECT_TIMEOUT, RedisPool::connect(&redis_url))

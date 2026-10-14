@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
 
+use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 
+use crate::history::History;
 use crate::members::{COLUMNS as MEMBER_COLUMNS, Member};
 
 const SNOWFLAKE_COLUMNS: &[(&str, &str)] = &[
@@ -20,6 +22,7 @@ const SNOWFLAKE_COLUMNS: &[(&str, &str)] = &[
     ("review", "voided_by"),
     ("review_evidence", "added_by"),
     ("evidence_post", "pending_by"),
+    ("api_request_subject", "actor_id"),
 ];
 
 const SNOWFLAKE_ARRAYS: &[(&str, &str)] = &[("player_events", "reviewed_by")];
@@ -30,6 +33,36 @@ const REVIEW_PARTICIPANT_COLUMNS: &[(&str, &str)] =
     &[("review", "submitter_id"), ("review_vote", "voter_id")];
 
 const DISCARDED_TABLES: &[&str] = &["discord_username_cache"];
+
+const MEMBER_KEYED_TABLES: &[(&str, &str)] = &[
+    ("api_key_ips", "ip_address"),
+    ("api_member_agents", "agent_md5"),
+    ("minecraft_accounts", "uuid"),
+];
+
+const REPOINTED_MEMBER_TABLES: &[&str] = &[
+    "member_api_keys",
+    "member_strike",
+    "api_request_log",
+    "api_request_detail",
+    "api_request_subject",
+];
+
+const CALLER_HOUR_COLUMNS: &[&str] = &[
+    "hour",
+    "key_kind",
+    "member_id",
+    "actor_id",
+    "key_prefix",
+    "service",
+    "route",
+    "method",
+    "status",
+    "cause",
+    "requests",
+    "latency_sum_ms",
+    "subjects",
+];
 
 #[derive(Debug)]
 pub enum TransferError {
@@ -121,6 +154,7 @@ impl<'a> TransferRepository<'a> {
         let mut outcome = TransferOutcome::default();
         merge_members(&mut tx, source, target, &mut outcome).await?;
         rewrite_snowflakes(&mut tx, source, target, &mut outcome).await?;
+        rewrite_request_actors(&mut tx, source, target, &mut outcome).await?;
         merge_keyed_tables(&mut tx, source, target, &mut outcome).await?;
         merge_review_participation(&mut tx, source, target, &mut outcome).await?;
         rewrite_strike_actors(&mut tx, source, target, &mut outcome).await?;
@@ -158,6 +192,7 @@ async fn source_has_data(conn: &mut PgConnection, source: i64) -> Result<bool, s
             .iter()
             .map(|(table, column)| format!("SELECT 1 FROM {table} WHERE {column} = $1")),
     );
+    checks.push("SELECT 1 FROM api_caller_hour WHERE actor_id = $1".to_string());
     checks.push("SELECT 1 FROM starfish_users WHERE discord_id = $1".to_string());
 
     let sql = format!(
@@ -215,6 +250,8 @@ async fn merge_members(
         .execute(&mut *conn)
         .await?;
     merge_member_fields(conn, &source_row, &target_row, source, target).await?;
+    History::Keys.sync(conn, target_row.id).await?;
+    History::Links.sync(conn, target_row.id).await?;
     outcome.record("members", 1);
 
     if source_row.api_key.is_some() && target_row.api_key.is_some() {
@@ -232,10 +269,30 @@ async fn repoint_member_rows(
     target_id: i64,
     outcome: &mut TransferOutcome,
 ) -> Result<(), sqlx::Error> {
-    for (table, key) in [
-        ("api_key_ips", "ip_address"),
-        ("minecraft_accounts", "uuid"),
-    ] {
+    merge_network_counts(conn, source_id, target_id).await?;
+    merge_member_keyed_tables(conn, source_id, target_id, outcome).await?;
+    for table in REPOINTED_MEMBER_TABLES {
+        let moved = sqlx::query(&format!(
+            "UPDATE {table} SET member_id = $2 WHERE member_id = $1"
+        ))
+        .bind(source_id)
+        .bind(target_id)
+        .execute(&mut *conn)
+        .await?;
+        outcome.record(*table, moved.rows_affected());
+    }
+    repoint_mc_links(conn, source_id, target_id, outcome).await?;
+    merge_caller_hours(conn, "member_id", source_id, target_id, outcome).await?;
+    move_developer_key(conn, source_id, target_id, outcome).await
+}
+
+async fn merge_member_keyed_tables(
+    conn: &mut PgConnection,
+    source_id: i64,
+    target_id: i64,
+    outcome: &mut TransferOutcome,
+) -> Result<(), sqlx::Error> {
+    for (table, key) in MEMBER_KEYED_TABLES {
         sqlx::query(&format!(
             "DELETE FROM {table} s WHERE s.member_id = $1
                AND EXISTS (SELECT 1 FROM {table} t WHERE t.member_id = $2 AND t.{key} = s.{key})"
@@ -251,9 +308,17 @@ async fn repoint_member_rows(
         .bind(target_id)
         .execute(&mut *conn)
         .await?;
-        outcome.record(table, moved.rows_affected());
+        outcome.record(*table, moved.rows_affected());
     }
+    Ok(())
+}
 
+async fn move_developer_key(
+    conn: &mut PgConnection,
+    source_id: i64,
+    target_id: i64,
+    outcome: &mut TransferOutcome,
+) -> Result<(), sqlx::Error> {
     let moved = sqlx::query(
         "UPDATE developer_keys SET member_id = $2 WHERE member_id = $1
            AND NOT EXISTS (SELECT 1 FROM developer_keys WHERE member_id = $2)",
@@ -271,27 +336,121 @@ async fn repoint_member_rows(
     if source_key_left {
         outcome.dropped.push("developer_key");
     }
+    Ok(())
+}
 
-    let moved = sqlx::query("UPDATE member_strike SET member_id = $2 WHERE member_id = $1")
+async fn merge_network_counts(
+    conn: &mut PgConnection,
+    source_id: i64,
+    target_id: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE api_key_ips t SET
+             first_seen = LEAST(t.first_seen, s.first_seen),
+             last_seen = GREATEST(t.last_seen, s.last_seen),
+             requests = t.requests + s.requests,
+             country = COALESCE(t.country, s.country),
+             proxied = t.proxied OR s.proxied
+         FROM api_key_ips s
+         WHERE s.member_id = $1 AND t.member_id = $2 AND t.ip_address = s.ip_address",
+    )
+    .bind(source_id)
+    .bind(target_id)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "UPDATE api_member_agents t SET
+             first_seen = LEAST(t.first_seen, s.first_seen),
+             last_seen = GREATEST(t.last_seen, s.last_seen),
+             requests = t.requests + s.requests
+         FROM api_member_agents s
+         WHERE s.member_id = $1 AND t.member_id = $2 AND t.agent_md5 = s.agent_md5",
+    )
+    .bind(source_id)
+    .bind(target_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+async fn repoint_mc_links(
+    conn: &mut PgConnection,
+    source_id: i64,
+    target_id: i64,
+    outcome: &mut TransferOutcome,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE member_mc_links s SET unlinked_at = now()
+         WHERE s.member_id = $1 AND s.unlinked_at IS NULL
+           AND EXISTS (SELECT 1 FROM member_mc_links t
+                       WHERE t.member_id = $2 AND t.unlinked_at IS NULL
+                         AND t.uuid = s.uuid AND t.relation = s.relation)",
+    )
+    .bind(source_id)
+    .bind(target_id)
+    .execute(&mut *conn)
+    .await?;
+    let moved = sqlx::query("UPDATE member_mc_links SET member_id = $2 WHERE member_id = $1")
         .bind(source_id)
         .bind(target_id)
         .execute(&mut *conn)
         .await?;
-    outcome.record("member_strike", moved.rows_affected());
+    outcome.record("member_mc_links", moved.rows_affected());
+    Ok(())
+}
 
-    let moved = sqlx::query("UPDATE api_request_log SET member_id = $2 WHERE member_id = $1")
-        .bind(source_id)
-        .bind(target_id)
-        .execute(&mut *conn)
-        .await?;
-    outcome.record("api_request_log", moved.rows_affected());
+async fn merge_caller_hours(
+    conn: &mut PgConnection,
+    column: &str,
+    source: i64,
+    target: i64,
+    outcome: &mut TransferOutcome,
+) -> Result<(), sqlx::Error> {
+    let columns = CALLER_HOUR_COLUMNS.join(", ");
+    let retargeted = CALLER_HOUR_COLUMNS
+        .iter()
+        .map(|name| if *name == column { "$2::bigint" } else { name })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let moved = sqlx::query(&format!(
+        "WITH moved AS (DELETE FROM api_caller_hour WHERE {column} = $1 RETURNING *)
+         INSERT INTO api_caller_hour AS t ({columns})
+         SELECT {retargeted} FROM moved
+         ON CONFLICT ON CONSTRAINT api_caller_hour_key DO UPDATE SET
+             requests = t.requests + excluded.requests,
+             latency_sum_ms = t.latency_sum_ms + excluded.latency_sum_ms,
+             subjects = t.subjects + excluded.subjects"
+    ))
+    .bind(source)
+    .bind(target)
+    .execute(&mut *conn)
+    .await?;
+    outcome.record(format!("api_caller_hour.{column}"), moved.rows_affected());
+    Ok(())
+}
 
-    let moved = sqlx::query("UPDATE api_request_detail SET member_id = $2 WHERE member_id = $1")
-        .bind(source_id)
-        .bind(target_id)
-        .execute(&mut *conn)
-        .await?;
-    outcome.record("api_request_detail", moved.rows_affected());
+async fn rewrite_request_actors(
+    conn: &mut PgConnection,
+    source: i64,
+    target: i64,
+    outcome: &mut TransferOutcome,
+) -> Result<(), sqlx::Error> {
+    merge_caller_hours(conn, "actor_id", source, target, outcome).await?;
+    let attributed_since: Option<DateTime<Utc>> =
+        sqlx::query_scalar("SELECT since FROM api_coverage WHERE feature = 'attribution'")
+            .fetch_optional(&mut *conn)
+            .await?;
+    let Some(since) = attributed_since else {
+        return Ok(());
+    };
+    let moved =
+        sqlx::query("UPDATE api_request_log SET actor_id = $2 WHERE actor_id = $1 AND ts >= $3")
+            .bind(source)
+            .bind(target)
+            .bind(since)
+            .execute(&mut *conn)
+            .await?;
+    outcome.record("api_request_log.actor_id", moved.rows_affected());
     Ok(())
 }
 
@@ -792,6 +951,139 @@ mod tests {
         cleanup(&pool, [source, target]).await;
     }
 
+    type CallerHourTotals = (Option<i64>, Option<i64>, i32, i64, i64);
+
+    async fn insert_caller_hour(
+        pool: &PgPool,
+        member_id: Option<i64>,
+        actor_id: Option<i64>,
+        requests: i32,
+    ) {
+        sqlx::query(
+            "INSERT INTO api_caller_hour (hour, key_kind, member_id, actor_id, key_prefix, service,
+                 route, method, status, cause, requests, latency_sum_ms, subjects)
+             VALUES ('2026-10-14 10:00+00', 1, $1, $2, NULL, 0, '/v3/player/tags', 'GET', 200, 0,
+                 $3, $3 * 10, $3)",
+        )
+        .bind(member_id)
+        .bind(actor_id)
+        .bind(requests)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn insert_network_rows(pool: &PgPool, member_id: i64, requests: i64) {
+        sqlx::query(
+            "INSERT INTO api_key_ips (member_id, ip_address, requests) VALUES ($1, '198.51.100.1', $2)",
+        )
+        .bind(member_id)
+        .bind(requests)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO api_member_agents (member_id, user_agent, first_seen, last_seen, requests)
+             VALUES ($1, 'agent', now(), now(), $2)",
+        )
+        .bind(member_id)
+        .bind(requests)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn moves_request_attribution_and_history_to_the_target() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let (source, target) = unique_ids();
+        cleanup(&pool, [source, target]).await;
+        let source_member = insert_member(&pool, source, &format!("s-{source}"), "srcuuid").await;
+        let target_member = insert_member(&pool, target, &format!("t-{target}"), "tgtuuid").await;
+        let members = MemberRepository::new(&pool);
+        let (source_key, target_key) = (format!("sk-{source}"), format!("tk-{target}"));
+        members.set_api_key(source, &source_key).await.unwrap();
+        members.set_api_key(target, &target_key).await.unwrap();
+        insert_caller_hour(&pool, Some(source_member), None, 2).await;
+        insert_caller_hour(&pool, Some(target_member), None, 3).await;
+        insert_caller_hour(&pool, None, Some(source), 4).await;
+        insert_network_rows(&pool, source_member, 5).await;
+        insert_network_rows(&pool, target_member, 6).await;
+        sqlx::query(
+            "INSERT INTO api_request_subject (ts, request_id, member_id, actor_id, key_kind, service,
+                 status, form, player)
+             VALUES (now(), gen_random_uuid(), $1, $2, 4, 0, 200, 1, gen_random_uuid())",
+        )
+        .bind(source_member)
+        .bind(source)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        TransferRepository::new(&pool)
+            .transfer(source, target, 1)
+            .await
+            .unwrap();
+
+        let hours: Vec<CallerHourTotals> = sqlx::query_as(
+            "SELECT member_id, actor_id, requests, latency_sum_ms, subjects FROM api_caller_hour
+             WHERE member_id = ANY($1) OR actor_id = ANY($2) ORDER BY requests",
+        )
+        .bind([source_member, target_member])
+        .bind([source, target])
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            hours,
+            vec![
+                (None, Some(target), 4, 40, 4),
+                (Some(target_member), None, 5, 50, 5),
+            ]
+        );
+        let network: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT requests FROM api_key_ips WHERE member_id = $1),
+                    (SELECT requests FROM api_member_agents WHERE member_id = $1)",
+        )
+        .bind(target_member)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(network, (11, 11));
+        let subject: (i64, i64) = sqlx::query_as(
+            "SELECT member_id, actor_id FROM api_request_subject WHERE actor_id = $1 OR member_id = $2",
+        )
+        .bind(target)
+        .bind(target_member)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(subject, (target_member, target));
+        let keys: Vec<(String, bool)> = sqlx::query_as(
+            "SELECT api_key, retired_at IS NULL FROM member_api_keys WHERE member_id = $1 ORDER BY api_key",
+        )
+        .bind(target_member)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(keys, vec![(source_key, true), (target_key, false)]);
+
+        sqlx::query("DELETE FROM api_caller_hour WHERE member_id = $1 OR actor_id = $2")
+            .bind(target_member)
+            .bind(target)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM api_request_subject WHERE member_id = $1")
+            .bind(target_member)
+            .execute(&pool)
+            .await
+            .unwrap();
+        cleanup(&pool, [source, target]).await;
+    }
+
     #[tokio::test]
     async fn moves_source_row_when_target_is_unregistered() {
         let Some(pool) = test_pool().await else {
@@ -814,6 +1106,37 @@ mod tests {
             .unwrap();
         assert_eq!(id, source_member);
 
+        cleanup(&pool, [source, target]).await;
+    }
+
+    #[tokio::test]
+    async fn moves_caller_hours_of_an_account_seen_only_as_an_actor() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let (source, target) = unique_ids();
+        cleanup(&pool, [source, target]).await;
+        insert_caller_hour(&pool, None, Some(source), 7).await;
+
+        TransferRepository::new(&pool)
+            .transfer(source, target, 1)
+            .await
+            .unwrap();
+
+        let actors: Vec<(i64, i32)> = sqlx::query_as(
+            "SELECT actor_id, requests FROM api_caller_hour WHERE actor_id = ANY($1)",
+        )
+        .bind([source, target])
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(actors, vec![(target, 7)]);
+
+        sqlx::query("DELETE FROM api_caller_hour WHERE actor_id = $1")
+            .bind(target)
+            .execute(&pool)
+            .await
+            .unwrap();
         cleanup(&pool, [source, target]).await;
     }
 

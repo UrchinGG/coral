@@ -84,10 +84,10 @@ pub async fn download_asset(access_token: &str, asset: &Asset) -> Result<Vec<u8>
         .header("X-GitHub-Api-Version", "2022-11-28")
         .send()
         .await
-        .map_err(|e| ApiError::ExternalApi(format!("GitHub asset fetch: {e}")))?;
+        .map_err(|e| ApiError::Upstream(format!("GitHub asset fetch: {e}")))?;
 
     if !response.status().is_success() {
-        return Err(ApiError::ExternalApi(format!(
+        return Err(ApiError::Upstream(format!(
             "GitHub returned {} for asset {}",
             response.status(),
             asset.name
@@ -98,7 +98,7 @@ pub async fn download_asset(access_token: &str, asset: &Asset) -> Result<Vec<u8>
         .bytes()
         .await
         .map(|b| b.to_vec())
-        .map_err(|e| ApiError::ExternalApi(format!("asset download: {e}")))
+        .map_err(|e| ApiError::Upstream(format!("asset download: {e}")))
 }
 
 async fn request<T: for<'de> Deserialize<'de>>(
@@ -113,7 +113,7 @@ async fn request<T: for<'de> Deserialize<'de>>(
         .header("X-GitHub-Api-Version", "2022-11-28")
         .send()
         .await
-        .map_err(|e| ApiError::ExternalApi(format!("GitHub API: {e}")))?;
+        .map_err(|e| ApiError::Upstream(format!("GitHub API: {e}")))?;
 
     let status = response.status();
     if !status.is_success() {
@@ -121,12 +121,12 @@ async fn request<T: for<'de> Deserialize<'de>>(
             401 => ApiError::Unauthorized("invalid_github_token".into()),
             403 => ApiError::Forbidden("github_access_denied".into()),
             404 => ApiError::NotFound(format!("GitHub resource not found: {url}")),
-            _ => ApiError::ExternalApi(format!("GitHub returned {status}")),
+            _ => ApiError::Upstream(format!("GitHub returned {status}")),
         });
     }
 
     response
         .json()
         .await
-        .map_err(|e| ApiError::ExternalApi(format!("parse GitHub response: {e}")))
+        .map_err(|e| ApiError::Upstream(format!("parse GitHub response: {e}")))
 }

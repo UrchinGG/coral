@@ -1,115 +1,266 @@
+use std::env;
+use std::net::IpAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use axum::body::{Body, Bytes};
-use axum::extract::{Request, State};
-use axum::http::{HeaderMap, StatusCode};
+use anyhow::{Context, Result};
+use axum::body::{Body, Bytes, HttpBody};
+use axum::extract::{MatchedPath, Request, State};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use chrono::{DateTime, Utc};
-use database::Database;
+use futures_util::StreamExt;
 use serde_json::{Map, Value};
-use sqlx::{PgPool, Postgres, QueryBuilder};
-use tokio::sync::mpsc;
-use uuid::Uuid;
+use tokio::task::JoinHandle;
 
-use crate::auth::RequestIdentity;
+use reqlog::{
+    Caller, Cause, Client, Detail, KEY_PREFIX_CHARS, KeyKind, LogEntry, MAX_REQUEST_BODY, Recorded,
+    RequestContext, SHUTDOWN_DRAIN, STORED_BODY_BYTES, SUBJECT_SOURCES_ENV, StoredText,
+    SubjectSources, WriterConfig,
+};
 
-const MAX_REQUEST_BODY: usize = 2 * 1024 * 1024;
-const STORED_BODY_BYTES: usize = 64 * 1024;
-const KEY_PREFIX_CHARS: usize = 8;
-const LOG_TABLE: &str = "api_request_log";
-const LOG_RETENTION_DAYS: i32 = 14;
-const DETAIL_TABLE: &str = "api_request_detail";
-const DETAIL_RETENTION_DAYS: i32 = 14;
+pub use reqlog::RequestLog;
 
-pub struct LogEntry {
-    request_id: Uuid,
-    ts: DateTime<Utc>,
-    ip: Option<String>,
-    member_id: Option<i64>,
-    key_prefix: Option<String>,
-    key_kind: &'static str,
+use crate::state::AppState;
+
+const HEALTH_PATH: &str = "/health";
+const REQUEST_ID_HEADER: &str = "x-request-id";
+const API_KEY_HEADER: &str = "x-api-key";
+const SESSION_HEADER: &str = "x-starfish-session";
+const AUTHORIZATION_HEADER: &str = "authorization";
+const CLIENT_IP_HEADER: &str = "cf-connecting-ip";
+const FORWARDED_FOR_HEADER: &str = "x-forwarded-for";
+const COUNTRY_HEADER: &str = "cf-ipcountry";
+const USER_AGENT_HEADER: &str = "user-agent";
+const KEY_QUERY_PREFIX: &str = "key=";
+const FIRST_ERROR_STATUS: u16 = StatusCode::BAD_REQUEST.as_u16();
+
+struct RequestFacts {
     method: String,
     path: String,
+    route: Option<String>,
     query: Option<String>,
-    user_agent: Option<String>,
-    status: i16,
-    latency_ms: i32,
-    error: Option<String>,
-    detail: RequestDetail,
-}
-
-struct RequestDetail {
+    client: Client,
+    credential_presented: bool,
     headers: Value,
-    body: Option<String>,
-    body_bytes: i32,
 }
 
-pub type LogSender = mpsc::Sender<LogEntry>;
-
-pub fn channel() -> (LogSender, mpsc::Receiver<LogEntry>) {
-    mpsc::channel(10_000)
+enum ReceivedBody {
+    Complete(Bytes),
+    TooLarge { prefix: Bytes, size: usize },
+    Interrupted { prefix: Bytes, size: usize },
 }
 
-pub async fn log_requests(State(tx): State<LogSender>, req: Request, next: Next) -> Response {
-    let path = req.uri().path().to_owned();
-    if path == "/health" {
-        return next.run(req).await;
+struct Exchange {
+    facts: RequestFacts,
+    body: ReceivedBody,
+    status: u16,
+    latency_ms: i32,
+    error_body: Option<String>,
+    recorded: Recorded,
+}
+
+pub fn start(state: &AppState) -> Result<(RequestLog, JoinHandle<()>)> {
+    let sources = subject_sources()?;
+    let pool = state.db.pool().clone();
+    let partitions_ready = reqlog::partitions::spawn_maintenance(pool.clone());
+    let (log, receiver) = reqlog::channel();
+    let writer = reqlog::spawn_writer(
+        WriterConfig {
+            pool,
+            redis: state.redis.connection(),
+            sources,
+            partitions_ready,
+        },
+        receiver,
+    );
+    Ok((log, writer))
+}
+
+pub async fn drain(writer: JoinHandle<()>) {
+    match tokio::time::timeout(SHUTDOWN_DRAIN, writer).await {
+        Ok(Ok(())) => tracing::info!("request log drained"),
+        Ok(Err(e)) => tracing::error!("request log writer failed: {e}"),
+        Err(_) => tracing::warn!("request log drain timed out; unwritten entries were lost"),
     }
-    let method = req.method().as_str().to_owned();
-    let query = req.uri().query().map(str::to_owned);
-    let ip = client_ip(&req);
-    let user_agent = req
-        .headers()
-        .get("user-agent")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.chars().take(256).collect());
-    let key = extract_key(&req);
-    let key_kind = if key.is_some() { "key" } else { "none" };
-    let key_prefix = key.map(|k| k.chars().take(KEY_PREFIX_CHARS).collect());
-    let headers = header_json(req.headers());
-    let start = Instant::now();
+}
 
-    let (parts, body) = req.into_parts();
-    let (res, body) = match axum::body::to_bytes(body, MAX_REQUEST_BODY).await {
-        Ok(bytes) => {
-            let req = Request::from_parts(parts, Body::from(bytes.clone()));
-            (next.run(req).await, bytes)
+pub async fn log_requests(State(log): State<RequestLog>, request: Request, next: Next) -> Response {
+    if request.uri().path() == HEALTH_PATH {
+        return next.run(request).await;
+    }
+    let started = Instant::now();
+    let facts = RequestFacts::capture(&request);
+    let (parts, body) = request.into_parts();
+    let body = ReceivedBody::read(body).await;
+    let context = Arc::new(RequestContext::default());
+    let response = match &body {
+        ReceivedBody::Complete(bytes) => {
+            let request = Request::from_parts(parts, Body::from(bytes.clone()));
+            reqlog::scope(context.clone(), next.run(request)).await
         }
-        Err(_) => (StatusCode::PAYLOAD_TOO_LARGE.into_response(), Bytes::new()),
+        ReceivedBody::TooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+        ReceivedBody::Interrupted { .. } => StatusCode::BAD_REQUEST.into_response(),
     };
-    let member_id = res
-        .extensions()
-        .get::<RequestIdentity>()
-        .map(|i| i.member_id);
-    let status = res.status().as_u16() as i16;
-    let latency_ms = start.elapsed().as_millis().min(i32::MAX as u128) as i32;
-
-    let (res, error) = capture_error(res, status).await;
-
-    let detail = RequestDetail {
-        headers,
-        body: stored_body(&body),
-        body_bytes: body.len().min(i32::MAX as usize) as i32,
-    };
-    let _ = tx.try_send(LogEntry {
-        request_id: Uuid::new_v4(),
-        ts: Utc::now(),
-        ip,
-        member_id,
-        key_prefix,
-        key_kind,
-        method,
-        path,
-        query,
-        user_agent,
+    let latency_ms = started.elapsed().as_millis().min(i32::MAX as u128) as i32;
+    let status = response.status().as_u16();
+    let (mut response, error_body) = capture_error_body(response).await;
+    let exchange = Exchange {
+        facts,
+        body,
         status,
         latency_ms,
-        error,
-        detail,
-    });
-    res
+        error_body,
+        recorded: context.take(),
+    };
+    let entry = exchange.into_entry();
+    response.headers_mut().insert(
+        REQUEST_ID_HEADER,
+        HeaderValue::from_str(&entry.request_id.to_string())
+            .expect("a uuid is always a valid header value"),
+    );
+    log.submit(entry);
+    response
+}
+
+impl RequestFacts {
+    fn capture(request: &Request) -> Self {
+        let headers = request.headers();
+        let key = api_key(request);
+        Self {
+            method: request.method().as_str().to_owned(),
+            path: request.uri().path().to_owned(),
+            route: request
+                .extensions()
+                .get::<MatchedPath>()
+                .map(|matched| matched.as_str().to_owned()),
+            query: request.uri().query().map(str::to_owned),
+            client: Client {
+                ip: client_ip(headers),
+                country: header_text(headers, COUNTRY_HEADER),
+                user_agent: header_text(headers, USER_AGENT_HEADER),
+                key_prefix: key
+                    .as_deref()
+                    .map(|key| key.chars().take(KEY_PREFIX_CHARS).collect()),
+            },
+            credential_presented: key.is_some()
+                || headers.contains_key(SESSION_HEADER)
+                || headers.contains_key(AUTHORIZATION_HEADER),
+            headers: header_json(headers),
+        }
+    }
+}
+
+impl ReceivedBody {
+    async fn read(body: Body) -> Self {
+        let declared = body.size_hint().exact();
+        let mut stream = body.into_data_stream();
+        let mut buffer = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let Ok(chunk) = chunk else {
+                let size = buffer.len();
+                return Self::Interrupted {
+                    prefix: Bytes::from(buffer),
+                    size,
+                };
+            };
+            if buffer.len() + chunk.len() > MAX_REQUEST_BODY {
+                return Self::too_large(buffer, &chunk, declared);
+            }
+            buffer.extend_from_slice(&chunk);
+        }
+        Self::Complete(Bytes::from(buffer))
+    }
+
+    fn too_large(mut prefix: Vec<u8>, overflow: &[u8], declared: Option<u64>) -> Self {
+        let read = prefix.len() + overflow.len();
+        let size = declared.map_or(read, |declared| (declared as usize).max(read));
+        let room = STORED_BODY_BYTES.saturating_sub(prefix.len());
+        prefix.extend_from_slice(&overflow[..room.min(overflow.len())]);
+        Self::TooLarge {
+            prefix: Bytes::from(prefix),
+            size,
+        }
+    }
+
+    fn bytes(&self) -> &Bytes {
+        match self {
+            Self::Complete(bytes) => bytes,
+            Self::TooLarge { prefix, .. } | Self::Interrupted { prefix, .. } => prefix,
+        }
+    }
+
+    fn size(&self) -> usize {
+        match self {
+            Self::Complete(bytes) => bytes.len(),
+            Self::TooLarge { size, .. } | Self::Interrupted { size, .. } => *size,
+        }
+    }
+}
+
+impl Exchange {
+    fn into_entry(self) -> LogEntry {
+        let ts = reqlog::now();
+        let route_matched = self.facts.route.is_some();
+        let outcome = self.recorded.outcome;
+        let semantic_status = outcome.map_or(self.status, |outcome| outcome.status);
+        let cause = outcome
+            .map(|outcome| outcome.cause)
+            .or(self.recorded.cause)
+            .unwrap_or_else(|| Cause::from_status(semantic_status, route_matched));
+        let caller = self.recorded.caller.unwrap_or_else(|| {
+            Caller::anonymous(match self.facts.credential_presented {
+                true => KeyKind::Unverified,
+                false => KeyKind::None,
+            })
+        });
+        let error = match self.status {
+            FIRST_ERROR_STATUS.. => self.error_body,
+            _ => outcome.map(|outcome| outcome.reason.to_owned()),
+        };
+        let accepted = route_matched && semantic_status < FIRST_ERROR_STATUS;
+        LogEntry {
+            request_id: reqlog::request_id_for(ts),
+            ts,
+            method: self.facts.method,
+            path: self.facts.path,
+            route: self.facts.route,
+            query: self.facts.query,
+            client: self.facts.client,
+            caller,
+            status: self.status,
+            outcome_status: outcome
+                .map(|outcome| outcome.status)
+                .filter(|status| *status != self.status),
+            cause,
+            latency_ms: self.latency_ms,
+            error,
+            detail: Detail::capture(
+                self.facts.headers,
+                self.body.bytes(),
+                self.body.size(),
+                accepted,
+                self.recorded.server_error,
+            ),
+        }
+    }
+}
+
+async fn capture_error_body(response: Response) -> (Response, Option<String>) {
+    if response.status().as_u16() < FIRST_ERROR_STATUS {
+        return (response, None);
+    }
+    let (parts, body) = response.into_parts();
+    match axum::body::to_bytes(body, usize::MAX).await {
+        Ok(bytes) => {
+            let error = (!bytes.is_empty()).then(|| StoredText::decode(&bytes).text);
+            (Response::from_parts(parts, Body::from(bytes)), error)
+        }
+        Err(e) => {
+            tracing::warn!("error response body could not be read for the request log: {e}");
+            (Response::from_parts(parts, Body::empty()), None)
+        }
+    }
 }
 
 fn header_json(headers: &HeaderMap) -> Value {
@@ -129,149 +280,44 @@ fn header_json(headers: &HeaderMap) -> Value {
     Value::Object(out)
 }
 
-fn stored_body(body: &Bytes) -> Option<String> {
-    if body.is_empty() {
-        return None;
-    }
-    let end = body.len().min(STORED_BODY_BYTES);
-    Some(String::from_utf8_lossy(&body[..end]).into_owned())
-}
-
-async fn capture_error(res: Response, status: i16) -> (Response, Option<String>) {
-    if status < 400 {
-        return (res, None);
-    }
-    let (parts, body) = res.into_parts();
-    match axum::body::to_bytes(body, 1_048_576).await {
-        Ok(bytes) => {
-            let error = (!bytes.is_empty())
-                .then(|| String::from_utf8_lossy(&bytes).chars().take(2000).collect());
-            (
-                Response::from_parts(parts, axum::body::Body::from(bytes)),
-                error,
-            )
-        }
-        Err(_) => (Response::from_parts(parts, axum::body::Body::empty()), None),
-    }
-}
-
-fn client_ip(req: &Request) -> Option<String> {
-    let headers = req.headers();
+fn header_text(headers: &HeaderMap, name: &str) -> Option<String> {
     headers
-        .get("cf-connecting-ip")
-        .or_else(|| headers.get("x-forwarded-for"))
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.split(',').next().unwrap_or(v).trim().to_owned())
+        .get(name)
+        .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
 }
 
-fn extract_key(req: &Request) -> Option<String> {
-    if let Some(header) = req.headers().get("x-api-key").and_then(|v| v.to_str().ok()) {
+fn client_ip(headers: &HeaderMap) -> Option<IpAddr> {
+    headers
+        .get(CLIENT_IP_HEADER)
+        .or_else(|| headers.get(FORWARDED_FOR_HEADER))
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .and_then(|value| value.trim().parse().ok())
+}
+
+fn api_key(request: &Request) -> Option<String> {
+    if let Some(header) = request
+        .headers()
+        .get(API_KEY_HEADER)
+        .and_then(|value| value.to_str().ok())
+    {
         return Some(header.to_owned());
     }
-    req.uri()
+    request
+        .uri()
         .query()?
         .split('&')
-        .find_map(|pair| pair.strip_prefix("key=").map(str::to_owned))
+        .find_map(|pair| pair.strip_prefix(KEY_QUERY_PREFIX).map(str::to_owned))
 }
 
-pub fn spawn_writer(db: Arc<Database>, mut rx: mpsc::Receiver<LogEntry>) {
-    tokio::spawn(async move {
-        let mut buf = Vec::with_capacity(500);
-        while rx.recv_many(&mut buf, 500).await > 0 {
-            if let Err(e) = insert_batch(db.pool(), &buf).await {
-                tracing::warn!("api request-log insert failed: {e}");
-            }
-            buf.clear();
-        }
-    });
+fn subject_sources() -> Result<SubjectSources> {
+    let Ok(raw) = env::var(SUBJECT_SOURCES_ENV) else {
+        return Ok(SubjectSources::All);
+    };
+    raw.parse()
+        .map_err(anyhow::Error::msg)
+        .with_context(|| format!("invalid {SUBJECT_SOURCES_ENV}"))
 }
 
-async fn insert_batch(pool: &PgPool, entries: &[LogEntry]) -> Result<(), sqlx::Error> {
-    insert_log(pool, entries).await?;
-    insert_detail(pool, entries).await
-}
-
-async fn insert_log(pool: &PgPool, entries: &[LogEntry]) -> Result<(), sqlx::Error> {
-    let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
-        "INSERT INTO api_request_log (request_id, ts, ip, member_id, key_prefix, key_kind, method, path, query, user_agent, status, latency_ms, error) ",
-    );
-    qb.push_values(entries, |mut b, e| {
-        b.push_bind(e.request_id)
-            .push_bind(e.ts)
-            .push_bind(e.ip.clone())
-            .push_bind(e.member_id)
-            .push_bind(e.key_prefix.clone())
-            .push_bind(e.key_kind)
-            .push_bind(e.method.clone())
-            .push_bind(e.path.clone())
-            .push_bind(e.query.clone())
-            .push_bind(e.user_agent.clone())
-            .push_bind(e.status)
-            .push_bind(e.latency_ms)
-            .push_bind(e.error.clone());
-    });
-    qb.build().execute(pool).await?;
-    Ok(())
-}
-
-async fn insert_detail(pool: &PgPool, entries: &[LogEntry]) -> Result<(), sqlx::Error> {
-    let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
-        "INSERT INTO api_request_detail (request_id, ts, member_id, headers, body, body_bytes) ",
-    );
-    qb.push_values(entries, |mut b, e| {
-        b.push_bind(e.request_id)
-            .push_bind(e.ts)
-            .push_bind(e.member_id)
-            .push_bind(&e.detail.headers)
-            .push_bind(e.detail.body.clone())
-            .push_bind(e.detail.body_bytes);
-    });
-    qb.build().execute(pool).await?;
-    Ok(())
-}
-
-pub fn spawn_partition_maintenance(db: Arc<Database>) {
-    tokio::spawn(async move {
-        loop {
-            for (table, keep_days) in [
-                (LOG_TABLE, LOG_RETENTION_DAYS),
-                (DETAIL_TABLE, DETAIL_RETENTION_DAYS),
-            ] {
-                if let Err(e) = maintain_partitions(db.pool(), table, keep_days).await {
-                    tracing::warn!("{table} partition maintenance failed: {e}");
-                }
-            }
-            tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
-        }
-    });
-}
-
-async fn maintain_partitions(
-    pool: &PgPool,
-    table: &str,
-    keep_days: i32,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(&format!(
-        r#"DO $$
-        DECLARE d date := current_date; r record;
-        BEGIN
-          FOR i IN 0..2 LOOP
-            EXECUTE format(
-              'CREATE TABLE IF NOT EXISTS {table}_%s PARTITION OF {table} FOR VALUES FROM (%L) TO (%L)',
-              to_char(d + i, 'YYYYMMDD'), (d + i)::text, (d + i + 1)::text);
-          END LOOP;
-          FOR r IN
-            SELECT c.relname AS name FROM pg_inherits inh
-            JOIN pg_class c ON c.oid = inh.inhrelid
-            WHERE inh.inhparent = '{table}'::regclass
-              AND c.relname ~ '^{table}_[0-9]{{8}}$'
-              AND to_date(right(c.relname, 8), 'YYYYMMDD') < current_date - {keep_days}
-          LOOP
-            EXECUTE format('DROP TABLE IF EXISTS %I', r.name);
-          END LOOP;
-        END $$;"#
-    ))
-    .execute(pool)
-    .await?;
-    Ok(())
-}
+#[cfg(test)]
+mod tests;

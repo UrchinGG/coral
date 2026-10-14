@@ -9,6 +9,7 @@ use utoipa::ToSchema;
 use clients::{is_uuid, normalize_uuid};
 use coral_redis::RateLimitResult;
 use database::BlacklistRepository;
+use reqlog::MAX_BATCH_UUIDS;
 
 use crate::{
     auth::{
@@ -20,8 +21,6 @@ use crate::{
     responses::{TagResponse, tag_responses},
     state::AppState,
 };
-
-const MAX_BATCH_SIZE: usize = 100;
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct BatchRequest {
@@ -99,9 +98,9 @@ pub async fn batch_lookup(
     if req.uuids.is_empty() {
         return Err(ApiError::BadRequest("uuids array is empty".into()));
     }
-    if req.uuids.len() > MAX_BATCH_SIZE {
+    if req.uuids.len() > MAX_BATCH_UUIDS {
         return Err(ApiError::BadRequest(format!(
-            "batch size exceeds maximum of {MAX_BATCH_SIZE}"
+            "batch size exceeds maximum of {MAX_BATCH_UUIDS}"
         )));
     }
 

@@ -12,6 +12,7 @@ mod guild_cache;
 mod guild_config;
 mod guild_current;
 mod guild_subscriptions;
+mod history;
 mod members;
 mod periods;
 mod plugin_registry;

@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{FromRow, PgPool};
 
+use crate::history::History;
+
 #[derive(Debug, Clone, FromRow)]
 pub struct Member {
     pub id: i64,
@@ -31,6 +33,9 @@ pub(crate) const COLUMNS: &str = "id, discord_id, uuid, api_key, join_date, requ
     (SELECT COUNT(*) FROM member_strike s WHERE s.member_id = members.id \
         AND s.revoked_at IS NULL AND (s.expires_at IS NULL OR s.expires_at > NOW())) \
         AS active_strikes";
+
+const SET_UUID: &str = "UPDATE members SET uuid = $2 WHERE discord_id = $1 RETURNING id";
+const SET_API_KEY: &str = "UPDATE members SET api_key = $2 WHERE discord_id = $1 RETURNING id";
 
 /// Signed adjustments to a member's tag-review counters.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -98,29 +103,38 @@ impl<'a> MemberRepository<'a> {
     }
 
     pub async fn set_uuid(&self, discord_id: i64, uuid: &str) -> Result<bool, sqlx::Error> {
-        sqlx::query("UPDATE members SET uuid = $2 WHERE discord_id = $1")
-            .bind(discord_id)
-            .bind(uuid)
-            .execute(self.pool)
+        self.update_with_history(SET_UUID, discord_id, Some(uuid), History::Links)
             .await
-            .map(|r| r.rows_affected() > 0)
     }
 
     pub async fn clear_uuid(&self, discord_id: i64) -> Result<bool, sqlx::Error> {
-        sqlx::query("UPDATE members SET uuid = NULL WHERE discord_id = $1")
-            .bind(discord_id)
-            .execute(self.pool)
+        self.update_with_history(SET_UUID, discord_id, None, History::Links)
             .await
-            .map(|r| r.rows_affected() > 0)
     }
 
     pub async fn set_api_key(&self, discord_id: i64, api_key: &str) -> Result<bool, sqlx::Error> {
-        sqlx::query("UPDATE members SET api_key = $2 WHERE discord_id = $1")
-            .bind(discord_id)
-            .bind(api_key)
-            .execute(self.pool)
+        self.update_with_history(SET_API_KEY, discord_id, Some(api_key), History::Keys)
             .await
-            .map(|r| r.rows_affected() > 0)
+    }
+
+    async fn update_with_history(
+        &self,
+        statement: &str,
+        discord_id: i64,
+        value: Option<&str>,
+        history: History,
+    ) -> Result<bool, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        let member_id: Option<i64> = sqlx::query_scalar(statement)
+            .bind(discord_id)
+            .bind(value)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if let Some(member_id) = member_id {
+            history.sync(&mut tx, member_id).await?;
+        }
+        tx.commit().await?;
+        Ok(member_id.is_some())
     }
 
     pub async fn lock_key(&self, discord_id: i64) -> Result<bool, sqlx::Error> {
