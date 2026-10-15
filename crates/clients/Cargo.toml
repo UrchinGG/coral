@@ -8,9 +8,11 @@ license.workspace = true
 [dependencies]
 hypixel = { path = "../hypixel" }
 render = { path = "../render" }
+coral-redis = { path = "../coral-redis" }
 
 serde.workspace = true
 serde_json.workspace = true
+chrono.workspace = true
 reqwest.workspace = true
 tokio.workspace = true
 thiserror.workspace = true

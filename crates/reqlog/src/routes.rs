@@ -93,6 +93,10 @@ const PLAYER_PARAM: &[SubjectSource] = &[SubjectSource::Query("player")];
 pub const MAX_BATCH_UUIDS: usize = 100;
 const GET: &str = "GET";
 const HEAD: &str = "HEAD";
+const PARAM_OPEN: char = '{';
+const PARAM_CLOSE: char = '}';
+const PARAM_PATTERN: &str = "[^/]+";
+const REGEX_METACHARACTERS: &str = r".^$*+?()[]{}|\";
 
 pub const ROUTE_SUBJECTS: &[RouteSubjects] = &[
     RouteSubjects {
@@ -202,9 +206,125 @@ pub fn is_mapped_route(route: &str) -> bool {
         .any(|entry| entry.templates.contains(&route))
 }
 
+pub fn is_static_template(template: &str) -> bool {
+    !template.contains(PARAM_OPEN)
+}
+
+pub fn static_templates() -> impl Iterator<Item = &'static str> {
+    ROUTE_TEMPLATES
+        .iter()
+        .copied()
+        .filter(|template| is_static_template(template))
+}
+
+pub fn template_for_path(path: &str) -> Option<&'static str> {
+    static_templates()
+        .find(|template| *template == path)
+        .or_else(|| {
+            ROUTE_TEMPLATES
+                .iter()
+                .copied()
+                .filter(|template| !is_static_template(template))
+                .find(|template| path_fits_template(path, template))
+        })
+}
+
+pub fn template_head(template: &str) -> &str {
+    template
+        .split_once(PARAM_OPEN)
+        .map_or(template, |(head, _)| head)
+}
+
+pub fn template_path_pattern(template: &str) -> String {
+    let segments: Vec<String> = template.split('/').map(segment_pattern).collect();
+    format!("^{}$", segments.join("/"))
+}
+
+fn path_fits_template(path: &str, template: &str) -> bool {
+    let mut path_segments = path.split('/');
+    let mut template_segments = template.split('/');
+    loop {
+        match (path_segments.next(), template_segments.next()) {
+            (None, None) => return true,
+            (Some(segment), Some(pattern)) if is_param(pattern) && !segment.is_empty() => {}
+            (Some(segment), Some(pattern)) if segment == pattern => {}
+            _ => return false,
+        }
+    }
+}
+
+fn is_param(segment: &str) -> bool {
+    segment.starts_with(PARAM_OPEN) && segment.ends_with(PARAM_CLOSE)
+}
+
+fn segment_pattern(segment: &str) -> String {
+    if is_param(segment) {
+        return PARAM_PATTERN.to_string();
+    }
+    let mut escaped = String::with_capacity(segment.len());
+    for c in segment.chars() {
+        if REGEX_METACHARACTERS.contains(c) {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    escaped
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dynamic_templates_become_anchored_segment_patterns() {
+        assert_eq!(
+            template_path_pattern("/v3/resolve/{identifier}"),
+            "^/v3/resolve/[^/]+$"
+        );
+        assert_eq!(
+            template_path_pattern("/api/v1/starfish/plugins/{slug}/releases/{version}"),
+            "^/api/v1/starfish/plugins/[^/]+/releases/[^/]+$"
+        );
+        assert_eq!(template_path_pattern("/openapi.json"), r"^/openapi\.json$");
+    }
+
+    #[test]
+    fn a_template_head_is_the_literal_text_before_its_first_parameter() {
+        assert_eq!(template_head("/v3/resolve/{identifier}"), "/v3/resolve/");
+        assert_eq!(
+            template_head("/api/v1/starfish/plugins/{slug}/releases/{version}"),
+            "/api/v1/starfish/plugins/"
+        );
+        assert_eq!(template_head("/v3/players"), "/v3/players");
+    }
+
+    #[test]
+    fn legacy_paths_map_to_their_templates_statics_first() {
+        assert_eq!(template_for_path("/v3/players"), Some("/v3/players"));
+        assert_eq!(
+            template_for_path("/v3/resolve/oJugg"),
+            Some("/v3/resolve/{identifier}")
+        );
+        assert_eq!(
+            template_for_path("/api/v1/starfish/plugins/disabled"),
+            Some("/api/v1/starfish/plugins/disabled")
+        );
+        assert_eq!(
+            template_for_path("/api/v1/starfish/plugins/bedwars/releases/1.2.0/yank"),
+            Some("/api/v1/starfish/plugins/{slug}/releases/{version}/yank")
+        );
+        assert_eq!(template_for_path("/v3/resolve/"), None);
+        assert_eq!(template_for_path("/v3/resolve/a/b"), None);
+        assert_eq!(template_for_path("/wp-login.php"), None);
+    }
+
+    #[test]
+    fn static_templates_exclude_parameterised_routes() {
+        let statics: Vec<&str> = static_templates().collect();
+        assert!(statics.contains(&"/v3/players"));
+        assert!(statics.contains(&"/api/v1/starfish/plugins/disabled"));
+        assert!(!statics.contains(&"/v3/resolve/{identifier}"));
+    }
 
     #[test]
     fn every_subject_template_is_a_known_route() {

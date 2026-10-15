@@ -53,7 +53,7 @@ pub use plugin_registry::{
     PluginInstall, PluginRating, PluginRegistryRepository, PluginRelease, PluginSortConfig,
     PluginSortMode, PluginSummary, ReleaseBody,
 };
-pub use pool::Database;
+pub use pool::{Database, PoolSettings};
 pub use review_guide::{ReviewGuideConfig, ReviewGuideRepository};
 pub use review_rules::{ReviewRules, ReviewRulesRepository};
 pub use reviews::{

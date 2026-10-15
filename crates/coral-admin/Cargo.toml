@@ -13,12 +13,13 @@ path = "src/main.rs"
 database = { path = "../database" }
 coral-redis = { path = "../coral-redis" }
 blacklist = { path = "../blacklist" }
+reqlog.workspace = true
 expr.workspace = true
 clients.workspace = true
 hypixel.workspace = true
 
 axum.workspace = true
-tower-http.workspace = true
+tower-http = { workspace = true, features = ["compression-br", "compression-gzip"] }
 tokio.workspace = true
 tokio-stream = "0.1"
 futures-util = "0.3"
@@ -49,7 +50,9 @@ uuid.workspace = true
 urlencoding = "2"
 url = "2"
 rust-embed = { version = "8", features = ["mime-guess"] }
+moka = { version = "0.12", features = ["future"] }
 
 [dev-dependencies]
+brotli-decompressor = "6"
 tower = { workspace = true, features = ["util"] }
 tokio = { workspace = true, features = ["test-util"] }

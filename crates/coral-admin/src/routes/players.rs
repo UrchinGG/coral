@@ -1,213 +1,147 @@
-use std::collections::HashMap;
+use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::{Path, Query, State};
+use axum::routing::{delete, get, post};
+use axum::{Extension, Json, Router};
+use serde::Serialize;
 
-use axum::{Json, Router, extract::*, routing::get};
-use chrono::{DateTime, Utc};
-use database::CacheRepository;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use sqlx::PgPool;
-
+use crate::auth::AdminActor;
+use crate::error::AdminError;
+use crate::players::{
+    self, NewLock, NewTag, PlayerCore, PlayerRequestRow, PlayerTags, RecentlyTagged, Requesters,
+    RequestersParams, SnapshotAt, SnapshotAtQuery, SnapshotPage, SnapshotQuery, StreamParams,
+};
+use crate::refs::Page;
 use crate::state::AppState;
 
-const RECENT_WINDOW: i64 = 200_000;
+#[derive(Serialize)]
+pub struct Done {
+    ok: bool,
+}
+
+const DONE: Done = Done { ok: true };
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/", get(list))
-        .route("/{uuid}", get(detail))
-        .route("/{uuid}/at", get(at))
+        .route("/recently-tagged", get(recently_tagged))
+        .route("/{uuid}", get(core))
+        .route("/{uuid}/requests", get(requests))
+        .route("/{uuid}/requesters", get(requesters))
+        .route("/{uuid}/tags", get(tags).post(add_tag))
+        .route("/{uuid}/tags/{tag_type}", delete(remove_tag))
+        .route("/{uuid}/lock", post(lock))
+        .route("/{uuid}/unlock", post(unlock))
+        .route("/{uuid}/snapshots", get(snapshots))
+        .route("/{uuid}/snapshots/at", get(snapshot_at))
 }
 
-#[derive(Deserialize)]
-struct ListParams {
-    search: Option<String>,
-    limit: Option<i64>,
-    offset: Option<i64>,
-}
-
-#[derive(Serialize)]
-struct PlayerRow {
-    uuid: String,
-    username: Option<String>,
-    last_snapshot_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Serialize)]
-struct ListResponse {
-    players: Vec<PlayerRow>,
-}
-
-async fn list(
+async fn recently_tagged(
     State(state): State<AppState>,
-    Query(params): Query<ListParams>,
-) -> Json<ListResponse> {
-    let pool = state.db.pool();
-
-    if let Some(q) = params
-        .search
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-    {
-        return Json(ListResponse {
-            players: search(pool, &q).await,
-        });
-    }
-
-    let limit = params.limit.unwrap_or(50).clamp(1, 200);
-    let offset = params.offset.unwrap_or(0).max(0);
-
-    let rows: Vec<(String, Option<String>, DateTime<Utc>)> = sqlx::query_as(
-        "SELECT uuid, username, timestamp FROM (
-            SELECT DISTINCT ON (uuid) uuid, username, timestamp FROM (
-                SELECT uuid, username, timestamp FROM player_snapshots ORDER BY timestamp DESC LIMIT $1
-            ) recent ORDER BY uuid, timestamp DESC
-         ) latest ORDER BY timestamp DESC LIMIT $2 OFFSET $3",
-    )
-    .bind(RECENT_WINDOW)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-
-    let players = rows
-        .into_iter()
-        .map(|(uuid, username, ts)| PlayerRow {
-            uuid,
-            username,
-            last_snapshot_at: Some(ts),
-        })
-        .collect();
-
-    Json(ListResponse { players })
+) -> Result<Json<RecentlyTagged>, AdminError> {
+    Ok(Json(players::read_recently_tagged(&state).await?))
 }
 
-fn prefix_upper(prefix: &str) -> Option<String> {
-    let mut chars: Vec<char> = prefix.chars().collect();
-    while let Some(last) = chars.pop() {
-        if let Some(next) = char::from_u32(last as u32 + 1) {
-            chars.push(next);
-            return Some(chars.into_iter().collect());
-        }
-    }
-    None
-}
-
-async fn search(pool: &PgPool, q: &str) -> Vec<PlayerRow> {
-    let cache = CacheRepository::new(pool);
-    let normalized = q.replace('-', "").to_lowercase();
-
-    let found: Vec<(String, Option<String>)> =
-        if normalized.len() == 32 && normalized.chars().all(|c| c.is_ascii_hexdigit()) {
-            vec![(
-                normalized.clone(),
-                cache.get_username(&normalized).await.ok().flatten(),
-            )]
-        } else {
-            let lower = q.to_lowercase();
-            let mut rows: Vec<(String, Option<String>)> = match prefix_upper(&lower) {
-                Some(upper) => sqlx::query_as(
-                    "SELECT DISTINCT ON (lower(username)) uuid, username FROM player_snapshots
-                     WHERE lower(username) >= $1 AND lower(username) < $2
-                     ORDER BY lower(username), timestamp DESC LIMIT 25",
-                )
-                .bind(&lower)
-                .bind(upper),
-                None => sqlx::query_as(
-                    "SELECT DISTINCT ON (lower(username)) uuid, username FROM player_snapshots
-                     WHERE lower(username) >= $1
-                     ORDER BY lower(username), timestamp DESC LIMIT 25",
-                )
-                .bind(&lower),
-            }
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
-
-            if let Ok(discord) = cache.find_by_discord_username(q).await {
-                for (uuid, username) in discord {
-                    if !rows.iter().any(|(u, _)| *u == uuid) {
-                        rows.push((uuid, Some(username)));
-                    }
-                }
-            }
-            rows
-        };
-
-    let uuids: Vec<String> = found.iter().map(|(u, _)| u.clone()).collect();
-    let stamps: HashMap<String, DateTime<Utc>> = sqlx::query_as::<_, (String, DateTime<Utc>)>(
-        "SELECT uuid, MAX(timestamp) FROM player_snapshots WHERE uuid = ANY($1) GROUP BY uuid",
-    )
-    .bind(&uuids)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .collect();
-
-    found
-        .into_iter()
-        .map(|(uuid, username)| PlayerRow {
-            last_snapshot_at: stamps.get(&uuid).cloned(),
-            username,
-            uuid,
-        })
-        .collect()
-}
-
-#[derive(Serialize)]
-struct PlayerView {
-    uuid: String,
-    username: Option<String>,
-    latest: Option<Value>,
-    timestamps: Vec<DateTime<Utc>>,
-}
-
-async fn detail(State(state): State<AppState>, Path(uuid): Path<String>) -> Json<PlayerView> {
-    let cache = CacheRepository::new(state.db.pool());
-    let uuid = uuid.to_lowercase();
-    let mut timestamps = cache
-        .list_snapshot_timestamps(&uuid, None, None)
-        .await
-        .unwrap_or_default();
-    timestamps.reverse();
-
-    Json(PlayerView {
-        username: cache.get_username(&uuid).await.ok().flatten(),
-        latest: cache.get_latest_snapshot(&uuid).await.ok().flatten(),
-        timestamps,
-        uuid,
-    })
-}
-
-#[derive(Deserialize)]
-struct AtParams {
-    ts: String,
-}
-
-async fn at(
+async fn core(
     State(state): State<AppState>,
     Path(uuid): Path<String>,
-    Query(params): Query<AtParams>,
-) -> Json<Option<Value>> {
-    let Some(ts) = parse_ts(&params.ts) else {
-        return Json(None);
-    };
-    let cache = CacheRepository::new(state.db.pool());
-    Json(
-        cache
-            .get_snapshot_at(&uuid.to_lowercase(), ts)
-            .await
-            .ok()
-            .flatten(),
-    )
+) -> Result<Json<PlayerCore>, AdminError> {
+    let player = players::parse_player(&uuid)?;
+    Ok(Json(players::read_core(&state, player).await?))
 }
 
-fn parse_ts(s: &str) -> Option<DateTime<Utc>> {
-    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-        return Some(dt.with_timezone(&Utc));
-    }
-    s.parse::<i64>()
-        .ok()
-        .and_then(DateTime::from_timestamp_millis)
+async fn requests(
+    State(state): State<AppState>,
+    Path(uuid): Path<String>,
+    params: Result<Query<StreamParams>, QueryRejection>,
+) -> Result<Json<Page<PlayerRequestRow>>, AdminError> {
+    let player = players::parse_player(&uuid)?;
+    let Query(params) = params?;
+    Ok(Json(players::read_stream(&state, player, params).await?))
+}
+
+async fn requesters(
+    State(state): State<AppState>,
+    Path(uuid): Path<String>,
+    params: Result<Query<RequestersParams>, QueryRejection>,
+) -> Result<Json<Requesters>, AdminError> {
+    let player = players::parse_player(&uuid)?;
+    let Query(params) = params?;
+    Ok(Json(
+        players::read_requesters(&state, player, params).await?,
+    ))
+}
+
+async fn tags(
+    State(state): State<AppState>,
+    Path(uuid): Path<String>,
+) -> Result<Json<PlayerTags>, AdminError> {
+    let player = players::parse_player(&uuid)?;
+    Ok(Json(players::read_tags(&state, player).await?))
+}
+
+async fn snapshots(
+    State(state): State<AppState>,
+    Path(uuid): Path<String>,
+    query: Result<Query<SnapshotQuery>, QueryRejection>,
+) -> Result<Json<SnapshotPage>, AdminError> {
+    let player = players::parse_player(&uuid)?;
+    let Query(query) = query?;
+    Ok(Json(
+        players::read_snapshots(&state.db, player, query).await?,
+    ))
+}
+
+async fn snapshot_at(
+    State(state): State<AppState>,
+    Path(uuid): Path<String>,
+    query: Result<Query<SnapshotAtQuery>, QueryRejection>,
+) -> Result<Json<SnapshotAt>, AdminError> {
+    let player = players::parse_player(&uuid)?;
+    let Query(query) = query?;
+    Ok(Json(
+        players::read_snapshot_at(&state.db, player, query).await?,
+    ))
+}
+
+async fn add_tag(
+    State(state): State<AppState>,
+    Extension(actor): Extension<AdminActor>,
+    Path(uuid): Path<String>,
+    tag: Result<Json<NewTag>, JsonRejection>,
+) -> Result<Json<Done>, AdminError> {
+    let player = players::parse_player(&uuid)?;
+    let Json(tag) = tag?;
+    players::add_tag(&state.db, actor.discord_id, player, tag).await?;
+    Ok(Json(DONE))
+}
+
+async fn remove_tag(
+    State(state): State<AppState>,
+    Extension(actor): Extension<AdminActor>,
+    Path((uuid, tag_type)): Path<(String, String)>,
+) -> Result<Json<Done>, AdminError> {
+    let player = players::parse_player(&uuid)?;
+    players::remove_tag(&state.db, actor.discord_id, player, &tag_type).await?;
+    Ok(Json(DONE))
+}
+
+async fn lock(
+    State(state): State<AppState>,
+    Extension(actor): Extension<AdminActor>,
+    Path(uuid): Path<String>,
+    lock: Result<Json<NewLock>, JsonRejection>,
+) -> Result<Json<Done>, AdminError> {
+    let player = players::parse_player(&uuid)?;
+    let Json(lock) = lock?;
+    players::lock(&state.db, actor.discord_id, player, lock).await?;
+    Ok(Json(DONE))
+}
+
+async fn unlock(
+    State(state): State<AppState>,
+    Extension(actor): Extension<AdminActor>,
+    Path(uuid): Path<String>,
+) -> Result<Json<Done>, AdminError> {
+    let player = players::parse_player(&uuid)?;
+    players::unlock(&state.db, actor.discord_id, player).await?;
+    Ok(Json(DONE))
 }

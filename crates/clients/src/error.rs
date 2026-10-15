@@ -25,4 +25,7 @@ pub enum ClientError {
 
     #[error("No API keys configured")]
     NoApiKeys,
+
+    #[error("No API key configured")]
+    MissingApiKey,
 }

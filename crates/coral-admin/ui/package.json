@@ -7,11 +7,13 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "test": "vitest run",
     "preview": "vite preview"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.2",
     "@tanstack/react-table": "^8.21.3",
+    "@tanstack/react-virtual": "^3.14.19",
     "lucide-react": "^1.25.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
@@ -26,6 +28,7 @@
     "oxlint": "^1.71.0",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
-    "vite": "^8.1.1"
+    "vite": "^8.1.1",
+    "vitest": "^5.0.4"
   }
 }

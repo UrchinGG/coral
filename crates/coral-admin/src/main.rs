@@ -11,21 +11,39 @@ use tracing_subscriber::EnvFilter;
 use url::Url;
 
 use crate::auth::{AuthConfig, DiscordOAuth};
+use crate::discord::DiscordContext;
 use crate::epoch::SessionEpoch;
 use crate::session::AuthKeys;
-use crate::state::AppState;
+use crate::state::{AppState, Connections};
 
 mod audit;
 mod auth;
+mod boot;
+mod coverage;
 mod discord;
 mod epoch;
-mod identity;
+mod error;
+mod extensions;
+mod flags;
+mod jobs;
+mod layers;
+mod maintenance;
+mod names;
 mod perimeter;
+mod players;
+mod query;
+mod refs;
+mod requests;
+mod rollups;
 mod routes;
+mod search;
 mod security;
 mod serde_id;
+mod serde_ts;
 mod session;
 mod state;
+mod traffic;
+mod views;
 
 const SESSION_SECRET_LEN: usize = 32;
 const REDIS_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -38,9 +56,7 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    let db = database::Database::connect(&required_env("DATABASE_URL")?).await?;
-    db.migrate_tolerating_newer_schema().await?;
-
+    let database_url = required_env("DATABASE_URL")?;
     let redis_url = required_env("REDIS_URL")?;
     let redis = time::timeout(REDIS_CONNECT_TIMEOUT, RedisPool::connect(&redis_url))
         .await
@@ -48,11 +64,20 @@ async fn main() -> Result<()> {
             format!("Redis did not accept a connection within {REDIS_CONNECT_TIMEOUT:?}")
         })?
         .context("connect to Redis, which holds the admin session epoch")?;
+    let connections = Connections::open(&database_url, redis.clone()).await?;
+    connections
+        .jobs_db
+        .migrate_tolerating_newer_schema()
+        .await?;
     let auth = Arc::new(auth_config(&redis).await?);
     auth.epoch.clone().keep_fresh();
 
-    let state = AppState::new(db, redis, redis_url, auth.clone());
-    let app = perimeter::router(auth, routes::api_router()).with_state(state);
+    let discord = DiscordContext::from_env()?;
+    let (state, name_workers) = AppState::start(connections, auth.clone(), discord).await?;
+    name_workers.spawn();
+    state.rollups.clone().supervise(state.jobs.clone());
+    let api = routes::api_router(state.clone());
+    let app = perimeter::router(auth, state.boot.clone(), api);
 
     let port: u16 = env::var("ADMIN_PORT")
         .unwrap_or_else(|_| "8080".into())

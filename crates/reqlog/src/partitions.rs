@@ -1,5 +1,5 @@
 use chrono::{Days, NaiveDate, Utc};
-use sqlx::{Executor, FromRow, PgPool, raw_sql};
+use sqlx::{Connection, Executor, FromRow, PgConnection, PgPool, raw_sql};
 use tokio::sync::watch;
 
 use crate::{
@@ -13,12 +13,18 @@ pub const PARTITIONED_TABLES: [(&str, u64); 3] = [
     ("api_request_subject", SUBJECT_RETENTION_DAYS),
 ];
 
-#[derive(Debug, FromRow)]
-struct MissingIndex {
-    parent_index: String,
-    partition: String,
+#[derive(Debug, Clone, FromRow)]
+pub struct MissingIndex {
+    pub parent_index: String,
+    pub partition: String,
     access_method: String,
     is_unique: bool,
+}
+
+impl MissingIndex {
+    pub fn child_name(&self) -> String {
+        format!("{}_{}", self.partition, self.parent_index)
+    }
 }
 
 pub fn spawn_maintenance(pool: PgPool) -> watch::Receiver<bool> {
@@ -68,11 +74,53 @@ pub async fn drop_expired(pool: &PgPool) {
 }
 
 pub async fn ensure_partition_indexes(pool: &PgPool, since: NaiveDate) -> Result<(), sqlx::Error> {
-    for (table, _) in PARTITIONED_TABLES {
-        for missing in missing_indexes(pool, table, since).await? {
-            build_child_index(pool, &missing).await?;
-        }
+    let mut conn = pool.acquire().await?;
+    for missing in missing_partition_indexes(&mut conn, since).await? {
+        build_partition_index(&mut conn, &missing).await?;
     }
+    Ok(())
+}
+
+pub async fn missing_partition_indexes(
+    conn: &mut PgConnection,
+    since: NaiveDate,
+) -> Result<Vec<MissingIndex>, sqlx::Error> {
+    let mut missing = Vec::new();
+    for (table, _) in PARTITIONED_TABLES {
+        missing.extend(missing_indexes(conn, table, since).await?);
+    }
+    Ok(missing)
+}
+
+pub async fn build_partition_index(
+    conn: &mut PgConnection,
+    missing: &MissingIndex,
+) -> Result<(), sqlx::Error> {
+    let child = missing.child_name();
+    let valid: Option<bool> =
+        sqlx::query_scalar("SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass($1)")
+            .bind(&child)
+            .fetch_optional(&mut *conn)
+            .await?;
+    if valid == Some(false) {
+        let discard = format!("DROP INDEX CONCURRENTLY IF EXISTS {child}");
+        conn.execute(raw_sql(&discard)).await?;
+    }
+    let unique = if missing.is_unique { "UNIQUE " } else { "" };
+    let build = format!(
+        "CREATE {unique}INDEX CONCURRENTLY IF NOT EXISTS {child} ON {}{}",
+        missing.partition, missing.access_method
+    );
+    conn.execute(raw_sql(&build)).await?;
+    let mut tx = conn.begin().await?;
+    let attach = format!(
+        "SET LOCAL lock_timeout = '{DDL_LOCK_TIMEOUT}';
+         ALTER INDEX {} ATTACH PARTITION {child};",
+        missing.parent_index
+    );
+    tx.execute(raw_sql(&attach)).await?;
+    tx.commit().await?;
+    tracing::info!(index = child, "partition index attached");
     Ok(())
 }
 
@@ -91,7 +139,11 @@ fn spawn_index_catch_up(pool: PgPool) {
     });
 }
 
-async fn create_partition(pool: &PgPool, table: &str, day: NaiveDate) -> Result<(), sqlx::Error> {
+pub(crate) async fn create_partition(
+    pool: &PgPool,
+    table: &str,
+    day: NaiveDate,
+) -> Result<(), sqlx::Error> {
     let partition = partition_name(table, day);
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
@@ -160,7 +212,7 @@ async fn drop_partition(pool: &PgPool, partition: &str) -> Result<(), sqlx::Erro
 }
 
 async fn missing_indexes(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     table: &str,
     since: NaiveDate,
 ) -> Result<Vec<MissingIndex>, sqlx::Error> {
@@ -184,37 +236,8 @@ async fn missing_indexes(
     .bind(table)
     .bind(partition_pattern(table))
     .bind(since)
-    .fetch_all(pool)
+    .fetch_all(conn)
     .await
-}
-
-async fn build_child_index(pool: &PgPool, missing: &MissingIndex) -> Result<(), sqlx::Error> {
-    let child = format!("{}_{}", missing.partition, missing.parent_index);
-    let valid: Option<bool> =
-        sqlx::query_scalar("SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass($1)")
-            .bind(&child)
-            .fetch_optional(pool)
-            .await?;
-    if valid == Some(false) {
-        let discard = format!("DROP INDEX CONCURRENTLY IF EXISTS {child}");
-        pool.execute(raw_sql(&discard)).await?;
-    }
-    let unique = if missing.is_unique { "UNIQUE " } else { "" };
-    let build = format!(
-        "CREATE {unique}INDEX CONCURRENTLY IF NOT EXISTS {child} ON {}{}",
-        missing.partition, missing.access_method
-    );
-    pool.execute(raw_sql(&build)).await?;
-    let mut tx = pool.begin().await?;
-    let attach = format!(
-        "SET LOCAL lock_timeout = '{DDL_LOCK_TIMEOUT}';
-         ALTER INDEX {} ATTACH PARTITION {child};",
-        missing.parent_index
-    );
-    tx.execute(raw_sql(&attach)).await?;
-    tx.commit().await?;
-    tracing::info!(index = child, "partition index attached");
-    Ok(())
 }
 
 fn partition_name(table: &str, day: NaiveDate) -> String {
@@ -274,14 +297,8 @@ mod tests {
         create_upcoming(&pool).await.unwrap();
         let today = Utc::now().date_naive();
         ensure_partition_indexes(&pool, today).await.unwrap();
-        for (table, _) in PARTITIONED_TABLES {
-            assert!(
-                missing_indexes(&pool, table, today)
-                    .await
-                    .unwrap()
-                    .is_empty(),
-                "{table}"
-            );
-        }
+        let mut conn = pool.acquire().await.unwrap();
+        let missing = missing_partition_indexes(&mut conn, today).await.unwrap();
+        assert!(missing.is_empty(), "{missing:?}");
     }
 }

@@ -68,7 +68,7 @@ pub fn safe_next(raw: &str, base: &Url) -> String {
     same_origin_target(raw, base).unwrap_or_else(|| ROOT_PATH.to_string())
 }
 
-pub fn json_error(status: StatusCode, code: &'static str, message: &'static str) -> Response {
+pub fn json_error(status: StatusCode, code: &'static str, message: &str) -> Response {
     let body = json!({ "error": { "code": code, "message": message } });
     (status, Json(body)).into_response()
 }

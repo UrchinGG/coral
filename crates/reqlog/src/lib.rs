@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+pub mod backfill;
 mod context;
 mod entry;
 pub mod partitions;
@@ -7,6 +8,8 @@ pub mod rollup;
 mod routes;
 mod status;
 mod subjects;
+#[cfg(test)]
+mod test_support;
 mod text;
 mod writer;
 
@@ -19,8 +22,11 @@ pub use entry::{
 };
 pub use routes::{
     MAX_BATCH_UUIDS, Methods, ROUTE_SUBJECTS, ROUTE_TEMPLATES, RouteSubjects, SubjectSource,
+    is_static_template, static_templates, template_for_path, template_path_pattern,
 };
-pub use subjects::{Extraction, Form, RequestParts, Subject, SubjectSources, extract};
+pub use subjects::{
+    Extraction, Form, RequestParts, Subject, SubjectSources, extract, is_player_name, parse_uuid,
+};
 pub use text::StoredText;
 pub use writer::{LogReceiver, RequestLog, WriterConfig, channel, spawn_writer};
 
@@ -40,6 +46,7 @@ pub const SHUTDOWN_DRAIN: Duration = Duration::from_secs(8);
 pub const MAX_REQUEST_BODY: usize = 2 * 1024 * 1024;
 pub const STORED_BODY_BYTES: usize = 64 * 1024;
 pub const KEY_PREFIX_CHARS: usize = 8;
+pub const TIME_ORDERED_VERSION: usize = 7;
 pub const LOG_RETENTION_DAYS: u64 = 14;
 pub const DETAIL_RETENTION_DAYS: u64 = 14;
 pub const SUBJECT_RETENTION_DAYS: u64 = 14;
@@ -52,4 +59,5 @@ pub const CREATION_RETRY: Duration = Duration::from_secs(5);
 pub const DROPPED_COUNTER_KEY: &str = "reqlog:dropped";
 pub const UNMAPPED_COUNTER_KEY: &str = "reqlog:unmapped";
 pub const COUNTER_TTL_SECS: i64 = 15 * 86_400;
+pub const COUNTER_DAY_FORMAT: &str = "%Y%m%d";
 pub const SUBJECT_SOURCES_ENV: &str = "REQLOG_SUBJECT_SOURCES";

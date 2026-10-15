@@ -1,20 +1,51 @@
+use std::sync::Arc;
+
 use anyhow::{Context as _, Result, anyhow};
 use serenity::all::*;
 
-use crate::state::AppState;
+const BOT_TOKEN_ENV: &str = "DISCORD_TOKEN";
+const SYNC_TOKEN_ENV: &str = "CORAL_SYNC_DISCORD_TOKEN";
+const HOME_GUILD_ENV: &str = "HOME_GUILD_ID";
+const REVIEW_FORUM_ENV: &str = "REVIEW_FORUM_ID";
+const BOT_MISSING: &str = "DISCORD_TOKEN not configured";
+const SYNC_MISSING: &str = "CORAL_SYNC_DISCORD_TOKEN / DISCORD_TOKEN not configured";
 
-pub fn sync_http(state: &AppState) -> Result<Http> {
-    build_http(
-        state.sync_discord_token.as_deref(),
-        "CORAL_SYNC_DISCORD_TOKEN / DISCORD_TOKEN not configured",
-    )
+#[derive(Clone)]
+pub struct DiscordContext {
+    bot: Option<Arc<Http>>,
+    sync: Option<Arc<Http>>,
+    pub home_guild_id: Option<i64>,
+    pub review_forum_id: Option<i64>,
 }
 
-pub fn bot_http(state: &AppState) -> Result<Http> {
-    build_http(
-        state.discord_token.as_deref(),
-        "DISCORD_TOKEN not configured",
-    )
+impl DiscordContext {
+    pub fn from_env() -> Result<Self> {
+        let bot_token = env_non_empty(BOT_TOKEN_ENV);
+        let sync_token = env_non_empty(SYNC_TOKEN_ENV);
+        let bot = bot_token.as_deref().map(build_http).transpose()?;
+        let sync = match sync_token {
+            Some(token) if Some(&token) != bot_token.as_ref() => Some(build_http(&token)?),
+            _ => bot.clone(),
+        };
+        Ok(Self {
+            bot,
+            sync,
+            home_guild_id: env_id(HOME_GUILD_ENV),
+            review_forum_id: env_id(REVIEW_FORUM_ENV),
+        })
+    }
+
+    pub fn bot(&self) -> Result<&Http> {
+        self.bot.as_deref().ok_or_else(|| anyhow!(BOT_MISSING))
+    }
+
+    pub fn sync(&self) -> Result<&Http> {
+        self.sync.as_deref().ok_or_else(|| anyhow!(SYNC_MISSING))
+    }
+
+    pub fn shared_bot(&self) -> Option<Arc<Http>> {
+        self.bot.clone()
+    }
 }
 
 pub async fn guild_roles(http: &Http, guild_id: GuildId) -> Result<Vec<Role>> {
@@ -53,10 +84,15 @@ pub fn separator() -> CreateContainerComponent<'static> {
     CreateContainerComponent::Separator(CreateSeparator::new(true))
 }
 
-fn build_http(token: Option<&str>, missing: &str) -> Result<Http> {
-    let token: Token = token
-        .ok_or_else(|| anyhow!("{missing}"))?
-        .parse()
-        .context("invalid Discord bot token")?;
-    Ok(Http::new(token))
+fn build_http(token: &str) -> Result<Arc<Http>> {
+    let token: Token = token.parse().context("invalid Discord bot token")?;
+    Ok(Arc::new(Http::new(token)))
+}
+
+fn env_non_empty(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|v| !v.is_empty())
+}
+
+fn env_id(name: &str) -> Option<i64> {
+    std::env::var(name).ok().and_then(|v| v.trim().parse().ok())
 }

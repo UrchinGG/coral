@@ -6,11 +6,11 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use clients::{ClientError, is_uuid, normalize_uuid};
-use database::{CacheRepository, GuildCurrentRepository, permissions};
+use database::{GuildCurrentRepository, permissions};
 
 use crate::{
     auth::DeveloperKeyAuth,
-    cache::{SNAPSHOT_SOURCE, parse_cache_age},
+    cache::{parse_cache_age, store_player_snapshot},
     error::ApiError,
     state::AppState,
 };
@@ -101,20 +101,14 @@ pub async fn player(
     let (uuid, username_hint) = resolve_identifier(&state, identifier).await?;
     let (data, stale) = resolve_player_data(&state, &uuid, max_cache_age).await?;
 
-    if !stale {
-        if let Some(ref player) = data {
-            let username = username_hint
-                .or_else(|| player["displayname"].as_str().map(String::from))
-                .unwrap_or_else(|| uuid.clone());
-            let pool = state.db.pool().clone();
-            let uuid = uuid.clone();
-            let player = player.clone();
-            tokio::spawn(async move {
-                let _ = CacheRepository::new(&pool)
-                    .store_snapshot(&uuid, &player, None, Some(SNAPSHOT_SOURCE), Some(&username))
-                    .await;
-            });
-        }
+    if !stale && let Some(ref player) = data {
+        let username = username_hint
+            .or_else(|| player["displayname"].as_str().map(String::from))
+            .unwrap_or_else(|| uuid.clone());
+        let (state, uuid, player) = (state.clone(), uuid.clone(), player.clone());
+        tokio::spawn(async move {
+            store_player_snapshot(&state, &uuid, &player, Some(&username)).await;
+        });
     }
 
     Ok(Json(

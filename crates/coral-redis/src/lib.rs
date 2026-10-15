@@ -1,4 +1,5 @@
 mod events;
+pub mod minute_history;
 mod pool;
 mod rate_limit;
 pub mod review_media;

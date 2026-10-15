@@ -1,82 +1,59 @@
-import { useQuery } from "@tanstack/react-query";
-import { apiDelete, apiGet, apiPost } from "./client";
-import { useAdminMutation } from "./useAdminMutation";
-import type { PluginDetailResponse, PluginListResponse } from "./types";
+import { queryOptions } from "@tanstack/react-query";
 
-export function usePlugins(search: string, offset: number, limit: number) {
+import { deleteJson, getJson, postJson } from "./http";
+import { keys } from "./keys";
+import { withLabels } from "./labels";
+import { entityQuery } from "./queryClient";
+import { rowPages } from "./row-pages";
+import type { PluginDetail, PluginRow } from "./types/platform";
+
+export type PluginFlag = "official" | "unlisted" | "disabled";
+
+export type FlagChange = { flag: PluginFlag; on: boolean; reason?: string };
+
+export function pluginsQuery(q: string) {
   const params = new URLSearchParams();
-  params.set("limit", String(limit));
-  params.set("offset", String(offset));
-  if (search) params.set("search", search);
+  if (q !== "") params.set("q", q);
+  return rowPages<PluginRow>(keys.plugins.list(q), "/plugins", params);
+}
 
-  return useQuery({
-    queryKey: ["plugins", "list", params.toString()],
-    queryFn: () => apiGet<PluginListResponse>(`/plugins?${params}`),
+export function pluginQuery(slug: string) {
+  return queryOptions({
+    queryKey: keys.plugins.core(slug),
+    queryFn: ({ signal, queryKey }) => getJson<PluginDetail>(pluginPath(slug), { signal, timingKey: queryKey }).then(withLabels),
+    ...entityQuery,
   });
 }
 
-export function usePlugin(slug: string) {
-  return useQuery({
-    queryKey: ["plugins", "detail", slug],
-    queryFn: () => apiGet<PluginDetailResponse>(`/plugins/${slug}`),
-    enabled: !!slug,
-  });
+export function setPluginFlag(slug: string, change: FlagChange): Promise<void> {
+  const body = change.flag === "disabled" ? { disabled: change.on, reason: change.reason ?? null } : { [change.flag]: change.on };
+  return postJson<void>(`${pluginPath(slug)}/${change.flag}`, body);
 }
 
-const pluginKeys = (slug: string) => [["plugins", "detail", slug], ["plugins", "list"]];
-
-export function useSetOfficial(slug: string) {
-  return useAdminMutation((official: boolean) => apiPost(`/plugins/${slug}/official`, { official }), {
-    successMessage: "Official status updated",
-    invalidateKeys: pluginKeys(slug),
-  });
+export function deletePlugin(slug: string): Promise<void> {
+  return deleteJson<void>(pluginPath(slug));
 }
 
-export function useSetUnlisted(slug: string) {
-  return useAdminMutation((unlisted: boolean) => apiPost(`/plugins/${slug}/unlisted`, { unlisted }), {
-    successMessage: "Listing status updated",
-    invalidateKeys: pluginKeys(slug),
-  });
+export function yankRelease(slug: string, version: string, reason: string): Promise<void> {
+  return postJson<void>(`${releasePath(slug, version)}/yank`, { reason: reason === "" ? null : reason });
 }
 
-export function useSetDisabled(slug: string) {
-  return useAdminMutation(
-    (req: { disabled: boolean; reason?: string }) => apiPost(`/plugins/${slug}/disabled`, req),
-    { successMessage: "Disabled status updated", invalidateKeys: pluginKeys(slug) },
-  );
+export function unyankRelease(slug: string, version: string): Promise<void> {
+  return postJson<void>(`${releasePath(slug, version)}/unyank`, {});
 }
 
-export function useDeletePlugin(slug: string) {
-  return useAdminMutation<void, unknown>(() => apiDelete(`/plugins/${slug}`), {
-    successMessage: "Plugin deleted",
-    invalidateKeys: [["plugins", "list"]],
-  });
+export function deleteRelease(slug: string, version: string): Promise<void> {
+  return deleteJson<void>(releasePath(slug, version));
 }
 
-export function useYankRelease(slug: string) {
-  return useAdminMutation(
-    (req: { version: string; reason?: string }) => apiPost(`/plugins/${slug}/releases/${req.version}/yank`, { reason: req.reason }),
-    { successMessage: "Release yanked", invalidateKeys: pluginKeys(slug) },
-  );
+export function deleteReview(slug: string, userId: number): Promise<void> {
+  return deleteJson<void>(`${pluginPath(slug)}/reviews/${userId}`);
 }
 
-export function useUnyankRelease(slug: string) {
-  return useAdminMutation((version: string) => apiPost(`/plugins/${slug}/releases/${version}/unyank`), {
-    successMessage: "Release unyanked",
-    invalidateKeys: pluginKeys(slug),
-  });
+function pluginPath(slug: string): string {
+  return `/plugins/${encodeURIComponent(slug)}`;
 }
 
-export function useDeleteRelease(slug: string) {
-  return useAdminMutation((version: string) => apiDelete(`/plugins/${slug}/releases/${version}`), {
-    successMessage: "Release deleted",
-    invalidateKeys: pluginKeys(slug),
-  });
-}
-
-export function useDeleteReview(slug: string) {
-  return useAdminMutation((userId: number) => apiDelete(`/plugins/${slug}/reviews/${userId}`), {
-    successMessage: "Review deleted",
-    invalidateKeys: pluginKeys(slug),
-  });
+function releasePath(slug: string, version: string): string {
+  return `${pluginPath(slug)}/releases/${encodeURIComponent(version)}`;
 }

@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
 use percent_encoding::percent_decode_str;
+use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use uuid::Uuid;
 
@@ -12,7 +13,8 @@ const UUID_HEX_LEN: usize = 32;
 const MAX_NAME_LEN: usize = 25;
 const PLAYER_QUERY_FIELDS: &[&str] = &["player", "uuid", "name"];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[repr(i16)]
 pub enum Form {
     Undashed = 1,
@@ -28,6 +30,7 @@ pub struct Subject {
     pub form: Form,
     pub player: Option<Uuid>,
     pub name: Option<String>,
+    pub raw: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,8 +66,21 @@ enum Origin {
 }
 
 impl Form {
+    pub const ALL: [Self; 6] = [
+        Self::Undashed,
+        Self::Dashed,
+        Self::Name,
+        Self::Display,
+        Self::Path,
+        Self::Body,
+    ];
+
     pub fn code(self) -> i16 {
         self as i16
+    }
+
+    pub fn from_code(code: i16) -> Option<Self> {
+        Self::ALL.into_iter().find(|form| form.code() == code)
     }
 
     pub fn resolves_by_name(self) -> bool {
@@ -73,19 +89,25 @@ impl Form {
 }
 
 impl Subject {
-    fn player(player: Uuid, form: Form) -> Self {
+    pub fn needs_resolution(&self) -> bool {
+        self.player.is_none() && self.form.resolves_by_name()
+    }
+
+    fn player(player: Uuid, form: Form, raw: &str) -> Self {
         Self {
             form,
             player: Some(player),
             name: None,
+            raw: raw.to_owned(),
         }
     }
 
-    fn name(name: &str, form: Form) -> Self {
+    fn name(raw: &str, form: Form) -> Self {
         Self {
             form,
             player: None,
-            name: Some(name.to_ascii_lowercase()),
+            name: Some(raw.to_ascii_lowercase()),
+            raw: raw.to_owned(),
         }
     }
 }
@@ -144,6 +166,22 @@ impl Origin {
             Self::Body => Form::Body,
         }
     }
+}
+
+pub fn resolve_names(subjects: Vec<Subject>, names: &HashMap<String, Uuid>) -> Vec<Subject> {
+    subjects
+        .into_iter()
+        .map(|mut subject| {
+            if subject.needs_resolution() {
+                subject.player = subject
+                    .name
+                    .as_ref()
+                    .and_then(|name| names.get(name))
+                    .copied();
+            }
+            subject
+        })
+        .collect()
 }
 
 pub fn extract(request: &RequestParts, sources: SubjectSources) -> Extraction {
@@ -226,7 +264,7 @@ fn body_text(raw: &RawValue) -> Option<String> {
 fn player_subject(raw: &str, origin: Origin) -> Option<Subject> {
     let value = raw.trim();
     match parse_uuid(value) {
-        Some(player) => Some(Subject::player(player, origin.uuid_form(value))),
+        Some(player) => Some(Subject::player(player, origin.uuid_form(value), value)),
         None => name_subject(value, origin.name_form()),
     }
 }
@@ -235,14 +273,14 @@ fn name_subject(value: &str, form: Form) -> Option<Subject> {
     is_player_name(value).then(|| Subject::name(value, form))
 }
 
-fn parse_uuid(value: &str) -> Option<Uuid> {
+pub fn parse_uuid(value: &str) -> Option<Uuid> {
     let hex: String = value.chars().filter(|c| *c != '-').collect();
     (hex.len() == UUID_HEX_LEN)
         .then(|| Uuid::try_parse(&hex).ok())
         .flatten()
 }
 
-fn is_player_name(value: &str) -> bool {
+pub fn is_player_name(value: &str) -> bool {
     (1..=MAX_NAME_LEN).contains(&value.len())
         && value
             .bytes()
@@ -293,6 +331,15 @@ mod tests {
     const OJUGG: &str = "94589c87999b4a7ab3add2ae50711e64";
     const OJUGG_DASHED: &str = "94589c87-999b-4a7a-b3ad-d2ae50711e64";
 
+    #[test]
+    fn form_codes_round_trip_and_serialize_by_name() {
+        for form in Form::ALL {
+            assert_eq!(Form::from_code(form.code()), Some(form));
+        }
+        assert_eq!(Form::from_code(0), None);
+        assert_eq!(serde_json::to_value(Form::Undashed).unwrap(), "undashed");
+    }
+
     fn ojugg() -> Uuid {
         Uuid::parse_str(OJUGG).unwrap()
     }
@@ -321,27 +368,27 @@ mod tests {
         )
     }
 
-    fn player(form: Form) -> Subject {
-        Subject::player(ojugg(), form)
+    fn player(raw: &str, form: Form) -> Subject {
+        Subject::player(ojugg(), form, raw)
     }
 
-    fn name(value: &str, form: Form) -> Subject {
-        Subject::name(value, form)
+    fn name(raw: &str, form: Form) -> Subject {
+        Subject::name(raw, form)
     }
 
     #[test]
     fn query_player_accepts_undashed_dashed_and_names() {
         assert_eq!(
             get("/v3/player/tags", &format!("player={OJUGG}")).subjects,
-            vec![player(Form::Undashed)]
+            vec![player(OJUGG, Form::Undashed)]
         );
         assert_eq!(
             get("/v3/player/tags", &format!("player={OJUGG_DASHED}")).subjects,
-            vec![player(Form::Dashed)]
+            vec![player(OJUGG_DASHED, Form::Dashed)]
         );
         assert_eq!(
             get("/v3/player/tags", "player=oJugg").subjects,
-            vec![name("ojugg", Form::Name)]
+            vec![name("oJugg", Form::Name)]
         );
     }
 
@@ -350,11 +397,11 @@ mod tests {
         let upper = OJUGG_DASHED.to_uppercase();
         assert_eq!(
             get("/v3/player/profile", &format!("uuid={upper}")).subjects,
-            vec![player(Form::Dashed)]
+            vec![player(&upper, Form::Dashed)]
         );
         assert_eq!(
             get("/v3/player/face", "uuid=94589c87999b4a7a-b3add2ae50711e64").subjects,
-            vec![player(Form::Dashed)]
+            vec![player("94589c87999b4a7a-b3add2ae50711e64", Form::Dashed)]
         );
     }
 
@@ -367,9 +414,9 @@ mod tests {
         assert_eq!(
             extraction.subjects,
             vec![
-                name("ojugg", Form::Name),
-                player(Form::Undashed),
-                name("technoblade", Form::Name),
+                name("oJugg", Form::Name),
+                player(OJUGG, Form::Undashed),
+                name("Technoblade", Form::Name),
             ]
         );
     }
@@ -378,7 +425,7 @@ mod tests {
     fn query_values_are_form_decoded_and_trimmed() {
         assert_eq!(
             get("/v3/player/tags", "player=%20oJugg+").subjects,
-            vec![name("ojugg", Form::Name)]
+            vec![name("oJugg", Form::Name)]
         );
     }
 
@@ -403,7 +450,7 @@ mod tests {
                 &format!("player={OJUGG}&uuid={OJUGG_DASHED}")
             )
             .subjects,
-            vec![player(Form::Undashed)]
+            vec![player(OJUGG, Form::Undashed)]
         );
     }
 
@@ -415,7 +462,7 @@ mod tests {
                 &format!("name=SomeGuild&player={OJUGG}")
             )
             .subjects,
-            vec![player(Form::Undashed)]
+            vec![player(OJUGG, Form::Undashed)]
         );
         assert!(
             get("/v3/hypixel/guild", "name=SomeGuild")
@@ -434,7 +481,7 @@ mod tests {
                 Some("player=oJugg"),
                 None,
             );
-            assert_eq!(extraction.subjects, vec![name("ojugg", Form::Name)]);
+            assert_eq!(extraction.subjects, vec![name("oJugg", Form::Name)]);
         }
     }
 
@@ -447,7 +494,7 @@ mod tests {
             Some(&format!("uuid={OJUGG}")),
             Some(r#"{"type":"sniper","reason":"Technoblade"}"#),
         );
-        assert_eq!(extraction.subjects, vec![player(Form::Undashed)]);
+        assert_eq!(extraction.subjects, vec![player(OJUGG, Form::Undashed)]);
     }
 
     #[test]
@@ -455,15 +502,15 @@ mod tests {
         let resolve = |path: &str| request("GET", "/v3/resolve/{identifier}", path, None, None);
         assert_eq!(
             resolve("/v3/resolve/oJugg").subjects,
-            vec![name("ojugg", Form::Path)]
+            vec![name("oJugg", Form::Path)]
         );
         assert_eq!(
             resolve(&format!("/v3/resolve/{OJUGG_DASHED}")).subjects,
-            vec![player(Form::Path)]
+            vec![player(OJUGG_DASHED, Form::Path)]
         );
         assert_eq!(
             resolve("/v3/resolve/%20oJugg").subjects,
-            vec![name("ojugg", Form::Path)]
+            vec![name("oJugg", Form::Path)]
         );
         assert!(resolve("/v3/resolve/%C2%A7e").subjects.is_empty());
     }
@@ -476,8 +523,8 @@ mod tests {
         assert_eq!(
             extraction.subjects,
             vec![
-                player(Form::Body),
-                Subject::player(Uuid::parse_str(other).unwrap(), Form::Body),
+                player(OJUGG, Form::Body),
+                Subject::player(Uuid::parse_str(other).unwrap(), Form::Body, other),
             ]
         );
     }
@@ -508,8 +555,8 @@ mod tests {
         assert_eq!(
             extraction.subjects,
             vec![
-                player(Form::Body),
-                Subject::player(Uuid::parse_str(other).unwrap(), Form::Body),
+                player(OJUGG, Form::Body),
+                Subject::player(Uuid::parse_str(other).unwrap(), Form::Body, other),
             ]
         );
 
@@ -521,7 +568,7 @@ mod tests {
             None,
             Some(&body),
         );
-        assert_eq!(extraction.subjects, vec![name("ojugg", Form::Body)]);
+        assert_eq!(extraction.subjects, vec![name("oJugg", Form::Body)]);
     }
 
     #[test]
@@ -548,7 +595,7 @@ mod tests {
         );
         assert_eq!(
             extraction.subjects,
-            vec![player(Form::Body), name("ojugg", Form::Body)]
+            vec![player(OJUGG, Form::Body), name("oJugg", Form::Body)]
         );
     }
 
@@ -560,13 +607,16 @@ mod tests {
         );
         assert_eq!(
             extraction.subjects,
-            vec![player(Form::Dashed), name("somenick", Form::Display)]
+            vec![
+                player(OJUGG_DASHED, Form::Dashed),
+                name("SomeNick", Form::Display)
+            ]
         );
         let extraction = get(
             "/v3/cubelify",
             &format!("uuid={OJUGG}&key=k&name=%C2%A7eDoorman"),
         );
-        assert_eq!(extraction.subjects, vec![player(Form::Undashed)]);
+        assert_eq!(extraction.subjects, vec![player(OJUGG, Form::Undashed)]);
     }
 
     #[test]
@@ -610,7 +660,7 @@ mod tests {
             Some("player=oJugg"),
             None,
         );
-        assert_eq!(extraction.subjects, vec![name("ojugg", Form::Name)]);
+        assert_eq!(extraction.subjects, vec![name("oJugg", Form::Name)]);
         assert!(!extraction.unmapped);
     }
 

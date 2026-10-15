@@ -275,10 +275,11 @@ pub async fn require_owner(
 
 pub async fn require_owner_page(
     State(auth): State<Arc<AuthConfig>>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
-    if auth.owner(request.headers()).is_some() {
+    if let Some(actor) = auth.owner(request.headers()) {
+        request.extensions_mut().insert(actor);
         return next.run(request).await;
     }
     let is_page_navigation = matches!(*request.method(), Method::GET | Method::HEAD)

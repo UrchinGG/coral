@@ -6,10 +6,14 @@ use sqlx::PgPool;
 
 use super::*;
 use crate::entry::{Caller, Cause, Client, Detail, KeyKind};
+use crate::rollup::{self, NETWORK_WATERMARK, Span};
+use crate::test_support::{NETWORK_STATE, create_day_partitions};
 
 const WRITE_WAIT: StdDuration = StdDuration::from_secs(10);
 const INCOMPRESSIBLE_PATH_SEGMENTS: usize = 200;
 const FAR_FUTURE_ROWS: usize = 8;
+const LATE_DAY: (i32, u32, u32) = (2020, 3, 6);
+const LOCK_WAIT_PROBE: StdDuration = StdDuration::from_millis(300);
 
 fn entry(path: &str, route: Option<&str>, query: Option<&str>) -> LogEntry {
     let ts = crate::now();
@@ -326,6 +330,7 @@ async fn a_repaired_batch_isolates_rows_without_repairing_again() {
 
 #[tokio::test]
 async fn late_batches_mark_dirty_ranges_and_fold_network_rows() {
+    let _state = NETWORK_STATE.lock().await;
     let Some(harness) = harness().await else {
         return;
     };
@@ -478,4 +483,148 @@ async fn the_writer_stores_resolved_subjects_with_each_request() {
             KeyKind::Invalid.code()
         )
     );
+}
+
+struct LateFold {
+    pool: PgPool,
+    member_id: i64,
+    watermark: DateTime<Utc>,
+    entries: Vec<PreparedEntry>,
+}
+
+impl LateFold {
+    async fn prepare(harness: &Harness) -> Self {
+        let (year, month, day) = LATE_DAY;
+        let date = chrono::NaiveDate::from_ymd_opt(year, month, day).unwrap();
+        create_day_partitions(&harness.pool, date).await;
+        let watermark = date.and_hms_opt(12, 0, 0).unwrap().and_utc();
+        let day = Span::new(
+            watermark - Duration::hours(12),
+            watermark + Duration::hours(12),
+        )
+        .unwrap();
+        for table in ["api_request_log", "api_request_detail"] {
+            sqlx::query(&format!("DELETE FROM {table} WHERE ts >= $1 AND ts < $2"))
+                .bind(day.from)
+                .bind(day.to)
+                .execute(&harness.pool)
+                .await
+                .unwrap();
+        }
+        let member_id: i64 =
+            sqlx::query_scalar("INSERT INTO members (discord_id) VALUES ($1) RETURNING id")
+                .bind(880_300_000_000_000_000 + crate::now().timestamp_subsec_micros() as i64)
+                .fetch_one(&harness.pool)
+                .await
+                .unwrap();
+        let mut tx = harness.pool.begin().await.unwrap();
+        rollup::set_watermark(&mut tx, NETWORK_WATERMARK, watermark)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let entries = [-20, -5, 10, 20]
+            .into_iter()
+            .map(|minutes| {
+                let mut late = entry("/v3/player/tags", Some("/v3/player/tags"), None);
+                late.ts = watermark + Duration::minutes(minutes);
+                late.request_id = crate::request_id_for(late.ts);
+                late.caller = Caller::member(KeyKind::Personal, member_id);
+                late.status = 200;
+                late
+            })
+            .collect();
+        Self {
+            pool: harness.pool.clone(),
+            member_id,
+            watermark,
+            entries: prepared(entries),
+        }
+    }
+
+    async fn write_late_batch(&self) -> sqlx::Transaction<'static, sqlx::Postgres> {
+        let mut tx = self.pool.begin().await.unwrap();
+        store::insert_log(&mut tx, &self.entries).await.unwrap();
+        store::insert_detail(&mut tx, &self.entries).await.unwrap();
+        store::mark_late_rows(&mut tx, &self.entries).await.unwrap();
+        tx
+    }
+
+    async fn advance_network(&self) -> sqlx::Transaction<'static, sqlx::Postgres> {
+        let mut tx = self.pool.begin().await.unwrap();
+        let folded = rollup::advance_network(&mut tx, self.watermark + Duration::hours(1))
+            .await
+            .unwrap();
+        assert_eq!(
+            folded,
+            Span::new(self.watermark, self.watermark + Duration::hours(1))
+        );
+        tx
+    }
+
+    async fn counted(&self) -> i64 {
+        sqlx::query_scalar(
+            "SELECT coalesce(sum(requests), 0)::bigint FROM api_key_ips WHERE member_id = $1",
+        )
+        .bind(self.member_id)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap()
+    }
+
+    async fn finish(self) {
+        sqlx::query("DELETE FROM api_rollup_state WHERE name = $1")
+            .bind(NETWORK_WATERMARK)
+            .execute(&self.pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM members WHERE id = $1")
+            .bind(self.member_id)
+            .execute(&self.pool)
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn a_late_fold_waiting_on_a_network_pass_counts_the_rows_the_pass_could_not_see() {
+    let _state = NETWORK_STATE.lock().await;
+    let Some(harness) = harness().await else {
+        return;
+    };
+    let fold = Arc::new(LateFold::prepare(&harness).await);
+    let pass = fold.advance_network().await;
+
+    let writer = tokio::spawn({
+        let fold = fold.clone();
+        async move { fold.write_late_batch().await.commit().await.unwrap() }
+    });
+    tokio::time::sleep(LOCK_WAIT_PROBE).await;
+    assert!(!writer.is_finished());
+    pass.commit().await.unwrap();
+    writer.await.unwrap();
+
+    assert_eq!(fold.counted().await, fold.entries.len() as i64);
+    Arc::into_inner(fold).unwrap().finish().await;
+}
+
+#[tokio::test]
+async fn a_network_pass_waiting_on_a_late_fold_counts_only_the_rows_above_the_watermark() {
+    let _state = NETWORK_STATE.lock().await;
+    let Some(harness) = harness().await else {
+        return;
+    };
+    let fold = Arc::new(LateFold::prepare(&harness).await);
+    let writer = fold.write_late_batch().await;
+
+    let pass = tokio::spawn({
+        let fold = fold.clone();
+        async move { fold.advance_network().await.commit().await.unwrap() }
+    });
+    tokio::time::sleep(LOCK_WAIT_PROBE).await;
+    assert!(!pass.is_finished());
+    writer.commit().await.unwrap();
+    pass.await.unwrap();
+
+    assert_eq!(fold.counted().await, fold.entries.len() as i64);
+    Arc::into_inner(fold).unwrap().finish().await;
 }

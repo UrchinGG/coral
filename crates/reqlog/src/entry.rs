@@ -1,6 +1,7 @@
 use std::net::IpAddr;
 
 use chrono::{DateTime, SubsecRound, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::{NoContext, Timestamp, Uuid};
 
@@ -16,7 +17,8 @@ const BOT_AGENT: &str = "coral-bot";
 const SYNC_AGENT: &str = "coral-sync";
 const VERIFY_AGENT: &str = "mc-verify";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[repr(i16)]
 pub enum KeyKind {
     None = 0,
@@ -29,7 +31,8 @@ pub enum KeyKind {
     Legacy = 7,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[repr(i16)]
 pub enum Service {
     Unknown = 0,
@@ -38,7 +41,8 @@ pub enum Service {
     Verify = 3,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[repr(i16)]
 pub enum Cause {
     Ok = 0,
@@ -102,8 +106,27 @@ pub struct LogEntry {
 }
 
 impl KeyKind {
+    pub const ALL: [Self; 8] = [
+        Self::None,
+        Self::Personal,
+        Self::Developer,
+        Self::Internal,
+        Self::Session,
+        Self::Invalid,
+        Self::Unverified,
+        Self::Legacy,
+    ];
+
     pub fn code(self) -> i16 {
         self as i16
+    }
+
+    pub fn from_code(code: i16) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.code() == code)
+    }
+
+    pub fn from_label(label: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.label() == label)
     }
 
     pub fn label(self) -> &'static str {
@@ -121,26 +144,55 @@ impl KeyKind {
 }
 
 impl Service {
+    pub const ALL: [Self; 4] = [Self::Unknown, Self::Bot, Self::Sync, Self::Verify];
+
     pub fn code(self) -> i16 {
         self as i16
+    }
+
+    pub fn from_code(code: i16) -> Option<Self> {
+        Self::ALL.into_iter().find(|service| service.code() == code)
     }
 
     pub fn from_user_agent(user_agent: Option<&str>) -> Self {
         let product = user_agent
             .and_then(|agent| agent.split('/').next())
             .map(str::trim);
-        match product {
-            Some(BOT_AGENT) => Self::Bot,
-            Some(SYNC_AGENT) => Self::Sync,
-            Some(VERIFY_AGENT) => Self::Verify,
-            _ => Self::Unknown,
+        Self::ALL
+            .into_iter()
+            .find(|service| product.is_some_and(|product| service.agent() == Some(product)))
+            .unwrap_or(Self::Unknown)
+    }
+
+    pub fn agent(self) -> Option<&'static str> {
+        match self {
+            Self::Unknown => None,
+            Self::Bot => Some(BOT_AGENT),
+            Self::Sync => Some(SYNC_AGENT),
+            Self::Verify => Some(VERIFY_AGENT),
         }
     }
 }
 
 impl Cause {
+    pub const ALL: [Self; 9] = [
+        Self::Ok,
+        Self::CallerLimit,
+        Self::UpstreamLimit,
+        Self::UpstreamError,
+        Self::Auth,
+        Self::Validation,
+        Self::NotFound,
+        Self::Internal,
+        Self::Unmatched,
+    ];
+
     pub fn code(self) -> i16 {
         self as i16
+    }
+
+    pub fn from_code(code: i16) -> Option<Self> {
+        Self::ALL.into_iter().find(|cause| cause.code() == code)
     }
 
     pub fn from_status(status: u16, route_matched: bool) -> Self {
@@ -323,6 +375,35 @@ mod tests {
         assert_eq!(Cause::from_status(429, true), Cause::CallerLimit);
         assert_eq!(Cause::from_status(422, true), Cause::Validation);
         assert_eq!(Cause::from_status(502, true), Cause::Internal);
+    }
+
+    #[test]
+    fn codes_and_labels_round_trip() {
+        for kind in KeyKind::ALL {
+            assert_eq!(KeyKind::from_code(kind.code()), Some(kind));
+            assert_eq!(KeyKind::from_label(kind.label()), Some(kind));
+        }
+        for service in Service::ALL {
+            assert_eq!(Service::from_code(service.code()), Some(service));
+        }
+        for cause in Cause::ALL {
+            assert_eq!(Cause::from_code(cause.code()), Some(cause));
+        }
+        assert_eq!(KeyKind::from_label("key"), None);
+        assert_eq!(Cause::from_code(99), None);
+    }
+
+    #[test]
+    fn vocabulary_serializes_in_snake_case() {
+        assert_eq!(
+            serde_json::to_value(Cause::CallerLimit).unwrap(),
+            "caller_limit"
+        );
+        assert_eq!(
+            serde_json::to_value(KeyKind::Unverified).unwrap(),
+            "unverified"
+        );
+        assert_eq!(serde_json::to_value(Service::Bot).unwrap(), "bot");
     }
 
     #[test]

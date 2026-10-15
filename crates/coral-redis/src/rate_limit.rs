@@ -4,7 +4,7 @@ use redis::AsyncCommands;
 
 use crate::RedisPool;
 
-const WINDOW_SECS: i64 = 300;
+pub const LIMIT_WINDOW_SECS: i64 = 300;
 const KEY_PREFIX: &str = "ratelimit:";
 
 pub const PERSONAL_RATE_LIMIT: i64 = 600;
@@ -54,23 +54,6 @@ pub enum RateLimitResult {
     Exceeded,
 }
 
-#[derive(Debug, Clone)]
-pub struct BudgetUsage {
-    pub name: String,
-    pub used: i64,
-    pub limit: i64,
-}
-
-impl BudgetUsage {
-    pub fn utilization(&self) -> f64 {
-        if self.limit <= 0 {
-            0.0
-        } else {
-            self.used as f64 / self.limit as f64
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct RateLimiter {
     pool: RedisPool,
@@ -104,7 +87,7 @@ impl RateLimiter {
             .cmd("ZREMRANGEBYSCORE")
             .arg(&key)
             .arg("-inf")
-            .arg(now - WINDOW_SECS)
+            .arg(now - LIMIT_WINDOW_SECS)
             .ignore();
         for _ in 0..weight.max(1) {
             pipe.cmd("ZADD")
@@ -115,7 +98,7 @@ impl RateLimiter {
         }
         pipe.cmd("EXPIRE")
             .arg(&key)
-            .arg(WINDOW_SECS + 10)
+            .arg(LIMIT_WINDOW_SECS + 10)
             .ignore()
             .query_async::<()>(&mut conn)
             .await?;
@@ -134,7 +117,7 @@ impl RateLimiter {
         let granted: i64 = ACQUIRE
             .key(key(name))
             .arg(now)
-            .arg(WINDOW_SECS)
+            .arg(LIMIT_WINDOW_SECS)
             .arg(limit)
             .arg(format!("{now}:{}", uuid::Uuid::new_v4()))
             .invoke_async(&mut self.pool.connection())
@@ -152,7 +135,7 @@ impl RateLimiter {
         let remaining: i64 = ADMIT_DISTINCT
             .key(key(name))
             .arg(now)
-            .arg(WINDOW_SECS)
+            .arg(LIMIT_WINDOW_SECS)
             .arg(limit)
             .arg(members)
             .invoke_async(&mut self.pool.connection())
@@ -187,49 +170,12 @@ impl RateLimiter {
         if names.is_empty() {
             return Ok(Vec::new());
         }
-        let mut conn = self.pool.connection();
+        let window_start = chrono::Utc::now().timestamp() - LIMIT_WINDOW_SECS;
         let mut pipe = redis::pipe();
         for name in names {
-            pipe.cmd("ZCARD").arg(key(name));
+            pipe.zcount(key(name), format!("({window_start}"), "+inf");
         }
-        pipe.query_async(&mut conn).await
-    }
-
-    pub async fn scan_budgets(
-        &self,
-        name_prefix: &str,
-        limit: i64,
-    ) -> Result<Vec<BudgetUsage>, redis::RedisError> {
-        let mut conn = self.pool.connection();
-        let pattern = key(&format!("{name_prefix}*"));
-        let mut cursor: u64 = 0;
-        let mut keys = Vec::new();
-        loop {
-            let (next, batch): (u64, Vec<String>) = redis::cmd("SCAN")
-                .arg(cursor)
-                .arg("MATCH")
-                .arg(&pattern)
-                .arg("COUNT")
-                .arg(200)
-                .query_async(&mut conn)
-                .await?;
-            keys.extend(batch);
-            cursor = next;
-            if cursor == 0 {
-                break;
-            }
-        }
-
-        let mut usages = Vec::with_capacity(keys.len());
-        for redis_key in keys {
-            let used: i64 = conn.zcard(&redis_key).await?;
-            let name = redis_key
-                .strip_prefix(KEY_PREFIX)
-                .unwrap_or(&redis_key)
-                .to_string();
-            usages.push(BudgetUsage { name, used, limit });
-        }
-        Ok(usages)
+        pipe.query_async(&mut self.pool.connection()).await
     }
 }
 
@@ -237,7 +183,7 @@ pub fn key(name: &str) -> String {
     format!("{KEY_PREFIX}{name}")
 }
 
-fn tag_limit_for_access(access_level: i16) -> i64 {
+pub fn tag_limit_for_access(access_level: i16) -> i64 {
     match access_level {
         5.. => 0,
         3..=4 => 60,
@@ -266,5 +212,34 @@ mod tests {
         assert_eq!(tag_limit_for_access(4), 60);
         assert_eq!(tag_limit_for_access(5), 0);
         assert_eq!(tag_limit_for_access(10), 0);
+    }
+
+    async fn test_limiter() -> Option<RateLimiter> {
+        let url = std::env::var("REDIS_URL").ok()?;
+        Some(RateLimiter::new(RedisPool::connect(&url).await.ok()?))
+    }
+
+    #[tokio::test]
+    async fn usage_many_counts_only_entries_inside_the_window() {
+        let Some(limiter) = test_limiter().await else {
+            return;
+        };
+        let name = format!("usage-test:{}", uuid::Uuid::new_v4());
+        let now = chrono::Utc::now().timestamp();
+        let mut conn = limiter.pool.connection();
+        let _: () = redis::pipe()
+            .zadd(key(&name), "expired", now - LIMIT_WINDOW_SECS - 30)
+            .zadd(key(&name), "boundary", now - LIMIT_WINDOW_SECS)
+            .zadd(key(&name), "recent", now - 10)
+            .zadd(key(&name), "current", now)
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        let empty = format!("usage-test:{}", uuid::Uuid::new_v4());
+
+        let usage = limiter.usage_many(&[name.clone(), empty]).await.unwrap();
+
+        assert_eq!(usage, vec![2, 0]);
+        limiter.reset(&name).await.unwrap();
     }
 }

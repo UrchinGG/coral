@@ -1,6 +1,6 @@
 mod counters;
-mod names;
-mod store;
+pub(crate) mod names;
+pub(crate) mod store;
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use crate::entry::LogEntry;
 use crate::partitions;
-use crate::subjects::{self, Extraction, Subject, SubjectSources};
+use crate::subjects::{self, Extraction, SubjectSources};
 use crate::{
     CHANNEL_BYTES, CHANNEL_CAPACITY, DROP_REPORT_INTERVAL, FLUSH_INTERVAL, LATE_BATCH_AGE,
     MAX_BATCH, MAX_BATCH_BYTES, RETRY_BACKOFF_MAX, RETRY_BACKOFF_MIN, UNMAPPED_COUNTER_KEY,
@@ -210,7 +210,7 @@ impl Writer {
             .zip(extractions)
             .map(|(entry, extraction)| PreparedEntry {
                 entry,
-                subjects: enabled.then(|| resolve_subjects(extraction.subjects, &names)),
+                subjects: enabled.then(|| subjects::resolve_names(extraction.subjects, &names)),
             })
             .collect()
     }
@@ -242,7 +242,7 @@ impl Writer {
         let names: Vec<String> = extractions
             .iter()
             .flat_map(|extraction| &extraction.subjects)
-            .filter(|subject| needs_resolution(subject))
+            .filter(|subject| subject.needs_resolution())
             .filter_map(|subject| subject.name.clone())
             .collect::<HashSet<_>>()
             .into_iter()
@@ -427,26 +427,6 @@ async fn next_batch(log: &mut LogReceiver) -> Option<Batch> {
         }
     }
     Some(batch)
-}
-
-fn resolve_subjects(subjects: Vec<Subject>, names: &HashMap<String, Uuid>) -> Vec<Subject> {
-    subjects
-        .into_iter()
-        .map(|mut subject| {
-            if needs_resolution(&subject) {
-                subject.player = subject
-                    .name
-                    .as_ref()
-                    .and_then(|name| names.get(name))
-                    .copied();
-            }
-            subject
-        })
-        .collect()
-}
-
-fn needs_resolution(subject: &Subject) -> bool {
-    subject.player.is_none() && subject.form.resolves_by_name()
 }
 
 fn earliest(entries: &[PreparedEntry]) -> Option<DateTime<Utc>> {

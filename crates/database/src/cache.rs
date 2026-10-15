@@ -8,7 +8,7 @@ use sqlx::{FromRow, PgPool};
 const RECONSTRUCTION_THRESHOLD: Duration = Duration::from_millis(10);
 
 pub enum SnapshotResult {
-    Stored(i64),
+    Stored { id: i64, first: bool },
     NoChange,
 }
 
@@ -99,6 +99,7 @@ impl<'a> CacheRepository<'a> {
     ) -> Result<SnapshotResult, sqlx::Error> {
         self.register_player(uuid).await?;
         let latest_baseline = self.get_latest_baseline(uuid).await?;
+        let first = latest_baseline.is_none();
 
         let id = match latest_baseline {
             None => {
@@ -118,7 +119,7 @@ impl<'a> CacheRepository<'a> {
         };
 
         self.maybe_promote_to_baseline(uuid, data, username).await?;
-        Ok(SnapshotResult::Stored(id))
+        Ok(SnapshotResult::Stored { id, first })
     }
 
     pub async fn get_snapshot_at(
@@ -559,6 +560,57 @@ pub fn reconstruct(baseline: &Value, deltas: &[Value]) -> Value {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    const TEST_SOURCE: &str = "test";
+
+    async fn test_pool() -> Option<PgPool> {
+        dotenvy::dotenv().ok();
+        let url = std::env::var("DATABASE_URL").ok()?;
+        sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&url)
+            .await
+            .ok()
+    }
+
+    async fn forget_player(pool: &PgPool, uuid: &str) {
+        for statement in [
+            "DELETE FROM player_snapshots WHERE uuid = $1",
+            "DELETE FROM players WHERE uuid = $1",
+        ] {
+            sqlx::query(statement)
+                .bind(uuid)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn only_a_players_first_snapshot_is_reported_as_first() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let uuid = format!("{:032x}", Utc::now().timestamp_nanos_opt().unwrap());
+        let repo = CacheRepository::new(&pool);
+        let store = async |data: Value| {
+            repo.store_snapshot(&uuid, &data, None, Some(TEST_SOURCE), None)
+                .await
+                .unwrap()
+        };
+
+        let first = store(json!({"kills": 1})).await;
+        let changed = store(json!({"kills": 2})).await;
+        let unchanged = store(json!({"kills": 2})).await;
+        forget_player(&pool, &uuid).await;
+
+        assert!(matches!(first, SnapshotResult::Stored { first: true, .. }));
+        assert!(matches!(
+            changed,
+            SnapshotResult::Stored { first: false, .. }
+        ));
+        assert!(matches!(unchanged, SnapshotResult::NoChange));
+    }
 
     #[test]
     fn test_calculate_delta_no_change() {

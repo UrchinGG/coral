@@ -1,11 +1,13 @@
-use chrono::{Duration, Utc};
-use database::{CacheRepository, GuildCacheRepository, GuildCurrentRepository};
+use chrono::{DateTime, Duration, Utc};
+use coral_redis::minute_history::{CHANGED_SNAPSHOTS, FIRST_SNAPSHOTS, SNAPSHOT_HISTORY};
+use database::{CacheRepository, GuildCacheRepository, GuildCurrentRepository, SnapshotResult};
+use redis::aio::ConnectionManager;
 use serde_json::Value;
 
 use crate::error::ApiError;
 use crate::state::AppState;
 
-pub const SNAPSHOT_SOURCE: &str = "api";
+const SNAPSHOT_SOURCE: &str = "api";
 
 const GUILD_REFRESH_AGE_MINUTES: i64 = 5;
 const BACKGROUND_FRESH_MINUTES: i64 = 10;
@@ -94,10 +96,7 @@ async fn discover_members(state: &AppState, raw: &Value) {
             return;
         }
         if let Ok(Some(player)) = hypixel.get_player(&uuid).await {
-            let username = player["displayname"].as_str();
-            let _ = cache
-                .store_snapshot(&uuid, &player, None, Some(SNAPSHOT_SOURCE), username)
-                .await;
+            store_player_snapshot(state, &uuid, &player, player["displayname"].as_str()).await;
         }
     }
 }
@@ -119,10 +118,30 @@ pub async fn refresh_player_cache(
 ) -> Option<Value> {
     let hypixel = state.hypixel.as_deref()?;
     let data = hypixel.get_player(uuid).await.ok()??;
-    let _ = CacheRepository::new(state.db.pool())
-        .store_snapshot(uuid, &data, None, Some(SNAPSHOT_SOURCE), username)
-        .await;
+    store_player_snapshot(state, uuid, &data, username).await;
     Some(data)
+}
+
+pub async fn store_player_snapshot(
+    state: &AppState,
+    uuid: &str,
+    data: &Value,
+    username: Option<&str>,
+) {
+    let stored = CacheRepository::new(state.db.pool())
+        .store_snapshot(uuid, data, None, Some(SNAPSHOT_SOURCE), username)
+        .await;
+    let stored = match stored {
+        Ok(stored) => stored,
+        Err(e) => {
+            tracing::warn!("failed to store a snapshot of {uuid}: {e}");
+            return;
+        }
+    };
+    let mut redis = state.redis.connection();
+    if let Err(e) = count_snapshot(&mut redis, &stored, Utc::now()).await {
+        tracing::warn!("failed to count a stored snapshot of {uuid}: {e}");
+    }
 }
 
 async fn is_fresh(state: &AppState, uuid: &str) -> bool {
@@ -133,6 +152,25 @@ async fn is_fresh(state: &AppState, uuid: &str) -> bool {
             .await,
         Ok(Some(ts)) if ts > cutoff
     )
+}
+
+async fn count_snapshot(
+    redis: &mut ConnectionManager,
+    stored: &SnapshotResult,
+    at: DateTime<Utc>,
+) -> Result<(), redis::RedisError> {
+    let Some(counter) = snapshot_counter(stored) else {
+        return Ok(());
+    };
+    SNAPSHOT_HISTORY.record(redis, at, &[counter]).await
+}
+
+fn snapshot_counter(stored: &SnapshotResult) -> Option<&'static str> {
+    match stored {
+        SnapshotResult::Stored { first: true, .. } => Some(FIRST_SNAPSHOTS),
+        SnapshotResult::Stored { first: false, .. } => Some(CHANGED_SNAPSHOTS),
+        SnapshotResult::NoChange => None,
+    }
 }
 
 async fn take_background_budget(state: &AppState) -> bool {
@@ -146,5 +184,73 @@ async fn take_background_budget(state: &AppState) -> bool {
             tracing::warn!("Background Hypixel budget unavailable: {e}");
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use redis::{AsyncCommands, Client};
+    use serde_json::json;
+    use sqlx::PgPool;
+
+    use super::*;
+
+    const SAMPLE_INSTANT: &str = "1970-01-04T00:09:00Z";
+
+    async fn test_stores() -> Option<(PgPool, ConnectionManager)> {
+        dotenvy::dotenv().ok();
+        let pool = PgPool::connect(&std::env::var("DATABASE_URL").ok()?)
+            .await
+            .ok()?;
+        let client = Client::open(std::env::var("REDIS_URL").ok()?).ok()?;
+        let redis = ConnectionManager::new(client).await.ok()?;
+        Some((pool, redis))
+    }
+
+    async fn forget_player(pool: &PgPool, uuid: &str) {
+        for statement in [
+            "DELETE FROM player_snapshots WHERE uuid = $1",
+            "DELETE FROM players WHERE uuid = $1",
+        ] {
+            sqlx::query(statement)
+                .bind(uuid)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn stored_snapshots_count_as_first_or_changed_and_unchanged_ones_do_not() {
+        let Some((pool, mut redis)) = test_stores().await else {
+            return;
+        };
+        let at: DateTime<Utc> = SAMPLE_INSTANT.parse().unwrap();
+        let slot = SNAPSHOT_HISTORY.slot(at);
+        let () = redis.del(&slot.key).await.unwrap();
+        let uuid = format!("{:032x}", Utc::now().timestamp_nanos_opt().unwrap());
+        let repo = CacheRepository::new(&pool);
+
+        for data in [
+            json!({"kills": 1}),
+            json!({"kills": 2}),
+            json!({"kills": 2}),
+        ] {
+            let stored = repo
+                .store_snapshot(&uuid, &data, None, Some(SNAPSHOT_SOURCE), None)
+                .await
+                .unwrap();
+            count_snapshot(&mut redis, &stored, at).await.unwrap();
+        }
+
+        let counts: HashMap<String, i64> = redis.hgetall(&slot.key).await.unwrap();
+        let () = redis.del(&slot.key).await.unwrap();
+        forget_player(&pool, &uuid).await;
+        assert_eq!(
+            counts,
+            HashMap::from([("f9".to_string(), 1), ("d9".to_string(), 1)])
+        );
     }
 }

@@ -3,15 +3,13 @@ use sqlx::{PgConnection, Postgres, QueryBuilder};
 use uuid::Uuid;
 
 use crate::entry::LogEntry;
-use crate::rollup::NETWORK_FOLD;
+use crate::rollup::{NETWORK_FOLD, NETWORK_WATERMARK};
 use crate::subjects::Subject;
-use crate::{SubjectSources, WRITER_STATEMENT_TIMEOUT_MS};
+use crate::{SubjectSources, TIME_ORDERED_VERSION, WRITER_STATEMENT_TIMEOUT_MS};
 
-const NETWORK_WATERMARK: &str = "network";
 const WRITER_SEEN: &str = "writer_seen";
 const ATTRIBUTION_FEATURE: &str = "attribution";
 const SUBJECTS_FEATURE: &str = "subjects";
-const TIME_ORDERED_VERSION: usize = 7;
 const TIMESTAMP_RESOLUTION: TimeDelta = TimeDelta::microseconds(1);
 
 pub struct PreparedEntry {
@@ -19,8 +17,20 @@ pub struct PreparedEntry {
     pub subjects: Option<Vec<Subject>>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SubjectOwner<'a> {
+    pub ts: DateTime<Utc>,
+    pub request_id: Uuid,
+    pub member_id: Option<i64>,
+    pub actor_id: Option<i64>,
+    pub key_prefix: Option<&'a str>,
+    pub key_kind: i16,
+    pub service: i16,
+    pub status: i16,
+}
+
 #[derive(Default)]
-struct SubjectColumns {
+pub(crate) struct SubjectColumns {
     ts: Vec<DateTime<Utc>>,
     request_id: Vec<Uuid>,
     member_id: Vec<Option<i64>>,
@@ -41,24 +51,36 @@ impl PreparedEntry {
 }
 
 impl SubjectColumns {
+    pub(crate) fn push(&mut self, owner: &SubjectOwner, subject: &Subject) {
+        self.ts.push(owner.ts);
+        self.request_id.push(owner.request_id);
+        self.member_id.push(owner.member_id);
+        self.actor_id.push(owner.actor_id);
+        self.key_prefix.push(owner.key_prefix.map(str::to_owned));
+        self.key_kind.push(owner.key_kind);
+        self.service.push(owner.service);
+        self.status.push(owner.status);
+        self.form.push(subject.form.code());
+        self.player.push(subject.player);
+        self.name.push(subject.name.clone());
+    }
+
     fn collect(entries: &[PreparedEntry]) -> Self {
         let mut columns = Self::default();
         for prepared in entries {
             let entry = &prepared.entry;
+            let owner = SubjectOwner {
+                ts: entry.ts,
+                request_id: entry.request_id,
+                member_id: entry.caller.member_id,
+                actor_id: entry.caller.actor_id,
+                key_prefix: entry.subject_key_prefix(),
+                key_kind: entry.caller.key_kind.code(),
+                service: entry.service().code(),
+                status: status_code(entry.semantic_status()),
+            };
             for subject in prepared.subjects.iter().flatten() {
-                columns.ts.push(entry.ts);
-                columns.request_id.push(entry.request_id);
-                columns.member_id.push(entry.caller.member_id);
-                columns.actor_id.push(entry.caller.actor_id);
-                columns
-                    .key_prefix
-                    .push(entry.subject_key_prefix().map(str::to_owned));
-                columns.key_kind.push(entry.caller.key_kind.code());
-                columns.service.push(entry.service().code());
-                columns.status.push(status_code(entry.semantic_status()));
-                columns.form.push(subject.form.code());
-                columns.player.push(subject.player);
-                columns.name.push(subject.name.clone());
+                columns.push(&owner, subject);
             }
         }
         columns
@@ -136,7 +158,13 @@ pub async fn insert_subjects(
     conn: &mut PgConnection,
     entries: &[PreparedEntry],
 ) -> Result<(), sqlx::Error> {
-    let columns = SubjectColumns::collect(entries);
+    insert_subject_columns(conn, SubjectColumns::collect(entries)).await
+}
+
+pub(crate) async fn insert_subject_columns(
+    conn: &mut PgConnection,
+    columns: SubjectColumns,
+) -> Result<(), sqlx::Error> {
     if columns.ts.is_empty() {
         return Ok(());
     }

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use chrono::Utc;
 use redis::aio::ConnectionManager;
 
-use crate::{COUNTER_TTL_SECS, DROPPED_COUNTER_KEY};
+use crate::{COUNTER_DAY_FORMAT, COUNTER_TTL_SECS, DROPPED_COUNTER_KEY};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DropReason {
@@ -79,7 +79,7 @@ impl DropCounters {
 }
 
 pub fn daily_field(name: &str) -> String {
-    format!("{}:{name}", Utc::now().format("%Y%m%d"))
+    format!("{}:{name}", Utc::now().format(COUNTER_DAY_FORMAT))
 }
 
 pub async fn increment_daily(

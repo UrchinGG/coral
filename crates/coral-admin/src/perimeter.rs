@@ -4,10 +4,10 @@ use axum::Router;
 use axum::middleware::{from_fn, from_fn_with_state};
 
 use crate::auth::{self, AuthConfig};
-use crate::routes;
-use crate::security;
+use crate::boot::BootSource;
+use crate::{layers, routes, security};
 
-pub fn router<S>(auth_config: Arc<AuthConfig>, api: Router<S>) -> Router<S>
+pub fn router<S>(auth_config: Arc<AuthConfig>, boot: BootSource, api: Router<S>) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
@@ -19,15 +19,16 @@ where
         ))
         .layer(from_fn_with_state(auth_config.clone(), auth::require_owner))
         .layer(from_fn(security::no_store));
-    let ui = routes::ui_router().layer(from_fn_with_state(
+    let ui = routes::ui_router(boot).layer(from_fn_with_state(
         auth_config.clone(),
         auth::require_owner_page,
     ));
-    Router::new()
+    let app = Router::new()
         .merge(auth::router(auth_config))
         .nest("/api", api)
         .merge(ui)
-        .layer(from_fn(security::headers))
+        .layer(from_fn(security::headers));
+    layers::apply(app)
 }
 
 #[cfg(test)]
@@ -36,7 +37,7 @@ mod tests {
     use std::convert::Infallible;
 
     use axum::body::{Body, to_bytes};
-    use axum::http::{HeaderMap, Request, Response, StatusCode, header, request};
+    use axum::http::{HeaderMap, HeaderName, Request, Response, StatusCode, header, request};
     use axum::response::sse::{Event, Sse};
     use axum::routing::{get, post};
     use axum::{Form, Json};
@@ -49,6 +50,7 @@ mod tests {
 
     use super::*;
     use crate::auth::DiscordOAuth;
+    use crate::coverage::{Coverage, CoverageCache};
     use crate::epoch::SessionEpoch;
     use crate::epoch::tests::{MemoryEpochStore, StoreHealth};
     use crate::session::{
@@ -62,6 +64,7 @@ mod tests {
     const LOGIN_PAGE_LIMIT: usize = 2048;
     const DISCORD_CODE: &str = "granted-code";
     const DISCORD_ACCESS_TOKEN: &str = "access-token";
+    const BUILD: &str = "test-build";
     const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
     struct Harness {
@@ -117,7 +120,12 @@ mod tests {
         }
 
         async fn send(&self, request: request::Builder) -> Response<Body> {
-            router(self.auth.clone(), stub_api())
+            let boot = BootSource::new(
+                Some(BUILD.into()),
+                CoverageCache::fixed(Coverage::default()),
+                Vec::new(),
+            );
+            router(self.auth.clone(), boot, stub_api())
                 .oneshot(request.body(Body::empty()).unwrap())
                 .await
                 .unwrap()
@@ -215,6 +223,13 @@ mod tests {
             .find(|(key, _)| key == name)
             .map(|(_, value)| value.into_owned())
             .unwrap()
+    }
+
+    async fn first_asset_path(harness: &Harness) -> String {
+        let index = body_text(harness.send_as_owner(Request::get("/")).await).await;
+        let start = index.find("/assets/").unwrap();
+        let end = start + index[start..].find('"').unwrap();
+        index[start..end].to_string()
     }
 
     #[tokio::test]
@@ -344,6 +359,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn owner_index_carries_the_boot_payload_for_the_signed_in_owner() {
+        let harness = Harness::new().await;
+        let index = body_text(harness.send_as_owner(Request::get("/players/x")).await).await;
+        let open = "<script id=\"boot\" type=\"application/json\">";
+        let start = index.find(open).unwrap() + open.len();
+        let end = start + index[start..].find("</script>").unwrap();
+        let boot: serde_json::Value = serde_json::from_str(&index[start..end]).unwrap();
+        assert_eq!(boot["discord_id"], OWNER.to_string());
+        assert_eq!(boot["build"], BUILD);
+        assert!(boot["coverage"].is_object());
+    }
+
+    #[tokio::test]
+    async fn every_response_reports_server_timing() {
+        let harness = Harness::new().await;
+        for response in [
+            harness.send(Request::get("/api/ping")).await,
+            harness.send_as_owner(Request::get("/api/ping")).await,
+            harness.send(Request::get("/")).await,
+        ] {
+            assert!(
+                header_value(&response, HeaderName::from_static("server-timing"))
+                    .starts_with("app;dur=")
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn owner_gets_embedded_assets_with_private_immutable_caching() {
         let harness = Harness::new().await;
         let index = body_text(harness.send_as_owner(Request::get("/")).await).await;
@@ -365,6 +408,31 @@ mod tests {
         let response = harness.send_as_owner(Request::get("/assets/nope.js")).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         assert_eq!(body_text(response).await, "");
+    }
+
+    #[tokio::test]
+    async fn brotli_clients_get_the_asset_precompressed_at_build_time() {
+        let harness = Harness::new().await;
+        let path = first_asset_path(&harness).await;
+        let plain = harness.send_as_owner(Request::get(&path)).await;
+        let brotli = harness
+            .send_as_owner(Request::get(&path).header(header::ACCEPT_ENCODING, "gzip, br"))
+            .await;
+        assert_eq!(header_value(&brotli, header::CONTENT_ENCODING), "br");
+        assert!(plain.headers().get(header::CONTENT_ENCODING).is_none());
+        for response in [&plain, &brotli] {
+            assert_eq!(header_value(response, header::VARY), "accept-encoding");
+        }
+        assert_eq!(
+            header_value(&brotli, header::CONTENT_TYPE),
+            header_value(&plain, header::CONTENT_TYPE)
+        );
+        let plain_len = to_bytes(plain.into_body(), BODY_LIMIT).await.unwrap().len();
+        let brotli_len = to_bytes(brotli.into_body(), BODY_LIMIT)
+            .await
+            .unwrap()
+            .len();
+        assert!(brotli_len < plain_len);
     }
 
     #[tokio::test]
