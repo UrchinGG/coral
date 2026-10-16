@@ -35,6 +35,8 @@ const REVIEW_PARTICIPANT_COLUMNS: &[(&str, &str)] = &[
     ("review_revision_request", "author_id"),
     ("review_revision_request", "applied_by"),
     ("review_revision_request_vote", "voter_id"),
+    ("review_evidence_prompt", "author_id"),
+    ("review_evidence_prompt_vote", "voter_id"),
 ];
 
 const DISCARDED_TABLES: &[&str] = &["discord_username_cache"];
@@ -638,6 +640,15 @@ async fn merge_review_participation(
         "DELETE FROM review_revision_request_vote s WHERE s.voter_id = $1
            AND EXISTS (SELECT 1 FROM review_revision_request_vote t
                        WHERE t.voter_id = $2 AND t.request_id = s.request_id)",
+    )
+    .bind(source)
+    .bind(target)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM review_evidence_prompt_vote s WHERE s.voter_id = $1
+           AND EXISTS (SELECT 1 FROM review_evidence_prompt_vote t
+                       WHERE t.voter_id = $2 AND t.source_message_id = s.source_message_id)",
     )
     .bind(source)
     .bind(target)

@@ -8,8 +8,7 @@ use database::{
 
 use super::render;
 use super::vote::{bounce, state_bounce};
-use super::{REASON_MAX_CHARS, REVIEW_TAGS, REVISION_VOTES_NEEDED, custom_id};
-use crate::commands::blacklist::appeal;
+use super::{REASON_MAX_CHARS, REVISION_TAGS, REVISION_VOTES_NEEDED, custom_id};
 use crate::framework::Data;
 use crate::interact;
 
@@ -20,6 +19,8 @@ const REASON_FIELD: &str = "reason";
 const UNCHANGED: &str = "Change the tag type or reason to suggest a revision.";
 const SUBMITTER_NO: &str =
     "Your No does nothing as the submitter. Press Yes to apply this revision yourself.";
+const OWN_REQUEST: &str = "You made this request.";
+const REQUEST_CLOSED: &str = "This revision is no longer open.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
@@ -155,7 +156,7 @@ async fn open(
 fn revision_modal(review_id: i64, live: &Revision) -> CreateModal<'static> {
     let options: Vec<CreateSelectMenuOption> = blacklist::all()
         .iter()
-        .filter(|def| REVIEW_TAGS.contains(&def.name))
+        .filter(|def| REVISION_TAGS.contains(&def.name))
         .map(|def| {
             CreateSelectMenuOption::new(def.display_name, def.name)
                 .default_selection(def.name == live.tag_type)
@@ -188,7 +189,7 @@ async fn submit(
     if let Some(refusal) = bounce(ctx, data, review, author).await? {
         return Ok(refusal);
     }
-    let Some(tag_type) = tag_type.filter(|t| REVIEW_TAGS.contains(&t.as_str())) else {
+    let Some(tag_type) = tag_type.filter(|t| REVISION_TAGS.contains(&t.as_str())) else {
         return Ok("Pick a tag type for the revision.".into());
     };
     if reason.is_empty() {
@@ -220,33 +221,16 @@ async fn post_request(
     review: &Review,
     request: &RevisionRequest,
 ) -> Result<()> {
-    let thread_id = thread_of(review)?;
-    let submitter = UserId::new(review.submitter_id as u64);
-    let mentions = if review.hide_username {
-        CreateAllowedMentions::new()
-    } else {
-        CreateAllowedMentions::new().users(vec![submitter])
-    };
     let message = CreateMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(render::revision_request(review, request, true))
-        .allowed_mentions(mentions);
+        .components(render::revision_request(review.id, request, true));
     let sent = ctx
         .http
-        .send_message(thread_id, Vec::<CreateAttachment>::new(), &message)
+        .send_message(thread_of(review)?, Vec::<CreateAttachment>::new(), &message)
         .await?;
     ReviewRepository::new(data.db.pool())
         .set_request_message(request.id, sent.id.get() as i64)
         .await?;
-    if review.hide_username {
-        let dm = format!("A revision was suggested for your review in <#{thread_id}>.");
-        if !appeal::send_dm(ctx, submitter, &dm).await {
-            tracing::warn!(
-                "Anonymous review {} revision DM was not delivered",
-                review.id
-            );
-        }
-    }
     Ok(())
 }
 
@@ -298,10 +282,14 @@ async fn voter_vote(
     if let Some(refusal) = bounce(ctx, data, review, voter).await? {
         return Ok(refusal);
     }
-    let (change, request) = match ReviewRepository::new(data.db.pool())
-        .vote_on_request(request_id, voter as i64, yes)
-        .await
-    {
+    let repo = ReviewRepository::new(data.db.pool());
+    let Some(request) = repo.revision_request(request_id).await? else {
+        return Ok(REQUEST_CLOSED.into());
+    };
+    if request.author_id as u64 == voter {
+        return Ok(OWN_REQUEST.into());
+    }
+    let (change, request) = match repo.vote_on_request(request_id, voter as i64, yes).await {
         Ok(cast) => cast,
         Err(e) => return refusal(e),
     };
@@ -362,7 +350,7 @@ async fn reject(
         .reject_request(request.id)
         .await?
     {
-        return Ok("This revision is no longer open.".into());
+        return Ok(REQUEST_CLOSED.into());
     }
     if let Some(message_id) = request.message_id {
         ctx.http
@@ -388,7 +376,7 @@ async fn edit_request_message(
             MessageId::new(message_id as u64),
             &EditMessage::new()
                 .flags(MessageFlags::IS_COMPONENTS_V2)
-                .components(render::revision_request(review, request, votable)),
+                .components(render::revision_request(review.id, request, votable)),
             Vec::new(),
         )
         .await?;
@@ -399,7 +387,7 @@ fn refusal(error: ReviewError) -> Result<String> {
     Ok(match error {
         ReviewError::WrongStatus(ReviewStatus::Voided) => "This review was voided.".into(),
         ReviewError::WrongStatus(_) => "This review is already resolved.".into(),
-        ReviewError::RequestClosed => "This revision is no longer open.".into(),
+        ReviewError::RequestClosed => REQUEST_CLOSED.into(),
         ReviewError::EditInProgress => {
             "Voting is paused while the submitter revises this review.".into()
         }

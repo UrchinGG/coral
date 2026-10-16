@@ -14,6 +14,12 @@ const REQUEST_COLUMNS: &str = "id, review_id, author_id, tag_type, reason, messa
      WHERE v.request_id = review_revision_request.id AND v.yes) AS yes, \
     (SELECT COUNT(*) FROM review_revision_request_vote v \
      WHERE v.request_id = review_revision_request.id AND NOT v.yes) AS no";
+const PROMPT_COLUMNS: &str = "source_message_id, review_id, prompt_message_id, author_id, \
+    (SELECT COUNT(*) FROM review_evidence_prompt_vote v \
+     WHERE v.source_message_id = review_evidence_prompt.source_message_id AND v.add) AS adds, \
+    (SELECT COUNT(*) FROM review_evidence_prompt_vote v \
+     WHERE v.source_message_id = review_evidence_prompt.source_message_id AND NOT v.add) \
+     AS dismisses";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReviewStatus {
@@ -349,6 +355,61 @@ impl From<RevisionRequestRow> for RevisionRequest {
                 yes: row.yes,
                 no: row.no,
             },
+        }
+    }
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct EvidencePromptRow {
+    source_message_id: i64,
+    review_id: i64,
+    prompt_message_id: i64,
+    author_id: i64,
+    adds: i64,
+    dismisses: i64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PromptTally {
+    pub add: i64,
+    pub dismiss: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct EvidencePrompt {
+    pub source_message_id: i64,
+    pub review_id: i64,
+    pub prompt_message_id: i64,
+    pub author_id: i64,
+    pub tally: PromptTally,
+}
+
+impl From<EvidencePromptRow> for EvidencePrompt {
+    fn from(row: EvidencePromptRow) -> Self {
+        Self {
+            source_message_id: row.source_message_id,
+            review_id: row.review_id,
+            prompt_message_id: row.prompt_message_id,
+            author_id: row.author_id,
+            tally: PromptTally {
+                add: row.adds,
+                dismiss: row.dismisses,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptOutcome {
+    Added,
+    Dismissed,
+}
+
+impl PromptOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Added => "added",
+            Self::Dismissed => "dismissed",
         }
     }
 }
@@ -1080,9 +1141,14 @@ impl<'a> ReviewRepository<'a> {
 
     pub async fn revise_supporters(&self, review_id: i64) -> Result<i64, sqlx::Error> {
         let (count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(DISTINCT v.voter_id) FROM review_revision_request_vote v
-             JOIN review_revision_request r ON r.id = v.request_id
-             WHERE r.review_id = $1 AND r.status = 'open' AND v.yes",
+            "SELECT COUNT(DISTINCT supporter) FROM (
+               SELECT r.author_id AS supporter FROM review_revision_request r
+               WHERE r.review_id = $1 AND r.status = 'open'
+               UNION
+               SELECT v.voter_id FROM review_revision_request_vote v
+               JOIN review_revision_request r ON r.id = v.request_id
+               WHERE r.review_id = $1 AND r.status = 'open' AND v.yes
+             ) supporters",
         )
         .bind(review_id)
         .fetch_one(self.pool)
@@ -1111,14 +1177,6 @@ impl<'a> ReviewRepository<'a> {
         .bind(tag_type)
         .bind(reason)
         .fetch_one(&mut *tx)
-        .await?;
-        sqlx::query(
-            "INSERT INTO review_revision_request_vote (request_id, voter_id, yes)
-             VALUES ($1, $2, TRUE)",
-        )
-        .bind(request_id)
-        .bind(author_id)
-        .execute(&mut *tx)
         .await?;
         let request = fetch_request(&mut *tx, request_id)
             .await?
@@ -1247,6 +1305,127 @@ impl<'a> ReviewRepository<'a> {
         .fetch_all(self.pool)
         .await?;
         Ok(rows.into_iter().map(RevisionRequest::from).collect())
+    }
+
+    pub async fn create_evidence_prompt(
+        &self,
+        source_message_id: i64,
+        review_id: i64,
+        prompt_message_id: i64,
+        author_id: i64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO review_evidence_prompt
+               (source_message_id, review_id, prompt_message_id, author_id)
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(source_message_id)
+        .bind(review_id)
+        .bind(prompt_message_id)
+        .bind(author_id)
+        .execute(self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn evidence_prompt(
+        &self,
+        source_message_id: i64,
+    ) -> Result<Option<EvidencePrompt>, sqlx::Error> {
+        fetch_prompt(self.pool, source_message_id).await
+    }
+
+    pub async fn vote_on_evidence_prompt(
+        &self,
+        source_message_id: i64,
+        voter_id: i64,
+        add: bool,
+    ) -> Result<(RequestVoteChange, EvidencePrompt), ReviewError> {
+        let mut tx = self.pool.begin().await?;
+        lock_open_prompt(&mut tx, source_message_id).await?;
+        let held: Option<(bool,)> = sqlx::query_as(
+            "SELECT add FROM review_evidence_prompt_vote
+             WHERE source_message_id = $1 AND voter_id = $2",
+        )
+        .bind(source_message_id)
+        .bind(voter_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let change = match held {
+            Some((held,)) if held == add => RequestVoteChange::Unchanged,
+            Some(_) => RequestVoteChange::Switched,
+            None => RequestVoteChange::Recorded,
+        };
+        if change != RequestVoteChange::Unchanged {
+            sqlx::query(
+                "INSERT INTO review_evidence_prompt_vote (source_message_id, voter_id, add)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (source_message_id, voter_id)
+                 DO UPDATE SET add = EXCLUDED.add, created_at = NOW()",
+            )
+            .bind(source_message_id)
+            .bind(voter_id)
+            .bind(add)
+            .execute(&mut *tx)
+            .await?;
+        }
+        let prompt = fetch_prompt(&mut *tx, source_message_id)
+            .await?
+            .ok_or(ReviewError::NotFound)?;
+        tx.commit().await?;
+        Ok((change, prompt))
+    }
+
+    pub async fn claim_evidence_prompt(&self, source_message_id: i64) -> Result<bool, sqlx::Error> {
+        let claimed = sqlx::query(
+            "UPDATE review_evidence_prompt SET status = 'adding'
+             WHERE source_message_id = $1 AND status = 'open'",
+        )
+        .bind(source_message_id)
+        .execute(self.pool)
+        .await?;
+        Ok(claimed.rows_affected() > 0)
+    }
+
+    pub async fn release_evidence_prompt(&self, source_message_id: i64) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE review_evidence_prompt SET status = 'open'
+             WHERE source_message_id = $1 AND status = 'adding'",
+        )
+        .bind(source_message_id)
+        .execute(self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn settle_evidence_prompt(
+        &self,
+        source_message_id: i64,
+        outcome: PromptOutcome,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE review_evidence_prompt SET status = $2, resolved_at = NOW()
+             WHERE source_message_id = $1 AND status IN ('open', 'adding')",
+        )
+        .bind(source_message_id)
+        .bind(outcome.as_str())
+        .execute(self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn close_open_evidence_prompts(
+        &self,
+        review_id: i64,
+    ) -> Result<Vec<EvidencePrompt>, sqlx::Error> {
+        let rows: Vec<EvidencePromptRow> = sqlx::query_as(&format!(
+            "UPDATE review_evidence_prompt SET status = 'closed', resolved_at = NOW()
+             WHERE review_id = $1 AND status = 'open' RETURNING {PROMPT_COLUMNS}"
+        ))
+        .bind(review_id)
+        .fetch_all(self.pool)
+        .await?;
+        Ok(rows.into_iter().map(EvidencePrompt::from).collect())
     }
 
     pub async fn resolve(
@@ -1477,6 +1656,42 @@ async fn lock_open_request(
         return Err(ReviewError::RequestClosed);
     }
     Ok(request)
+}
+
+async fn fetch_prompt<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    source_message_id: i64,
+) -> Result<Option<EvidencePrompt>, sqlx::Error> {
+    let row: Option<EvidencePromptRow> = sqlx::query_as(&format!(
+        "SELECT {PROMPT_COLUMNS} FROM review_evidence_prompt WHERE source_message_id = $1"
+    ))
+    .bind(source_message_id)
+    .fetch_optional(executor)
+    .await?;
+    Ok(row.map(EvidencePrompt::from))
+}
+
+async fn lock_open_prompt(
+    conn: &mut PgConnection,
+    source_message_id: i64,
+) -> Result<(), ReviewError> {
+    let prompt = fetch_prompt(&mut *conn, source_message_id)
+        .await?
+        .ok_or(ReviewError::NotFound)?;
+    let status = lock_status(conn, prompt.review_id).await?;
+    if status != ReviewStatus::Open {
+        return Err(ReviewError::WrongStatus(status));
+    }
+    let (current,): (String,) = sqlx::query_as(
+        "SELECT status FROM review_evidence_prompt WHERE source_message_id = $1 FOR UPDATE",
+    )
+    .bind(source_message_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    if current != "open" {
+        return Err(ReviewError::RequestClosed);
+    }
+    Ok(())
 }
 
 async fn void_open(
@@ -1842,7 +2057,7 @@ mod tests {
             .create_request(review.id, author, "closet_cheater", "reach only")
             .await
             .unwrap();
-        assert_eq!(first.tally, RequestTally { yes: 1, no: 0 });
+        assert_eq!(first.tally, RequestTally { yes: 0, no: 0 });
         let second = repo
             .create_request(review.id, voter, "closet_cheater", "timer")
             .await
@@ -1851,10 +2066,15 @@ mod tests {
 
         let (change, request) = repo.vote_on_request(first.id, voter, false).await.unwrap();
         assert_eq!(change, RequestVoteChange::Recorded);
-        assert_eq!(request.tally, RequestTally { yes: 1, no: 1 });
+        assert_eq!(request.tally, RequestTally { yes: 0, no: 1 });
         let (change, request) = repo.vote_on_request(first.id, voter, true).await.unwrap();
         assert_eq!(change, RequestVoteChange::Switched);
-        assert_eq!(request.tally, RequestTally { yes: 2, no: 0 });
+        assert_eq!(request.tally, RequestTally { yes: 1, no: 0 });
+        assert_eq!(repo.revise_supporters(review.id).await.unwrap(), 2);
+        repo.vote_on_request(second.id, accepter, true)
+            .await
+            .unwrap();
+        assert_eq!(repo.revise_supporters(review.id).await.unwrap(), 3);
         let (change, _) = repo.vote_on_request(first.id, voter, true).await.unwrap();
         assert_eq!(change, RequestVoteChange::Unchanged);
 
@@ -1898,6 +2118,75 @@ mod tests {
         );
         assert!(repo.open_requests(review.id).await.unwrap().is_empty());
         assert_eq!(repo.revise_supporters(review.id).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn evidence_prompts_count_votes_claim_once_and_close() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let repo = ReviewRepository::new(&pool);
+        let review = published_review(&repo, unique(9_600_000_000_000)).await;
+        let (poster, first_voter, second_voter) = (unique(94), unique(95), unique(96));
+        let (voted, dismissed) = (unique(9_700_000_000_000), unique(9_800_000_000_000));
+        repo.create_evidence_prompt(voted, review.id, voted + 1, poster)
+            .await
+            .unwrap();
+        repo.create_evidence_prompt(dismissed, review.id, dismissed + 1, poster)
+            .await
+            .unwrap();
+
+        let (change, prompt) = repo
+            .vote_on_evidence_prompt(voted, first_voter, false)
+            .await
+            .unwrap();
+        assert_eq!(change, RequestVoteChange::Recorded);
+        assert_eq!(prompt.tally, PromptTally { add: 0, dismiss: 1 });
+        assert_eq!(prompt.author_id, poster);
+        let (change, _) = repo
+            .vote_on_evidence_prompt(voted, first_voter, true)
+            .await
+            .unwrap();
+        assert_eq!(change, RequestVoteChange::Switched);
+        let (change, prompt) = repo
+            .vote_on_evidence_prompt(voted, second_voter, true)
+            .await
+            .unwrap();
+        assert_eq!(change, RequestVoteChange::Recorded);
+        assert_eq!(prompt.tally, PromptTally { add: 2, dismiss: 0 });
+        let (change, _) = repo
+            .vote_on_evidence_prompt(voted, second_voter, true)
+            .await
+            .unwrap();
+        assert_eq!(change, RequestVoteChange::Unchanged);
+
+        assert!(repo.claim_evidence_prompt(voted).await.unwrap());
+        assert!(!repo.claim_evidence_prompt(voted).await.unwrap());
+        assert!(matches!(
+            repo.vote_on_evidence_prompt(voted, poster, true).await,
+            Err(ReviewError::RequestClosed)
+        ));
+        repo.release_evidence_prompt(voted).await.unwrap();
+        assert!(repo.claim_evidence_prompt(voted).await.unwrap());
+        repo.settle_evidence_prompt(voted, PromptOutcome::Added)
+            .await
+            .unwrap();
+        repo.release_evidence_prompt(voted).await.unwrap();
+        assert!(!repo.claim_evidence_prompt(voted).await.unwrap());
+
+        let closed = repo.close_open_evidence_prompts(review.id).await.unwrap();
+        assert_eq!(
+            closed
+                .iter()
+                .map(|p| p.source_message_id)
+                .collect::<Vec<_>>(),
+            vec![dismissed]
+        );
+        assert!(matches!(
+            repo.vote_on_evidence_prompt(dismissed, first_voter, false)
+                .await,
+            Err(ReviewError::RequestClosed)
+        ));
     }
 
     #[tokio::test]

@@ -1,24 +1,29 @@
 use std::collections::HashMap;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use serenity::all::*;
 
 use coral_redis::{ThreadAttachment, review_media};
-use database::{ContributedMedia, Review, ReviewError, ReviewRepository, ReviewStatus};
+use database::{
+    ContributedMedia, PromptOutcome, PromptTally, RequestVoteChange, Review, ReviewError,
+    ReviewRepository, ReviewStatus,
+};
 
 use super::publish::thread_link;
 use super::render::{self, MediaUrls, PostState};
-use super::{ALLOWED_MEDIA_EXTENSIONS, MAX_MEDIA, custom_id_with, face_filename, load_live};
+use super::vote::bounce;
+use super::{ALLOWED_MEDIA_EXTENSIONS, EVIDENCE_VOTES_NEEDED, MAX_MEDIA, face_filename, load_live};
 use crate::commands::blacklist::appeal;
 use crate::framework::Data;
 use crate::utils::discord_media::message_media;
 use crate::utils::text;
 
 pub const ACTIONS: &[&str] = &[ADD, DISMISS];
+pub const ADD: &str = "media_add";
+pub const DISMISS: &str = "media_dismiss";
 
-const ADD: &str = "media_add";
-const DISMISS: &str = "media_dismiss";
-const ONLY_SUBMITTER: &str = "Only the submitter can act on this.";
+const OWN_MEDIA: &str = "You posted this media.";
+const PROMPT_CLOSED: &str = "This prompt is no longer open.";
 const MESSAGE_GONE: &str = "That message is gone. Ask the sender to post it again.";
 const EDIT_PAUSED: &str = "Voting is paused while the submitter is editing.";
 const ADD_FAILED: &str = "The files could not be added. Try again.";
@@ -34,12 +39,35 @@ enum Refusal {
     Closed(&'static str),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PromptVerdict {
+    Add,
+    Dismiss,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Adder {
+    Submitter,
+    Vote,
+}
+
+fn verdict(tally: PromptTally) -> Option<PromptVerdict> {
+    if tally.add >= EVIDENCE_VOTES_NEEDED {
+        Some(PromptVerdict::Add)
+    } else if tally.dismiss >= EVIDENCE_VOTES_NEEDED {
+        Some(PromptVerdict::Dismiss)
+    } else {
+        None
+    }
+}
+
 pub async fn prompt(
     ctx: &Context,
     data: &Data,
     review_id: i64,
     thread_id: u64,
     message_id: u64,
+    author_id: u64,
     attachments: Vec<ThreadAttachment>,
 ) -> Result<()> {
     let media: Vec<ThreadAttachment> = attachments
@@ -58,35 +86,15 @@ pub async fn prompt(
     review_media::store(&mut data.redis.connection(), message_id, &media).await?;
 
     let thread = GenericChannelId::new(thread_id);
-    let submitter = UserId::new(review.submitter_id as u64);
-    let (question, mentions) = if review.hide_username {
-        (
-            "Add this to the review's evidence?".to_string(),
-            CreateAllowedMentions::new(),
-        )
-    } else {
-        (
-            format!("<@{submitter}>, add this to your review's evidence?"),
-            CreateAllowedMentions::new().users(vec![submitter]),
-        )
-    };
-    let buttons = vec![
-        CreateButton::new(custom_id_with(ADD, review.id, message_id))
-            .label("Add")
-            .style(ButtonStyle::Success),
-        CreateButton::new(custom_id_with(DISMISS, review.id, message_id))
-            .label("Dismiss")
-            .style(ButtonStyle::Secondary),
-    ];
     let message = CreateMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(vec![CreateComponent::Container(CreateContainer::new(
-            vec![
-                text(question),
-                CreateContainerComponent::ActionRow(CreateActionRow::buttons(buttons)),
-            ],
-        ))])
-        .allowed_mentions(mentions.replied_user(false))
+        .components(render::evidence_prompt(
+            review.id,
+            message_id,
+            PromptTally::default(),
+            true,
+        ))
+        .allowed_mentions(CreateAllowedMentions::new().replied_user(false))
         .reference_message(
             MessageReference::new(MessageReferenceKind::Default, thread)
                 .message_id(MessageId::new(message_id)),
@@ -94,6 +102,14 @@ pub async fn prompt(
     let sent = ctx
         .http
         .send_message(thread, Vec::<CreateAttachment>::new(), &message)
+        .await?;
+    ReviewRepository::new(data.db.pool())
+        .create_evidence_prompt(
+            message_id as i64,
+            review.id,
+            sent.id.get() as i64,
+            author_id as i64,
+        )
         .await?;
     if review.hide_username {
         alert_submitter(ctx, data, &review, thread_id, sent.id).await;
@@ -118,19 +134,165 @@ pub async fn handle_component(
     let Some(review) = ReviewRepository::new(data.db.pool()).get(review_id).await? else {
         return Ok(());
     };
-    if review.submitter_id as u64 != component.user.id.get() {
-        return reply(ctx, component, ONLY_SUBMITTER).await;
+    if review.submitter_id as u64 == component.user.id.get() {
+        return submitter_action(ctx, component, data, &review, action == ADD, source_id).await;
     }
+    vote(ctx, component, data, &review, action == ADD, source_id).await
+}
+
+pub async fn close_prompts(ctx: &Context, data: &Data, review: &Review) {
+    let closed = match ReviewRepository::new(data.db.pool())
+        .close_open_evidence_prompts(review.id)
+        .await
+    {
+        Ok(closed) => closed,
+        Err(e) => {
+            tracing::error!(
+                "Failed to close evidence prompts on review {}: {e}",
+                review.id
+            );
+            return;
+        }
+    };
+    let Some(thread_id) = review.thread_id else {
+        return;
+    };
+    for prompt in closed {
+        let source_id = prompt.source_message_id as u64;
+        let retired = EditMessage::new()
+            .flags(MessageFlags::IS_COMPONENTS_V2)
+            .components(render::evidence_prompt(
+                review.id,
+                source_id,
+                prompt.tally,
+                false,
+            ));
+        if let Err(e) = ctx
+            .http
+            .edit_message(
+                GenericChannelId::new(thread_id as u64),
+                MessageId::new(prompt.prompt_message_id as u64),
+                &retired,
+                Vec::new(),
+            )
+            .await
+        {
+            tracing::warn!("Failed to retire evidence prompt {source_id}: {e}");
+        }
+        forget(data, source_id).await;
+    }
+}
+
+async fn submitter_action(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+    review: &Review,
+    add_media: bool,
+    source_id: u64,
+) -> Result<()> {
     if let Some(closed) = closed_notice(review.status) {
         reply(ctx, component, closed).await?;
         remove_prompt(ctx, data, component, source_id).await;
         return Ok(());
     }
-    if action == DISMISS {
+    if !add_media {
         remove_prompt(ctx, data, component, source_id).await;
         return Ok(());
     }
-    add(ctx, component, data, &review, source_id).await
+    add(ctx, component, data, review, source_id, Adder::Submitter).await?;
+    Ok(())
+}
+
+async fn vote(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+    review: &Review,
+    add_media: bool,
+    source_id: u64,
+) -> Result<()> {
+    let voter = component.user.id.get();
+    if let Some(refusal) = bounce(ctx, data, review, voter).await? {
+        return reply(ctx, component, &refusal).await;
+    }
+    let repo = ReviewRepository::new(data.db.pool());
+    let Some(prompt) = repo.evidence_prompt(source_id as i64).await? else {
+        return reply(ctx, component, PROMPT_CLOSED).await;
+    };
+    if prompt.author_id as u64 == voter {
+        return reply(ctx, component, OWN_MEDIA).await;
+    }
+    let (change, prompt) = match repo
+        .vote_on_evidence_prompt(source_id as i64, voter as i64, add_media)
+        .await
+    {
+        Ok(cast) => cast,
+        Err(ReviewError::WrongStatus(status)) => {
+            let notice = closed_notice(status).unwrap_or(PROMPT_CLOSED);
+            return reply(ctx, component, notice).await;
+        }
+        Err(ReviewError::RequestClosed) => return reply(ctx, component, PROMPT_CLOSED).await,
+        Err(e) => return Err(anyhow!("{e:?}")),
+    };
+    let choice = if add_media { "Add" } else { "Dismiss" };
+    match verdict(prompt.tally) {
+        Some(PromptVerdict::Add) => {
+            return add_by_vote(ctx, component, data, review, source_id).await;
+        }
+        Some(PromptVerdict::Dismiss) => {
+            remove_prompt(ctx, data, component, source_id).await;
+            return reply(
+                ctx,
+                component,
+                "You voted **Dismiss**. The media was dismissed.",
+            )
+            .await;
+        }
+        None => {}
+    }
+    if change != RequestVoteChange::Unchanged {
+        component
+            .edit_response(
+                &ctx.http,
+                EditInteractionResponse::new()
+                    .flags(MessageFlags::IS_COMPONENTS_V2)
+                    .components(render::evidence_prompt(
+                        review.id,
+                        source_id,
+                        prompt.tally,
+                        true,
+                    )),
+            )
+            .await?;
+    }
+    let message = match change {
+        RequestVoteChange::Recorded => format!("You voted **{choice}** on this media."),
+        RequestVoteChange::Switched => {
+            format!("You changed your vote to **{choice}** on this media.")
+        }
+        RequestVoteChange::Unchanged => format!("You already voted **{choice}** on this media."),
+    };
+    reply(ctx, component, &message).await
+}
+
+async fn add_by_vote(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+    review: &Review,
+    source_id: u64,
+) -> Result<()> {
+    let repo = ReviewRepository::new(data.db.pool());
+    if !repo.claim_evidence_prompt(source_id as i64).await? {
+        return reply(ctx, component, PROMPT_CLOSED).await;
+    }
+    let added = add(ctx, component, data, review, source_id, Adder::Vote).await;
+    repo.release_evidence_prompt(source_id as i64).await?;
+    if added? {
+        reply(ctx, component, "You voted **Add**. The media was added.").await?;
+    }
+    Ok(())
 }
 
 async fn add(
@@ -139,9 +301,11 @@ async fn add(
     data: &Data,
     review: &Review,
     source_id: u64,
-) -> Result<()> {
+    adder: Adder,
+) -> Result<bool> {
     if super::vote::paused(ctx, data, review.id).await? {
-        return reply(ctx, component, EDIT_PAUSED).await;
+        reply(ctx, component, EDIT_PAUSED).await?;
+        return Ok(false);
     }
     let stored = review_media::load(&mut data.redis.connection(), source_id).await?;
     let source = ctx
@@ -151,29 +315,34 @@ async fn add(
     let (Some(files), Ok(source)) = (stored, source) else {
         reply(ctx, component, MESSAGE_GONE).await?;
         remove_prompt(ctx, data, component, source_id).await;
-        return Ok(());
+        return Ok(false);
     };
     let room = room_left(data, review.id).await?;
     if files.len() as i64 > room {
-        return reply(ctx, component, &room_notice(room)).await;
+        reply(ctx, component, &room_notice(room)).await?;
+        return Ok(false);
     }
     let Some(downloads) = download(ctx, data, review.id, &files).await? else {
         reply(ctx, component, MESSAGE_GONE).await?;
         remove_prompt(ctx, data, component, source_id).await;
-        return Ok(());
+        return Ok(false);
     };
     match contribute(ctx, data, review, source.author.id, &downloads).await {
         Ok(()) => {}
-        Err(Refusal::Reply(message)) => return reply(ctx, component, &message).await,
+        Err(Refusal::Reply(message)) => {
+            reply(ctx, component, &message).await?;
+            return Ok(false);
+        }
         Err(Refusal::Closed(message)) => {
             reply(ctx, component, message).await?;
             remove_prompt(ctx, data, component, source_id).await;
-            return Ok(());
+            return Ok(false);
         }
     }
-    show_contribution(ctx, component, source.author.id, downloads).await?;
+    show_contribution(ctx, component, source.author.id, downloads, adder).await?;
+    settle(data, source_id, PromptOutcome::Added).await;
     forget(data, source_id).await;
-    Ok(())
+    Ok(true)
 }
 
 async fn contribute(
@@ -309,6 +478,7 @@ async fn show_contribution(
     component: &ComponentInteraction,
     contributor: UserId,
     downloads: Vec<Download>,
+    adder: Adder,
 ) -> Result<()> {
     let gallery = CreateMediaGallery::new(
         downloads
@@ -321,13 +491,17 @@ async fn show_contribution(
             })
             .collect::<Vec<_>>(),
     );
+    let mut parts = vec![
+        CreateContainerComponent::MediaGallery(gallery),
+        text(format!("-# Evidence contributed by <@{contributor}>")),
+    ];
+    if adder == Adder::Vote {
+        parts.push(text("-# Added by vote."));
+    }
     let mut response = EditInteractionResponse::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
         .components(vec![CreateComponent::Container(CreateContainer::new(
-            vec![
-                CreateContainerComponent::MediaGallery(gallery),
-                text(format!("-# Evidence contributed by <@{contributor}>")),
-            ],
+            parts,
         ))])
         .allowed_mentions(CreateAllowedMentions::new());
     for file in downloads {
@@ -409,7 +583,17 @@ async fn remove_prompt(
             component.message.id
         );
     }
+    settle(data, source_id, PromptOutcome::Dismissed).await;
     forget(data, source_id).await;
+}
+
+async fn settle(data: &Data, source_id: u64, outcome: PromptOutcome) {
+    if let Err(e) = ReviewRepository::new(data.db.pool())
+        .settle_evidence_prompt(source_id as i64, outcome)
+        .await
+    {
+        tracing::error!("Failed to settle evidence prompt {source_id}: {e}");
+    }
 }
 
 async fn forget(data: &Data, source_id: u64) {
@@ -479,6 +663,15 @@ async fn reply(ctx: &Context, component: &ComponentInteraction, message: &str) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn three_adds_attach_and_three_dismisses_drop() {
+        let tally = |add, dismiss| PromptTally { add, dismiss };
+        assert_eq!(verdict(tally(2, 2)), None);
+        assert_eq!(verdict(tally(3, 0)), Some(PromptVerdict::Add));
+        assert_eq!(verdict(tally(1, 3)), Some(PromptVerdict::Dismiss));
+        assert_eq!(verdict(tally(3, 3)), Some(PromptVerdict::Add));
+    }
 
     #[test]
     fn room_notice_counts_files() {

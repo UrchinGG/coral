@@ -23,11 +23,13 @@ pub mod vote;
 
 pub const ID_PREFIX: &str = "rv:";
 pub const REVIEW_TAGS: &[&str] = &["closet_cheater", "blatant_cheater"];
+pub const REVISION_TAGS: &[&str] = &["closet_cheater", "blatant_cheater", "sniper"];
 pub const MAX_MEDIA: i64 = 9;
 pub const MAX_FILES_PER_UPLOAD: u8 = 4;
 pub const NOTE_MAX_CHARS: u16 = 75;
 pub const REASON_MAX_CHARS: u16 = 120;
 pub const REVISION_VOTES_NEEDED: i64 = 3;
+pub const EVIDENCE_VOTES_NEEDED: i64 = 3;
 pub const ALLOWED_MEDIA_EXTENSIONS: &[&str] =
     &["png", "jpg", "jpeg", "gif", "webp", "mp4", "webm", "mov"];
 pub const FACE_SIZE: u32 = 128;
@@ -274,6 +276,18 @@ mod tests {
             ("evnote", 42, Some("7"))
         );
         assert!(parse_id("review_approve:0:1").is_none());
+    }
+
+    #[test]
+    fn revisions_offer_every_review_tag_and_sniper() {
+        assert!(REVIEW_TAGS.iter().all(|tag| REVISION_TAGS.contains(tag)));
+        assert!(REVISION_TAGS.contains(&blacklist::SNIPER.name));
+        assert!(!REVIEW_TAGS.contains(&blacklist::SNIPER.name));
+        assert!(
+            REVISION_TAGS
+                .iter()
+                .all(|tag| blacklist::lookup(tag).is_some())
+        );
     }
 
     #[test]

@@ -21,8 +21,8 @@ pub fn spawn_sync_subscriber(ctx: Context, data: Data) {
                         review_id,
                         thread_id,
                         message_id,
+                        author_id,
                         attachments,
-                        ..
                     } = event
                     else {
                         return;
@@ -33,6 +33,7 @@ pub fn spawn_sync_subscriber(ctx: Context, data: Data) {
                         review_id,
                         thread_id,
                         message_id,
+                        author_id,
                         attachments,
                     )
                     .await

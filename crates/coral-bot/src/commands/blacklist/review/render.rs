@@ -7,20 +7,22 @@ use chrono::{DateTime, Utc};
 use serenity::all::*;
 
 use database::{
-    Evidence, EvidenceKind, Review, ReviewRules, ReviewStatus, RevisionRequest, Tally, Vote,
+    Evidence, EvidenceKind, PromptTally, ReviewRules, ReviewStatus, RevisionRequest, Tally, Vote,
     VoteKind,
 };
 
 use super::super::channel::format_tag_block;
+use super::community::{ADD, DISMISS};
 use super::{
-    Loaded, REVIEW_TAGS, REVISION_VOTES_NEEDED, custom_id, custom_id_with, face_filename,
-    media_label,
+    EVIDENCE_VOTES_NEEDED, Loaded, REVIEW_TAGS, REVISION_VOTES_NEEDED, custom_id, custom_id_with,
+    face_filename, media_label,
 };
 use crate::utils::{format_uuid_dashed, sanitize_reason, separator, text};
 
 pub const ANONYMITY_NOTE: &str =
     "Be aware that users may still be able to determine who made this report with the replay.";
 const MAX_LISTED_REQUESTS: usize = 4;
+const EVIDENCE_QUESTION: &str = "Add this to the review's evidence?";
 
 pub enum ConsoleMode {
     Draft {
@@ -368,7 +370,7 @@ fn vote_sections(review_id: i64, state: &PostState) -> Vec<CreateContainerCompon
 }
 
 pub fn revision_request(
-    review: &Review,
+    review_id: i64,
     request: &RevisionRequest,
     votable: bool,
 ) -> Vec<CreateComponent<'static>> {
@@ -378,10 +380,7 @@ pub fn revision_request(
     ))];
     if votable {
         parts.push(separator());
-        parts.extend(request_votes(review.id, request));
-    }
-    if !review.hide_username {
-        parts.push(text(format!("-# Submitted by <@{}>", review.submitter_id)));
+        parts.extend(request_votes(review_id, request));
     }
     vec![CreateComponent::Container(CreateContainer::new(parts))]
 }
@@ -451,6 +450,33 @@ fn request_votes(
             false,
         ),
     ]
+}
+
+pub fn evidence_prompt(
+    review_id: i64,
+    source_id: u64,
+    tally: PromptTally,
+    votable: bool,
+) -> Vec<CreateComponent<'static>> {
+    let mut parts = vec![text(EVIDENCE_QUESTION)];
+    if votable {
+        parts.push(separator());
+        parts.push(vote_section(
+            format!("### Add [{}/{EVIDENCE_VOTES_NEEDED}]", tally.add),
+            custom_id_with(ADD, review_id, source_id),
+            "Add",
+            ButtonStyle::Success,
+            false,
+        ));
+        parts.push(vote_section(
+            format!("### Dismiss [{}/{EVIDENCE_VOTES_NEEDED}]", tally.dismiss),
+            custom_id_with(DISMISS, review_id, source_id),
+            "Dismiss",
+            ButtonStyle::Danger,
+            false,
+        ));
+    }
+    vec![CreateComponent::Container(CreateContainer::new(parts))]
 }
 
 fn vote_section(

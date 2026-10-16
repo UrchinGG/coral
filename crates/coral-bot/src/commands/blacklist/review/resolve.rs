@@ -146,6 +146,7 @@ pub async fn close_out(ctx: &Context, data: &Data, review: &Review) {
 async fn finish(ctx: &Context, data: &Data, review: &Review, close_thread: bool) {
     rerender_post(ctx, data, review.id).await;
     super::revision::close_requests(ctx, data, review).await;
+    super::community::close_prompts(ctx, data, review).await;
     let Some(thread_id) = review.thread_id else {
         return;
     };
