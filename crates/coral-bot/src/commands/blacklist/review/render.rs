@@ -297,9 +297,9 @@ pub fn public_post(
 
     parts.push(separator());
     parts.push(text(if review.hide_username {
-        "-# Evidence submitted anonymously".to_string()
+        "-# Tag submitted anonymously".to_string()
     } else {
-        format!("-# Evidence submitted by <@{}>", review.submitter_id)
+        format!("-# Tag submitted by <@{}>", review.submitter_id)
     }));
     vec![CreateComponent::Container(CreateContainer::new(parts))]
 }
