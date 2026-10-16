@@ -38,6 +38,7 @@ const FORUM_TAG_PENDING: &str = "Pending";
 const FORUM_TAG_APPROVED: &str = "Accepted";
 const FORUM_TAG_REJECTED: &str = "Denied";
 const FORUM_TAG_VOIDED: &str = "Voided";
+const FORUM_TAG_CONFIRMED: &str = "Confirmed";
 
 pub fn draft_idle_window() -> Duration {
     Duration::minutes(30)
@@ -242,7 +243,7 @@ impl ForumTags {
         Self { by_name }
     }
 
-    pub fn for_status(&self, status: database::ReviewStatus) -> Vec<ForumTagId> {
+    pub fn for_status(&self, status: database::ReviewStatus, confirmed: bool) -> Vec<ForumTagId> {
         use database::ReviewStatus::*;
         let name = match status {
             Open => FORUM_TAG_PENDING,
@@ -251,7 +252,12 @@ impl ForumTags {
             Voided => FORUM_TAG_VOIDED,
             Draft | Expired => return Vec::new(),
         };
-        self.by_name.get(name).copied().into_iter().collect()
+        let confirmed = confirmed.then_some(FORUM_TAG_CONFIRMED);
+        [Some(name), confirmed]
+            .into_iter()
+            .flatten()
+            .filter_map(|name| self.by_name.get(name).copied())
+            .collect()
     }
 }
 

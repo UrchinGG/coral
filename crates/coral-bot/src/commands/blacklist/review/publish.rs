@@ -276,7 +276,7 @@ async fn create_post(ctx: &Context, data: &Data, loaded: &Loaded) -> Result<Thre
         ));
     }
     let tags = ForumTags::resolve(ctx, data).await;
-    let forum_post = tags.for_status(ReviewStatus::Open).into_iter().fold(
+    let forum_post = tags.for_status(ReviewStatus::Open, false).into_iter().fold(
         CreateForumPost::new(loaded.username.clone(), message),
         |post, tag| post.add_applied_tag(tag),
     );
@@ -391,12 +391,18 @@ pub async fn try_rerender_post(ctx: &Context, data: &Data, review_id: i64) -> Re
     Ok(())
 }
 
-pub async fn set_forum_tags(ctx: &Context, data: &Data, thread_id: i64, status: ReviewStatus) {
+pub async fn set_forum_tags(
+    ctx: &Context,
+    data: &Data,
+    thread_id: i64,
+    status: ReviewStatus,
+    confirmed: bool,
+) {
     let tags = ForumTags::resolve(ctx, data).await;
     if let Err(e) = ThreadId::new(thread_id as u64)
         .edit(
             &ctx.http,
-            EditThread::new().applied_tags(tags.for_status(status)),
+            EditThread::new().applied_tags(tags.for_status(status, confirmed)),
         )
         .await
     {

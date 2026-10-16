@@ -10,7 +10,7 @@ use database::{
 use super::super::evidence_post::confirm::{Reply, Target, confirm_flow};
 use super::super::evidence_post::{self, media::current_media, menu::add_sources, render};
 use super::REVIEW_TAGS;
-use super::publish::rerender_post;
+use super::publish::{rerender_post, set_forum_tags};
 use crate::commands::blacklist::tag::get_rank;
 use crate::framework::{AccessRank, Data};
 use crate::interact;
@@ -215,6 +215,9 @@ async fn settle(ctx: &Context, data: &Data, review: &Review, state: ConfirmState
     let thread = ThreadId::new(thread_id as u64);
     set_thread_closed(ctx, thread, false).await;
     rerender_post(ctx, data, review.id).await;
+    if matches!(state, ConfirmState::Confirmed(_)) {
+        set_forum_tags(ctx, data, thread_id, review.status, true).await;
+    }
     set_thread_closed(ctx, thread, true).await;
     Ok(())
 }

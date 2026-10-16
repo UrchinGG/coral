@@ -150,7 +150,7 @@ async fn finish(ctx: &Context, data: &Data, review: &Review, close_thread: bool)
     let Some(thread_id) = review.thread_id else {
         return;
     };
-    set_forum_tags(ctx, data, thread_id, review.status).await;
+    set_forum_tags(ctx, data, thread_id, review.status, false).await;
     if !close_thread {
         return;
     }
