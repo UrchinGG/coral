@@ -57,8 +57,9 @@ pub use pool::{Database, PoolSettings};
 pub use review_guide::{ReviewGuideConfig, ReviewGuideRepository};
 pub use review_rules::{ReviewRules, ReviewRulesRepository};
 pub use reviews::{
-    CastOutcome, ContributedMedia, Evidence, EvidenceKind, PublishedAttachment, Review,
-    ReviewError, ReviewRepository, ReviewStatus, Revision, StagedMedia, Tally, Vote, VoteKind,
+    CastOutcome, ContributedMedia, Evidence, EvidenceKind, PublishedAttachment, RequestStatus,
+    RequestTally, RequestVoteChange, Review, ReviewError, ReviewRepository, ReviewStatus, Revision,
+    RevisionRequest, StagedMedia, Tally, Vote, VoteKind,
 };
 pub use sessions::{SessionMarker, SessionRepository};
 pub use sqlx::{Error as SqlxError, PgConnection, Postgres, Transaction};

@@ -220,12 +220,7 @@ async fn console_mode(data: &Data, loaded: &Loaded) -> Result<ConsoleMode> {
     let repo = ReviewRepository::new(data.db.pool());
     let votes = repo.active_votes(loaded.review.id).await?;
     Ok(ConsoleMode::Edit {
-        revise_reasons: votes
-            .iter()
-            .filter(|v| v.kind == VoteKind::Revise)
-            .filter_map(|v| v.reason.clone())
-            .collect(),
-        save_clears_votes: votes.iter().any(|v| v.kind != VoteKind::Reject),
+        save_clears_votes: votes.iter().any(|v| v.kind == VoteKind::Accept),
         can_withdraw: !repo.ever_voted(loaded.review.id).await?,
     })
 }

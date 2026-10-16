@@ -246,6 +246,7 @@ async fn create_post(ctx: &Context, data: &Data, loaded: &Loaded) -> Result<Thre
         loaded,
         &PostState {
             tally: Default::default(),
+            revise_supporters: 0,
             votes: &[],
             paused: false,
             edited_at: None,
@@ -321,6 +322,7 @@ pub async fn try_rerender_post(ctx: &Context, data: &Data, review_id: i64) -> Re
     };
     let repo = ReviewRepository::new(data.db.pool());
     let tally = repo.tally(review_id).await?;
+    let revise_supporters = repo.revise_supporters(review_id).await?;
     let votes = repo.active_votes(review_id).await?;
     let paused = repo.edit_session(review_id).await?.is_some();
     let edited_at = (repo.revision_count(review_id).await? > 1)
@@ -352,6 +354,7 @@ pub async fn try_rerender_post(ctx: &Context, data: &Data, review_id: i64) -> Re
         &loaded,
         &PostState {
             tally,
+            revise_supporters,
             votes: &votes,
             paused,
             edited_at,

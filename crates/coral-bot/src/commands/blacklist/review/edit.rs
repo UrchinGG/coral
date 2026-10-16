@@ -140,6 +140,7 @@ async fn publish_session(ctx: &Context, data: &Data, loaded: &Loaded) -> Result<
         loaded,
         &PostState {
             tally,
+            revise_supporters: repo.revise_supporters(loaded.review.id).await?,
             votes: &kept_votes,
             paused: false,
             edited_at: Some(chrono::Utc::now()),

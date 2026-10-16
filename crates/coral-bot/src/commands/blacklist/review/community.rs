@@ -257,6 +257,7 @@ async fn attach_to_post(
         &loaded,
         &PostState {
             tally: repo.tally(review_id).await?,
+            revise_supporters: repo.revise_supporters(review_id).await?,
             votes: &votes,
             paused: repo.edit_session(review_id).await?.is_some(),
             edited_at: (repo.revision_count(review_id).await? > 1)

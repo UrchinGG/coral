@@ -7,8 +7,8 @@ use database::{
 };
 
 use super::resolve::{self, Outcome};
-use super::{REVISE_MAX_CHARS, custom_id, custom_id_with, edit_idle_window, load_live};
-use crate::commands::blacklist::{appeal, channel};
+use super::{custom_id_with, edit_idle_window, load_live};
+use crate::commands::blacklist::channel;
 use crate::framework::{AccessRank, AccessRankExt, Data};
 use crate::utils::text;
 
@@ -26,25 +26,19 @@ pub async fn handle_component(
     let Some(review) = ReviewRepository::new(data.db.pool()).get(review_id).await? else {
         return Ok(());
     };
-    let opens_modal = action == "revise";
     if matches!(action, "switch" | "addvote" | "resolve") {
         component
             .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
             .await?;
-    } else if !opens_modal {
+    } else {
         component.defer_ephemeral(&ctx.http).await?;
     }
     if let Some(bounce) = bounce(ctx, data, &review, voter).await? {
-        return if opens_modal {
-            reply(ctx, component, bounce).await
-        } else {
-            respond(ctx, component, vec![text(bounce)]).await
-        };
+        return respond(ctx, component, vec![text(bounce)]).await;
     }
     let kind = match action {
         "accept" => VoteKind::Accept,
         "reject" => VoteKind::Reject,
-        "revise" => return open_revise_modal(ctx, component, data, &review, voter).await,
         "switch" | "addvote" => {
             let kind = parse_kind(extra);
             return record_from_prompt(ctx, component, data, &review, voter, kind).await;
@@ -60,7 +54,7 @@ pub async fn handle_component(
         .await?;
     match held.map(|v| v.kind) {
         None => {
-            let message = cast(ctx, data, &review, voter, kind, None).await?;
+            let message = cast(ctx, data, &review, voter, kind).await?;
             respond(ctx, component, vec![text(message)]).await
         }
         Some(held) if held == kind => {
@@ -96,47 +90,14 @@ pub async fn handle_component(
     }
 }
 
-pub async fn handle_revise_modal(
+pub(super) async fn bounce(
     ctx: &Context,
-    modal: &ModalInteraction,
     data: &Data,
-    review_id: i64,
-) -> Result<()> {
-    let voter = modal.user.id.get();
-    modal.defer_ephemeral(&ctx.http).await?;
-    let Some(review) = ReviewRepository::new(data.db.pool()).get(review_id).await? else {
-        return Ok(());
-    };
-    let reason = crate::interact::extract_modal_value(&modal.data.components, "reason");
-    let reason = reason.trim();
-    let message = match bounce(ctx, data, &review, voter).await? {
-        Some(bounce) => bounce,
-        None if reason.is_empty() => "A revision request needs a reason.".to_string(),
-        None => cast(ctx, data, &review, voter, VoteKind::Revise, Some(reason)).await?,
-    };
-    modal
-        .edit_response(
-            &ctx.http,
-            EditInteractionResponse::new()
-                .flags(MessageFlags::IS_COMPONENTS_V2)
-                .components(container(vec![text(message)])),
-        )
-        .await?;
-    Ok(())
-}
-
-async fn bounce(ctx: &Context, data: &Data, review: &Review, voter: u64) -> Result<Option<String>> {
-    match review.status {
-        ReviewStatus::Voided => return Ok(Some("This review was voided.".into())),
-        status if status.is_terminal() => {
-            return Ok(Some("This review is already resolved.".into()));
-        }
-        _ => {}
-    }
-    if paused(ctx, data, review.id).await? {
-        return Ok(Some(
-            "Voting is paused while the submitter revises this review.".into(),
-        ));
+    review: &Review,
+    voter: u64,
+) -> Result<Option<String>> {
+    if let Some(bounce) = state_bounce(ctx, data, review).await? {
+        return Ok(Some(bounce));
     }
     if review.submitter_id as u64 == voter {
         return Ok(Some(OWN_SUBMISSION.into()));
@@ -155,6 +116,26 @@ async fn bounce(ctx: &Context, data: &Data, review: &Review, voter: u64) -> Resu
         return Ok(None);
     }
     Ok(Some(vote_access_hint(member.as_ref(), &rules).to_string()))
+}
+
+pub(super) async fn state_bounce(
+    ctx: &Context,
+    data: &Data,
+    review: &Review,
+) -> Result<Option<String>> {
+    match review.status {
+        ReviewStatus::Voided => return Ok(Some("This review was voided.".into())),
+        status if status.is_terminal() => {
+            return Ok(Some("This review is already resolved.".into()));
+        }
+        _ => {}
+    }
+    if paused(ctx, data, review.id).await? {
+        return Ok(Some(
+            "Voting is paused while the submitter revises this review.".into(),
+        ));
+    }
+    Ok(None)
 }
 
 pub async fn paused(ctx: &Context, data: &Data, review_id: i64) -> Result<bool> {
@@ -254,7 +235,7 @@ async fn record_from_prompt(
     voter: u64,
     kind: VoteKind,
 ) -> Result<()> {
-    let message = cast(ctx, data, review, voter, kind, None).await?;
+    let message = cast(ctx, data, review, voter, kind).await?;
     respond(ctx, component, vec![text(message)]).await
 }
 
@@ -295,54 +276,16 @@ async fn resolve_now(
     respond(ctx, component, vec![text(message)]).await
 }
 
-async fn open_revise_modal(
-    ctx: &Context,
-    component: &ComponentInteraction,
-    data: &Data,
-    review: &Review,
-    voter: u64,
-) -> Result<()> {
-    let held = ReviewRepository::new(data.db.pool())
-        .active_vote(review.id, voter as i64)
-        .await?;
-    let mut input = CreateInputText::new(InputTextStyle::Paragraph, "reason")
-        .placeholder("What should the type or reason say instead?")
-        .max_length(REVISE_MAX_CHARS)
-        .required(true);
-    let title = match &held {
-        Some(vote) if vote.kind == VoteKind::Revise => {
-            if let Some(reason) = &vote.reason {
-                input = input.value(reason.clone());
-            }
-            "Update your revision request"
-        }
-        Some(_) => "Switching your vote to revise",
-        None => "Request a revision",
-    };
-    let modal = CreateModal::new(custom_id("revise_m", review.id), title).components(vec![
-        CreateModalComponent::Label(CreateLabel::input_text("What should change?", input)),
-    ]);
-    component
-        .create_response(&ctx.http, CreateInteractionResponse::Modal(modal))
-        .await?;
-    Ok(())
-}
-
 async fn cast(
     ctx: &Context,
     data: &Data,
     review: &Review,
     voter: u64,
     kind: VoteKind,
-    reason: Option<&str>,
 ) -> Result<String> {
     let repo = ReviewRepository::new(data.db.pool());
     let before = repo.tally(review.id).await?;
-    let held = repo
-        .active_vote(review.id, voter as i64)
-        .await?
-        .map(|v| v.kind);
-    let outcome = match repo.cast_vote(review.id, voter as i64, kind, reason).await {
+    let outcome = match repo.cast_vote(review.id, voter as i64, kind, None).await {
         Ok(outcome) => outcome,
         Err(ReviewError::WrongStatus(ReviewStatus::Voided)) => {
             return Ok("This review was voided.".into());
@@ -352,36 +295,18 @@ async fn cast(
     };
     let label = tag_label(data, review.id).await?;
     let player = player_name(ctx, data, review.id).await?;
-    let reason = reason.unwrap_or_default();
     let message = match outcome {
-        CastOutcome::Unchanged if kind == VoteKind::Revise => {
-            return Ok(format!(
-                "Your revision request for the {label} tag on `{player}` is unchanged."
-            ));
-        }
         CastOutcome::Unchanged => {
             return Ok(format!(
                 "You have already voted to {} this player",
                 verb(kind)
             ));
         }
-        CastOutcome::Recorded if held == Some(VoteKind::Revise) => {
-            notify_revise(ctx, review, reason, true).await;
-            format!("You updated your revision request for the {label} tag on `{player}`.")
-        }
-        CastOutcome::Recorded => {
-            if kind == VoteKind::Revise {
-                notify_revise(ctx, review, reason, false).await;
-            }
-            format!(
-                "You voted to **{}** the {label} tag on `{player}`.",
-                title(kind)
-            )
-        }
+        CastOutcome::Recorded => format!(
+            "You voted to **{}** the {label} tag on `{player}`.",
+            title(kind)
+        ),
         CastOutcome::Switched(_) => {
-            if kind == VoteKind::Revise {
-                notify_revise(ctx, review, reason, false).await;
-            }
             format!(
                 "You changed your vote to **{}** the {label} tag on `{player}`.",
                 title(kind)
@@ -416,52 +341,6 @@ async fn after_vote(
         None => super::publish::rerender_post(ctx, data, review.id).await,
     }
     Ok(())
-}
-
-async fn notify_revise(ctx: &Context, review: &Review, reason: &str, updated: bool) {
-    let Some(thread_id) = review.thread_id else {
-        return;
-    };
-    let what = if updated {
-        "a revision request was updated"
-    } else {
-        "a revision has been requested"
-    };
-    let reason = crate::utils::sanitize_reason(reason);
-    let submitter = UserId::new(review.submitter_id as u64);
-    let lead = if review.hide_username {
-        let mut sentence = what.to_string();
-        sentence[..1].make_ascii_uppercase();
-        let dm = format!("{sentence}: {reason}\nThread: <#{thread_id}>");
-        if !appeal::send_dm(ctx, submitter, &dm).await {
-            tracing::warn!("Anonymous review {} revise DM was not delivered", review.id);
-        }
-        format!("{sentence}:")
-    } else {
-        format!("<@{submitter}> {what}:")
-    };
-    let mentions = if review.hide_username {
-        CreateAllowedMentions::new()
-    } else {
-        CreateAllowedMentions::new().users(vec![submitter])
-    };
-    let message = CreateMessage::new()
-        .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(vec![CreateComponent::Container(CreateContainer::new(
-            vec![text(format!("{lead}\n> {reason}"))],
-        ))])
-        .allowed_mentions(mentions);
-    if let Err(e) = ctx
-        .http
-        .send_message(
-            GenericChannelId::new(thread_id as u64),
-            Vec::<CreateAttachment>::new(),
-            &message,
-        )
-        .await
-    {
-        tracing::warn!("Failed to post revise notice in review {}: {e}", review.id);
-    }
 }
 
 async fn ping_dispute(ctx: &Context, data: &Data, review: &Review) {
@@ -541,26 +420,8 @@ fn title(kind: VoteKind) -> &'static str {
     }
 }
 
-fn ephemeral(
-    parts: Vec<CreateContainerComponent<'static>>,
-) -> CreateInteractionResponseMessage<'static> {
-    CreateInteractionResponseMessage::new()
-        .flags(MessageFlags::IS_COMPONENTS_V2 | MessageFlags::EPHEMERAL)
-        .components(container(parts))
-}
-
 fn container(parts: Vec<CreateContainerComponent<'static>>) -> Vec<CreateComponent<'static>> {
     vec![CreateComponent::Container(CreateContainer::new(parts))]
-}
-
-async fn reply(ctx: &Context, component: &ComponentInteraction, message: String) -> Result<()> {
-    component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(ephemeral(vec![text(message)])),
-        )
-        .await?;
-    Ok(())
 }
 
 async fn respond(

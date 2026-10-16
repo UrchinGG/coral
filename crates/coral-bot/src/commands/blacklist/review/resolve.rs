@@ -48,7 +48,7 @@ impl Outcome {
 }
 
 pub fn community_outcome(tally: Tally, rules: &ReviewRules) -> Option<Outcome> {
-    if tally.accept >= rules.accept_threshold && tally.reject == 0 && tally.revise == 0 {
+    if tally.accept >= rules.accept_threshold && tally.reject == 0 {
         Some(Outcome::Accept)
     } else if tally.reject >= rules.reject_threshold && tally.accept == 0 {
         Some(Outcome::Reject)
@@ -145,6 +145,7 @@ pub async fn close_out(ctx: &Context, data: &Data, review: &Review) {
 
 async fn finish(ctx: &Context, data: &Data, review: &Review, close_thread: bool) {
     rerender_post(ctx, data, review.id).await;
+    super::revision::close_requests(ctx, data, review).await;
     let Some(thread_id) = review.thread_id else {
         return;
     };
@@ -278,22 +279,14 @@ async fn apply_tag(data: &Data, review: &Review, votes: &[Vote], staff: Option<u
 mod tests {
     use super::*;
 
-    fn tally(accept: i64, reject: i64, revise: i64) -> Tally {
-        Tally {
-            accept,
-            reject,
-            revise,
-        }
-    }
-
-    fn outcome(accept: i64, reject: i64, revise: i64) -> Option<Outcome> {
-        community_outcome(tally(accept, reject, revise), &ReviewRules::DEFAULT)
+    fn outcome(accept: i64, reject: i64) -> Option<Outcome> {
+        community_outcome(Tally { accept, reject }, &ReviewRules::DEFAULT)
     }
 
     #[test]
     fn eight_clean_accepts_resolve() {
-        assert_eq!(outcome(7, 0, 0), None);
-        assert_eq!(outcome(8, 0, 0), Some(Outcome::Accept));
+        assert_eq!(outcome(7, 0), None);
+        assert_eq!(outcome(8, 0), Some(Outcome::Accept));
     }
 
     #[test]
@@ -304,23 +297,36 @@ mod tests {
             ..ReviewRules::DEFAULT
         };
         assert_eq!(
-            community_outcome(tally(4, 0, 0), &rules),
+            community_outcome(
+                Tally {
+                    accept: 4,
+                    reject: 0
+                },
+                &rules
+            ),
             Some(Outcome::Accept)
         );
-        assert_eq!(community_outcome(tally(0, 4, 0), &rules), None);
+        assert_eq!(
+            community_outcome(
+                Tally {
+                    accept: 0,
+                    reject: 4
+                },
+                &rules
+            ),
+            None
+        );
     }
 
     #[test]
-    fn any_reject_or_revise_blocks_acceptance() {
-        assert_eq!(outcome(9, 1, 0), None);
-        assert_eq!(outcome(9, 0, 1), None);
+    fn any_reject_blocks_acceptance() {
+        assert_eq!(outcome(9, 1), None);
     }
 
     #[test]
-    fn three_rejects_with_no_accepts_reject_and_revises_do_not_count() {
-        assert_eq!(outcome(0, 3, 0), Some(Outcome::Reject));
-        assert_eq!(outcome(0, 2, 5), None);
-        assert_eq!(outcome(0, 3, 4), Some(Outcome::Reject));
-        assert_eq!(outcome(1, 3, 0), None);
+    fn three_rejects_with_no_accepts_reject() {
+        assert_eq!(outcome(0, 2), None);
+        assert_eq!(outcome(0, 3), Some(Outcome::Reject));
+        assert_eq!(outcome(1, 3), None);
     }
 }

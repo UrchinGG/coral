@@ -8,6 +8,12 @@ const REVISION_COLUMNS: &str =
 const EVIDENCE_COLUMNS: &str = "id, review_id, revision, kind, replay_id, replay_ts, filename, \
     content_type, attachment_message_id, attachment_id, note, added_by, added_at, position";
 const VOTE_COLUMNS: &str = "id, review_id, voter_id, revision, kind, reason, disposition, cast_at";
+const REQUEST_COLUMNS: &str = "id, review_id, author_id, tag_type, reason, message_id, status, \
+    applied_by, created_at, resolved_at, \
+    (SELECT COUNT(*) FROM review_revision_request_vote v \
+     WHERE v.request_id = review_revision_request.id AND v.yes) AS yes, \
+    (SELECT COUNT(*) FROM review_revision_request_vote v \
+     WHERE v.request_id = review_revision_request.id AND NOT v.yes) AS no";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReviewStatus {
@@ -71,6 +77,25 @@ impl VoteKind {
             "reject" => Self::Reject,
             "revise" => Self::Revise,
             _ => Self::Accept,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestStatus {
+    Open,
+    Applied,
+    Rejected,
+    Closed,
+}
+
+impl RequestStatus {
+    fn parse(raw: &str) -> Self {
+        match raw {
+            "applied" => Self::Applied,
+            "rejected" => Self::Rejected,
+            "closed" => Self::Closed,
+            _ => Self::Open,
         }
     }
 }
@@ -268,7 +293,71 @@ impl From<VoteRow> for Vote {
 pub struct Tally {
     pub accept: i64,
     pub reject: i64,
-    pub revise: i64,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct RevisionRequestRow {
+    id: i64,
+    review_id: i64,
+    author_id: i64,
+    tag_type: String,
+    reason: String,
+    message_id: Option<i64>,
+    status: String,
+    applied_by: Option<i64>,
+    created_at: DateTime<Utc>,
+    resolved_at: Option<DateTime<Utc>>,
+    yes: i64,
+    no: i64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RequestTally {
+    pub yes: i64,
+    pub no: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct RevisionRequest {
+    pub id: i64,
+    pub review_id: i64,
+    pub author_id: i64,
+    pub tag_type: String,
+    pub reason: String,
+    pub message_id: Option<i64>,
+    pub status: RequestStatus,
+    pub applied_by: Option<i64>,
+    pub created_at: DateTime<Utc>,
+    pub resolved_at: Option<DateTime<Utc>>,
+    pub tally: RequestTally,
+}
+
+impl From<RevisionRequestRow> for RevisionRequest {
+    fn from(row: RevisionRequestRow) -> Self {
+        Self {
+            id: row.id,
+            review_id: row.review_id,
+            author_id: row.author_id,
+            tag_type: row.tag_type,
+            reason: row.reason,
+            message_id: row.message_id,
+            status: RequestStatus::parse(&row.status),
+            applied_by: row.applied_by,
+            created_at: row.created_at,
+            resolved_at: row.resolved_at,
+            tally: RequestTally {
+                yes: row.yes,
+                no: row.no,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestVoteChange {
+    Recorded,
+    Switched,
+    Unchanged,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -287,6 +376,7 @@ pub enum ReviewError {
     EditInProgress,
     NoRoom(i64),
     VotesExist,
+    RequestClosed,
     Database(sqlx::Error),
 }
 
@@ -433,17 +523,7 @@ impl<'a> ReviewRepository<'a> {
         tag_type: &str,
         reason: &str,
     ) -> Result<bool, sqlx::Error> {
-        let updated = sqlx::query(
-            "UPDATE review_revision SET tag_type = $3, reason = $4, last_activity_at = NOW()
-             WHERE review_id = $1 AND revision = $2 AND published_at IS NULL",
-        )
-        .bind(review_id)
-        .bind(revision)
-        .bind(tag_type)
-        .bind(reason)
-        .execute(self.pool)
-        .await?;
-        Ok(updated.rows_affected() > 0)
+        write_content(self.pool, review_id, revision, tag_type, reason).await
     }
 
     pub async fn evidence(
@@ -715,28 +795,7 @@ impl<'a> ReviewRepository<'a> {
             tx.commit().await?;
             return Ok(existing);
         }
-        let revision: Revision = sqlx::query_as(&format!(
-            "INSERT INTO review_revision (review_id, revision, reason, tag_type)
-             SELECT review_id, revision + 1, reason, tag_type FROM review_revision
-             WHERE review_id = $1 AND published_at IS NOT NULL
-             ORDER BY revision DESC LIMIT 1
-             RETURNING {REVISION_COLUMNS}"
-        ))
-        .bind(review_id)
-        .fetch_one(&mut *tx)
-        .await?;
-        sqlx::query(
-            "INSERT INTO review_evidence
-                 (review_id, revision, kind, replay_id, replay_ts, filename, content_type,
-                  attachment_message_id, attachment_id, note, added_by, added_at, position)
-             SELECT review_id, $2, kind, replay_id, replay_ts, filename, content_type,
-                    attachment_message_id, attachment_id, note, added_by, added_at, position
-             FROM review_evidence WHERE review_id = $1 AND revision = $2 - 1",
-        )
-        .bind(review_id)
-        .bind(revision.revision)
-        .execute(&mut *tx)
-        .await?;
+        let revision = open_revision(&mut tx, review_id).await?;
         tx.commit().await?;
         Ok(revision)
     }
@@ -813,14 +872,7 @@ impl<'a> ReviewRepository<'a> {
         if status != ReviewStatus::Open {
             return Err(ReviewError::WrongStatus(status));
         }
-        let (editing,): (bool,) = sqlx::query_as(
-            "SELECT EXISTS (SELECT 1 FROM review_revision
-                            WHERE review_id = $1 AND published_at IS NULL)",
-        )
-        .bind(review_id)
-        .fetch_one(&mut *tx)
-        .await?;
-        if editing {
+        if has_unpublished_revision(&mut tx, review_id).await? {
             return Err(ReviewError::EditInProgress);
         }
         let revision = live_revision_number(&mut tx, review_id).await?;
@@ -921,20 +973,15 @@ impl<'a> ReviewRepository<'a> {
     }
 
     pub async fn tally(&self, review_id: i64) -> Result<Tally, sqlx::Error> {
-        let (accept, reject, revise): (i64, i64, i64) = sqlx::query_as(
+        let (accept, reject): (i64, i64) = sqlx::query_as(
             "SELECT COUNT(*) FILTER (WHERE kind = 'accept'),
-                    COUNT(*) FILTER (WHERE kind = 'reject'),
-                    COUNT(*) FILTER (WHERE kind = 'revise')
+                    COUNT(*) FILTER (WHERE kind = 'reject')
              FROM review_vote WHERE review_id = $1 AND disposition = 'active'",
         )
         .bind(review_id)
         .fetch_one(self.pool)
         .await?;
-        Ok(Tally {
-            accept,
-            reject,
-            revise,
-        })
+        Ok(Tally { accept, reject })
     }
 
     pub async fn ever_voted(&self, review_id: i64) -> Result<bool, sqlx::Error> {
@@ -1011,6 +1058,195 @@ impl<'a> ReviewRepository<'a> {
         };
         tx.commit().await?;
         Ok(outcome)
+    }
+
+    pub async fn open_requests(&self, review_id: i64) -> Result<Vec<RevisionRequest>, sqlx::Error> {
+        let rows: Vec<RevisionRequestRow> = sqlx::query_as(&format!(
+            "SELECT {REQUEST_COLUMNS} FROM review_revision_request
+             WHERE review_id = $1 AND status = 'open' ORDER BY id"
+        ))
+        .bind(review_id)
+        .fetch_all(self.pool)
+        .await?;
+        Ok(rows.into_iter().map(RevisionRequest::from).collect())
+    }
+
+    pub async fn revision_request(
+        &self,
+        request_id: i64,
+    ) -> Result<Option<RevisionRequest>, sqlx::Error> {
+        fetch_request(self.pool, request_id).await
+    }
+
+    pub async fn revise_supporters(&self, review_id: i64) -> Result<i64, sqlx::Error> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(DISTINCT v.voter_id) FROM review_revision_request_vote v
+             JOIN review_revision_request r ON r.id = v.request_id
+             WHERE r.review_id = $1 AND r.status = 'open' AND v.yes",
+        )
+        .bind(review_id)
+        .fetch_one(self.pool)
+        .await?;
+        Ok(count)
+    }
+
+    pub async fn create_request(
+        &self,
+        review_id: i64,
+        author_id: i64,
+        tag_type: &str,
+        reason: &str,
+    ) -> Result<RevisionRequest, ReviewError> {
+        let mut tx = self.pool.begin().await?;
+        let status = lock_status(&mut tx, review_id).await?;
+        if status != ReviewStatus::Open {
+            return Err(ReviewError::WrongStatus(status));
+        }
+        let (request_id,): (i64,) = sqlx::query_as(
+            "INSERT INTO review_revision_request (review_id, author_id, tag_type, reason)
+             VALUES ($1, $2, $3, $4) RETURNING id",
+        )
+        .bind(review_id)
+        .bind(author_id)
+        .bind(tag_type)
+        .bind(reason)
+        .fetch_one(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO review_revision_request_vote (request_id, voter_id, yes)
+             VALUES ($1, $2, TRUE)",
+        )
+        .bind(request_id)
+        .bind(author_id)
+        .execute(&mut *tx)
+        .await?;
+        let request = fetch_request(&mut *tx, request_id)
+            .await?
+            .ok_or(ReviewError::NotFound)?;
+        tx.commit().await?;
+        Ok(request)
+    }
+
+    pub async fn set_request_message(
+        &self,
+        request_id: i64,
+        message_id: i64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE review_revision_request SET message_id = $2 WHERE id = $1")
+            .bind(request_id)
+            .bind(message_id)
+            .execute(self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn vote_on_request(
+        &self,
+        request_id: i64,
+        voter_id: i64,
+        yes: bool,
+    ) -> Result<(RequestVoteChange, RevisionRequest), ReviewError> {
+        let mut tx = self.pool.begin().await?;
+        lock_open_request(&mut tx, request_id).await?;
+        let held: Option<(bool,)> = sqlx::query_as(
+            "SELECT yes FROM review_revision_request_vote WHERE request_id = $1 AND voter_id = $2",
+        )
+        .bind(request_id)
+        .bind(voter_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let change = match held {
+            Some((held,)) if held == yes => RequestVoteChange::Unchanged,
+            Some(_) => {
+                sqlx::query(
+                    "UPDATE review_revision_request_vote SET yes = $3, created_at = NOW()
+                     WHERE request_id = $1 AND voter_id = $2",
+                )
+                .bind(request_id)
+                .bind(voter_id)
+                .bind(yes)
+                .execute(&mut *tx)
+                .await?;
+                RequestVoteChange::Switched
+            }
+            None => {
+                sqlx::query(
+                    "INSERT INTO review_revision_request_vote (request_id, voter_id, yes)
+                     VALUES ($1, $2, $3)",
+                )
+                .bind(request_id)
+                .bind(voter_id)
+                .bind(yes)
+                .execute(&mut *tx)
+                .await?;
+                RequestVoteChange::Recorded
+            }
+        };
+        let request = fetch_request(&mut *tx, request_id)
+            .await?
+            .ok_or(ReviewError::NotFound)?;
+        tx.commit().await?;
+        Ok((change, request))
+    }
+
+    pub async fn apply_request(
+        &self,
+        request_id: i64,
+        applied_by: i64,
+    ) -> Result<RevisionRequest, ReviewError> {
+        let mut tx = self.pool.begin().await?;
+        let request = lock_open_request(&mut tx, request_id).await?;
+        if has_unpublished_revision(&mut tx, request.review_id).await? {
+            return Err(ReviewError::EditInProgress);
+        }
+        let revision = open_revision(&mut tx, request.review_id).await?;
+        write_content(
+            &mut *tx,
+            request.review_id,
+            revision.revision,
+            &request.tag_type,
+            &request.reason,
+        )
+        .await?;
+        publish_revision(&mut tx, request.review_id, revision.revision, &[]).await?;
+        sqlx::query(
+            "UPDATE review_revision_request
+             SET status = 'applied', applied_by = $2, resolved_at = NOW() WHERE id = $1",
+        )
+        .bind(request_id)
+        .bind(applied_by)
+        .execute(&mut *tx)
+        .await?;
+        let applied = fetch_request(&mut *tx, request_id)
+            .await?
+            .ok_or(ReviewError::NotFound)?;
+        tx.commit().await?;
+        Ok(applied)
+    }
+
+    pub async fn reject_request(&self, request_id: i64) -> Result<bool, sqlx::Error> {
+        let rejected = sqlx::query(
+            "UPDATE review_revision_request SET status = 'rejected', resolved_at = NOW()
+             WHERE id = $1 AND status = 'open'",
+        )
+        .bind(request_id)
+        .execute(self.pool)
+        .await?;
+        Ok(rejected.rows_affected() > 0)
+    }
+
+    pub async fn close_open_requests(
+        &self,
+        review_id: i64,
+    ) -> Result<Vec<RevisionRequest>, sqlx::Error> {
+        let rows: Vec<RevisionRequestRow> = sqlx::query_as(&format!(
+            "UPDATE review_revision_request SET status = 'closed', resolved_at = NOW()
+             WHERE review_id = $1 AND status = 'open' RETURNING {REQUEST_COLUMNS}"
+        ))
+        .bind(review_id)
+        .fetch_all(self.pool)
+        .await?;
+        Ok(rows.into_iter().map(RevisionRequest::from).collect())
     }
 
     pub async fn resolve(
@@ -1146,6 +1382,101 @@ async fn publish_revision(
     .execute(&mut *conn)
     .await?;
     Ok(())
+}
+
+async fn has_unpublished_revision(
+    conn: &mut PgConnection,
+    review_id: i64,
+) -> Result<bool, sqlx::Error> {
+    let (exists,): (bool,) = sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM review_revision
+                        WHERE review_id = $1 AND published_at IS NULL)",
+    )
+    .bind(review_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(exists)
+}
+
+async fn open_revision(conn: &mut PgConnection, review_id: i64) -> Result<Revision, sqlx::Error> {
+    let revision: Revision = sqlx::query_as(&format!(
+        "INSERT INTO review_revision (review_id, revision, reason, tag_type)
+         SELECT review_id, revision + 1, reason, tag_type FROM review_revision
+         WHERE review_id = $1 AND published_at IS NOT NULL
+         ORDER BY revision DESC LIMIT 1
+         RETURNING {REVISION_COLUMNS}"
+    ))
+    .bind(review_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    sqlx::query(
+        "INSERT INTO review_evidence
+             (review_id, revision, kind, replay_id, replay_ts, filename, content_type,
+              attachment_message_id, attachment_id, note, added_by, added_at, position)
+         SELECT review_id, $2, kind, replay_id, replay_ts, filename, content_type,
+                attachment_message_id, attachment_id, note, added_by, added_at, position
+         FROM review_evidence WHERE review_id = $1 AND revision = $2 - 1",
+    )
+    .bind(review_id)
+    .bind(revision.revision)
+    .execute(&mut *conn)
+    .await?;
+    Ok(revision)
+}
+
+async fn write_content<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    review_id: i64,
+    revision: i32,
+    tag_type: &str,
+    reason: &str,
+) -> Result<bool, sqlx::Error> {
+    let updated = sqlx::query(
+        "UPDATE review_revision SET tag_type = $3, reason = $4, last_activity_at = NOW()
+         WHERE review_id = $1 AND revision = $2 AND published_at IS NULL",
+    )
+    .bind(review_id)
+    .bind(revision)
+    .bind(tag_type)
+    .bind(reason)
+    .execute(executor)
+    .await?;
+    Ok(updated.rows_affected() > 0)
+}
+
+async fn fetch_request<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    request_id: i64,
+) -> Result<Option<RevisionRequest>, sqlx::Error> {
+    let row: Option<RevisionRequestRow> = sqlx::query_as(&format!(
+        "SELECT {REQUEST_COLUMNS} FROM review_revision_request WHERE id = $1"
+    ))
+    .bind(request_id)
+    .fetch_optional(executor)
+    .await?;
+    Ok(row.map(RevisionRequest::from))
+}
+
+async fn lock_open_request(
+    conn: &mut PgConnection,
+    request_id: i64,
+) -> Result<RevisionRequest, ReviewError> {
+    let request = fetch_request(&mut *conn, request_id)
+        .await?
+        .ok_or(ReviewError::NotFound)?;
+    let status = lock_status(conn, request.review_id).await?;
+    if status != ReviewStatus::Open {
+        return Err(ReviewError::WrongStatus(status));
+    }
+    let (current,): (String,) =
+        sqlx::query_as("SELECT status FROM review_revision_request WHERE id = $1 FOR UPDATE")
+            .bind(request_id)
+            .fetch_one(&mut *conn)
+            .await?;
+    if RequestStatus::parse(&current) != RequestStatus::Open {
+        return Err(ReviewError::RequestClosed);
+    }
+    Ok(request)
 }
 
 async fn void_open(
@@ -1313,8 +1644,7 @@ mod tests {
             repo.tally(review.id).await.unwrap(),
             Tally {
                 accept: 1,
-                reject: 1,
-                revise: 1
+                reject: 1
             }
         );
 
@@ -1330,8 +1660,7 @@ mod tests {
             repo.tally(review.id).await.unwrap(),
             Tally {
                 accept: 0,
-                reject: 1,
-                revise: 0
+                reject: 1
             }
         );
         assert_eq!(
@@ -1495,6 +1824,80 @@ mod tests {
             ReviewStatus::Expired
         );
         assert!(repo.evidence(draft.id, 1).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn revision_requests_vote_apply_and_close_without_touching_votes() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let repo = ReviewRepository::new(&pool);
+        let review = published_review(&repo, unique(9_500_000_000_000)).await;
+        let (author, voter, accepter) = (unique(91), unique(92), unique(93));
+        repo.cast_vote(review.id, accepter, VoteKind::Accept, None)
+            .await
+            .unwrap();
+
+        let first = repo
+            .create_request(review.id, author, "closet_cheater", "reach only")
+            .await
+            .unwrap();
+        assert_eq!(first.tally, RequestTally { yes: 1, no: 0 });
+        let second = repo
+            .create_request(review.id, voter, "closet_cheater", "timer")
+            .await
+            .unwrap();
+        assert_eq!(repo.revise_supporters(review.id).await.unwrap(), 2);
+
+        let (change, request) = repo.vote_on_request(first.id, voter, false).await.unwrap();
+        assert_eq!(change, RequestVoteChange::Recorded);
+        assert_eq!(request.tally, RequestTally { yes: 1, no: 1 });
+        let (change, request) = repo.vote_on_request(first.id, voter, true).await.unwrap();
+        assert_eq!(change, RequestVoteChange::Switched);
+        assert_eq!(request.tally, RequestTally { yes: 2, no: 0 });
+        let (change, _) = repo.vote_on_request(first.id, voter, true).await.unwrap();
+        assert_eq!(change, RequestVoteChange::Unchanged);
+
+        let applied = repo.apply_request(first.id, voter).await.unwrap();
+        assert_eq!(applied.status, RequestStatus::Applied);
+        assert_eq!(applied.applied_by, Some(voter));
+        let live = repo.live_revision(review.id).await.unwrap().unwrap();
+        assert_eq!(
+            (live.revision, live.tag_type.as_str(), live.reason.as_str()),
+            (2, "closet_cheater", "reach only")
+        );
+        assert_eq!(repo.evidence(review.id, 2).await.unwrap().len(), 1);
+        assert_eq!(repo.tally(review.id).await.unwrap().accept, 1);
+        assert!(matches!(
+            repo.vote_on_request(first.id, accepter, true).await,
+            Err(ReviewError::RequestClosed)
+        ));
+        assert!(matches!(
+            repo.apply_request(first.id, voter).await,
+            Err(ReviewError::RequestClosed)
+        ));
+
+        repo.begin_edit(review.id).await.unwrap();
+        assert!(matches!(
+            repo.apply_request(second.id, voter).await,
+            Err(ReviewError::EditInProgress)
+        ));
+        repo.cancel_edit(review.id).await.unwrap();
+
+        let third = repo
+            .create_request(review.id, author, "blatant_cheater", "fly")
+            .await
+            .unwrap();
+        assert!(repo.reject_request(third.id).await.unwrap());
+        assert!(!repo.reject_request(third.id).await.unwrap());
+
+        let closed = repo.close_open_requests(review.id).await.unwrap();
+        assert_eq!(
+            closed.iter().map(|r| r.id).collect::<Vec<_>>(),
+            vec![second.id]
+        );
+        assert!(repo.open_requests(review.id).await.unwrap().is_empty());
+        assert_eq!(repo.revise_supporters(review.id).await.unwrap(), 0);
     }
 
     #[tokio::test]

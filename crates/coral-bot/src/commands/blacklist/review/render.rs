@@ -1,24 +1,32 @@
 use std::collections::HashMap;
 
-use blacklist::{EMOTE_EVIDENCE, EMOTE_NO_EVIDENCE, EMOTE_TAG, Replay, lookup as lookup_tag};
+use blacklist::{
+    EMOTE_EDITTAG, EMOTE_EVIDENCE, EMOTE_NO_EVIDENCE, EMOTE_TAG, Replay, lookup as lookup_tag,
+};
 use chrono::{DateTime, Utc};
 use serenity::all::*;
 
-use database::{Evidence, EvidenceKind, ReviewRules, ReviewStatus, Tally, Vote, VoteKind};
+use database::{
+    Evidence, EvidenceKind, Review, ReviewRules, ReviewStatus, RevisionRequest, Tally, Vote,
+    VoteKind,
+};
 
-use super::super::channel::format_tag_block;
-use super::{Loaded, REVIEW_TAGS, custom_id, custom_id_with, face_filename, media_label};
+use super::super::channel::{format_tag_block, tag_label};
+use super::{
+    Loaded, REVIEW_TAGS, REVISION_VOTES_NEEDED, custom_id, custom_id_with, face_filename,
+    media_label,
+};
 use crate::utils::{format_uuid_dashed, sanitize_reason, separator, text};
 
 pub const ANONYMITY_NOTE: &str =
     "Be aware that users may still be able to determine who made this report with the replay.";
+const MAX_LISTED_REQUESTS: usize = 4;
 
 pub enum ConsoleMode {
     Draft {
         expires_at: DateTime<Utc>,
     },
     Edit {
-        revise_reasons: Vec<String>,
         save_clears_votes: bool,
         can_withdraw: bool,
     },
@@ -75,16 +83,6 @@ pub fn console(
     ));
     parts.push(separator());
 
-    if let ConsoleMode::Edit { revise_reasons, .. } = mode
-        && !revise_reasons.is_empty()
-    {
-        let lines: Vec<String> = revise_reasons
-            .iter()
-            .enumerate()
-            .map(|(i, reason)| format!("{}. {}", i + 1, sanitize_reason(reason)))
-            .collect();
-        parts.push(text(format!("**Revision requests**\n{}", lines.join("\n"))));
-    }
     if let Some(notice) = notice {
         parts.push(text(format!("-# {notice}")));
     }
@@ -133,7 +131,7 @@ fn console_actions(
             let mut parts = Vec::new();
             if *save_clears_votes {
                 parts.push(text(
-                    "-# Saving will clear accept and revise votes so that reviewers read what changed.",
+                    "-# Saving will clear accept votes so that reviewers read what changed.",
                 ));
             }
             parts.push(CreateContainerComponent::ActionRow(
@@ -255,6 +253,7 @@ pub fn evidence_manager(loaded: &Loaded, selected: Option<i64>) -> Vec<CreateCom
 
 pub struct PostState<'a> {
     pub tally: Tally,
+    pub revise_supporters: i64,
     pub votes: &'a [Vote],
     pub paused: bool,
     pub edited_at: Option<DateTime<Utc>>,
@@ -323,7 +322,7 @@ fn vote_sections(review_id: i64, state: &PostState) -> Vec<CreateContainerCompon
             tally.reject, state.rules.reject_threshold
         )
     };
-    let revise_heading = format!("### {revise_emote} Revise [{}]", tally.revise);
+    let revise_heading = format!("### {revise_emote} Revise [{}]", state.revise_supporters);
 
     let mut parts = vec![
         vote_section(
@@ -352,8 +351,6 @@ fn vote_sections(review_id: i64, state: &PostState) -> Vec<CreateContainerCompon
         Some("Voting is paused while the submitter is editing.")
     } else if contested {
         Some("Votes disagree, so a staff member must resolve this.")
-    } else if tally.revise > 0 {
-        Some("Cannot resolve while a revision is open.")
     } else {
         None
     };
@@ -368,6 +365,88 @@ fn vote_sections(review_id: i64, state: &PostState) -> Vec<CreateContainerCompon
         ]),
     ));
     parts
+}
+
+pub fn revision_request(
+    review: &Review,
+    request: &RevisionRequest,
+    votable: bool,
+) -> Vec<CreateComponent<'static>> {
+    let mut lines = vec![format!("## {EMOTE_EDITTAG} Revision")];
+    if !review.hide_username {
+        lines.push(format!("<@{}>", review.submitter_id));
+    }
+    lines.push(request_summary(request));
+    let mut parts = vec![text(lines.join("\n"))];
+    if votable {
+        parts.push(separator());
+        parts.extend(request_votes(review.id, request));
+    }
+    vec![CreateComponent::Container(CreateContainer::new(parts))]
+}
+
+pub fn applied_revision(
+    request: &RevisionRequest,
+    by_submitter: bool,
+) -> Vec<CreateComponent<'static>> {
+    let applied_by = if by_submitter {
+        "the submitter"
+    } else {
+        "vote"
+    };
+    simple(format!(
+        "## {EMOTE_EDITTAG} Revision\n{}\n-# Applied by {applied_by}.",
+        request_summary(request)
+    ))
+}
+
+pub fn revise_menu(review_id: i64, requests: &[RevisionRequest]) -> Vec<CreateComponent<'static>> {
+    let mut parts = vec![text(format!("## {EMOTE_EDITTAG} Revise"))];
+    let skipped = requests.len().saturating_sub(MAX_LISTED_REQUESTS);
+    for request in &requests[skipped..] {
+        parts.push(separator());
+        parts.push(text(request_summary(request)));
+        parts.extend(request_votes(review_id, request));
+    }
+    parts.push(separator());
+    parts.push(CreateContainerComponent::ActionRow(
+        CreateActionRow::buttons(vec![
+            CreateButton::new(custom_id("rqnew", review_id))
+                .label("New Revision")
+                .style(ButtonStyle::Primary),
+        ]),
+    ));
+    vec![CreateComponent::Container(CreateContainer::new(parts))]
+}
+
+fn request_summary(request: &RevisionRequest) -> String {
+    format!(
+        "Tag - {}\n> {}",
+        tag_label(&request.tag_type),
+        sanitize_reason(&request.reason)
+    )
+}
+
+fn request_votes(
+    review_id: i64,
+    request: &RevisionRequest,
+) -> Vec<CreateContainerComponent<'static>> {
+    vec![
+        vote_section(
+            format!("### Yes [{}/{REVISION_VOTES_NEEDED}]", request.tally.yes),
+            custom_id_with("rqyes", review_id, request.id),
+            "Yes",
+            ButtonStyle::Success,
+            false,
+        ),
+        vote_section(
+            format!("### No [{}/{REVISION_VOTES_NEEDED}]", request.tally.no),
+            custom_id_with("rqno", review_id, request.id),
+            "No",
+            ButtonStyle::Danger,
+            false,
+        ),
+    ]
 }
 
 fn vote_section(

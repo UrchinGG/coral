@@ -16,6 +16,7 @@ pub mod guide;
 pub mod publish;
 pub mod render;
 pub mod resolve;
+pub mod revision;
 pub mod staff_ping;
 pub mod void;
 pub mod vote;
@@ -26,7 +27,7 @@ pub const MAX_MEDIA: i64 = 9;
 pub const MAX_FILES_PER_UPLOAD: u8 = 4;
 pub const NOTE_MAX_CHARS: u16 = 75;
 pub const REASON_MAX_CHARS: u16 = 120;
-pub const REVISE_MAX_CHARS: u16 = 300;
+pub const REVISION_VOTES_NEEDED: i64 = 3;
 pub const ALLOWED_MEDIA_EXTENSIONS: &[&str] =
     &["png", "jpg", "jpeg", "gif", "webp", "mp4", "webm", "mov"];
 pub const FACE_SIZE: u32 = 128;
@@ -68,7 +69,7 @@ pub fn parse_id(custom_id: &str) -> Option<ParsedId<'_>> {
     })
 }
 
-const VOTE_ACTIONS: &[&str] = &["accept", "reject", "revise", "switch", "addvote", "resolve"];
+const VOTE_ACTIONS: &[&str] = &["accept", "reject", "switch", "addvote", "resolve"];
 
 pub async fn handle_component(
     ctx: &Context,
@@ -101,6 +102,10 @@ pub async fn handle_component(
         )
         .await;
     }
+    if revision::ACTIONS.contains(&id.action) {
+        return revision::handle_component(ctx, component, data, id.action, id.review_id, id.extra)
+            .await;
+    }
     if VOTE_ACTIONS.contains(&id.action) {
         return vote::handle_component(ctx, component, data, id.action, id.review_id, id.extra)
             .await;
@@ -114,8 +119,8 @@ pub async fn handle_modal(
     data: &Data,
 ) -> anyhow::Result<()> {
     match parse_id(&modal.data.custom_id) {
-        Some(id) if id.action == "revise_m" => {
-            vote::handle_revise_modal(ctx, modal, data, id.review_id).await
+        Some(id) if id.action == revision::MODAL_ACTION => {
+            revision::handle_modal(ctx, modal, data, id.review_id).await
         }
         Some(_) => console::handle_modal(ctx, modal, data).await,
         None => Ok(()),
