@@ -111,18 +111,22 @@ pub async fn announce(ctx: &Context, data: &Data, review: &Review, verb: &str, s
             return;
         }
     };
-    let mut body = match staff {
+    let body = match staff {
         Some(id) => format!("<@{id}> **{verb}** the {label} tag on `{player}`."),
         None => format!("The {label} tag on `{player}` was **{verb}** by review."),
     };
+    let mut components = Vec::new();
     if !review.hide_username {
-        body.push_str(&format!("\n-# Submitted by <@{}>", review.submitter_id));
+        components.push(CreateComponent::TextDisplay(CreateTextDisplay::new(
+            format!("<@{}>", review.submitter_id),
+        )));
     }
+    components.push(CreateComponent::Container(CreateContainer::new(vec![
+        crate::utils::text(body),
+    ])));
     let message = CreateMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(vec![CreateComponent::Container(CreateContainer::new(
-            vec![crate::utils::text(body)],
-        ))]);
+        .components(components);
     if let Err(e) = ctx
         .http
         .send_message(
