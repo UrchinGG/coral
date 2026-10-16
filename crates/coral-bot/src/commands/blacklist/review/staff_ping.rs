@@ -261,14 +261,28 @@ async fn set_thread_closed(ctx: &Context, thread: ThreadId, closed: bool) {
 }
 
 async fn notice_body(ctx: &Context, data: &Data, review: &Review) -> String {
-    let (label, player) = tokio::join!(
-        super::vote::tag_label(data, review.id),
+    let repo = ReviewRepository::new(data.db.pool());
+    let (revision, player) = tokio::join!(
+        repo.live_revision(review.id),
         super::vote::player_name(ctx, data, review.id)
     );
     let player = player.unwrap_or_else(|_| review.player_uuid.clone());
-    let label = label.unwrap_or_default();
+    let block = revision
+        .ok()
+        .flatten()
+        .map(|r| {
+            super::super::channel::format_tag_block(
+                &r.tag_type,
+                &crate::utils::sanitize_reason(&r.reason),
+                "",
+                None,
+                None,
+                false,
+            )
+        })
+        .unwrap_or_default();
     format!(
-        "## {} {TITLE}\nIGN - `{player}`\nTag - {label}",
+        "## {} {TITLE}\nIGN - `{player}`\n{block}",
         confirmed_emote()
     )
 }

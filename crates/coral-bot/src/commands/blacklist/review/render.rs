@@ -11,7 +11,7 @@ use database::{
     VoteKind,
 };
 
-use super::super::channel::{format_tag_block, tag_label};
+use super::super::channel::format_tag_block;
 use super::{
     Loaded, REVIEW_TAGS, REVISION_VOTES_NEEDED, custom_id, custom_id_with, face_filename,
     media_label,
@@ -372,15 +372,16 @@ pub fn revision_request(
     request: &RevisionRequest,
     votable: bool,
 ) -> Vec<CreateComponent<'static>> {
-    let mut lines = vec![format!("## {EMOTE_EDITTAG} Revision")];
-    if !review.hide_username {
-        lines.push(format!("<@{}>", review.submitter_id));
-    }
-    lines.push(request_summary(request));
-    let mut parts = vec![text(lines.join("\n"))];
+    let mut parts = vec![text(format!(
+        "## {EMOTE_EDITTAG} Revision\n{}",
+        request_summary(request)
+    ))];
     if votable {
         parts.push(separator());
         parts.extend(request_votes(review.id, request));
+    }
+    if !review.hide_username {
+        parts.push(text(format!("-# Submitted by <@{}>", review.submitter_id)));
     }
     vec![CreateComponent::Container(CreateContainer::new(parts))]
 }
@@ -420,10 +421,13 @@ pub fn revise_menu(review_id: i64, requests: &[RevisionRequest]) -> Vec<CreateCo
 }
 
 fn request_summary(request: &RevisionRequest) -> String {
-    format!(
-        "Tag - {}\n> {}",
-        tag_label(&request.tag_type),
-        sanitize_reason(&request.reason)
+    format_tag_block(
+        &request.tag_type,
+        &sanitize_reason(&request.reason),
+        "",
+        None,
+        None,
+        false,
     )
 }
 
