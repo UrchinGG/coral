@@ -32,8 +32,8 @@ pub const ALLOWED_MEDIA_EXTENSIONS: &[&str] =
 pub const FACE_SIZE: u32 = 128;
 
 const FORUM_TAG_PENDING: &str = "Pending";
-const FORUM_TAG_APPROVED: &str = "Approved";
-const FORUM_TAG_REJECTED: &str = "Rejected";
+const FORUM_TAG_APPROVED: &str = "Accepted";
+const FORUM_TAG_REJECTED: &str = "Denied";
 const FORUM_TAG_VOIDED: &str = "Voided";
 
 pub fn draft_idle_window() -> Duration {
@@ -80,6 +80,9 @@ pub async fn handle_component(
     };
     if id.action == "void_go" {
         return void::confirm(ctx, component, data, id.review_id).await;
+    }
+    if id.action == "dismisstag" {
+        return staff_ping::handle_dismiss(ctx, component, data, id.review_id).await;
     }
     if id.action == "confirmtag" {
         return staff_ping::handle_click(ctx, component, data, id.review_id).await;

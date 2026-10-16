@@ -16,8 +16,8 @@ use crate::interact;
 use crate::utils::discord_media::message_media;
 use crate::utils::{resolve_username_or_fetch, text};
 
-const HEADING: &str = "## Accepted With Media";
-const QUESTION: &str = "Confirm this tag and create an evidence post?";
+const TITLE: &str = "Confirm Tag";
+const PROMPT: &str = "-# Accepted with media. Confirm to create an evidence post, or dismiss to leave the tag as it is.";
 const CONFIRMED_TAG: &str = "confirmed_cheater";
 
 enum PlayerState {
@@ -76,7 +76,8 @@ pub async fn handle_click(
         PlayerState::Untagged => reply(ctx, component, view, face).await,
         PlayerState::Confirmed | PlayerState::HasPost => {
             reply(ctx, component, view, face).await?;
-            edit_notice(ctx, data, component, &review, None).await;
+            let line = format!("-# Already handled. Closed by <@{staff}>.");
+            edit_notice(ctx, data, component, &review, line).await;
             Ok(())
         }
         PlayerState::Ready => finish(ctx, component, data, &review, &target, staff).await,
@@ -124,7 +125,34 @@ async fn finish(
         "Evidence post created by"
     };
     let line = format!("-# {outcome} <@{staff}> in <#{}>.", post.thread_id);
-    edit_notice(ctx, data, component, review, Some(line)).await;
+    edit_notice(ctx, data, component, review, line).await;
+    Ok(())
+}
+
+pub async fn handle_dismiss(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+    review_id: i64,
+) -> Result<()> {
+    let staff = component.user.id.get();
+    if get_rank(data, staff).await? < AccessRank::Helper {
+        return interact::send_component_error(
+            ctx,
+            component,
+            "Error",
+            "Only helpers and above can use this",
+        )
+        .await;
+    }
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await?;
+    let Some(review) = ReviewRepository::new(data.db.pool()).get(review_id).await? else {
+        return Ok(());
+    };
+    let line = format!("-# Dismissed by <@{staff}>.");
+    edit_notice(ctx, data, component, &review, line).await;
     Ok(())
 }
 
@@ -155,10 +183,13 @@ async fn post_ping(ctx: &Context, data: &Data, review: &Review) -> Result<bool> 
         return Ok(false);
     }
     let face = format!("attachment://{}", face_filename(&review.player_uuid));
-    let button = CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
+    let buttons = CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
         CreateButton::new(custom_id("confirmtag", review.id))
             .label("Confirm Tag")
-            .style(ButtonStyle::Primary),
+            .style(ButtonStyle::Success),
+        CreateButton::new(custom_id("dismisstag", review.id))
+            .label("Dismiss")
+            .style(ButtonStyle::Secondary),
     ]));
     let face_file = face_attachment(data, &review.player_uuid).await;
     let message = CreateMessage::new()
@@ -166,8 +197,8 @@ async fn post_ping(ctx: &Context, data: &Data, review: &Review) -> Result<bool> 
         .components(notice_components(
             confirm_role(data).await,
             face,
-            &format!("{HEADING}\n{QUESTION}"),
-            Some(button),
+            &notice_body(ctx, data, review).await,
+            vec![text(PROMPT), buttons],
         ))
         .add_file(face_file.clone());
     ctx.http
@@ -185,7 +216,7 @@ async fn edit_notice(
     data: &Data,
     component: &ComponentInteraction,
     review: &Review,
-    line: Option<String>,
+    line: String,
 ) {
     let channel_id = component.channel_id;
     let message_id = component.message.id;
@@ -202,8 +233,8 @@ async fn edit_notice(
         .components(notice_components(
             confirm_role(data).await,
             face,
-            HEADING,
-            line.map(text),
+            &notice_body(ctx, data, review).await,
+            vec![text(line)],
         ));
     let thread = ThreadId::new(channel_id.get());
     set_thread_closed(ctx, thread, false).await;
@@ -229,11 +260,24 @@ async fn set_thread_closed(ctx: &Context, thread: ThreadId, closed: bool) {
     }
 }
 
+async fn notice_body(ctx: &Context, data: &Data, review: &Review) -> String {
+    let (label, player) = tokio::join!(
+        super::vote::tag_label(data, review.id),
+        super::vote::player_name(ctx, data, review.id)
+    );
+    let player = player.unwrap_or_else(|_| review.player_uuid.clone());
+    let label = label.unwrap_or_default();
+    format!(
+        "## {} {TITLE}\nIGN - `{player}`\nTag - {label}",
+        confirmed_emote()
+    )
+}
+
 fn notice_components(
     role: Option<i64>,
     face: String,
     body: &str,
-    footer: Option<CreateContainerComponent<'static>>,
+    footer: Vec<CreateContainerComponent<'static>>,
 ) -> Vec<CreateComponent<'static>> {
     let mut parts = vec![CreateContainerComponent::Section(CreateSection::new(
         vec![CreateSectionComponent::TextDisplay(CreateTextDisplay::new(

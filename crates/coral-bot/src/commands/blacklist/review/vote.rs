@@ -502,7 +502,7 @@ async fn is_staff(data: &Data, user: u64) -> Result<bool> {
     Ok(data.is_owner(user) || AccessRank::of(data, user, member.as_ref()) >= AccessRank::Helper)
 }
 
-async fn tag_label(data: &Data, review_id: i64) -> Result<String> {
+pub(super) async fn tag_label(data: &Data, review_id: i64) -> Result<String> {
     let revision = ReviewRepository::new(data.db.pool())
         .live_revision(review_id)
         .await?;
@@ -511,7 +511,7 @@ async fn tag_label(data: &Data, review_id: i64) -> Result<String> {
         .unwrap_or_default())
 }
 
-async fn player_name(ctx: &Context, data: &Data, review_id: i64) -> Result<String> {
+pub(super) async fn player_name(ctx: &Context, data: &Data, review_id: i64) -> Result<String> {
     Ok(load_live(ctx, data, review_id)
         .await?
         .map(|l| l.username)

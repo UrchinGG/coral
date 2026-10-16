@@ -85,6 +85,7 @@ pub async fn confirm(
                 serde_json::json!({ "player": review.player_uuid }),
             )
             .await;
+            super::resolve::announce(ctx, data, &review, "voided", Some(staff)).await;
             super::resolve::close_out(ctx, data, &review).await;
             let label = match repo.live_revision(review.id).await? {
                 Some(revision) => tag_label(&revision.tag_type),

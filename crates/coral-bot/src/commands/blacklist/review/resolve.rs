@@ -25,6 +25,13 @@ impl Outcome {
         }
     }
 
+    fn verb(self) -> &'static str {
+        match self {
+            Outcome::Accept => "accepted",
+            Outcome::Reject => "rejected",
+        }
+    }
+
     fn winning_kind(self) -> VoteKind {
         match self {
             Outcome::Accept => VoteKind::Accept,
@@ -77,6 +84,7 @@ pub async fn resolve(
         Err(e) => return Err(anyhow::anyhow!("{e:?}")),
     };
     score(data, &review, &votes, outcome).await;
+    announce(ctx, data, &review, outcome.verb(), staff).await;
     let mut awaiting_confirmation = false;
     if outcome == Outcome::Accept {
         apply_tag(data, &review, &votes, staff).await?;
@@ -84,6 +92,51 @@ pub async fn resolve(
     }
     finish(ctx, data, &review, !awaiting_confirmation).await;
     Ok(true)
+}
+
+pub async fn announce(ctx: &Context, data: &Data, review: &Review, verb: &str, staff: Option<u64>) {
+    let Some(thread_id) = review.thread_id else {
+        return;
+    };
+    let (label, player) = match tokio::try_join!(
+        super::vote::tag_label(data, review.id),
+        super::vote::player_name(ctx, data, review.id)
+    ) {
+        Ok(found) => found,
+        Err(e) => {
+            tracing::warn!(
+                "Failed to describe review {} for its outcome: {e}",
+                review.id
+            );
+            return;
+        }
+    };
+    let mut body = match staff {
+        Some(id) => format!("<@{id}> **{verb}** the {label} tag on `{player}`."),
+        None => format!("The {label} tag on `{player}` was **{verb}** by review."),
+    };
+    if !review.hide_username {
+        body.push_str(&format!("\n-# Submitted by <@{}>", review.submitter_id));
+    }
+    let message = CreateMessage::new()
+        .flags(MessageFlags::IS_COMPONENTS_V2)
+        .components(vec![CreateComponent::Container(CreateContainer::new(
+            vec![crate::utils::text(body)],
+        ))]);
+    if let Err(e) = ctx
+        .http
+        .send_message(
+            GenericChannelId::new(thread_id as u64),
+            Vec::<CreateAttachment>::new(),
+            &message,
+        )
+        .await
+    {
+        tracing::warn!(
+            "Failed to announce the outcome of review {}: {e}",
+            review.id
+        );
+    }
 }
 
 pub async fn close_out(ctx: &Context, data: &Data, review: &Review) {
