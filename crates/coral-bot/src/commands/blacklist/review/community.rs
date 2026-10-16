@@ -9,11 +9,9 @@ use database::{
     ReviewRepository, ReviewStatus,
 };
 
-use super::publish::thread_link;
 use super::render::{self, MediaUrls, PostState};
 use super::vote::bounce;
 use super::{ALLOWED_MEDIA_EXTENSIONS, EVIDENCE_VOTES_NEEDED, MAX_MEDIA, face_filename, load_live};
-use crate::commands::blacklist::appeal;
 use crate::framework::Data;
 use crate::utils::discord_media::message_media;
 use crate::utils::text;
@@ -111,9 +109,6 @@ pub async fn prompt(
             author_id as i64,
         )
         .await?;
-    if review.hide_username {
-        alert_submitter(ctx, data, &review, thread_id, sent.id).await;
-    }
     Ok(())
 }
 
@@ -546,25 +541,6 @@ async fn download(
         number += 1;
     }
     Ok(Some(downloads))
-}
-
-async fn alert_submitter(
-    ctx: &Context,
-    data: &Data,
-    review: &Review,
-    thread_id: u64,
-    prompt_id: MessageId,
-) {
-    let link = thread_link(data, Some(thread_id as i64))
-        .map(|thread| format!("\n[Jump to message]({thread}/{prompt_id})"))
-        .unwrap_or_default();
-    let alert = format!("Someone posted media in your review's thread.{link}");
-    if !appeal::send_dm(ctx, UserId::new(review.submitter_id as u64), &alert).await {
-        tracing::warn!(
-            "Anonymous review {} media alert DM was not delivered",
-            review.id
-        );
-    }
 }
 
 async fn remove_prompt(
