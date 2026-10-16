@@ -3,21 +3,22 @@ use blacklist::lookup as lookup_tag;
 use serenity::all::*;
 
 use database::{
-    BlacklistRepository, EvidenceKind, EvidencePostRepository, Review, ReviewGuideRepository,
-    ReviewRepository,
+    BlacklistRepository, ConfirmState, EvidenceKind, EvidencePostRepository, Review,
+    ReviewGuideRepository, ReviewRepository,
 };
 
 use super::super::evidence_post::confirm::{Reply, Target, confirm_flow};
 use super::super::evidence_post::{self, media::current_media, menu::add_sources, render};
-use super::{REVIEW_TAGS, custom_id, face_attachment, face_filename};
+use super::REVIEW_TAGS;
+use super::publish::rerender_post;
 use crate::commands::blacklist::tag::get_rank;
 use crate::framework::{AccessRank, Data};
 use crate::interact;
 use crate::utils::discord_media::message_media;
-use crate::utils::{resolve_username_or_fetch, text};
+use crate::utils::resolve_username_or_fetch;
 
-const TITLE: &str = "Confirm Tag";
-const PROMPT: &str = "-# Accepted with media. Confirm to create an evidence post, or dismiss to leave the tag as it is.";
+const PROMPT: &str = "Accepted with media. Confirm or dismiss it on the post above.";
+const ALREADY_HANDLED: &str = "This tag was already confirmed or dismissed";
 const CONFIRMED_TAG: &str = "confirmed_cheater";
 
 enum PlayerState {
@@ -57,6 +58,9 @@ pub async fn handle_click(
     let Some(review) = ReviewRepository::new(data.db.pool()).get(review_id).await? else {
         return reply_error(ctx, component, "That review no longer exists").await;
     };
+    if review.confirm != Some(ConfirmState::Pending) {
+        return reply_error(ctx, component, ALREADY_HANDLED).await;
+    }
     let uuid = evidence_post::normalize(&review.player_uuid);
     let target = Target {
         username: resolve_username_or_fetch(&uuid, data)
@@ -76,9 +80,7 @@ pub async fn handle_click(
         PlayerState::Untagged => reply(ctx, component, view, face).await,
         PlayerState::Confirmed | PlayerState::HasPost => {
             reply(ctx, component, view, face).await?;
-            let line = format!("-# Already handled. Closed by <@{staff}>.");
-            edit_notice(ctx, data, component, &review, line).await;
-            Ok(())
+            settle(ctx, data, &review, ConfirmState::Closed(staff as i64)).await
         }
         PlayerState::Ready => finish(ctx, component, data, &review, &target, staff).await,
     }
@@ -118,15 +120,7 @@ async fn finish(
     );
     let face = Some(evidence_post::face_attachment(data, &target.uuid).await);
     reply(ctx, component, view, face).await?;
-
-    let outcome = if is_confirmed(data, &target.uuid).await? {
-        "Confirmed by"
-    } else {
-        "Evidence post created by"
-    };
-    let line = format!("-# {outcome} <@{staff}> in <#{}>.", post.thread_id);
-    edit_notice(ctx, data, component, review, line).await;
-    Ok(())
+    settle(ctx, data, review, ConfirmState::Confirmed(staff as i64)).await
 }
 
 pub async fn handle_dismiss(
@@ -151,9 +145,7 @@ pub async fn handle_dismiss(
     let Some(review) = ReviewRepository::new(data.db.pool()).get(review_id).await? else {
         return Ok(());
     };
-    let line = format!("-# Dismissed by <@{staff}>.");
-    edit_notice(ctx, data, component, &review, line).await;
-    Ok(())
+    settle(ctx, data, &review, ConfirmState::Dismissed(staff as i64)).await
 }
 
 async fn post_ping(ctx: &Context, data: &Data, review: &Review) -> Result<bool> {
@@ -182,73 +174,49 @@ async fn post_ping(ctx: &Context, data: &Data, review: &Review) -> Result<bool> 
     {
         return Ok(false);
     }
-    let face = format!("attachment://{}", face_filename(&review.player_uuid));
-    let buttons = CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
-        CreateButton::new(custom_id("confirmtag", review.id))
-            .label("Confirm Tag")
-            .style(ButtonStyle::Success),
-        CreateButton::new(custom_id("dismisstag", review.id))
-            .label("Dismiss")
-            .style(ButtonStyle::Secondary),
-    ]));
-    let face_file = face_attachment(data, &review.player_uuid).await;
+    repo.open_confirm(review.id).await?;
+    let mut lines: Vec<String> = confirm_role(data)
+        .await
+        .map(|id| format!("<@&{id}>"))
+        .into_iter()
+        .collect();
+    lines.push(format!("-# {} {PROMPT}", confirmed_emote()));
+    let thread = GenericChannelId::new(thread_id as u64);
     let message = CreateMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(notice_components(
-            confirm_role(data).await,
-            face,
-            &notice_body(ctx, data, review).await,
-            vec![text(PROMPT), buttons],
-        ))
-        .add_file(face_file.clone());
-    ctx.http
-        .send_message(
-            GenericChannelId::new(thread_id as u64),
-            vec![face_file],
-            &message,
+        .components(vec![CreateComponent::TextDisplay(CreateTextDisplay::new(
+            lines.join("\n"),
+        ))])
+        .allowed_mentions(
+            CreateAllowedMentions::new()
+                .all_roles(true)
+                .replied_user(false),
         )
+        .reference_message(
+            MessageReference::new(MessageReferenceKind::Default, thread)
+                .message_id(MessageId::new(thread_id as u64)),
+        );
+    ctx.http
+        .send_message(thread, Vec::<CreateAttachment>::new(), &message)
         .await?;
     Ok(true)
 }
 
-async fn edit_notice(
-    ctx: &Context,
-    data: &Data,
-    component: &ComponentInteraction,
-    review: &Review,
-    line: String,
-) {
-    let channel_id = component.channel_id;
-    let message_id = component.message.id;
-    let face = message_media(&ctx.http, channel_id, message_id)
-        .await
-        .ok()
-        .and_then(|media| media.into_iter().find(|m| !m.in_gallery))
-        .map_or_else(
-            || format!("attachment://{}", face_filename(&review.player_uuid)),
-            |m| m.url,
-        );
-    let edit = EditMessage::new()
-        .flags(MessageFlags::IS_COMPONENTS_V2)
-        .components(notice_components(
-            confirm_role(data).await,
-            face,
-            &notice_body(ctx, data, review).await,
-            vec![text(line)],
-        ));
-    let thread = ThreadId::new(channel_id.get());
-    set_thread_closed(ctx, thread, false).await;
-    if let Err(e) = ctx
-        .http
-        .edit_message(channel_id, message_id, &edit, Vec::new())
-        .await
+async fn settle(ctx: &Context, data: &Data, review: &Review, state: ConfirmState) -> Result<()> {
+    if !ReviewRepository::new(data.db.pool())
+        .settle_confirm(review.id, state)
+        .await?
     {
-        tracing::warn!(
-            "Failed to update the confirm ping in review {}: {e}",
-            review.id
-        );
+        return Ok(());
     }
+    let Some(thread_id) = review.thread_id else {
+        return Ok(());
+    };
+    let thread = ThreadId::new(thread_id as u64);
+    set_thread_closed(ctx, thread, false).await;
+    rerender_post(ctx, data, review.id).await;
     set_thread_closed(ctx, thread, true).await;
+    Ok(())
 }
 
 async fn set_thread_closed(ctx: &Context, thread: ThreadId, closed: bool) {
@@ -258,54 +226,6 @@ async fn set_thread_closed(ctx: &Context, thread: ThreadId, closed: bool) {
     {
         tracing::warn!("Failed to set review thread {thread} closed={closed}: {e}");
     }
-}
-
-async fn notice_body(ctx: &Context, data: &Data, review: &Review) -> String {
-    let repo = ReviewRepository::new(data.db.pool());
-    let (revision, player) = tokio::join!(
-        repo.live_revision(review.id),
-        super::vote::player_name(ctx, data, review.id)
-    );
-    let player = player.unwrap_or_else(|_| review.player_uuid.clone());
-    let block = revision
-        .ok()
-        .flatten()
-        .map(|r| {
-            super::super::channel::format_tag_block(
-                &r.tag_type,
-                &crate::utils::sanitize_reason(&r.reason),
-                "",
-                None,
-                None,
-                false,
-            )
-        })
-        .unwrap_or_default();
-    format!(
-        "## {} {TITLE}\nIGN - `{player}`\n{block}",
-        confirmed_emote()
-    )
-}
-
-fn notice_components(
-    role: Option<i64>,
-    face: String,
-    body: &str,
-    footer: Vec<CreateContainerComponent<'static>>,
-) -> Vec<CreateComponent<'static>> {
-    let mut parts = vec![CreateContainerComponent::Section(CreateSection::new(
-        vec![CreateSectionComponent::TextDisplay(CreateTextDisplay::new(
-            body.to_string(),
-        ))],
-        CreateSectionAccessory::Thumbnail(CreateThumbnail::new(CreateUnfurledMediaItem::new(face))),
-    ))];
-    parts.extend(footer);
-    let mut components: Vec<CreateComponent<'static>> = role
-        .map(|id| CreateComponent::TextDisplay(CreateTextDisplay::new(format!("<@&{id}>"))))
-        .into_iter()
-        .collect();
-    components.push(CreateComponent::Container(CreateContainer::new(parts)));
-    components
 }
 
 async fn media_sources(

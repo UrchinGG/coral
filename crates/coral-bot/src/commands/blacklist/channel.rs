@@ -6,8 +6,10 @@ use blacklist::{
     lookup as lookup_tag,
 };
 use database::{
-    BlacklistRepository, GuildSubscriptionRepository, PlayerEvent, standing::StandingChange,
+    BlacklistRepository, GuildSubscriptionRepository, PlayerEvent, PlayerSnapshot,
+    standing::StandingChange,
 };
+use hypixel::BedwarsPlayerStats;
 
 use super::appeal;
 use super::evidence_post::evidence_thread_url;
@@ -338,6 +340,34 @@ pub async fn format_reviewed_line(ctx: &Context, reviewed_by: Option<&[i64]>) ->
     Some(format!("> -# **\\- Reviewed by {}**", names.join(", ")))
 }
 
+pub fn format_ign(name: &str, player: Option<PlayerSnapshot>) -> String {
+    match player {
+        Some(p) => format!(
+            "IGN - `[{}\u{272B}]` **`{name}`** `({:.2} fkdr)`",
+            p.star, p.fkdr
+        ),
+        None => format!("IGN - `{name}`"),
+    }
+}
+
+pub fn player_snapshot(stats: &BedwarsPlayerStats) -> PlayerSnapshot {
+    PlayerSnapshot {
+        star: stats.level as i32,
+        fkdr: stats.overall.fkdr(),
+    }
+}
+
+async fn ign_line(data: &Data, uuid: &str, name: &str) -> String {
+    format_ign(name, fetch_player_snapshot(data, uuid).await)
+}
+
+async fn fetch_player_snapshot(data: &Data, uuid: &str) -> Option<PlayerSnapshot> {
+    let response = data.api.get_player_stats(uuid).await.ok()?;
+    let stats =
+        hypixel::extract_bedwars_stats(&response.username, response.hypixel.as_ref()?, None)?;
+    Some(player_snapshot(&stats))
+}
+
 fn tag_footer(dashed_uuid: &str, review_url: Option<&str>, evidence_url: Option<&str>) -> String {
     let mut footer = format!("-# UUID: {dashed_uuid}");
     if let Some(url) = review_url {
@@ -365,11 +395,12 @@ pub async fn post_new_tag(
     } else {
         Some(appeal::notify_tagged_player(ctx, data, uuid, name, tag).await)
     };
+    let ign = ign_line(data, uuid, name).await;
     post_tag_to_log(
         ctx,
         data,
         uuid,
-        name,
+        &ign,
         tag,
         "New Tag",
         EMOTE_ADDTAG,
@@ -385,7 +416,7 @@ pub async fn post_new_tag(
         ctx,
         data,
         uuid,
-        name,
+        &ign,
         all_tags,
         "New Tag",
         EMOTE_ADDTAG,
@@ -411,11 +442,12 @@ pub async fn post_overwritten_tag(
     } else {
         Some(appeal::notify_tagged_player(ctx, data, uuid, name, tag).await)
     };
+    let ign = ign_line(data, uuid, name).await;
     post_tag_to_log(
         ctx,
         data,
         uuid,
-        name,
+        &ign,
         tag,
         "Tag Overwritten",
         EMOTE_EDITTAG,
@@ -431,7 +463,7 @@ pub async fn post_overwritten_tag(
         ctx,
         data,
         uuid,
-        name,
+        &ign,
         all_tags,
         "Tag Overwritten",
         EMOTE_EDITTAG,
@@ -471,6 +503,7 @@ pub async fn post_tag_removed(
     silent: bool,
 ) {
     let dashed_uuid = format_uuid_dashed(uuid);
+    let ign = ign_line(data, uuid, name).await;
     let username = get_username(ctx, removed_by).await;
     let detail = format_tag_detail(tag);
     let tag_type = tag.tag_type.as_deref().unwrap_or("");
@@ -485,7 +518,7 @@ pub async fn post_tag_removed(
     let make_container = |block: String, footer: String| {
         CreateContainer::new(vec![
             face_section(vec![
-                format!("## {} Tag Removed\nIGN - `{name}`\n", EMOTE_REMOVETAG),
+                format!("## {EMOTE_REMOVETAG} Tag Removed\n{ign}\n"),
                 block,
                 footer,
             ]),
@@ -530,6 +563,7 @@ pub async fn post_tag_changed(
     changed_by: u64,
 ) {
     let dashed_uuid = format_uuid_dashed(uuid);
+    let ign = ign_line(data, uuid, name).await;
     let old_added = format_mod_added_line(ctx, old_tag).await;
     let new_added = format_mod_added_line(ctx, new_tag).await;
     let username = get_username(ctx, changed_by).await;
@@ -554,7 +588,7 @@ pub async fn post_tag_changed(
     let face = face_attachment(data, uuid).await;
     let container = CreateContainer::new(vec![
         face_section(vec![
-            format!("## {EMOTE_EDITTAG} {title}\nIGN - `{name}`\n"),
+            format!("## {EMOTE_EDITTAG} {title}\n{ign}\n"),
             format!("Previous:\n{old_block}"),
         ]),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
@@ -580,13 +614,11 @@ pub async fn post_lock_change(
     changed_by: u64,
 ) {
     let dashed_uuid = format_uuid_dashed(uuid);
+    let ign = ign_line(data, uuid, name).await;
     let title = if locked {
-        format!("## {} Player Locked \u{1F512}\nIGN - `{}`", EMOTE_TAG, name)
+        format!("## {EMOTE_TAG} Player Locked \u{1F512}\n{ign}")
     } else {
-        format!(
-            "## {} Player Unlocked \u{1F513}\nIGN - `{}`",
-            EMOTE_TAG, name
-        )
+        format!("## {EMOTE_TAG} Player Unlocked \u{1F513}\n{ign}")
     };
 
     let face = face_attachment(data, uuid).await;
@@ -832,7 +864,7 @@ async fn post_tag_to_log(
     ctx: &Context,
     data: &Data,
     uuid: &str,
-    name: &str,
+    ign: &str,
     tag: &PlayerEvent,
     title: &str,
     emote: &str,
@@ -857,7 +889,7 @@ async fn post_tag_to_log(
     let footer = tag_footer(&dashed_uuid, review_url, evidence_url.as_deref());
     let container = CreateContainer::new(vec![
         face_section(vec![
-            format!("## {emote} {title}\nIGN - `{name}`\n"),
+            format!("## {emote} {title}\n{ign}\n"),
             block,
             match notice {
                 Some(notice) => format!("{footer}\n{}", notice.log_line()),
@@ -892,7 +924,7 @@ async fn post_to_blacklist_channel(
     ctx: &Context,
     data: &Data,
     uuid: &str,
-    name: &str,
+    ign: &str,
     all_tags: &[PlayerEvent],
     title: &str,
     emote: &str,
@@ -923,7 +955,7 @@ async fn post_to_blacklist_channel(
 
     let footer = tag_footer(&dashed_uuid, review_url, evidence_url.as_deref());
 
-    let header = format!("## {} {}\nIGN - `{}`\n", emote, title, name);
+    let header = format!("## {emote} {title}\n{ign}\n");
     let first_tag = tag_texts.first().cloned().unwrap_or_default();
 
     let mut parts = vec![face_section(vec![header, first_tag])];

@@ -4,6 +4,8 @@ mod overall;
 pub mod prestiges;
 pub(crate) mod session;
 
+pub use overall::bedwars_card;
+
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};

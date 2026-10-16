@@ -9,6 +9,7 @@ use database::{
     ReviewStatus,
 };
 
+use super::super::channel::player_snapshot;
 use super::render::{self, MediaUrls, PostState};
 use super::{ForumTags, Loaded, custom_id, deadline, face_attachment, face_filename, load_live};
 use crate::framework::Data;
@@ -16,6 +17,7 @@ use crate::interact;
 use crate::utils::discord_media::message_media;
 use crate::utils::{separator, text};
 
+const CARD_FILENAME: &str = "bedwars.png";
 const CONFIRMED_REFUSAL: &str =
     "This player is a confirmed cheater. Only staff can change a confirmed tag.";
 
@@ -197,14 +199,23 @@ pub async fn submit(
             .await;
         }
     };
-    let loaded = Loaded {
-        review: claimed,
-        ..loaded
-    };
+    let card = crate::commands::stats::bedwars_card(data, &claimed.player_uuid).await;
+    let mut review = claimed;
+    if let Some((stats, _)) = &card {
+        let snapshot = player_snapshot(stats);
+        repo.set_player_snapshot(review.id, snapshot).await?;
+        review.player = Some(snapshot);
+    }
+    let loaded = Loaded { review, ..loaded };
     let result = create_post(ctx, data, &loaded).await;
     let reply = match result {
         Ok(thread_id) => {
-            tokio::spawn(ping_reviewers(ctx.clone(), data.clone(), thread_id));
+            tokio::spawn(post_followups(
+                ctx.clone(),
+                data.clone(),
+                thread_id,
+                card.map(|(_, png)| png),
+            ));
             render::simple(format!(
                 "## {EMOTE_TAG} Review Submitted\nYour review of `{}` is open for voting in <#{thread_id}>.",
                 loaded.username
@@ -393,7 +404,29 @@ pub async fn set_forum_tags(ctx: &Context, data: &Data, thread_id: i64, status: 
     }
 }
 
-async fn ping_reviewers(ctx: Context, data: Data, thread_id: ThreadId) {
+async fn post_followups(ctx: Context, data: Data, thread_id: ThreadId, card: Option<Vec<u8>>) {
+    if let Some(png) = card {
+        post_card(&ctx, thread_id, png).await;
+    }
+    ping_reviewers(&ctx, &data, thread_id).await;
+}
+
+async fn post_card(ctx: &Context, thread_id: ThreadId, png: Vec<u8>) {
+    let card = CreateAttachment::bytes(png, CARD_FILENAME);
+    if let Err(e) = ctx
+        .http
+        .send_message(
+            thread_id.into(),
+            vec![card.clone()],
+            &CreateMessage::new().add_file(card),
+        )
+        .await
+    {
+        tracing::warn!("Failed to post the bedwars card in {thread_id}: {e}");
+    }
+}
+
+async fn ping_reviewers(ctx: &Context, data: &Data, thread_id: ThreadId) {
     let (review_role, _, _) = database::ReviewGuideRepository::new(data.db.pool())
         .get_ping_roles()
         .await

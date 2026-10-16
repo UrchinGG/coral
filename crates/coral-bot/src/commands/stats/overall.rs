@@ -2,11 +2,13 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use anyhow::Result;
+use hypixel::BedwarsPlayerStats;
 use serenity::all::*;
 use tracing::debug;
 
 use database::{CacheRepository, MemberRepository};
 
+use super::bedwars::Bedwars;
 use super::{
     CACHE_TTL_SECS, GameStats, OverallCache, StatsError, disable_components, evict_expired,
     extract_tag_icons, fetch_skin, map_api_error, resolve_uuid, send_deferred_error, spawn_expiry,
@@ -177,6 +179,14 @@ pub(super) async fn handle_mode_switch<G: GameStats>(
     }
 
     Ok(())
+}
+
+pub async fn bedwars_card(data: &Data, uuid: &str) -> Option<(BedwarsPlayerStats, Vec<u8>)> {
+    let cache = fetch_player_data::<Bedwars>(data, uuid).await.ok()?;
+    let png = render_and_encode::<Bedwars>(&cache)
+        .inspect_err(|e| tracing::warn!("Failed to render the bedwars card for {uuid}: {e}"))
+        .ok()?;
+    Some((cache.stats, png))
 }
 
 fn resolve_mode_switch<G: GameStats>(

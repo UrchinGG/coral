@@ -7,11 +7,11 @@ use chrono::{DateTime, Utc};
 use serenity::all::*;
 
 use database::{
-    Evidence, EvidenceKind, PromptTally, ReviewRules, ReviewStatus, RevisionRequest, Tally, Vote,
-    VoteKind,
+    ConfirmState, Evidence, EvidenceKind, PromptTally, ReviewRules, ReviewStatus, RevisionRequest,
+    Tally, Vote, VoteKind,
 };
 
-use super::super::channel::format_tag_block;
+use super::super::channel::{format_ign, format_tag_block};
 use super::community::{ADD, DISMISS};
 use super::{
     EVIDENCE_VOTES_NEEDED, Loaded, REVIEW_TAGS, REVISION_VOTES_NEEDED, custom_id, custom_id_with,
@@ -275,7 +275,7 @@ pub fn public_post(
     let mut parts = vec![
         text(format!("## {EMOTE_TAG} Tag Review")),
         separator(),
-        text(format!("IGN - `{}`", loaded.username)),
+        text(format_ign(&loaded.username, review.player)),
     ];
     if let Some(gallery) = media_gallery(&loaded.evidence, urls) {
         parts.push(gallery);
@@ -294,14 +294,46 @@ pub fn public_post(
     } else {
         parts.push(text(outcome_text(loaded, state.votes)));
     }
+    if review.confirm == Some(ConfirmState::Pending) {
+        parts.push(separator());
+        parts.extend(confirm_section(review.id));
+    }
 
     parts.push(separator());
-    parts.push(text(if review.hide_username {
+    let submitted = if review.hide_username {
         "-# Tag submitted anonymously".to_string()
     } else {
         format!("-# Tag submitted by <@{}>", review.submitter_id)
+    };
+    parts.push(text(match review.confirm.and_then(confirm_line) {
+        Some(line) => format!("{submitted}\n{line}"),
+        None => submitted,
     }));
     vec![CreateComponent::Container(CreateContainer::new(parts))]
+}
+
+fn confirm_section(review_id: i64) -> Vec<CreateContainerComponent<'static>> {
+    let emote = lookup_tag("confirmed_cheater").map_or("", |d| d.emote);
+    vec![
+        text(format!("### {emote} Confirm Tag")),
+        CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
+            CreateButton::new(custom_id("confirmtag", review_id))
+                .label("Confirm Tag")
+                .style(ButtonStyle::Success),
+            CreateButton::new(custom_id("dismisstag", review_id))
+                .label("Dismiss")
+                .style(ButtonStyle::Secondary),
+        ])),
+    ]
+}
+
+fn confirm_line(state: ConfirmState) -> Option<String> {
+    match state {
+        ConfirmState::Pending => None,
+        ConfirmState::Confirmed(id) => Some(format!("-# Confirmed by <@{id}>")),
+        ConfirmState::Dismissed(id) => Some(format!("-# Dismissed by <@{id}>")),
+        ConfirmState::Closed(id) => Some(format!("-# Closed by <@{id}>")),
+    }
 }
 
 fn vote_sections(review_id: i64, state: &PostState) -> Vec<CreateContainerComponent<'static>> {

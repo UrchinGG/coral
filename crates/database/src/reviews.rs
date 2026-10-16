@@ -2,7 +2,8 @@ use chrono::{DateTime, Duration, Utc};
 use sqlx::{FromRow, PgConnection, PgPool};
 
 const REVIEW_COLUMNS: &str = "id, player_uuid, submitter_id, hide_username, thread_id, status, \
-    staff_resolved, resolved_by, resolved_at, voided_by, voided_at, created_at";
+    staff_resolved, resolved_by, resolved_at, voided_by, voided_at, created_at, player_star, \
+    player_fkdr, confirm_state, confirm_by";
 const REVISION_COLUMNS: &str =
     "review_id, revision, reason, tag_type, created_at, last_activity_at, published_at";
 const EVIDENCE_COLUMNS: &str = "id, review_id, revision, kind, replay_id, replay_ts, filename, \
@@ -107,6 +108,49 @@ impl RequestStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmState {
+    Pending,
+    Confirmed(i64),
+    Dismissed(i64),
+    Closed(i64),
+}
+
+impl ConfirmState {
+    fn parse(raw: Option<&str>, by: Option<i64>) -> Option<Self> {
+        let by = by.unwrap_or_default();
+        match raw? {
+            "pending" => Some(Self::Pending),
+            "confirmed" => Some(Self::Confirmed(by)),
+            "dismissed" => Some(Self::Dismissed(by)),
+            "closed" => Some(Self::Closed(by)),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Confirmed(_) => "confirmed",
+            Self::Dismissed(_) => "dismissed",
+            Self::Closed(_) => "closed",
+        }
+    }
+
+    fn by(self) -> Option<i64> {
+        match self {
+            Self::Pending => None,
+            Self::Confirmed(by) | Self::Dismissed(by) | Self::Closed(by) => Some(by),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlayerSnapshot {
+    pub star: i32,
+    pub fkdr: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvidenceKind {
     Replay,
     Media,
@@ -126,6 +170,10 @@ struct ReviewRow {
     voided_by: Option<i64>,
     voided_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
+    player_star: Option<i32>,
+    player_fkdr: Option<f64>,
+    confirm_state: Option<String>,
+    confirm_by: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -142,6 +190,8 @@ pub struct Review {
     pub voided_by: Option<i64>,
     pub voided_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    pub player: Option<PlayerSnapshot>,
+    pub confirm: Option<ConfirmState>,
 }
 
 impl From<ReviewRow> for Review {
@@ -159,6 +209,11 @@ impl From<ReviewRow> for Review {
             voided_by: row.voided_by,
             voided_at: row.voided_at,
             created_at: row.created_at,
+            player: row
+                .player_star
+                .zip(row.player_fkdr)
+                .map(|(star, fkdr)| PlayerSnapshot { star, fkdr }),
+            confirm: ConfirmState::parse(row.confirm_state.as_deref(), row.confirm_by),
         }
     }
 }
@@ -464,6 +519,41 @@ impl<'a> ReviewRepository<'a> {
         .fetch_optional(self.pool)
         .await?;
         Ok(row.map(Review::from))
+    }
+
+    pub async fn set_player_snapshot(
+        &self,
+        id: i64,
+        snapshot: PlayerSnapshot,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE review SET player_star = $2, player_fkdr = $3 WHERE id = $1")
+            .bind(id)
+            .bind(snapshot.star)
+            .bind(snapshot.fkdr)
+            .execute(self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn open_confirm(&self, id: i64) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE review SET confirm_state = 'pending' WHERE id = $1")
+            .bind(id)
+            .execute(self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn settle_confirm(&self, id: i64, state: ConfirmState) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE review SET confirm_state = $2, confirm_by = $3 \
+             WHERE id = $1 AND confirm_state = 'pending'",
+        )
+        .bind(id)
+        .bind(state.as_str())
+        .bind(state.by())
+        .execute(self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
     }
 
     pub async fn get_by_thread(&self, thread_id: i64) -> Result<Option<Review>, sqlx::Error> {
@@ -2223,5 +2313,44 @@ mod tests {
             kept.id
         );
         assert!(repo.draft_for(&uuid, source).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn snapshot_persists_and_confirm_settles_once() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let repo = ReviewRepository::new(&pool);
+        let review = published_review(&repo, unique(10_000_000_000_000)).await;
+        assert!(review.player.is_none() && review.confirm.is_none());
+
+        let snapshot = PlayerSnapshot {
+            star: 52,
+            fkdr: 5.3,
+        };
+        repo.set_player_snapshot(review.id, snapshot).await.unwrap();
+        assert!(
+            !repo
+                .settle_confirm(review.id, ConfirmState::Dismissed(1))
+                .await
+                .unwrap()
+        );
+
+        repo.open_confirm(review.id).await.unwrap();
+        assert!(
+            repo.settle_confirm(review.id, ConfirmState::Confirmed(2))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !repo
+                .settle_confirm(review.id, ConfirmState::Dismissed(3))
+                .await
+                .unwrap()
+        );
+
+        let stored = repo.get(review.id).await.unwrap().unwrap();
+        assert_eq!(stored.player, Some(snapshot));
+        assert_eq!(stored.confirm, Some(ConfirmState::Confirmed(2)));
     }
 }
