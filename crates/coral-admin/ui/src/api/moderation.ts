@@ -3,7 +3,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { getJson, postJson, putJson } from "./http";
 import { keys } from "./keys";
 import { withLabels } from "./labels";
-import { configQuery, getQuery, liveQuery } from "./queryClient";
+import { configQuery, getQuery, immutableQuery, liveQuery } from "./queryClient";
 import { rowPages } from "./row-pages";
 import type {
   AuditRow,
@@ -24,7 +24,7 @@ import type { RecentModeration } from "./types/moderation";
 export const POLL_MODERATION_MS = 60_000;
 
 export function tagTypesQuery() {
-  return queryOptions({ queryKey: keys.moderation.tagTypes(), queryFn: getQuery<TagType[]>("/moderation/tag-types"), staleTime: Infinity });
+  return queryOptions({ queryKey: keys.moderation.tagTypes(), queryFn: getQuery<TagType[]>("/moderation/tag-types"), ...immutableQuery });
 }
 
 export function recentModerationQuery() {

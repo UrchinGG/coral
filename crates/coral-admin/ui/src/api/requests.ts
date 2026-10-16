@@ -3,7 +3,7 @@ import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/
 import { getJson, postJson } from "./http";
 import { keys } from "./keys";
 import { withLabels } from "./labels";
-import { configQuery, immutableQuery, infiniteListQuery, listQuery } from "./queryClient";
+import { configQuery, immutableQuery, infiniteListQuery, listQuery, pinnedQuery } from "./queryClient";
 import type { Page } from "./types/refs";
 import type { GroupPage, GroupQuery, RequestQuery, RouteCount } from "./types/request-explorer";
 import type { RequestFull } from "./types/request-full";
@@ -17,6 +17,7 @@ export function requestListQuery(query: RequestQuery) {
     initialPageParam: infiniteListQuery.initialPageParam,
     getNextPageParam: (page: Page<RequestRow>) => page.next_cursor,
     placeholderData: keepPreviousData,
+    ...pinnedQuery,
     queryKey: keys.requests.list(query),
     queryFn: ({ pageParam, signal, queryKey }) =>
       postJson<Page<RequestRow>>("/requests/query", pageParam === null ? query : { ...query, cursor: pageParam }, { signal, timingKey: queryKey }).then(withLabels),
@@ -30,6 +31,7 @@ export function requestTail(query: RequestQuery, after: string, signal?: AbortSi
 export function requestGroupsQuery(query: GroupQuery) {
   return queryOptions<GroupPage>({
     ...listQuery,
+    ...pinnedQuery,
     queryKey: keys.requests.groups(query),
     queryFn: ({ signal, queryKey }) => postJson<GroupPage>("/requests/groups", query, { signal, timingKey: queryKey }).then(withLabels),
   });

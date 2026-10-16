@@ -192,6 +192,7 @@ mod tests {
         ExtensionView {
             title: title.into(),
             subtitle: None,
+            refresh_s: None,
             sections: Vec::new(),
         }
     }
@@ -292,7 +293,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
             body,
-            json!({ "title": "Fake", "subtitle": null, "sections": [] })
+            json!({ "title": "Fake", "subtitle": null, "refresh_s": null, "sections": [] })
         );
     }
 
@@ -375,7 +376,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
             body,
-            json!({ "message": "echoed \"hi\"", "view": { "title": "Echoed", "subtitle": null, "sections": [] } })
+            json!({ "message": "echoed \"hi\"", "view": { "title": "Echoed", "subtitle": null, "refresh_s": null, "sections": [] } })
         );
         assert_eq!(
             audited,

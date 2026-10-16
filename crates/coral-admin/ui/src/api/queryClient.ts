@@ -18,11 +18,13 @@ export const SCAN_AUTO_CONTINUE_HOURS = 24;
 
 export const entityQuery = { staleTime: STALE_ENTITY_MS } as const;
 
-export const immutableQuery = { staleTime: Infinity } as const;
+export const immutableQuery = { staleTime: Infinity, refetchInterval: false } as const;
+
+export const pinnedQuery = { refetchInterval: false } as const;
 
 export const listQuery = { staleTime: STALE_LIST_MS, placeholderData: keepPreviousData };
 
-export const configQuery = { staleTime: STALE_CONFIG_MS } as const;
+export const configQuery = { staleTime: STALE_CONFIG_MS, refetchInterval: false } as const;
 
 export const infiniteListQuery = {
   staleTime: STALE_LIST_MS,
@@ -46,6 +48,8 @@ export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
+      refetchInterval: POLL_PULSE_MS,
+      refetchIntervalInBackground: false,
       gcTime: GC_MS,
       retry: shouldRetry,
       retryDelay: (attempt) => RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)],

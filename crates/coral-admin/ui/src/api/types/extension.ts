@@ -11,6 +11,7 @@ export type ExtensionFlag = {
 export type ExtensionView = {
   title: string;
   subtitle: string | null;
+  refresh_s: number | null;
   sections: ViewSection[];
 };
 

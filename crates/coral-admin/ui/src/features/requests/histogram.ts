@@ -1,7 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 
 import { keys } from "../../api/keys";
-import { getQuery, listQuery } from "../../api/queryClient";
+import { getQuery, listQuery, pinnedQuery } from "../../api/queryClient";
 import type { RollupFilter } from "../../api/types/request-explorer";
 
 export type HistogramPoint = {
@@ -27,6 +27,7 @@ export function histogramQuery(filter: RollupFilter) {
   }
   return queryOptions({
     ...listQuery,
+    ...pinnedQuery,
     queryKey: keys.requests.histogram(params.toString()),
     queryFn: getQuery<HistogramSeries>(`/traffic/series?${params}`),
   });

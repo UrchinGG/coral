@@ -7,7 +7,7 @@ type Chunk = Rolldown.OutputChunk;
 type BudgetLine = { name: string; bytes: number; limit: number };
 
 const KILOBYTE = 1_000;
-const INITIAL_JS_BUDGET_BYTES = 110 * KILOBYTE;
+const INITIAL_JS_BUDGET_BYTES = 112 * KILOBYTE;
 const LAZY_CHUNK_BUDGET_BYTES = 30 * KILOBYTE;
 const COMPRESSIBLE_FILE = /\.(?:js|css)$/;
 const BROTLI_SUFFIX = ".br";

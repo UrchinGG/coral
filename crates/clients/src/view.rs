@@ -11,6 +11,7 @@ use crate::serde_ts;
 pub struct ExtensionView {
     pub title: String,
     pub subtitle: Option<String>,
+    pub refresh_s: Option<u32>,
     pub sections: Vec<ViewSection>,
 }
 
@@ -284,6 +285,7 @@ mod tests {
         ExtensionView {
             title: "Sample".into(),
             subtitle: None,
+            refresh_s: Some(5),
             sections: vec![
                 ViewSection::Notice {
                     level: FlagLevel::Warning,
@@ -385,6 +387,7 @@ mod tests {
         let expected = json!({
             "title": "Sample",
             "subtitle": null,
+            "refresh_s": 5,
             "sections": [
                 { "type": "notice", "level": "warning", "text": "Check this", "actions": [expected_plain_action("check", "Check")] },
                 { "type": "stats", "items": [{ "label": "Used", "value": "30 / 120", "detail": "per 5 min" }] },
