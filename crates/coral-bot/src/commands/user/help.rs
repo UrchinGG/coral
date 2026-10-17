@@ -14,12 +14,9 @@ pub fn register() -> CreateCommand<'static> {
 }
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
-    let discord_id = command.user.id.get() as i64;
-    let api_key = database::MemberRepository::new(data.db.pool())
-        .get_by_discord_id(discord_id)
-        .await?
-        .and_then(|m| m.api_key);
-    let components = build_help_view(api_key.as_deref(), false);
+    let member =
+        super::dashboard::ensure_member_with_key(data, command.user.id.get() as i64).await?;
+    let components = build_help_view(member.api_key.as_deref().unwrap_or_default(), false);
     command
         .create_response(
             &ctx.http,
@@ -39,12 +36,9 @@ pub async fn handle_help_button(
     component: &ComponentInteraction,
     data: &Data,
 ) -> Result<()> {
-    let discord_id = component.user.id.get() as i64;
-    let api_key = database::MemberRepository::new(data.db.pool())
-        .get_by_discord_id(discord_id)
-        .await?
-        .and_then(|m| m.api_key);
-    let components = build_help_view(api_key.as_deref(), true);
+    let member =
+        super::dashboard::ensure_member_with_key(data, component.user.id.get() as i64).await?;
+    let components = build_help_view(member.api_key.as_deref().unwrap_or_default(), true);
     component
         .create_response(
             &ctx.http,
@@ -73,25 +67,19 @@ pub async fn handle_help_back(
     crate::interact::update_message(ctx, component, components).await
 }
 
-fn build_help_view(api_key: Option<&str>, from_dashboard: bool) -> Vec<CreateComponent<'static>> {
+fn build_help_view(api_key: &str, from_dashboard: bool) -> Vec<CreateComponent<'static>> {
     let mut parts: Vec<CreateContainerComponent> = vec![text("## Help")];
     parts.push(separator());
     parts.push(text(
         "### How to add Urchin to Cubelify\n\
-         1. Run `/dashboard` to register and get your API key\n\
-         2. Open the **Settings** menu in Cubelify and navigate to **Integrations**\n\
-         3. Under **Custom**, paste the URL below\n\
-         4. Go to the **Columns** page\n\
-         5. Add the **Custom Anti-Sniper Tags** column to your overlay",
+         1. Open the **Settings** menu in Cubelify and navigate to **Integrations**\n\
+         2. Under **Custom**, paste the URL below\n\
+         3. Go to the **Columns** page\n\
+         4. Add the **Custom Anti-Sniper Tags** column to your overlay",
     ));
-    match api_key {
-        Some(key) => parts.push(text(format!(
-            "Your URL (click to reveal):\n||```\nhttps://api.urchin.gg/v3/cubelify?uuid={{{{id}}}}&key={key}\n```||"
-        ))),
-        None => parts.push(text(
-            "```\nhttps://api.urchin.gg/v3/cubelify?uuid={{id}}&key=YOUR_KEY\n```"
-        )),
-    }
+    parts.push(text(format!(
+        "Your URL (click to reveal):\n||```\nhttps://api.urchin.gg/v3/cubelify?uuid={{{{id}}}}&key={api_key}\n```||"
+    )));
 
     parts.push(CreateContainerComponent::MediaGallery(
         CreateMediaGallery::new(vec![CreateMediaGalleryItem::new(
@@ -122,7 +110,7 @@ fn build_help_view(api_key: Option<&str>, from_dashboard: bool) -> Vec<CreateCom
     parts.push(text(
         "### FAQ\n\
          **How do I find my API key?**\n\
-         -# Run `/dashboard`. A key is generated automatically when you first open it.\n\
+         -# It's part of your URL above. You can also see it or regenerate it in `/dashboard`.\n\
          **What's a developer key?**\n\
          -# A separate key that can be granted access to private endpoints, for development purposes. Open a ticket in our server to request one.\n\
          **How do I report a cheater?**\n\

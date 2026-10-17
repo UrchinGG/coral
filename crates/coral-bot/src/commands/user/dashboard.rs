@@ -1,7 +1,9 @@
 use anyhow::Result;
 use serenity::all::*;
 
-use database::{BlacklistRepository, DeveloperKeyRepository, MemberRepository, StrikeRepository};
+use database::{
+    BlacklistRepository, DeveloperKeyRepository, Member, MemberRepository, StrikeRepository,
+};
 
 use crate::{
     framework::{AccessRank, AccessRankExt, Data},
@@ -14,22 +16,7 @@ pub fn register() -> CreateCommand<'static> {
 }
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
-    let discord_id = command.user.id.get() as i64;
-    let repo = MemberRepository::new(data.db.pool());
-    let mut member = match repo.get_by_discord_id(discord_id).await? {
-        Some(m) => m,
-        None => {
-            repo.create(discord_id).await?;
-            repo.get_by_discord_id(discord_id)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("failed to retrieve member after creation"))?
-        }
-    };
-    if member.api_key.is_none() {
-        let key = generate_api_key();
-        repo.set_api_key(discord_id, &key).await?;
-        member.api_key = Some(key);
-    }
+    let member = ensure_member_with_key(data, command.user.id.get() as i64).await?;
     let components = build_dashboard_view(&member, data).await;
 
     command
@@ -43,6 +30,20 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         )
         .await?;
     Ok(())
+}
+
+pub async fn ensure_member_with_key(data: &Data, discord_id: i64) -> Result<Member> {
+    let repo = MemberRepository::new(data.db.pool());
+    let mut member = match repo.get_by_discord_id(discord_id).await? {
+        Some(m) => m,
+        None => repo.create(discord_id).await?,
+    };
+    if member.api_key.is_none() {
+        let key = generate_api_key();
+        repo.set_api_key(discord_id, &key).await?;
+        member.api_key = Some(key);
+    }
+    Ok(member)
 }
 
 pub async fn handle_regenerate_key(
