@@ -172,15 +172,10 @@ fn resolve_username(hint: Option<String>, player_data: &Option<Value>, uuid: &st
     })
 }
 
-fn spawn_cache_update(state: &AppState, uuid: &str, data: &Value, username: &str) {
-    let (state, uuid, data, username) = (
-        state.clone(),
-        uuid.to_string(),
-        data.clone(),
-        username.to_string(),
-    );
+fn spawn_cache_update(state: &AppState, uuid: &str, data: &Value, username: Option<String>) {
+    let (state, uuid, data) = (state.clone(), uuid.to_string(), data.clone());
     tokio::spawn(async move {
-        store_player_snapshot(&state, &uuid, &data, Some(&username)).await;
+        store_player_snapshot(&state, &uuid, &data, username.as_deref()).await;
     });
 }
 
@@ -289,16 +284,17 @@ pub async fn player_stats(
     );
     let (player_data, stale) = player_result?;
     let tags = tags?;
-    let (skin_url, slim) = match profile.ok() {
-        Some(p) => (p.skin_url, p.slim),
-        None => (None, false),
-    };
+    let profile = profile.ok();
+    let (skin_url, slim) = profile
+        .as_ref()
+        .map_or((None, false), |p| (p.skin_url.clone(), p.slim));
+    let mojang_name = username_hint.or_else(|| profile.map(|p| p.username));
 
-    let username = resolve_username(username_hint, &player_data, &uuid);
+    let username = resolve_username(mojang_name.clone(), &player_data, &uuid);
 
     if !stale {
         if let Some(ref data) = player_data {
-            spawn_cache_update(&state, &uuid, data, &username);
+            spawn_cache_update(&state, &uuid, data, mojang_name);
         }
     }
 

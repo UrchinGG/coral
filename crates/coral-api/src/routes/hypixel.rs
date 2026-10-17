@@ -102,12 +102,9 @@ pub async fn player(
     let (data, stale) = resolve_player_data(&state, &uuid, max_cache_age).await?;
 
     if !stale && let Some(ref player) = data {
-        let username = username_hint
-            .or_else(|| player["displayname"].as_str().map(String::from))
-            .unwrap_or_else(|| uuid.clone());
         let (state, uuid, player) = (state.clone(), uuid.clone(), player.clone());
         tokio::spawn(async move {
-            store_player_snapshot(&state, &uuid, &player, Some(&username)).await;
+            store_player_snapshot(&state, &uuid, &player, username_hint.as_deref()).await;
         });
     }
 

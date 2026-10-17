@@ -109,7 +109,12 @@ impl<'a> CacheRepository<'a> {
             Some(baseline) => {
                 let current = self.reconstruct_current(uuid, &baseline).await?;
                 match calculate_delta(&current, data) {
-                    None => return Ok(SnapshotResult::NoChange),
+                    None => {
+                        if let Some(username) = username {
+                            self.cache_username(uuid, username).await?;
+                        }
+                        return Ok(SnapshotResult::NoChange);
+                    }
                     Some(delta) => {
                         self.insert_snapshot(uuid, &delta, discord_id, source, username, false)
                             .await?
@@ -584,6 +589,37 @@ mod tests {
                 .await
                 .unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn a_rename_is_recorded_even_when_stats_are_unchanged() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let uuid = format!("{:032x}", Utc::now().timestamp_nanos_opt().unwrap());
+        let repo = CacheRepository::new(&pool);
+        let data = json!({"kills": 1});
+
+        repo.store_snapshot(&uuid, &data, None, Some(TEST_SOURCE), Some("OldName"))
+            .await
+            .unwrap();
+        let unchanged = repo
+            .store_snapshot(&uuid, &data, None, Some(TEST_SOURCE), Some("NewName"))
+            .await
+            .unwrap();
+        let name = repo.get_username(&uuid).await.unwrap();
+        let changed = repo
+            .store_snapshot(&uuid, &json!({"kills": 2}), None, Some(TEST_SOURCE), None)
+            .await
+            .unwrap();
+        forget_player(&pool, &uuid).await;
+
+        assert!(matches!(unchanged, SnapshotResult::NoChange));
+        assert_eq!(name.as_deref(), Some("NewName"));
+        assert!(matches!(
+            changed,
+            SnapshotResult::Stored { first: false, .. }
+        ));
     }
 
     #[tokio::test]

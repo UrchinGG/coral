@@ -128,6 +128,7 @@ impl MojangClient {
 
         let (uuid, username) = match result {
             Ok(pair) => pair,
+            Err(e @ ClientError::PlayerNotFound(_)) => return Err(e),
             Err(e) => {
                 return match self.get_cached::<PlayerIdentity>(&stale_key(&key)).await {
                     Some(stale) => Ok(stale),

@@ -96,7 +96,7 @@ async fn discover_members(state: &AppState, raw: &Value) {
             return;
         }
         if let Ok(Some(player)) = hypixel.get_player(&uuid).await {
-            store_player_snapshot(state, &uuid, &player, player["displayname"].as_str()).await;
+            store_player_snapshot(state, &uuid, &player, None).await;
         }
     }
 }
