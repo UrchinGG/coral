@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use anyhow::{Result, anyhow};
 use serenity::all::*;
 
+use coral_redis::LinkMethod;
 use database::{AccountRepository, CacheRepository, MemberRepository};
 
 use super::manage::fetch_context;
@@ -426,7 +427,9 @@ pub async fn handle_link_pick(
             .await;
         }
     };
-    match crate::accounts::link_alt(data, target_id, member.id, &uuid).await? {
+    match crate::accounts::link_alt(data, target_id, member.id, &uuid, LinkMethod::HypixelSocial)
+        .await?
+    {
         crate::accounts::LinkOutcome::AlreadyLinked => {
             send_already_linked_component(ctx, component).await
         }
@@ -571,7 +574,15 @@ pub async fn handle_add_code_modal(
 
     let uuid = player.uuid.clone();
     let _ = data.api.get_player_stats(&uuid).await;
-    match crate::accounts::link_alt(data, target_id, member.id, &uuid).await? {
+    match crate::accounts::link_alt(
+        data,
+        target_id,
+        member.id,
+        &uuid,
+        LinkMethod::VerificationServer,
+    )
+    .await?
+    {
         crate::accounts::LinkOutcome::AlreadyLinked => send_already_linked_modal(ctx, modal).await,
         crate::accounts::LinkOutcome::Added => {
             let _ = CacheRepository::new(data.db.pool())
@@ -633,7 +644,15 @@ pub async fn handle_add_account_modal(
         .unwrap_or(false);
 
     if verified {
-        return match crate::accounts::link_alt(data, target_id, member.id, &uuid).await? {
+        return match crate::accounts::link_alt(
+            data,
+            target_id,
+            member.id,
+            &uuid,
+            LinkMethod::HypixelSocial,
+        )
+        .await?
+        {
             crate::accounts::LinkOutcome::AlreadyLinked => {
                 send_already_linked_modal(ctx, modal).await
             }
@@ -741,7 +760,7 @@ pub async fn handle_force_add(
             .await;
     };
 
-    match crate::accounts::link_alt(data, target_id, member.id, &uuid).await? {
+    match crate::accounts::link_alt(data, target_id, member.id, &uuid, LinkMethod::Staff).await? {
         crate::accounts::LinkOutcome::AlreadyLinked => {
             send_already_linked_component(ctx, component).await
         }

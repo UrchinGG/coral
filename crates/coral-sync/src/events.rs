@@ -26,6 +26,22 @@ pub fn spawn_sync_subscriber(ctx: Context, data: Data) {
                         SyncEvent::GuildJobCancelRequested { job_id } => {
                             crate::jobs::request_cancel(&data, job_id);
                         }
+                        SyncEvent::IdentityTakeover {
+                            uuid,
+                            previous_discord_id,
+                            new_discord_id,
+                            method,
+                        } => {
+                            crate::identity::handle_takeover(
+                                ctx,
+                                data,
+                                uuid,
+                                previous_discord_id,
+                                new_discord_id,
+                                method,
+                            )
+                            .await;
+                        }
                         SyncEvent::GuildJobProgress { .. }
                         | SyncEvent::GuildJobFinished { .. }
                         | SyncEvent::ReviewThreadMedia { .. } => {}
