@@ -147,6 +147,19 @@ pub enum SyncEvent {
         author_id: u64,
         attachments: Vec<ThreadAttachment>,
     },
+    IdentityTakeover {
+        uuid: String,
+        previous_discord_id: u64,
+        new_discord_id: u64,
+        method: LinkMethod,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LinkMethod {
+    HypixelSocial,
+    VerificationServer,
+    Staff,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

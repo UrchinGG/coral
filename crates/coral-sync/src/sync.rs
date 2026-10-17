@@ -12,7 +12,7 @@ use tokio::sync::Semaphore;
 
 use database::{
     BlacklistRepository, CacheRepository, GuildConfig, GuildConfigRepository, GuildRoleRule,
-    MemberRepository,
+    IdentityRepository, MemberRepository,
 };
 
 use crate::framework::Data;
@@ -285,7 +285,7 @@ pub async fn sync_user(ctx: Context, data: Data, user_id: UserId) {
             )
             .await
         }
-        None => sync_unlinked_member(&ctx, &data, guild_id, &member, &config, &rules).await,
+        None => sync_unlinked_member(&ctx, &data, guild_id, &member, &config, &rules, None).await,
     };
 
     if let Err(e) = result {
@@ -452,7 +452,10 @@ async fn sync_member_batch(
                     )
                     .await
                 }
-                _ => sync_unlinked_member(&ctx, &data, guild_id, &member, &config, &rules).await,
+                _ => {
+                    sync_unlinked_member(&ctx, &data, guild_id, &member, &config, &rules, None)
+                        .await
+                }
             };
 
             match result {
@@ -489,6 +492,12 @@ pub(crate) async fn sync_member(
     hypixel_data: &Value,
     preserve_custom: bool,
 ) -> Result<bool> {
+    let holder = IdentityRepository::new(data.db.pool()).holder(uuid).await?;
+    if holder != Some(member.user.id.get() as i64) {
+        let ign = hypixel_data.get("displayname").and_then(Value::as_str);
+        return sync_unlinked_member(ctx, data, guild_id, member, config, rules, ign).await;
+    }
+
     let tags = active_tags(data, uuid).await;
     let member_db = MemberRepository::new(data.db.pool())
         .get_by_discord_id(member.user.id.get() as i64)
@@ -530,13 +539,7 @@ pub(crate) async fn sync_member(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let bypass_role = std::env::var("NICKNAME_BYPASS_ROLE_ID")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .map(RoleId::new);
-    let nickname_bypassed = bypass_role.is_some_and(|r| member.roles.contains(&r));
-
-    let nickname = if nickname_bypassed || pause_name_updates {
+    let nickname = if nickname_bypassed(member) || pause_name_updates {
         None
     } else {
         config.nickname_template.as_ref().and_then(|template| {
@@ -571,6 +574,14 @@ pub(crate) async fn sync_member(
     Ok(true)
 }
 
+fn nickname_bypassed(member: &Member) -> bool {
+    std::env::var("NICKNAME_BYPASS_ROLE_ID")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(RoleId::new)
+        .is_some_and(|r| member.roles.contains(&r))
+}
+
 async fn sync_unlinked_member(
     ctx: &Context,
     data: &Data,
@@ -578,6 +589,7 @@ async fn sync_unlinked_member(
     member: &Member,
     config: &GuildConfig,
     rules: &[GuildRoleRule],
+    shared_ign: Option<&str>,
 ) -> Result<bool> {
     let mut roles: Vec<RoleId> = member.roles.iter().copied().collect();
     let original_roles = roles.clone();
@@ -595,13 +607,27 @@ async fn sync_unlinked_member(
         roles.retain(|r| *r != RoleId::new(rule.role_id as u64));
     }
 
-    if roles == original_roles {
+    let roles_changed = roles != original_roles;
+    let clear_nickname = config.nickname_template.is_some()
+        && !nickname_bypassed(member)
+        && shared_ign
+            .zip(member.nick.as_deref())
+            .is_some_and(|(ign, nick)| nick.to_lowercase().contains(&ign.to_lowercase()));
+
+    if !roles_changed && !clear_nickname {
         return Ok(false);
     }
 
     yield_to_interactions(data).await;
+    let mut edit = EditMember::new();
+    if roles_changed {
+        edit = edit.roles(&roles)
+    }
+    if clear_nickname {
+        edit = edit.nickname("")
+    }
     guild_id
-        .edit_member(&ctx.http, member.user.id, EditMember::new().roles(&roles))
+        .edit_member(&ctx.http, member.user.id, edit)
         .await?;
     Ok(true)
 }

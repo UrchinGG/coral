@@ -13,6 +13,7 @@ mod guild_config;
 mod guild_current;
 mod guild_subscriptions;
 mod history;
+mod identity;
 mod members;
 mod periods;
 mod plugin_registry;
@@ -46,6 +47,7 @@ pub use guild_cache::GuildCacheRepository;
 pub use guild_config::{GuildConfig, GuildConfigRepository, GuildRoleRule};
 pub use guild_current::GuildCurrentRepository;
 pub use guild_subscriptions::{GuildSubscription, GuildSubscriptionRepository};
+pub use identity::IdentityRepository;
 pub use members::{Member, MemberRepository, ReviewCounterDelta};
 pub use periods::Period;
 pub use plugin_registry::{

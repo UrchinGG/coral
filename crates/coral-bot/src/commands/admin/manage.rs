@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow};
 use serde_json::json;
 use serenity::all::*;
 
+use coral_redis::LinkMethod;
 use database::{DeveloperKeyRepository, MemberRepository, StrikeRepository, permissions};
 
 use crate::{
@@ -502,8 +503,9 @@ async fn link_member(
     target_id: u64,
     uuid: &str,
     action: &str,
+    method: LinkMethod,
 ) -> Result<()> {
-    crate::accounts::link_primary(data, target_id, uuid).await?;
+    crate::accounts::link_primary(data, target_id, uuid, method).await?;
     audit::record(data, invoker_id, action, target_id, json!({"uuid": uuid})).await;
     Ok(())
 }
@@ -700,7 +702,15 @@ pub async fn handle_register_modal(
         .unwrap_or(false);
 
     if verified {
-        link_member(data, invoker_id, target_id, &uuid, VERIFIED_LINK_ACTION).await?;
+        link_member(
+            data,
+            invoker_id,
+            target_id,
+            &uuid,
+            VERIFIED_LINK_ACTION,
+            LinkMethod::HypixelSocial,
+        )
+        .await?;
         return refresh_main_from_modal(ctx, modal, data, invoker_rank, target_id).await;
     }
 
@@ -748,7 +758,15 @@ pub async fn handle_force_link(
             .await;
     }
 
-    link_member(data, invoker_id, target_id, &uuid, FORCED_LINK_ACTION).await?;
+    link_member(
+        data,
+        invoker_id,
+        target_id,
+        &uuid,
+        FORCED_LINK_ACTION,
+        LinkMethod::Staff,
+    )
+    .await?;
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }
 

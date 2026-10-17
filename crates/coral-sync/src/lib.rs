@@ -3,6 +3,7 @@ pub mod api;
 pub mod commands;
 pub mod events;
 pub mod framework;
+pub mod identity;
 pub mod interact;
 pub mod jobs;
 pub mod review_media;
