@@ -57,7 +57,7 @@ pub struct Data {
     pub sync_cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
     pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
     pub started_at: i64,
-    pub info_cache: Arc<Mutex<commands::admin::info::InfoCache>>,
+    pub info_cache: Arc<commands::admin::info::InfoCache>,
 }
 
 impl Data {
@@ -335,6 +335,9 @@ impl Handler {
             }
             "info_taggers" => {
                 commands::admin::info::handle_taggers(ctx, component, &self.data).await
+            }
+            "info_leaderboard_category" => {
+                commands::admin::info::handle_leaderboard_category(ctx, component, &self.data).await
             }
             "prestige_color_codes" => {
                 commands::stats::prestiges::handle_color_codes(ctx, component, &self.data).await
