@@ -827,21 +827,19 @@ mod tests {
         )
         .bind(discord_id)
         .bind(api_key)
-        .bind(uuid)
+        .bind(format!("{uuid}{discord_id}"))
         .bind(
             json!([{"reason": "r", "struck_by": discord_id, "timestamp": "2026-01-01T00:00:00Z"}]),
         )
         .fetch_one(pool)
         .await
         .unwrap();
-        sqlx::query(
-            "INSERT INTO minecraft_accounts (member_id, uuid) VALUES ($1, 'shared'), ($1, $2)",
-        )
-        .bind(id)
-        .bind(format!("own{discord_id}"))
-        .execute(pool)
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO minecraft_accounts (member_id, uuid) VALUES ($1, $2)")
+            .bind(id)
+            .bind(format!("own{discord_id}"))
+            .execute(pool)
+            .await
+            .unwrap();
         id
     }
 
@@ -915,7 +913,7 @@ mod tests {
             .unwrap();
         assert_eq!(merged.id, target_member);
         assert_eq!(merged.api_key.as_deref(), Some(source_key.as_str()));
-        assert_eq!(merged.uuid.as_deref(), Some("tgtuuid"));
+        assert_eq!(merged.uuid, Some(format!("tgtuuid{target}")));
         assert_eq!(merged.accepted_tags, 4);
         let strikes = &merged.strikes;
         let actors: Vec<i64> = strikes
@@ -932,7 +930,7 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(accounts, 3);
+        assert_eq!(accounts, 2);
 
         let (author, reviewers): (i64, Vec<i64>) = sqlx::query_as(
             "SELECT author, reviewed_by FROM player_events WHERE author = $1 AND uuid = 'p'",
