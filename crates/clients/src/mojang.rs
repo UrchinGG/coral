@@ -14,15 +14,15 @@ const SESSION_API: &str = "https://sessionserver.mojang.com";
 
 const IDENTITY_PREFIX: &str = "mj:id:";
 const UUID_PREFIX: &str = "mj:uuid:";
-const VACANT_PREFIX: &str = "mj:vacant:";
+const MISSING_PREFIX: &str = "mj:missing:";
 const STALE_PREFIX: &str = "mj:stale:";
 const PROFILE_RENDER_PREFIX: &str = "mj:profile:";
 const PROFILE_METADATA_PREFIX: &str = "mj:profile-meta:";
 
 const IDENTITY_TTL_SECS: i64 = 3 * 24 * 60 * 60;
 const RENAME_LOCK_SECS: i64 = 30 * 24 * 60 * 60;
-const VACANCY_SECS: i64 = 37 * 24 * 60 * 60;
 const STALE_FALLBACK_SECS: u64 = 7 * 24 * 60 * 60;
+const MISSING_TTL_SECS: u64 = 10 * 60;
 
 const PROFILE_RENDER_TTL_SECS: u64 = 45;
 const PROFILE_METADATA_TTL_SECS: u64 = IDENTITY_TTL_SECS as u64;
@@ -108,7 +108,7 @@ impl MojangClient {
     pub async fn resolve(&self, identifier: &str) -> Result<PlayerIdentity, ClientError> {
         let key = identifier.to_lowercase().replace('-', "");
 
-        if self.is_vacant(&key).await {
+        if self.is_missing(&key).await {
             return Err(ClientError::PlayerNotFound(identifier.to_string()));
         }
 
@@ -128,7 +128,10 @@ impl MojangClient {
 
         let (uuid, username) = match result {
             Ok(pair) => pair,
-            Err(e @ ClientError::PlayerNotFound(_)) => return Err(e),
+            Err(e @ ClientError::PlayerNotFound(_)) => {
+                self.mark_missing(&key).await;
+                return Err(e);
+            }
             Err(e) => {
                 return match self.get_cached::<PlayerIdentity>(&stale_key(&key)).await {
                     Some(stale) => Ok(stale),
@@ -276,11 +279,7 @@ impl MojangClient {
                 }
             }
 
-            let vacancy_remaining = prev.last_seen + VACANCY_SECS - now;
-            if vacancy_remaining > 0 {
-                self.mark_vacant(&prev.username.to_lowercase(), vacancy_remaining as u64)
-                    .await;
-            }
+            self.forget_name(&prev.username.to_lowercase()).await;
         } else {
             self.set_cached(&identity_key(key), &identity, IDENTITY_TTL_SECS as u64)
                 .await;
@@ -294,22 +293,27 @@ impl MojangClient {
             .await;
     }
 
-    async fn is_vacant(&self, name_key: &str) -> bool {
+    async fn is_missing(&self, key: &str) -> bool {
         self.redis
             .clone()
-            .exists(vacant_key(name_key))
+            .exists(missing_key(key))
             .await
             .unwrap_or(false)
     }
 
-    async fn mark_vacant(&self, name_key: &str, ttl_secs: u64) {
-        if ttl_secs == 0 {
-            return;
-        }
+    async fn mark_missing(&self, key: &str) {
         let _: Result<(), _> = self
             .redis
             .clone()
-            .set_ex(vacant_key(name_key), 1u8, ttl_secs)
+            .set_ex(missing_key(key), 1u8, MISSING_TTL_SECS)
+            .await;
+    }
+
+    async fn forget_name(&self, name_key: &str) {
+        let _: Result<(), _> = self
+            .redis
+            .clone()
+            .del(&[identity_key(name_key), stale_key(name_key)])
             .await;
     }
 
@@ -336,8 +340,8 @@ fn uuid_key(uuid: &str) -> String {
     format!("{UUID_PREFIX}{uuid}")
 }
 
-fn vacant_key(name_key: &str) -> String {
-    format!("{VACANT_PREFIX}{name_key}")
+fn missing_key(key: &str) -> String {
+    format!("{MISSING_PREFIX}{key}")
 }
 
 fn stale_key(key: &str) -> String {

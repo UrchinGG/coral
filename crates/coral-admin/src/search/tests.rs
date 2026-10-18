@@ -57,7 +57,7 @@ const HEAVY_SNAPSHOTS: i32 = 600;
 const EARLY_RENAMED_TO: &str = "SearchTestEarly";
 const GHOST_NAME: &str = "searchtestghost";
 const REMOTE_NAME: &str = "SearchTestRemote";
-const VACANT_NAME: &str = "SearchTestVacant";
+const MISSING_NAME: &str = "SearchTestMissing";
 
 const IP: &str = "198.51.100.77";
 const IP_COUNTRY: &str = "NL";
@@ -447,7 +447,7 @@ async fn seed_redis(redis: &RedisPool) {
             format!("mj:id:{}", lower(REMOTE_NAME)),
             json!({ "uuid": CURRENT_HOLDER, "username": REMOTE_NAME }).to_string(),
         )
-        .set(format!("mj:vacant:{}", lower(VACANT_NAME)), "1")
+        .set(format!("mj:missing:{}", lower(MISSING_NAME)), "1")
         .query_async(&mut redis.connection())
         .await
         .unwrap();
@@ -722,7 +722,13 @@ async fn mojang_answers_come_from_its_cache_or_its_vacancies() {
     assert_eq!(hits[0].score, CURRENT_NAME);
     assert_eq!(hits[0].account_id, Some(OWNER_DISCORD));
 
-    assert!(run.searcher().remote(VACANT_NAME).await.unwrap().is_empty());
+    assert!(
+        run.searcher()
+            .remote(MISSING_NAME)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(
         run.searcher().remote("no spaces").await.unwrap_err().code(),
         "bad_request"
