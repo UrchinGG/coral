@@ -30,7 +30,7 @@ mod tag_ops;
 mod transfer;
 
 pub use access::AccessRank;
-pub use accounts::{AccountRepository, MinecraftAccount};
+pub use accounts::{AccountRepository, LinkRole, MinecraftAccount};
 pub use admin_actions::{AdminAction, AdminActionRepository};
 pub use blacklist::{AddOutcome, BlacklistRepository, LockState, OverwriteOutcome, PlayerEvent};
 pub use cache::{CacheRepository, SnapshotResult, calculate_delta, reconstruct};

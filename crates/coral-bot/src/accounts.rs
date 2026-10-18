@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use coral_redis::SyncEvent;
-use database::{AccountRepository, MemberRepository};
+use database::{AccountRepository, LinkRole, MemberRepository};
 
 use crate::framework::Data;
 
@@ -37,12 +37,17 @@ pub async fn check_link(data: &Data, player: &str, discord_username: &str) -> Li
 }
 
 pub async fn link_primary(data: &Data, discord_id: u64, uuid: &str) -> Result<()> {
-    let repo = MemberRepository::new(data.db.pool());
-    repo.create(discord_id as i64).await?;
-    repo.set_uuid(discord_id as i64, uuid).await?;
-    data.sync_event_publisher
-        .publish(&SyncEvent::SyncUser { discord_id })
-        .await;
+    let member = MemberRepository::new(data.db.pool())
+        .create(discord_id as i64)
+        .await?;
+    let losers = AccountRepository::new(data.db.pool())
+        .claim(member.id, uuid, LinkRole::Primary)
+        .await?;
+    resync(
+        data,
+        std::iter::once(discord_id).chain(losers.into_iter().map(|id| id as u64)),
+    )
+    .await;
     Ok(())
 }
 
@@ -64,9 +69,18 @@ pub async fn link_alt(
     if member.as_ref().and_then(|m| m.uuid.as_ref()).is_none() {
         link_primary(data, discord_id, uuid).await?;
     } else {
-        accounts.add(member_id, uuid).await?;
+        let losers = accounts.claim(member_id, uuid, LinkRole::Alt).await?;
+        resync(data, losers.into_iter().map(|id| id as u64)).await;
     }
     Ok(LinkOutcome::Added)
+}
+
+async fn resync(data: &Data, discord_ids: impl Iterator<Item = u64>) {
+    for discord_id in discord_ids {
+        data.sync_event_publisher
+            .publish(&SyncEvent::SyncUser { discord_id })
+            .await;
+    }
 }
 
 pub fn is_discord_linked(player: &Value, discord_username: &str) -> bool {
