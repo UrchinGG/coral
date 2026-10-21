@@ -197,10 +197,15 @@ async fn verify(
     let after = current_media(ctx, post.thread_id).await?;
     let present_ids: Vec<u64> = after.iter().map(|m| m.attachment_id.get()).collect();
     let present_names: Vec<&str> = after.iter().map(|m| m.filename.as_str()).collect();
+    let broken: Vec<&MessageMedia> = after
+        .iter()
+        .filter(|m| m.in_gallery && m.failed_to_load())
+        .collect();
     let missing: Vec<&MessageMedia> = kept
         .iter()
         .copied()
         .filter(|m| !present_ids.contains(&m.attachment_id.get()))
+        .chain(broken.iter().copied())
         .collect();
     report.lost.extend(
         new_files
@@ -212,11 +217,20 @@ async fn verify(
         return Ok(());
     }
 
-    let keep: Vec<AttachmentId> = after.iter().map(|m| m.attachment_id).collect();
+    let keep: Vec<AttachmentId> = after
+        .iter()
+        .filter(|m| !broken.contains(m))
+        .map(|m| m.attachment_id)
+        .collect();
     let mut uploads: Vec<CreateAttachment<'static>> = missing
         .iter()
         .filter_map(|media| {
-            let bytes = held.get(&media.attachment_id.get())?;
+            let bytes = held.get(&media.attachment_id.get()).or_else(|| {
+                new_files
+                    .iter()
+                    .find(|f| f.filename == media.filename)
+                    .map(|f| &f.bytes)
+            })?;
             Some(CreateAttachment::bytes(
                 bytes.clone(),
                 media.filename.clone(),
@@ -229,7 +243,7 @@ async fn verify(
     }
     let by_name: HashMap<&str, &str> = after
         .iter()
-        .filter(|m| m.in_gallery)
+        .filter(|m| m.in_gallery && !m.failed_to_load())
         .map(|m| (m.filename.as_str(), m.url.as_str()))
         .collect();
     let refs = Refs {

@@ -4,6 +4,7 @@ use serenity::http::{LightMethod, Request, Route};
 
 const MEDIA_GALLERY: u64 = 12;
 const THUMBNAIL: u64 = 11;
+const LOADING_FAILED: u64 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageMedia {
@@ -11,6 +12,13 @@ pub struct MessageMedia {
     pub filename: String,
     pub url: String,
     pub in_gallery: bool,
+    pub loading_state: Option<u64>,
+}
+
+impl MessageMedia {
+    pub fn failed_to_load(&self) -> bool {
+        self.loading_state == Some(LOADING_FAILED)
+    }
 }
 
 #[derive(Debug)]
@@ -107,6 +115,7 @@ fn read_media(media: &Value, in_gallery: bool) -> Result<MessageMedia, MediaRead
         filename: filename_from_url(&url),
         url,
         in_gallery,
+        loading_state: media.get("loading_state").and_then(Value::as_u64),
     })
 }
 
@@ -154,6 +163,16 @@ mod tests {
         assert_eq!(ids, vec![7, 8, 9]);
         assert_eq!(media[1].filename, "Hexze_1.mp4");
         assert!(!media[0].in_gallery && media[1].in_gallery);
+    }
+
+    #[test]
+    fn reads_a_failed_loading_state() {
+        let components = json!([{"type": 12, "items": [
+            {"media": {"url": "https://cdn.discordapp.com/attachments/1/8/A_1.mov", "loading_state": 3}},
+            {"media": {"url": "https://cdn.discordapp.com/attachments/1/9/A_2.mov", "loading_state": 2}}
+        ]}]);
+        let media = media_from_components(&components).unwrap();
+        assert!(media[0].failed_to_load() && !media[1].failed_to_load());
     }
 
     #[test]
