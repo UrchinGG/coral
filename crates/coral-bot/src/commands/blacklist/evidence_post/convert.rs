@@ -9,6 +9,12 @@ use crate::framework::Data;
 
 const BASE_TAGS: &[&str] = &["closet_cheater", "blatant_cheater"];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Credit {
+    Confirmer,
+    OriginalTagger,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Conversion {
     Converted,
@@ -23,6 +29,7 @@ pub async fn run(
     post: &EvidencePost,
     has_media: bool,
     actor: u64,
+    credit: Credit,
 ) -> anyhow::Result<Conversion> {
     let repo = BlacklistRepository::new(data.db.pool());
     let tags = repo.get_active_tags(&post.uuid).await?;
@@ -42,7 +49,7 @@ pub async fn run(
             .is_some_and(|ty| BASE_TAGS.contains(&ty))
     });
     let outcome = match (base, &post.pending) {
-        (Some(tag), _) => overwrite(data, tag, actor, true).await?,
+        (Some(tag), _) => overwrite(data, tag, actor, credit, true).await?,
         (None, Some(pending)) => {
             add_then_overwrite(
                 data,
@@ -51,6 +58,7 @@ pub async fn run(
                 &pending.reason,
                 pending.by,
                 actor,
+                credit,
             )
             .await?
         }
@@ -67,8 +75,13 @@ async fn overwrite(
     data: &Data,
     tag: &database::PlayerEvent,
     actor: u64,
+    credit: Credit,
     announce_overwrite: bool,
 ) -> anyhow::Result<Conversion> {
+    let author = match credit {
+        Credit::Confirmer => actor as i64,
+        Credit::OriginalTagger => tag.author.unwrap_or(actor as i64),
+    };
     let repo = BlacklistRepository::new(data.db.pool());
     let old_tag_type = tag.tag_type.clone().unwrap_or_default();
     let old_reason = tag.reason.clone().unwrap_or_default();
@@ -83,7 +96,7 @@ async fn overwrite(
             None,
             None,
             Some(actor as i64),
-            Some(actor as i64),
+            Some(author),
             None,
             &blocking,
             Some(tag.id),
@@ -105,7 +118,7 @@ async fn overwrite(
                 BlacklistEvent::TagAdded {
                     uuid: tag.uuid.clone(),
                     tag_id: new.id,
-                    added_by: actor as i64,
+                    added_by: author,
                     silent: false,
                     review_url: None,
                 }
@@ -130,6 +143,7 @@ async fn add_then_overwrite(
     reason: &str,
     pending_by: i64,
     actor: u64,
+    credit: Credit,
 ) -> anyhow::Result<Conversion> {
     let repo = BlacklistRepository::new(data.db.pool());
     let blocking = blacklist::priority_lane_excluding(tag_type, "");
@@ -155,7 +169,7 @@ async fn add_then_overwrite(
         .await?
         .filter(|t| t.id == tag_id);
     let result = match &written {
-        Some(tag) => overwrite(data, tag, actor, false).await,
+        Some(tag) => overwrite(data, tag, actor, credit, false).await,
         None => Ok(Conversion::Failed(
             "The new tag could not be read back.".to_string(),
         )),

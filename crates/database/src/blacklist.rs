@@ -171,7 +171,7 @@ impl<'a> BlacklistRepository<'a> {
         .bind(expires_at)
         .bind(reviewed_by)
         .bind(tag_author)
-        .bind(old.author)
+        .bind(old.author.filter(|displaced| Some(*displaced) != tag_author))
         .bind(ts)
         .fetch_one(&mut *tx)
         .await?;
@@ -515,4 +515,70 @@ async fn is_locked(
     .fetch_optional(&mut **tx)
     .await?;
     Ok(row.is_some_and(|(locked,)| locked))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn test_pool() -> Option<PgPool> {
+        dotenvy::dotenv().ok();
+        let url = std::env::var("DATABASE_URL").ok()?;
+        sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&url)
+            .await
+            .ok()
+    }
+
+    async fn overwrite_authored_by(tag_author: i64, original: i64) -> PlayerEvent {
+        let pool = test_pool().await.expect("DATABASE_URL");
+        let repo = BlacklistRepository::new(&pool);
+        let uuid = format!("ow{:030x}", Utc::now().timestamp_nanos_opt().unwrap());
+        repo.add_event(
+            &uuid,
+            "closet_cheater",
+            "r",
+            false,
+            None,
+            None,
+            Some(original),
+            &[],
+        )
+        .await
+        .unwrap();
+        let OverwriteOutcome::Inserted { new, .. } = repo
+            .overwrite_event(
+                &uuid,
+                "closet_cheater",
+                "confirmed_cheater",
+                "r",
+                false,
+                None,
+                None,
+                Some(999),
+                Some(tag_author),
+                None,
+                &[],
+                None,
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("overwrite did not insert");
+        };
+        new
+    }
+
+    #[tokio::test]
+    async fn keeping_the_author_records_no_displacement() {
+        let new = overwrite_authored_by(111, 111).await;
+        assert_eq!((new.author, new.displaced_author), (Some(111), None));
+    }
+
+    #[tokio::test]
+    async fn taking_over_records_the_displaced_author() {
+        let new = overwrite_authored_by(999, 111).await;
+        assert_eq!((new.author, new.displaced_author), (Some(999), Some(111)));
+    }
 }

@@ -2,7 +2,7 @@ use serenity::all::*;
 
 use database::{EvidencePost, EvidencePostRepository, Origin, PostStatus, get_locked, set_status};
 
-use super::convert::{self, Conversion};
+use super::convert::{self, Conversion, Credit};
 use super::media::{self, Change, EditError, EditReport, NewFile, View, edit_post};
 use super::{MAX_EVIDENCE_ITEMS, render};
 use crate::framework::Data;
@@ -64,6 +64,7 @@ pub async fn upload(
     thread_id: i64,
     files: Vec<(String, Vec<u8>)>,
     actor: u64,
+    credit: Credit,
 ) -> Result<UploadResult, OpError> {
     let repo = EvidencePostRepository::new(data.db.pool());
     let post = repo.get(thread_id).await?.ok_or(OpError::NoPost)?;
@@ -106,9 +107,16 @@ pub async fn upload(
         Change::Add(new_files),
     )
     .await?;
-    let conversion = convert::run(&mut tx, data, &post, !report.files.is_empty(), actor)
-        .await
-        .map_err(OpError::Database)?;
+    let conversion = convert::run(
+        &mut tx,
+        data,
+        &post,
+        !report.files.is_empty(),
+        actor,
+        credit,
+    )
+    .await
+    .map_err(OpError::Database)?;
     if conversion == Conversion::Converted {
         let post = get_locked(&mut tx, thread_id)
             .await?
@@ -268,9 +276,16 @@ pub async fn restore(
         Change::Rerender,
     )
     .await?;
-    let conversion = convert::run(&mut tx, data, &post, !report.files.is_empty(), actor)
-        .await
-        .map_err(OpError::Database)?;
+    let conversion = convert::run(
+        &mut tx,
+        data,
+        &post,
+        !report.files.is_empty(),
+        actor,
+        Credit::Confirmer,
+    )
+    .await
+    .map_err(OpError::Database)?;
     if conversion == Conversion::Converted {
         let post = get_locked(&mut tx, thread_id)
             .await?

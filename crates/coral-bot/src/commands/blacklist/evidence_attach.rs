@@ -4,6 +4,7 @@ use serenity::all::*;
 
 use database::{EvidencePost, EvidencePostRepository, PostStatus, ReviewRepository};
 
+use super::evidence_post::convert::Credit;
 use super::evidence_post::menu::add_sources;
 use super::evidence_post::render::face_section;
 use super::evidence_post::{face_attachment, is_media_filename, normalize};
@@ -207,7 +208,7 @@ async fn add_to(
             "That evidence post is archived. Run /confirm on the player to restore it.",
         );
     }
-    let summary = add_sources(ctx, data, post.thread_id, sources, actor).await;
+    let summary = add_sources(ctx, data, post.thread_id, sources, actor, Credit::Confirmer).await;
     let username = super::evidence_post::ops::username(data, post).await;
     vec![CreateComponent::Container(CreateContainer::new(vec![
         face_section(format!(

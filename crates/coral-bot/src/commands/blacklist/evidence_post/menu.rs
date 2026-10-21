@@ -3,7 +3,7 @@ use serenity::all::*;
 
 use database::{EvidencePostRepository, PostStatus};
 
-use super::convert::Conversion;
+use super::convert::{Conversion, Credit};
 use super::media::{self, current_media};
 use super::ops::{self, OpError};
 use super::{MAX_FILES_PER_UPLOAD, is_media_filename, media_extension, media_label};
@@ -105,7 +105,7 @@ pub async fn handle_media_modal(
         .iter()
         .map(|a| (a.filename.to_string(), a.url.to_string()))
         .collect();
-    let message = add_sources(ctx, data, thread_id, &sources, staff).await;
+    let message = add_sources(ctx, data, thread_id, &sources, staff, Credit::Confirmer).await;
     modal
         .edit_response(
             &ctx.http,
@@ -125,6 +125,7 @@ pub async fn add_sources(
     thread_id: i64,
     sources: &[(String, String)],
     actor: u64,
+    credit: Credit,
 ) -> String {
     let rejected: Vec<&str> = sources
         .iter()
@@ -151,7 +152,7 @@ pub async fn add_sources(
             failed.join(", ")
         );
     }
-    match ops::upload(ctx, data, thread_id, files, actor).await {
+    match ops::upload(ctx, data, thread_id, files, actor, credit).await {
         Ok(result) => upload_summary(&result),
         Err(e) => e.to_string(),
     }

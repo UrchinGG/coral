@@ -8,6 +8,7 @@ use database::{
 };
 
 use super::super::evidence_post::confirm::{Reply, Target, confirm_flow};
+use super::super::evidence_post::convert::Credit;
 use super::super::evidence_post::{self, media::current_media, menu::add_sources, render};
 use super::REVIEW_TAGS;
 use super::publish::{rerender_post, set_forum_tags};
@@ -101,7 +102,17 @@ async fn finish(
         return reply_error(ctx, component, "The evidence post could not be found").await;
     };
     let summary = match media_sources(ctx, data, review).await {
-        Ok(sources) => add_sources(ctx, data, post.thread_id, &sources, staff).await,
+        Ok(sources) => {
+            add_sources(
+                ctx,
+                data,
+                post.thread_id,
+                &sources,
+                staff,
+                Credit::OriginalTagger,
+            )
+            .await
+        }
         Err(message) => message,
     };
     let copied = current_media(ctx, post.thread_id)
