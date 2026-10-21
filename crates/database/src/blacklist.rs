@@ -531,8 +531,8 @@ mod tests {
             .ok()
     }
 
-    async fn overwrite_authored_by(tag_author: i64, original: i64) -> PlayerEvent {
-        let pool = test_pool().await.expect("DATABASE_URL");
+    async fn overwrite_authored_by(tag_author: i64, original: i64) -> Option<PlayerEvent> {
+        let pool = test_pool().await?;
         let repo = BlacklistRepository::new(&pool);
         let uuid = format!("ow{:030x}", Utc::now().timestamp_nanos_opt().unwrap());
         repo.add_event(
@@ -567,18 +567,22 @@ mod tests {
         else {
             panic!("overwrite did not insert");
         };
-        new
+        Some(new)
     }
 
     #[tokio::test]
     async fn keeping_the_author_records_no_displacement() {
-        let new = overwrite_authored_by(111, 111).await;
+        let Some(new) = overwrite_authored_by(111, 111).await else {
+            return;
+        };
         assert_eq!((new.author, new.displaced_author), (Some(111), None));
     }
 
     #[tokio::test]
     async fn taking_over_records_the_displaced_author() {
-        let new = overwrite_authored_by(999, 111).await;
+        let Some(new) = overwrite_authored_by(999, 111).await else {
+            return;
+        };
         assert_eq!((new.author, new.displaced_author), (Some(999), Some(111)));
     }
 }
