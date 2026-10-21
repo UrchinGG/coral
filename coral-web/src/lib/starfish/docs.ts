@@ -84,7 +84,7 @@ export const SHARED_TYPES: DocSection = {
     rows: [
       ["Positionable", "{x, y, z} | Entity | starfish.players.me()", "Anything with a position, wherever a function takes one"],
       ["MessageContent", "string | Component", "A §-coded string or a starfish.text component"],
-      ["Subscription", "sub:off()", "Returned by every handler and timer registration; off() cancels it"],
+      ["Subscription", "sub:off()", "Returned by every handler, timer, and block registration; off() cancels it"],
       ["Identifier", "string", "A namespaced id such as \"minecraft:stone\""],
     ],
   },
@@ -150,14 +150,21 @@ export const DOC_PAGES: DocPage[] = [
           {
             signature: "starfish.chat.onReceive(handler, opts?) -> Subscription",
             description:
-              "Handles chat arriving from the server; `handler` receives a `ChatMessage`. `opts.priority` (higher runs first, default 0) and `opts.receiveCancelled` (also see messages an earlier handler cancelled) are optional.",
+              "Handles chat arriving from the server; `handler` receives a `ChatMessage`. `opts.priority` (higher runs first among this plugin's handlers, default 0) and `opts.receiveCancelled` (also see messages an earlier handler of this plugin cancelled) are optional.",
           },
           {
             signature: "starfish.chat.onSend(handler, opts?) -> Subscription",
-            description: "Same as `onReceive`, for chat and commands you send.",
+            description:
+              "Same as `onReceive`, for chat and commands you send. Edits are sent as legacy text, so click and hover are dropped. Starfish's own commands and blocked messages never reach it.",
           },
-          { signature: "starfish.chat.blockIncoming(text) -> nil", description: "Drops every incoming message containing `text` until the plugin unloads." },
-          { signature: "starfish.chat.blockOutgoing(prefix) -> nil", description: "Drops every outgoing message starting with `prefix` until the plugin unloads." },
+          {
+            signature: "starfish.chat.blockIncoming(text) -> Subscription",
+            description: "Drops every incoming message whose raw JSON contains `text`, until turned off or the plugin unloads.",
+          },
+          {
+            signature: "starfish.chat.blockOutgoing(prefix) -> Subscription",
+            description: "Drops every outgoing message that is `prefix`, or starts with `prefix` and a space, ignoring case, until turned off or the plugin unloads.",
+          },
         ],
       },
       {
@@ -169,6 +176,9 @@ export const DOC_PAGES: DocPage[] = [
             ["legacy", "string", "The message as a §-coded string"],
             ["content", "Component", ""],
             ["cancelled", "boolean", ""],
+            ["signed", "boolean", "Always false on 1.8.9"],
+            ["rewritable", "boolean", "Always true on 1.8.9"],
+            ["sender", "{uuid, name} | nil", "Always nil on 1.8.9"],
           ],
         },
         entries: [
@@ -207,7 +217,9 @@ export const DOC_PAGES: DocPage[] = [
           "`starfish.chat.Color` maps names to legacy § codes: the 16 colors (`BLACK` ... `WHITE`, e.g. `DARK_AQUA`) plus `BOLD`, `ITALIC`, `UNDERLINE`, `STRIKETHROUGH`, `OBFUSCATED`, and `RESET`.",
       },
     ],
-    notes: [],
+    notes: [
+      "Each plugin's handlers run as their own chain, plugins in load order: a plugin sees the edits of plugins before it but not their cancels, and the message is dropped if any plugin cancels it.",
+    ],
   },
   {
     slug: "commands",
@@ -266,6 +278,7 @@ export const DOC_PAGES: DocPage[] = [
     notes: [
       "`UiReply` is opaque: it is only valid as a handler return value or `ctx:reply` argument.",
       "`ui.page` accepts a `command` option, but it doesn't render clickable pagination yet.",
+      "The subcommands `help` and `config` belong to Starfish: a plugin's own `help` or `config` subcommand never runs.",
     ],
   },
   {
@@ -324,7 +337,7 @@ export const DOC_PAGES: DocPage[] = [
       {
         title: "Prefix and suffix",
         description:
-          "Each plugin edits only its own contribution to a player's tab-list name, so plugins never overwrite each other. `text` is a §-coded string; `opts.priority` orders this plugin's contribution against others.",
+          "Each plugin edits only its own contribution to a player's tab-list name, so plugins never overwrite each other. `text` is a §-coded string; `opts.priority` (default 0) orders this plugin's contribution against others: lower comes first, ties by plugin name. A plugin's prefix and suffix on one player share the priority of its latest call.",
         entries: [
           { signature: "starfish.display.setPrefix(uuid, text, opts?) -> nil" },
           { signature: "starfish.display.appendPrefix(uuid, text, opts?) -> nil" },
@@ -343,6 +356,11 @@ export const DOC_PAGES: DocPage[] = [
           { signature: "starfish.display.suffix(uuid) -> string", description: "The combined prefix or suffix from every plugin." },
           { signature: "starfish.display.othersPrefix(uuid) -> string" },
           { signature: "starfish.display.othersSuffix(uuid) -> string", description: "The combined prefix or suffix from every plugin except this one." },
+          {
+            signature: "starfish.display.teamPrefix(uuid) -> string | nil",
+            description:
+              "The team prefix the player's tab entry is drawn with: their live team's, or for an entry held past its removal, the team it last had while listed. nil when nothing is known about the player.",
+          },
           { signature: "starfish.display.isModified(uuid) -> boolean", description: "Whether any plugin has changed this player's name." },
         ],
       },
@@ -558,8 +576,8 @@ export const DOC_PAGES: DocPage[] = [
             ["position", "{x, y, z}", ""],
             ["velocity", "{x, y, z}", ""],
             ["rotation", "{yaw, pitch}", ""],
-            ["state", "table", "{sneaking, sprinting, usingItem, invisible, onFire}"],
-            ["equipment", "table", "{hand, boots, leggings, chestplate, helmet}, each an Item or nil"],
+            ["state", "table", "{sneaking, sprinting, usingItem, invisible, onFire, glowing, gliding, swimming}; the last three are always false on 1.8.9"],
+            ["equipment", "table", "{hand, offHand, boots, leggings, chestplate, helmet}, each an Item or nil; offHand is always nil on 1.8.9"],
           ],
         },
       },
@@ -575,7 +593,10 @@ export const DOC_PAGES: DocPage[] = [
       {
         title: "Blocks and chunks",
         entries: [
-          { signature: "starfish.world.block(position) -> {id} | nil", description: "The block at a `Positionable`, coordinates floored." },
+          {
+            signature: "starfish.world.block(position) -> {id, properties} | nil",
+            description: "The block at a `Positionable`, coordinates floored. `properties` is always empty on 1.8.9.",
+          },
           { signature: "starfish.world.isChunkLoaded(chunkX, chunkZ) -> boolean" },
           { signature: "starfish.world.loadedChunks() -> {x, z}[]" },
           { signature: "starfish.world.chunkCount() -> integer" },
@@ -617,7 +638,8 @@ export const DOC_PAGES: DocPage[] = [
         entries: [
           {
             signature: "starfish.inventory.item(opts) -> Item",
-            description: "Builds an item for `starfish.client` windows and entities. `opts`: `id`, `count?` (default 1), `name?`, `lore?`, `enchantments?` (`{id, level}[]`). Errors on an unknown id.",
+            description:
+              "Builds an item for `starfish.client` windows and entities. `opts`: `id`, `count?` (default 1), `name?`, `lore?`, `enchantments?` (`{id, level}[]`). Errors on an unknown id or enchantment.",
           },
         ],
       },
@@ -641,14 +663,14 @@ export const DOC_PAGES: DocPage[] = [
       },
     ],
     notes: [
-      "An enchanted book's `enchantments` is empty: only an item's applied enchantments are read, not the ones a book stores.",
+      "An enchanted book's stored enchantments are read into `enchantments`, like an item's applied ones.",
     ],
   },
   {
     slug: "scoreboard",
     title: "Scoreboard",
     group: "Game State",
-    summary: "Read teams, objectives, and scores.",
+    summary: "Read teams, objectives, and scores, and rename teams for your client.",
     sections: [
       {
         title: "Teams",
@@ -684,8 +706,47 @@ export const DOC_PAGES: DocPage[] = [
           { signature: "starfish.scoreboard.displayed(slot) -> Objective | nil", description: "`slot` is `list`, `sidebar`, or `belowName`; anything else errors." },
         ],
       },
+      {
+        title: "Renaming teams",
+        entries: [
+          {
+            signature: "starfish.scoreboard.onTeams(handler, opts?) -> Subscription",
+            description:
+              "Handles every Teams packet before it reaches your client; `handler` receives a `TeamsPacket`. `opts.priority` (higher runs first among this plugin's handlers, default 0) is optional. Each plugin's handlers run by priority, plugins in load order, each seeing the name the ones before it chose.",
+          },
+        ],
+      },
+      {
+        title: "TeamsPacket",
+        description: "Fields read the packet as earlier handlers left it. A field the packet doesn't carry is nil.",
+        table: {
+          rows: [
+            ["mode", "string", "create, remove, update, addPlayers, or removePlayers"],
+            ["name", "string", "The team name the client receives: the server's until a handler renames the team"],
+            ["realName", "string", "The team name the server sent. Never changes; use it to look the team up"],
+            ["displayName", "string | nil", "create and update only"],
+            ["prefix", "string | nil", "create and update only"],
+            ["suffix", "string | nil", "create and update only"],
+            ["color", "string | nil", "create and update only"],
+            ["nameTagVisibility", "string | nil", "create and update only"],
+            ["players", "string[]", "The player names in a create, addPlayers, or removePlayers"],
+          ],
+        },
+        entries: [
+          {
+            signature: "packet:setName(name) -> nil",
+            description:
+              "Renames the team for the client; every later packet for it reaches the client under that name until the team is removed or the world changes. Errors on any packet but a create, and for an empty name, one over 16 characters, or one the client already has on another team.",
+          },
+        ],
+      },
     ],
-    notes: [],
+    notes: [
+      "Only the client's copy of a team changes: `teams()`, `team()`, `team:update`, and a player's `team` always show the server's own teams.",
+      "Registering an `onTeams` handler, cancelling it, and unloading its plugin run every team through the handlers again and send the client what changed, so a rename shows at once and is undone when the last handler goes.",
+      "While any `onTeams` handler is registered, team packets wait for Starfish before reaching the client, so register only while you need the hook.",
+      "An `onTeams` handler that errors is logged and keeps whatever it set before the error.",
+    ],
   },
   {
     slug: "network",
@@ -760,7 +821,10 @@ export const DOC_PAGES: DocPage[] = [
             signature: "starfish.server.sendPluginMessage(channel, payload) -> nil",
             description: "`channel` is lowercase `namespace:path`, `REGISTER`, or `UNREGISTER`; `payload` is a byte array.",
           },
-          { signature: "starfish.server.blockChannel(channel) -> nil", description: "Hides messages on `channel` from the game." },
+          {
+            signature: "starfish.server.blockChannel(channel) -> Subscription",
+            description: "Hides messages on `channel` from the game, until turned off or the plugin unloads.",
+          },
           { signature: "starfish.server.onPluginMessage(channel, handler) -> Subscription", description: "`handler(payload)` for messages on one channel." },
         ],
       },
@@ -777,7 +841,7 @@ export const DOC_PAGES: DocPage[] = [
     sections: [
       {
         title: "Subscription",
-        entries: [{ signature: "sub:off() -> nil", description: "Cancels a handler or timer. Every `on...` registration and timer returns one." }],
+        entries: [{ signature: "sub:off() -> nil", description: "Cancels a handler, timer, or block. Every `on...` registration, timer, and block returns one." }],
       },
       {
         title: "starfish.events",
@@ -789,7 +853,7 @@ export const DOC_PAGES: DocPage[] = [
           },
           { signature: "starfish.events.once(name, handler) -> Subscription", description: "Like `on`, cancelled after the first call." },
           { signature: "starfish.events.off(subscription) -> nil", description: "Same as `subscription:off()`." },
-          { signature: "starfish.events.emit(name, data?) -> nil", description: "Runs this plugin's handlers immediately; other plugins receive it on the next tick." },
+          { signature: "starfish.events.emit(name, data?) -> nil", description: "Runs this plugin's handlers immediately; other plugins receive a copy by the next tick." },
         ],
       },
       {
@@ -802,7 +866,8 @@ export const DOC_PAGES: DocPage[] = [
       },
       {
         title: "Core events",
-        description: "Handlers receive one payload table. `entity` fields are references `{entityId, type, uuid}` (or nil); look them up with `starfish.entities.byId`.",
+        description:
+          "Handlers receive one payload table. `entity` fields are references `{entityId, type, uuid}`, with `type` `player` or `entity` and `uuid` nil for non-players; look them up with `starfish.entities.byId`. Your own entity id (`players.me().entityId`) resolves to you, and an id nothing tracks gives nil.",
         table: {
           columns: ["Event", "Payload", "Notes"],
           rows: [
@@ -810,46 +875,46 @@ export const DOC_PAGES: DocPage[] = [
             ["chat:send", "{message}", ""],
             ["chat:tabComplete", "{matches}", ""],
             ["chat:tabCompleteRequest", "{text, position?}", ""],
-            ["chat:title", "{action, text?, message?, fadeIn, stay, fadeOut}", ""],
-            ["config:changed", "{plugin, key, value}", "Only for your own plugin"],
+            ["chat:title", "{action, text?, message?, fadeIn?, stay?, fadeOut?}", ""],
+            ["config:changed", "{plugin, key, value?}", "Only for your own plugin"],
             ["entity:animation", "{entity, animation}", ""],
             ["entity:attach", "{entity, vehicle?, leash}", ""],
             ["entity:attributes", "{entity, properties}", ""],
             ["entity:collect", "{collected, collector}", ""],
             ["entity:despawn", "{entityIds}", ""],
             ["entity:effectAdd", "{entity, effect?, amplifier, duration, hideParticles}", ""],
-            ["entity:effectRemove", "{entity, effect}", ""],
+            ["entity:effectRemove", "{entity, effect?}", ""],
             ["entity:equipmentChange", "{entity, isPlayer, slot, item?}", ""],
             ["entity:headLook", "{entity, headYaw}", ""],
             ["entity:metadata", "{entity, metadata}", ""],
             ["entity:move", "{entity, onGround, delta?, rotation?, position?}", ""],
-            ["entity:nbt", "{entity, nbt}", ""],
+            ["entity:nbt", "{entity, nbt?}", ""],
             ["entity:spawn", "{entityId, kind, x, y, z, ...}", "Extra fields depend on kind"],
             ["entity:status", "{entity, status}", ""],
             ["entity:useBed", "{entity, position}", ""],
             ["entity:useItemStart", "{x, y, z, face, cursorX, cursorY, cursorZ}", "Sent by you"],
             ["entity:useItemStop", "{x, y, z, face}", "Sent by you"],
             ["entity:velocity", "{entity, velocity}", ""],
-            ["inventory:creativeAction", "{slot, item}", "Sent by you"],
+            ["inventory:creativeAction", "{slot, item?}", "Sent by you"],
             ["inventory:enchantItem", "{windowId, enchantment}", "Sent by you"],
-            ["inventory:mapData", "{mapId, scale, icons, columns, rows, x, y, data}", ""],
-            ["inventory:slotUpdate", "{windowId, slot, item}", ""],
+            ["inventory:mapData", "{mapId, scale, icons, columns, rows?, x?, y?, data?}", ""],
+            ["inventory:slotUpdate", "{windowId, slot, item?}", ""],
             ["inventory:transactionAck", "{windowId, action, accepted}", "Sent by you"],
             ["inventory:transactionConfirm", "{windowId, action, accepted}", ""],
             ["inventory:windowClick", "{windowId, slot, button, mode, actionNumber}", "Sent by you"],
             ["inventory:windowClose", "{windowId}", ""],
             ["inventory:windowCloseRequest", "{windowId}", "Sent by you"],
             ["inventory:windowItems", "{windowId, items}", ""],
-            ["inventory:windowOpen", "{windowId, windowType, title, slotCount, entityId}", ""],
+            ["inventory:windowOpen", "{windowId, windowType, title, slotCount, entityId?}", ""],
             ["inventory:windowProperty", "{windowId, property, value}", ""],
             ["player:abilities", "{invulnerable, flying, canFly, creative, flySpeed, fovModifier}", ""],
             ["player:action", "{action, jumpBoost}", "Sent by you"],
             ["player:camera", "{entity}", ""],
-            ["player:combatEvent", "{event, duration, entity, victim, message, json}", ""],
+            ["player:combatEvent", "{event, duration?, entity, victim, message?, json?}", ""],
             ["player:experienceUpdate", "{bar, level, total}", ""],
             ["player:healthUpdate", "{health, food, saturation}", ""],
             ["player:interact", "{entity, action, position?}", "Sent by you"],
-            ["player:join", "{uuid, name, displayName, gamemode, ping}", "A player was added to the tab list"],
+            ["player:join", "{uuid, name, displayName?, gamemode, ping}", "A player was added to the tab list"],
             ["player:listHeaderFooter", "{header, footer, headerJson, footerJson}", ""],
             ["player:listUpdate", "{action, players}", ""],
             ["player:move", "{position?, rotation?, onGround}", "Sent by you"],
@@ -861,8 +926,8 @@ export const DOC_PAGES: DocPage[] = [
             ["player:steerVehicle", "{sideways, forward, jump, unmount}", "Sent by you"],
             ["player:swingArm", "{}", "Sent by you"],
             ["scoreboard:displayChange", "{position, objectiveName}", ""],
-            ["scoreboard:objectiveUpdate", "{objectiveName, mode, displayName, type}", ""],
-            ["scoreboard:scoreUpdate", "{scoreName, objectiveName, action, value}", ""],
+            ["scoreboard:objectiveUpdate", "{objectiveName, mode, displayName?, type?}", ""],
+            ["scoreboard:scoreUpdate", "{scoreName, objectiveName, action, value?}", ""],
             ["server:packetReceive", "{id}", "Every incoming packet"],
             ["server:pluginMessage", "{channel, data}", ""],
             ["server:pluginMessageOutgoing", "{channel, data}", "Sent by you"],
@@ -871,12 +936,12 @@ export const DOC_PAGES: DocPage[] = [
             ["session:attached", "{}", "Starfish hooked into the game's connection"],
             ["session:detached", "{}", "Starfish lost the game's connection"],
             ["session:join", "{entityId, gamemode, dimension, difficulty, maxPlayers, levelType}", "You joined a server"],
-            ["team:update", "{mode, teamName, displayName, prefix, suffix, friendlyFire, nameTagVisibility, color, players}", ""],
+            ["team:update", "{mode, teamName, displayName?, prefix?, suffix?, friendlyFire?, nameTagVisibility?, color?, players}", ""],
             ["world:blockAction", "{position, byte1, byte2, blockType}", ""],
             ["world:blockBreakAnimation", "{entity, entityId, x, y, z, destroyStage}", ""],
             ["world:blockChange", "{x, y, z, blockId, meta}", ""],
-            ["world:blockEntity", "{position, action, nbt}", ""],
-            ["world:border", "{action, diameter, oldDiameter, newDiameter, speed, center?, ...}", ""],
+            ["world:blockEntity", "{position, action, nbt?}", ""],
+            ["world:border", "{action, diameter?, oldDiameter?, newDiameter?, speed?, center?, portalTeleportBoundary?, warningTime?, warningBlocks?}", ""],
             ["world:chunkLoad", "{chunkX, chunkZ}", ""],
             ["world:chunkUnload", "{chunkX, chunkZ}", ""],
             ["world:difficulty", "{difficulty}", ""],
@@ -909,7 +974,8 @@ export const DOC_PAGES: DocPage[] = [
           { signature: "starfish.config.get(key, fallback?) -> any", description: "The saved value, else the schema default, else `config.defaults`, else `fallback`." },
           {
             signature: "starfish.config.set(key, value) -> boolean",
-            description: "Saves a value and fires `config:changed`. Returns false, saving nothing, when the value can't be stored as JSON or doesn't match the setting's type.",
+            description:
+              "Saves a value and fires `config:changed`. Returns false, saving nothing, when the value can't be stored as JSON, doesn't match the setting's type, isn't one of a cycle's values, or the key is a button.",
           },
           { signature: "starfish.config.defaults(values) -> nil", description: "Defaults for keys with no settings-UI entry. Each call replaces the last." },
           { signature: "starfish.config.onChange(key, handler) -> Subscription", description: "`handler(value, key)` when `key` changes." },
@@ -920,7 +986,7 @@ export const DOC_PAGES: DocPage[] = [
         title: "starfish.schema",
         description: "Declares the settings the Starfish app shows on the plugin's page.",
         entries: [
-          { signature: "starfish.schema.section(section) -> nil", description: "Adds a section: `{key, label, description?, settings}`." },
+          { signature: "starfish.schema.section(section) -> nil", description: "Adds a section: `{key, label, description?, settings}`, replacing an earlier one with the same key." },
           { signature: "starfish.schema.get() -> {sections} | nil" },
           { signature: "starfish.schema.clear() -> nil", description: "Removes every section this plugin declared." },
         ],
@@ -953,7 +1019,8 @@ export const DOC_PAGES: DocPage[] = [
         entries: [
           {
             signature: "starfish.input.bind(key, opts) -> nil",
-            description: "`opts`: `onPress?`, `onRelease?`, `passThrough?` (also let the game see the key, default false), `activeInMenu?` (default false). Replaces this plugin's earlier bind for the key.",
+            description:
+              "`opts`: `onPress?`, `onRelease?`, `passThrough?` (also let the game see the key, default false), `activeInMenu?` (also fire while a vanilla screen such as chat or an inventory is open, default false). Replaces this plugin's earlier bind for the key.",
           },
           { signature: "starfish.input.unbind(key) -> nil" },
           { signature: "starfish.input.isHeld(key) -> boolean" },
@@ -996,7 +1063,9 @@ export const DOC_PAGES: DocPage[] = [
       },
     ],
     notes: [
-      "`stop()` never fires `onCancel`. Starfish ends sessions itself, and does fire `onCancel`, when a text session loses focus (a click outside every hit region, or the game taking the mouse back) or when Escape is pressed during mouse capture.",
+      "Binds always fire in gameplay and inside a plugin's `captureMouse` menu, and never while a `captureText` session is active.",
+      "While a text or mouse capture is active the game sees only F1-F12, whatever `passThrough` says.",
+      "`stop()` never fires `onCancel`. Starfish ends sessions itself, and does fire `onCancel`, when a new capture of the same kind replaces one, when a text session loses focus (a click outside every hit region, or the game taking the mouse back), or when Escape is pressed, which ends a text session before a mouse capture.",
     ],
   },
   {
@@ -1096,7 +1165,10 @@ export const DOC_PAGES: DocPage[] = [
           { signature: "starfish.client.window.setWindowItems(windowId, items) -> nil", description: "Items are read up to the first nil." },
           { signature: "starfish.client.window.fillWindow(windowId, item?) -> nil" },
           { signature: "starfish.client.window.clearWindow(windowId) -> nil" },
-          { signature: "starfish.client.window.clickSlot(windowId, slot, button?, mode?, item?) -> nil", description: "`button` and `mode` default to 0." },
+          {
+            signature: "starfish.client.window.clickSlot(windowId, slot, button?, mode?, item?) -> nil",
+            description: "Clicks a slot as you: unlike the rest of `starfish.client`, this sends a Click Window packet to the server. `button` and `mode` default to 0.",
+          },
           { signature: "starfish.client.window.sendTransaction(windowId, action, accepted) -> nil" },
           { signature: "starfish.client.window.sendCraftProgress(windowId, property, value) -> nil" },
           { signature: "starfish.client.window.openSignEditor(position) -> nil" },
@@ -1151,7 +1223,7 @@ export const DOC_PAGES: DocPage[] = [
       {
         title: "starfish.json",
         entries: [
-          { signature: "starfish.json.encode(value) -> string", description: "Empty tables encode as `{}`. Errors on cycles." },
+          { signature: "starfish.json.encode(value) -> string", description: "Empty tables encode as `{}`. Errors on cycles or nesting deeper than 128." },
           { signature: "starfish.json.decode(text) -> any", description: "JSON `null` becomes nil." },
         ],
       },
