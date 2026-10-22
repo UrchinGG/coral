@@ -2,20 +2,16 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { Code, P, Prose, Section } from "@/components/starfish/DocsKit";
 import { DocSectionView } from "@/components/starfish/DocPage";
-import {
-  INTRODUCTION,
-  SHARED_TYPES,
-  TEMPLATE_PLUGIN,
-  TEMPLATE_REFERENCE,
-  docPagesByGroup,
-} from "@/lib/starfish/docs";
+import { docPagesByGroup, starfishDocs } from "@/lib/starfish/docs";
 
 export const metadata: Metadata = {
   title: "Plugin API",
   description: "Lua plugin API reference for Starfish.",
 };
 
-export default function DocsPage() {
+export default async function DocsPage() {
+  const docs = await starfishDocs();
+
   return (
     <div>
       <h1 className="text-3xl font-bold tracking-tight mb-2">Plugin API</h1>
@@ -23,19 +19,19 @@ export default function DocsPage() {
 
       <Section title="Start here">
         <P>
-          <Prose text={INTRODUCTION} />
+          <Prose text={docs.introduction} />
         </P>
         <P>
-          <Prose text={TEMPLATE_REFERENCE} />
+          <Prose text={docs.templateReference} />
         </P>
-        <Code>{TEMPLATE_PLUGIN}</Code>
+        <Code>{docs.template}</Code>
       </Section>
 
-      <DocSectionView section={SHARED_TYPES} />
+      <DocSectionView section={docs.sharedTypes} />
 
       <Section title="Reference">
         <div className="space-y-6">
-          {docPagesByGroup().map(({ group, pages }) => (
+          {docPagesByGroup(docs).map(({ group, pages }) => (
             <div key={group}>
               <h3 className="text-[11px] text-white/20 uppercase tracking-widest mb-2">{group}</h3>
               <div className="space-y-3">

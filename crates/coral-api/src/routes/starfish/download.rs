@@ -17,7 +17,7 @@ use crate::{
 
 use super::{require_starfish, session_auth};
 
-const GITHUB_API_URL: &str = "https://api.github.com";
+pub(super) const GITHUB_API_URL: &str = "https://api.github.com";
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -71,8 +71,8 @@ pub struct ReleaseInfo {
 }
 
 #[derive(Deserialize)]
-struct GitHubRelease {
-    tag_name: String,
+pub(super) struct GitHubRelease {
+    pub(super) tag_name: String,
     name: Option<String>,
     published_at: Option<String>,
     body: Option<String>,
@@ -279,7 +279,9 @@ fn starfish_session_headers(headers: &axum::http::HeaderMap) -> Option<(String, 
     ))
 }
 
-async fn fetch_latest_release(config: &StarfishConfig) -> Result<GitHubRelease, ApiError> {
+pub(super) async fn fetch_latest_release(
+    config: &StarfishConfig,
+) -> Result<GitHubRelease, ApiError> {
     fetch_releases(config)
         .await?
         .into_iter()

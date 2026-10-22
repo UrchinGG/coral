@@ -1,33 +1,25 @@
-import {
-  DOC_PAGES,
-  INTRODUCTION,
-  SHARED_TYPES,
-  TEMPLATE_PLUGIN,
-  TEMPLATE_REFERENCE,
-  type DocPage,
-  type DocSection,
-} from "@/lib/starfish/docs";
+import type { DocPage, DocSection, StarfishDocs } from "@/lib/starfish/docs";
 
-export function llmsTxt(origin: string): string {
+export function llmsTxt(docs: StarfishDocs, origin: string): string {
   return [
     "# Starfish Plugin API",
     "",
     "> Starfish is an injectable overlay and Lua plugin loader for Minecraft 1.8.9. This file is the complete Lua plugin API: every `starfish.*` function with its signature and the core events.",
     "",
-    INTRODUCTION,
+    docs.introduction,
     "",
     "## Start here",
     "",
-    TEMPLATE_REFERENCE,
+    docs.templateReference,
     "",
-    luaBlock(TEMPLATE_PLUGIN.trimEnd()),
+    luaBlock(docs.template.trimEnd()),
     "",
-    sectionText(SHARED_TYPES, "##"),
+    sectionText(docs.sharedTypes, "##"),
     "## Pages",
     "",
-    ...DOC_PAGES.map((page) => `- [${page.title}](${origin}/docs/${page.slug}): ${page.summary}`),
+    ...docs.pages.map((page) => `- [${page.title}](${origin}/docs/${page.slug}): ${page.summary}`),
     "",
-    ...DOC_PAGES.map(pageText),
+    ...docs.pages.map(pageText),
   ].join("\n");
 }
 

@@ -1,4 +1,5 @@
 pub mod auth;
+mod docs;
 mod download;
 mod license;
 pub mod plugins;
@@ -80,6 +81,7 @@ pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .merge(auth::router(state.clone()))
         .merge(license::router())
+        .merge(docs::router())
         .merge(download::router())
         .merge(users::router(state.clone()))
         .merge(plugins::router(state))
