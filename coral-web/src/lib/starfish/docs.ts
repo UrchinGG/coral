@@ -789,7 +789,7 @@ export const DOC_PAGES: DocPage[] = [
           {
             signature: "starfish.websocket.connect(url, opts?) -> Connection",
             description:
-              "Returns a handle immediately; `onOpen` fires once connected. `opts`: `headers`, `onOpen(conn)`, `onMessage(conn, message, isBinary)`, `onClose(conn, code?, reason?)`, `onError(conn, message)`.",
+              "Returns a handle immediately; `onOpen` fires once connected. `opts`: `headers`, `onOpen(conn)`, `onMessage(conn, message, isBinary)`, `onClose(conn, code?, reason?)`, `onError(conn, message)`. `onClose` fires exactly once when the connection ends, after `onError` too.",
           },
           {
             signature: "starfish.websocket.onWebSocket(path, handlers) -> nil",
@@ -808,7 +808,7 @@ export const DOC_PAGES: DocPage[] = [
           {
             signature: "starfish.endpoint.register(path, opts, handler) -> nil",
             description:
-              "`path` gets a leading `/`; a trailing `/*` matches every sub-path. `opts.methods` defaults to GET and POST. `handler(request)` gets `{path, method, headers, query, body?, data?}` and returns nil (empty 200), a string (200 body), or `{status?, headers?, body?}`.",
+              "`path` gets a leading `/`; a trailing `/*` matches every sub-path, and an exact path beats a wildcard while the longer wildcard beats the shorter. `opts.methods` defaults to GET and POST. `handler(request)` gets `{path, method, headers, query, body?, data?}` and returns nil (empty 200), a string (200 body), or `{status?, headers?, body?}`.",
           },
           { signature: "starfish.endpoint.unregister(path) -> boolean" },
           { signature: "starfish.endpoint.list() -> string[]" },
@@ -897,6 +897,7 @@ export const DOC_PAGES: DocPage[] = [
             ["entity:velocity", "{entity, velocity}", ""],
             ["inventory:creativeAction", "{slot, item?}", "Sent by you"],
             ["inventory:enchantItem", "{windowId, enchantment}", "Sent by you"],
+            ["inventory:heldSlotChange", "{slot, previousSlot}", "When your held hotbar slot changes, whether you chose it or the server did"],
             ["inventory:mapData", "{mapId, scale, icons, columns, rows?, x?, y?, data?}", ""],
             ["inventory:slotUpdate", "{windowId, slot, item?}", ""],
             ["inventory:transactionAck", "{windowId, action, accepted}", "Sent by you"],
@@ -1043,7 +1044,7 @@ export const DOC_PAGES: DocPage[] = [
         entries: [
           {
             signature: "starfish.input.captureText(opts) -> TextSession",
-            description: "Starts capturing typing, ending any earlier session. `opts`: `initial?`, `onChange?(state)`, `onSubmit?(text)`, `onCancel?()`.",
+            description: "Starts capturing typing, ending any earlier session. `opts`: `initial?`, `onChange?(state)`, `onSubmit?(text)`, `onCancel?()`. Ends silently, without `onCancel`, when the plugin unloads.",
           },
           { signature: "session:get() -> {text, cursor, selection?} | nil", description: "`selection` is `{start, finish}`; nil once the session has ended." },
           { signature: "session:set(text, cursor?) -> nil" },
@@ -1056,7 +1057,7 @@ export const DOC_PAGES: DocPage[] = [
         entries: [
           {
             signature: "starfish.input.captureMouse(opts) -> MouseSession",
-            description: "Captures the mouse for overlay UI, ending any earlier session. `opts`: `onMiss?(event)` for clicks outside every hit region (`{kind, x, y, button?, dy?}`), `onCancel?()`.",
+            description: "Captures the mouse for overlay UI, ending any earlier session. `opts`: `onMiss?(event)` for clicks outside every hit region (`{kind, x, y, button?, dy?}`), `onCancel?()`. Ends silently, without `onCancel`, when the plugin unloads.",
           },
           { signature: "session:stop() -> nil" },
         ],
@@ -1138,7 +1139,7 @@ export const DOC_PAGES: DocPage[] = [
           { signature: "starfish.client.world.setBlocks(blocks) -> nil", description: "Each entry is `{x, y, z, id}`." },
           {
             signature: "starfish.client.world.spawnParticle(particleId, position, opts?) -> nil",
-            description: "`particleId` from `starfish.client.world.Particle` (e.g. `Particle.HEART`). `opts`: `longDistance?`, `offsetX?`, `offsetY?`, `offsetZ?`, `speed?`, `count?` (default 1).",
+            description: "`particleId` from `starfish.client.world.Particle` (e.g. `Particle.HEART`). `opts`: `longDistance?`, `offsetX?`, `offsetY?`, `offsetZ?`, `speed?`, `count?` (default 1). `ITEM_CRACK` also needs `item` (e.g. `minecraft:diamond_sword`) and takes `damage?` (default 0); `BLOCK_CRACK` and `BLOCK_DUST` need `block` and take `meta?` (0 to 15, default 0)."
           },
           { signature: "starfish.client.world.playSound(name, opts?) -> nil", description: "A sound name such as `note.pling`. `opts`: `position?` (default yours), `volume?`, `pitch?` (default 1)." },
           { signature: "starfish.client.world.setTime(worldAge, timeOfDay) -> nil" },
@@ -1156,7 +1157,7 @@ export const DOC_PAGES: DocPage[] = [
       {
         title: "starfish.client.window",
         entries: [
-          { signature: "starfish.client.window.openWindow(windowId, windowType, title, slotCount) -> nil", description: "`windowType` from `starfish.inventory.WindowType`." },
+          { signature: "starfish.client.window.openWindow(windowId, windowType, title, slotCount, entityId?) -> nil", description: "`windowType` from `starfish.inventory.WindowType`; `title` is a string or a component. `entityId` is the horse's entity id: required for `HORSE`, an error for every other type." },
           { signature: "starfish.client.window.closeWindow(windowId) -> nil" },
           { signature: "starfish.client.window.createChest(title, size?) -> windowId", description: "Opens a chest window; `size` defaults to 27." },
           { signature: "starfish.client.window.createHopper(title) -> windowId" },
