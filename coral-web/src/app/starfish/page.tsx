@@ -67,9 +67,13 @@ export default function StarfishPage() {
         </div>
 
         <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-4 mb-16">
-          <FeatureCard title="Packet API" description="Read and write packets in Lua with the plugin API." />
-          <FeatureCard title="Native Overlay" description="Native rendering and input control." />
-          <FeatureCard title="Cross-Platform" description="All features supported on Windows, Linux, and macOS. Tested on Lunar Client, Badlion, Forge, and more." />
+          <FeatureCard title="Lua Plugins" description="Install others' plugins straight from the Starfish app, or write your own with the full Lua API." />
+          <FeatureCard title="Native Integration" description="Read and write packets, render natively inside the game window, and intercept keyboard and mouse input." />
+          <FeatureCard
+            title="Cross-Platform"
+            description="Attaches to any Minecraft 1.8.9 process* on Windows, Linux, and macOS, with full feature parity."
+            footnote="*Lunar Client and Badlion's macOS apps block all injection."
+          />
         </div>
       </section>
 
@@ -94,11 +98,12 @@ export default function StarfishPage() {
   );
 }
 
-function FeatureCard({ title, description }: { title: string; description: string }) {
+function FeatureCard({ title, description, footnote }: { title: string; description: string; footnote?: string }) {
   return (
-    <div className="rounded-lg border border-white/[0.08] bg-[rgba(0,0,0,0.5)] p-5">
+    <div className="flex flex-col rounded-lg border border-white/[0.08] bg-[rgba(0,0,0,0.5)] p-5">
       <h3 className="text-sm font-semibold text-white/70 mb-1.5">{title}</h3>
       <p className="text-[12px] text-white/35 leading-relaxed">{description}</p>
+      {footnote && <p className="mt-auto -mb-2.5 pt-3 text-[8px] tracking-tight lg:whitespace-nowrap text-white/20">{footnote}</p>}
     </div>
   );
 }
