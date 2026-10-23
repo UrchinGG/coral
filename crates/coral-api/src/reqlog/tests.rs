@@ -20,6 +20,7 @@ const OVERSIZED_BODY_BYTES: usize = 70 * 1024;
 const TOO_LARGE_BODY_BYTES: usize = 3 * 1024 * 1024;
 const UPSTREAM_TEST_KEY: &str = "reqlog-upstream-test-key";
 const UPSTREAM_PENALTY_SECS: i64 = 60;
+const OFFICIAL_CONTENT_SHA256: [u8; 32] = [9; 32];
 
 struct Harness {
     router: Router,
@@ -435,7 +436,63 @@ impl Harness {
     }
 }
 
+impl Harness {
+    async fn official_plugin(&self, content_sha256: &[u8]) -> String {
+        let pool = self.state.db.pool();
+        let slug = format!("attested-{}", &Uuid::new_v4().simple().to_string()[..12]);
+        let owner_id: i64 = sqlx::query_scalar(
+            "INSERT INTO starfish_users (discord_id, license_status) VALUES ($1, 'active') RETURNING id",
+        )
+        .bind(850_000_000_000_000_000 + i64::from(Uuid::new_v4().as_fields().1))
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let plugin_id: i64 = sqlx::query_scalar(
+            "INSERT INTO plugins (slug, owner_user_id, repo, github_repo_id, display_name, description, official)
+             VALUES ($1, $2, 'owner/repo', $3, 'Attested', '', true) RETURNING id",
+        )
+        .bind(&slug)
+        .bind(owner_id)
+        .bind((Uuid::new_v4().as_u64_pair().0 >> 1) as i64)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO plugin_releases (plugin_id, version, git_sha, asset_url, asset_sha256, asset_size, manifest_json, content_sha256)
+             VALUES ($1, '1.0.0', 'sha', 'url', '\\x00', 1, '{}', $2)",
+        )
+        .bind(plugin_id)
+        .bind(content_sha256)
+        .execute(pool)
+        .await
+        .unwrap();
+        slug
+    }
+}
+
 impl StarfishSession {
+    fn token(&self) -> &str {
+        &self.headers[0].1
+    }
+
+    fn attestation(&self, slug: &str, content_sha256: &[u8]) -> Vec<(&'static str, String)> {
+        let timestamp = chrono::Utc::now().timestamp();
+        let plugin_hash = hex::encode(content_sha256);
+        let payload = format!(
+            "GET\n/v3/hypixel/player\n{}\n{timestamp}\n{slug}\n{plugin_hash}",
+            self.token()
+        );
+        let session_key =
+            starfish_crypto::derive_attestation_key(&starfish_config().hmac_secret, self.token());
+        let signature = starfish_crypto::sign_attestation_mac(&session_key, payload.as_bytes());
+        vec![
+            ("x-starfish-plugin", slug.to_string()),
+            ("x-starfish-plugin-hash", plugin_hash),
+            ("x-starfish-timestamp", timestamp.to_string()),
+            ("x-starfish-attest", hex::encode(signature)),
+        ]
+    }
+
     fn headers(&self) -> Vec<(&str, &str)> {
         self.headers
             .iter()
@@ -479,6 +536,40 @@ async fn starfish_sessions_are_attributed_to_their_discord_user() {
         )
         .await;
     assert_eq!(sent.status, 200);
+    let member_id: i64 = sqlx::query_scalar("SELECT id FROM members WHERE discord_id = $1")
+        .bind(session.discord_id)
+        .fetch_one(harness.state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        sent.entry.caller,
+        Caller::session(Some(member_id), session.discord_id)
+    );
+}
+
+#[tokio::test]
+async fn attested_plugin_requests_are_not_rejected_for_a_personal_key() {
+    let Some(mut harness) = harness().await else {
+        return;
+    };
+    let session = harness.starfish_session().await;
+    let (_, personal_key) = harness.member(false).await;
+    let slug = harness.official_plugin(&OFFICIAL_CONTENT_SHA256).await;
+    let attestation = session.attestation(&slug, &OFFICIAL_CONTENT_SHA256);
+    let mut headers = session.headers();
+    headers.extend(
+        attestation
+            .iter()
+            .map(|(name, value)| (*name, value.as_str())),
+    );
+
+    headers.push(("x-api-key", personal_key.as_str()));
+    let sent = harness
+        .get(&format!("/v3/hypixel/player?player={PLAYER}"), &headers)
+        .await;
+
+    assert_ne!(sent.status, 401);
+    assert_ne!(sent.status, 403);
     let member_id: i64 = sqlx::query_scalar("SELECT id FROM members WHERE discord_id = $1")
         .bind(session.discord_id)
         .fetch_one(harness.state.db.pool())

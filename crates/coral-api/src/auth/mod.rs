@@ -62,14 +62,18 @@ pub async fn require_internal_or_developer(
     mut request: Request,
     next: Next,
 ) -> Result<Response, Response> {
-    if let Some(api_key) = extract_api_key(&request) {
-        authorize_developer_or_internal(&state, &api_key, &mut request)
-            .await
-            .map_err(IntoResponse::into_response)?;
-    } else {
-        authorize_elevated_session(&state, &mut request)
-            .await
-            .map_err(IntoResponse::into_response)?;
+    let attested = PluginAttestation::from_request(&request).is_some();
+    match extract_api_key(&request) {
+        Some(api_key) if !attested => {
+            authorize_developer_or_internal(&state, &api_key, &mut request)
+                .await
+                .map_err(IntoResponse::into_response)?;
+        }
+        _ => {
+            authorize_elevated_session(&state, &mut request)
+                .await
+                .map_err(IntoResponse::into_response)?;
+        }
     }
     Ok(next.run(request).await)
 }
