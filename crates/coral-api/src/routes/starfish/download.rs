@@ -8,10 +8,12 @@ use axum::{
     response::Response,
     routing::get,
 };
+use database::starfish::StarfishUser;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     error::ApiError,
+    routes::web,
     state::{AppState, StarfishConfig},
 };
 
@@ -236,18 +238,23 @@ async fn download_latest(
         .map_err(|e| ApiError::Internal(format!("Failed to build response: {e}")))?)
 }
 
-/// The desktop app authenticates with its starfish session headers; the website keeps
-/// using a Discord OAuth bearer token. Both paths require an active license.
+/// The desktop app authenticates with its starfish session headers, the Urchin sites with
+/// their sign-in cookie, and older clients with a Discord OAuth bearer token. Every path
+/// requires an active license.
 async fn authorize_download(
     state: &AppState,
     headers: &axum::http::HeaderMap,
     query: &DownloadQuery,
 ) -> Result<(), ApiError> {
+    let repo = database::StarfishRepository::new(state.db.pool());
     if let Some((token, hwid, signature)) = starfish_session_headers(headers) {
         super::auth::validate_hwid(&hwid)?;
-        let repo = database::StarfishRepository::new(state.db.pool());
         session_auth::resolve_verified_session(&repo, &token, &hwid, &signature).await?;
         return Ok(());
+    }
+
+    if let Some(signed_in) = web::session::current_user(state, headers).await {
+        return require_license(repo.get_user_by_discord_id(signed_in.discord_id).await?);
     }
 
     let discord_token = headers
@@ -257,7 +264,10 @@ async fn authorize_download(
         .or(query.token.as_deref())
         .ok_or_else(|| ApiError::Unauthorized("Missing authorization".into()))?;
 
-    let user = super::resolve_discord_user(state, discord_token).await?;
+    require_license(super::resolve_discord_user(state, discord_token).await?)
+}
+
+fn require_license(user: Option<StarfishUser>) -> Result<(), ApiError> {
     match user.as_ref().map(|u| u.license_status.as_str()) {
         Some("active") => Ok(()),
         Some(_) => Err(ApiError::Unauthorized("License required".into())),

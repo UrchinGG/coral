@@ -210,8 +210,8 @@ mod tests {
     fn context_prefixes_the_message_and_keeps_the_kind() {
         let error: Result<(), AdminError> = Err(AdminError::Redis("connection refused".into()));
         assert_eq!(
-            error.context("read the session epoch").unwrap_err(),
-            AdminError::Redis("read the session epoch: connection refused".into())
+            error.context("read the session").unwrap_err(),
+            AdminError::Redis("read the session: connection refused".into())
         );
     }
 

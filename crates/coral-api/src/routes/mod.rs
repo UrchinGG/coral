@@ -16,6 +16,7 @@ pub mod session;
 pub mod starfish;
 pub mod tags;
 pub mod verify;
+pub mod web;
 pub mod winstreaks;
 
 pub fn router(state: AppState) -> Router<AppState> {

@@ -3,17 +3,15 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{env, net::SocketAddr};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use coral_redis::RedisPool;
 use tokio::net::TcpListener;
 use tokio::time;
 use tracing_subscriber::EnvFilter;
 use url::Url;
 
-use crate::auth::{AuthConfig, DiscordOAuth};
+use crate::auth::AuthConfig;
 use crate::discord::DiscordContext;
-use crate::epoch::SessionEpoch;
-use crate::session::AuthKeys;
 use crate::state::{AppState, Connections};
 
 mod audit;
@@ -21,7 +19,6 @@ mod auth;
 mod boot;
 mod coverage;
 mod discord;
-mod epoch;
 mod error;
 mod extensions;
 mod flags;
@@ -45,7 +42,6 @@ mod state;
 mod traffic;
 mod views;
 
-const SESSION_SECRET_LEN: usize = 32;
 const REDIS_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const WEB_SCHEMES: [&str; 2] = ["http", "https"];
 
@@ -63,14 +59,13 @@ async fn main() -> Result<()> {
         .with_context(|| {
             format!("Redis did not accept a connection within {REDIS_CONNECT_TIMEOUT:?}")
         })?
-        .context("connect to Redis, which holds the admin session epoch")?;
+        .context("connect to Redis, which holds the sign-in sessions")?;
     let connections = Connections::open(&database_url, redis.clone()).await?;
     connections
         .jobs_db
         .migrate_tolerating_newer_schema()
         .await?;
-    let auth = Arc::new(auth_config(&redis).await?);
-    auth.epoch.clone().keep_fresh();
+    let auth = Arc::new(auth_config(&redis)?);
 
     let discord = DiscordContext::from_env()?;
     let (state, name_workers) = AppState::start(connections, auth.clone(), discord).await?;
@@ -91,27 +86,11 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn auth_config(redis: &RedisPool) -> Result<AuthConfig> {
-    let owner_ids = owner_ids(&required_env("OWNER_IDS")?)?;
-    let base_url = admin_base_url()?;
-    let secret: [u8; SESSION_SECRET_LEN] = hex::decode(required_env("ADMIN_SESSION_SECRET")?)
-        .context("ADMIN_SESSION_SECRET must be valid hex")?
-        .try_into()
-        .map_err(|_| {
-            anyhow!("ADMIN_SESSION_SECRET must be {SESSION_SECRET_LEN} hex-encoded bytes")
-        })?;
-    let discord = DiscordOAuth::new(
-        required_env("STARFISH_DISCORD_CLIENT_ID")?,
-        required_env("STARFISH_DISCORD_CLIENT_SECRET")?,
-        &base_url,
-    )?;
-    let epoch = SessionEpoch::load(Arc::new(redis.clone())).await?;
+fn auth_config(redis: &RedisPool) -> Result<AuthConfig> {
     Ok(AuthConfig {
-        owner_ids,
-        base_url,
-        keys: AuthKeys::derive(&secret),
-        epoch: Arc::new(epoch),
-        discord,
+        owner_ids: owner_ids(&required_env("OWNER_IDS")?)?,
+        base_url: admin_base_url()?,
+        sessions: Arc::new(redis.clone()),
     })
 }
 
