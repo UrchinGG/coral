@@ -15,6 +15,11 @@ Coral is a Hypixel stats and player-blacklist platform.
 
 Rust (tokio, axum, sqlx, serenity), Postgres, Redis, Next.js + Tailwind.
 
+## Deployment
+
+Every push to master runs CI on the self-hosted runners, which builds and deploys only
+the services the change affects. Production's compose file, Caddyfile and tunnel routes
+live in `deploy/`; secrets and private hosts stay in the server's `.env`.
 
 ## License
 

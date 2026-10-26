@@ -1,0 +1,20 @@
+{
+    auto_https off
+}
+
+:8080 {
+    reverse_proxy {
+        dynamic a {
+            name coral-api
+            port 3080
+            refresh 2s
+        }
+        lb_policy round_robin
+        health_uri /health
+        health_interval 1s
+        health_timeout 2s
+        health_passes 1
+        health_fails 2
+        fail_duration 10s
+    }
+}

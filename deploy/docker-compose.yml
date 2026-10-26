@@ -1,0 +1,234 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    command: ["postgres", "-c", "max_connections=200"]
+    environment:
+      POSTGRES_USER: coral
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: coral
+    volumes:
+      - pg_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coral -d coral"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7.2-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  socks-1:
+    build: ./egress
+    restart: unless-stopped
+    volumes:
+      - /home/debian/coral-r730/egress/socks-1.key:/key:ro
+    command:
+      - ssh
+      - -Nn
+      - -D
+      - 0.0.0.0:1080
+      - -i
+      - /key
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -o
+      - ServerAliveInterval=30
+      - -o
+      - ServerAliveCountMax=3
+      - -o
+      - ExitOnForwardFailure=yes
+      - ${EGRESS_1_HOST}
+
+  socks-2:
+    build: ./egress
+    restart: unless-stopped
+    volumes:
+      - /home/debian/coral-r730/egress/socks-2.key:/key:ro
+    command:
+      - ssh
+      - -Nn
+      - -D
+      - 0.0.0.0:1080
+      - -i
+      - /key
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -o
+      - ServerAliveInterval=30
+      - -o
+      - ServerAliveCountMax=3
+      - -o
+      - ExitOnForwardFailure=yes
+      - ${EGRESS_2_HOST}
+
+  coral-verify:
+    image: infra-vm:5000/coral-verify:latest
+    restart: unless-stopped
+    environment:
+      CORAL_API_URL: http://coral-api:${API_PORT:-8000}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      VERIFY_SERVER_ADDRESS: 0.0.0.0:25565
+      RUST_LOG: ${RUST_LOG:-info}
+
+  verify-tunnel:
+    build: ./egress
+    restart: unless-stopped
+    depends_on:
+      - coral-verify
+    volumes:
+      - /home/debian/coral-r730/egress/verify-tunnel.key:/key:ro
+    command:
+      - ssh
+      - -Nn
+      - -R
+      - 0.0.0.0:25565:coral-verify:25565
+      - -i
+      - /key
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -o
+      - ServerAliveInterval=30
+      - -o
+      - ServerAliveCountMax=3
+      - -o
+      - ExitOnForwardFailure=yes
+      - ${VERIFY_TUNNEL_HOST}
+
+  coral-api:
+    image: infra-vm:5000/coral-api:latest
+
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      DISCORD_TOKEN: ${DISCORD_TOKEN:-}
+      HYPIXEL_API_KEY: ${HYPIXEL_API_KEY:-}
+      HYPIXEL_EGRESS_1: ${HYPIXEL_EGRESS_1:-}
+      HYPIXEL_EGRESS_2: ${HYPIXEL_EGRESS_2:-}
+      BACKGROUND_REFRESH_BUDGET: ${BACKGROUND_REFRESH_BUDGET:-}
+      PORT: ${API_PORT:-8000}
+      RUST_LOG: ${RUST_LOG:-info}
+      OWNER_IDS: ${OWNER_IDS:-}
+      HOME_GUILD_ID: ${HOME_GUILD_ID:-}
+      STARFISH_HMAC_SECRET: ${STARFISH_HMAC_SECRET:-}
+      STARFISH_ED25519_PRIVATE_KEY: ${STARFISH_ED25519_PRIVATE_KEY:-}
+      STARFISH_DISCORD_CLIENT_ID: ${STARFISH_DISCORD_CLIENT_ID:-}
+      STARFISH_DISCORD_CLIENT_SECRET: ${STARFISH_DISCORD_CLIENT_SECRET:-}
+      STARFISH_GITHUB_TOKEN: ${STARFISH_GITHUB_TOKEN:-}
+      STARFISH_GITHUB_REPO: ${STARFISH_GITHUB_REPO:-}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:${API_PORT:-8000}/health | grep -q healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  coral-web:
+    image: infra-vm:5000/coral-web:latest
+
+    restart: unless-stopped
+    environment:
+      CORAL_API_URL: http://coral-api:${API_PORT:-8000}
+      CORAL_INTERNAL_KEY: ${INTERNAL_API_KEY}
+      SITE_URL: ${SITE_URL:-http://localhost:3000}
+      STARFISH_DISCORD_CLIENT_ID: ${STARFISH_DISCORD_CLIENT_ID:-}
+      STARFISH_DISCORD_CLIENT_SECRET: ${STARFISH_DISCORD_CLIENT_SECRET:-}
+
+  coral-bot:
+    image: infra-vm:5000/coral-bot:latest
+
+    restart: unless-stopped
+    depends_on: [coral-proxy, coral-web]
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      CORAL_API_URL: http://coral-api:${API_PORT:-8000}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      HYPIXEL_API_KEY: ${HYPIXEL_API_KEY:-}
+      HYPIXEL_EGRESS_1: ${HYPIXEL_EGRESS_1:-}
+      HYPIXEL_EGRESS_2: ${HYPIXEL_EGRESS_2:-}
+      VERIFICATION_ROLE_ID: ${VERIFICATION_ROLE_ID:-}
+      OWNER_IDS: ${OWNER_IDS:-}
+      HOME_GUILD_ID: ${HOME_GUILD_ID:-}
+      VOTE_MIN_RANK: ${VOTE_MIN_RANK:-}
+      BLACKLIST_CHANNEL_ID: ${BLACKLIST_CHANNEL_ID:-}
+      MOD_CHANNEL_ID: ${MOD_CHANNEL_ID:-}
+      REVIEW_FORUM_ID: ${REVIEW_FORUM_ID:-}
+      EVIDENCE_FORUM_ID: ${EVIDENCE_FORUM_ID:-}
+      REVIEW_PING_ROLE_ID: ${REVIEW_PING_ROLE_ID:-}
+      DISPUTE_PING_ROLE_ID: ${DISPUTE_PING_ROLE_ID:-}
+      RUST_LOG: ${RUST_LOG:-info}
+
+  coral-sync:
+    image: infra-vm:5000/coral-sync:latest
+
+    restart: unless-stopped
+    depends_on: [coral-proxy, coral-web]
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      CORAL_SYNC_DISCORD_TOKEN: ${CORAL_SYNC_DISCORD_TOKEN}
+      CORAL_API_URL: http://coral-api:${API_PORT:-8000}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      OWNER_IDS: ${OWNER_IDS:-}
+      HOME_GUILD_ID: ${CORAL_SYNC_HOME_GUILD_ID:-}
+      RUST_LOG: ${RUST_LOG:-info}
+
+  coral-admin:
+    image: infra-vm:5000/coral-admin:latest
+
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      OWNER_IDS: ${OWNER_IDS:-}
+      REDIS_URL: ${REDIS_URL}
+      ADMIN_PORT: ${ADMIN_PORT:-8080}
+      DISCORD_TOKEN: ${DISCORD_TOKEN:-}
+      CORAL_SYNC_DISCORD_TOKEN: ${CORAL_SYNC_DISCORD_TOKEN:-}
+      HOME_GUILD_ID: ${HOME_GUILD_ID:-}
+      REVIEW_FORUM_ID: ${REVIEW_FORUM_ID:-}
+      ADMIN_BASE_URL: ${ADMIN_BASE_URL:-}
+      STARFISH_DISCORD_CLIENT_ID: ${STARFISH_DISCORD_CLIENT_ID:-}
+      STARFISH_DISCORD_CLIENT_SECRET: ${STARFISH_DISCORD_CLIENT_SECRET:-}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      RUST_LOG: ${RUST_LOG:-info}
+
+  coral-proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    volumes:
+      - /home/debian/coral-r730/Caddyfile:/etc/caddy/Caddyfile:ro
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: ["tunnel", "--config", "/etc/cloudflared/config.yml", "--no-autoupdate", "run"]
+    volumes:
+      - /home/debian/.cloudflared:/etc/cloudflared:ro
+    depends_on: [coral-proxy, coral-web]
+
+volumes:
+  pg_data:
+  redis_data:

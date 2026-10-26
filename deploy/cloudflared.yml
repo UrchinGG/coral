@@ -1,0 +1,17 @@
+tunnel: f6e363e0-ab77-4e64-a220-731aceac68d1
+credentials-file: /etc/cloudflared/f6e363e0-ab77-4e64-a220-731aceac68d1.json
+
+ingress:
+  - hostname: api.urchin.gg
+    service: http://coral-proxy:8080
+  - hostname: coral.urchin.gg
+    service: http://coral-web:3000
+  - hostname: link.urchin.gg
+    service: http://coral-web:3000
+  - hostname: admin.urchin.gg
+    service: http://coral-admin:8080
+  - hostname: starfish.urchin.gg
+    service: http://coral-web:3000
+  - hostname: starfish.hexze.dev
+    service: http://coral-web:3000
+  - service: http_status:404
