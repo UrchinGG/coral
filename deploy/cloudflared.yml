@@ -14,4 +14,8 @@ ingress:
     service: http://coral-web:3000
   - hostname: starfish.hexze.dev
     service: http://coral-web:3000
+  - hostname: urchin.gg
+    service: http://coral-proxy:80
+  - hostname: "*.urchin.gg"
+    service: http://coral-proxy:80
   - service: http_status:404

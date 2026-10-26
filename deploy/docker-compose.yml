@@ -220,6 +220,7 @@ services:
     restart: unless-stopped
     volumes:
       - /home/debian/coral-r730/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /srv/web:/srv/web:ro
 
   cloudflared:
     image: cloudflare/cloudflared:latest
