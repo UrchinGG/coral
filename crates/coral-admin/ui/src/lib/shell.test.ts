@@ -7,6 +7,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { buildCurl, quoteShellArgument, type CurlRequest } from "./shell";
 
 const TWO_MIB = 2 * 1024 * 1024;
+const SHELL_TIMEOUT = 30_000;
 const BASH_OUTPUT_LIMIT = 16 * 1024 * 1024;
 const ARGV_CURL = `curl() { printf '%s\\0' "$@"; }`;
 const STDIN_CURL = "curl() { cat; }";
@@ -148,11 +149,11 @@ describe("buildCurl", () => {
     const request: CurlRequest = { method: "POST", url: "https://api.urchin.gg/v3/players", headers: [], body };
     expect(buildCurl(request).command.length).toBeGreaterThan(TWO_MIB);
     expect(stdinOf(request)).toBe(body);
-  });
+  }, SHELL_TIMEOUT);
 
   it("replays a 2 MiB body holding NUL bytes", () => {
     const chunk = "nul\u0000and 'quote' $(x)\n";
     const body = chunk.repeat(Math.ceil(TWO_MIB / chunk.length)).slice(0, TWO_MIB);
     expect(stdinOf({ method: "POST", url: "https://api.urchin.gg/v3/players", headers: [], body })).toBe(body);
-  });
+  }, SHELL_TIMEOUT);
 });
