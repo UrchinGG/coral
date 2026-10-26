@@ -5,7 +5,7 @@ import json
 import os
 import subprocess
 import sys
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 SERVICES = {"coral-api", "coral-bot", "coral-admin", "coral-sync", "coral-verify"}
 REBUILD_EVERYTHING = {"Cargo.toml", "Cargo.lock", "Dockerfile"}
@@ -84,7 +84,7 @@ def main():
         "services": " ".join(services),
         "admin_panel": changed("crates/coral-admin/ui/"),
         "coral_web": changed("coral-web/"),
-        "web": site or changed("web/"),
+        "web": Path("web/package.json").is_file() and (site or changed("web/")),
         "deploy": changed("deploy/"),
     }
     for key, value in outputs.items():
