@@ -1,94 +1,64 @@
 # syntax=docker/dockerfile:1
 
-FROM rust:1.92-bookworm AS chef
-RUN cargo install cargo-chef --locked
-WORKDIR /app
-
-FROM chef AS planner
-COPY Cargo.toml Cargo.lock ./
-COPY crates ./crates
-RUN cargo chef prepare --recipe-path recipe.json
-
-FROM node:22-alpine AS admin-ui-deps
+FROM node:22-alpine AS admin-ui
 WORKDIR /app
 COPY crates/coral-admin/ui/package.json crates/coral-admin/ui/package-lock.json ./
 RUN npm ci
-
-FROM node:22-alpine AS admin-ui-builder
-WORKDIR /app
-COPY --from=admin-ui-deps /app/node_modules ./node_modules
 COPY crates/coral-admin/ui/ ./
 RUN npm run build
 
-FROM chef AS builder
-RUN apt-get update && apt-get install -y \
-    pkg-config libssl-dev clang mold \
+FROM rust:1.92-bookworm AS builder
+RUN apt-get update && apt-get install -y pkg-config libssl-dev clang mold \
  && rm -rf /var/lib/apt/lists/*
-
 ENV RUSTFLAGS="-C linker=clang -C link-arg=-fuse-ld=mold"
-
-COPY --from=planner /app/recipe.json recipe.json
-
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/app/target \
-    cargo chef cook --release --recipe-path recipe.json
+WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY migrations ./migrations
-COPY --from=admin-ui-builder /app/dist ./crates/coral-admin/ui/dist
+COPY --from=admin-ui /app/dist ./crates/coral-admin/ui/dist
 
+ARG BINS="coral-api coral-bot coral-admin coral-sync coral-verify"
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target \
-    cargo build --release --bin coral-api --bin coral-bot --bin coral-admin --bin coral-sync --bin coral-verify && \
-    cp target/release/coral-api target/release/coral-bot target/release/coral-admin target/release/coral-sync target/release/coral-verify /usr/local/bin/
+    cargo build --release $(printf -- '--bin %s ' $BINS) \
+ && mkdir -p /out/clients \
+ && for bin in $BINS; do cp "target/release/$bin" /out/; done \
+ && cargo build --release --manifest-path crates/clients/Cargo.toml --bins --message-format=json-render-diagnostics \
+  | grep -o '"executable":"[^"]*"' | cut -d '"' -f 4 | xargs -r cp -t /out/clients/
 
 
-FROM debian:bookworm-slim AS coral-api
-RUN apt-get update && apt-get install -y \
-    ca-certificates libssl3 curl mesa-vulkan-drivers \
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y ca-certificates libssl3 curl \
  && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /usr/local/bin/coral-api /usr/local/bin/
 ENV RUST_LOG=info
+
+FROM runtime AS renderer
+RUN apt-get update && apt-get install -y mesa-vulkan-drivers \
+ && rm -rf /var/lib/apt/lists/*
+
+
+FROM renderer AS coral-api
+COPY --from=builder /out/coral-api /out/clients/ /usr/local/bin/
 EXPOSE 8000
 CMD ["coral-api"]
 
-
-FROM debian:bookworm-slim AS coral-bot
-RUN apt-get update && apt-get install -y \
-    ca-certificates libssl3 mesa-vulkan-drivers \
- && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /usr/local/bin/coral-bot /usr/local/bin/
-ENV RUST_LOG=info
+FROM renderer AS coral-bot
+COPY --from=builder /out/coral-bot /usr/local/bin/
 CMD ["coral-bot"]
 
-
-FROM debian:bookworm-slim AS coral-admin
-RUN apt-get update && apt-get install -y \
-    ca-certificates libssl3 \
- && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /usr/local/bin/coral-admin /usr/local/bin/
-ENV RUST_LOG=info
+FROM runtime AS coral-admin
+COPY --from=builder /out/coral-admin /usr/local/bin/
 EXPOSE 8080
 CMD ["coral-admin"]
 
-
-FROM debian:bookworm-slim AS coral-sync
-RUN apt-get update && apt-get install -y \
-    ca-certificates libssl3 \
- && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /usr/local/bin/coral-sync /usr/local/bin/
-ENV RUST_LOG=info
-EXPOSE 25565
+FROM runtime AS coral-sync
+COPY --from=builder /out/coral-sync /usr/local/bin/
 CMD ["coral-sync"]
 
-
-FROM debian:bookworm-slim AS coral-verify
-RUN apt-get update && apt-get install -y \
-    ca-certificates libssl3 \
- && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /usr/local/bin/coral-verify /usr/local/bin/
-ENV RUST_LOG=info
+FROM runtime AS coral-verify
+COPY --from=builder /out/coral-verify /usr/local/bin/
 EXPOSE 25565
 CMD ["coral-verify"]
 
