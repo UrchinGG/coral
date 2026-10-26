@@ -1,0 +1,38 @@
+---
+import Container from "./Container.astro";
+
+interface Props {
+  logo: string;
+  title: string;
+  tagline: string;
+}
+
+const { logo, title, tagline } = Astro.props;
+---
+
+<Container class="hero">
+  <img src={logo} alt="" width="48" height="48" />
+  <h1>{title}</h1>
+  <p>{tagline}</p>
+</Container>
+
+<style>
+  .hero {
+    padding-block: 6rem 3rem;
+    text-align: center;
+  }
+
+  img {
+    margin: 0 auto 1.25rem;
+  }
+
+  h1 {
+    margin-bottom: 0.75rem;
+    font-size: var(--text-display);
+  }
+
+  p {
+    color: var(--color-text-muted);
+    font-size: var(--text-lg);
+  }
+</style>

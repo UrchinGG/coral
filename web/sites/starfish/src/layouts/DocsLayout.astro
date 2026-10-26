@@ -1,0 +1,33 @@
+---
+import DocsShell from "@shared/components/DocsShell.astro";
+import { docGroups } from "@/lib/starfish";
+import Layout from "./Layout.astro";
+
+interface Props {
+  title: string;
+  heading: string;
+  summary: string;
+}
+
+const { title, heading, summary } = Astro.props;
+
+const groups = docGroups.map(({ group, pages }, index) => ({
+  label: group,
+  items: [
+    ...(index === 0 ? [{ title: "Introduction", href: "/docs" }] : []),
+    ...pages.map((page) => ({ title: page.title, href: `/docs/${page.slug}` })),
+  ],
+}));
+---
+
+<Layout title={title} description={summary}>
+  <DocsShell
+    name="Starfish"
+    logo="/brand/starfish.svg"
+    groups={groups}
+    heading={heading}
+    summary={summary}
+  >
+    <slot />
+  </DocsShell>
+</Layout>

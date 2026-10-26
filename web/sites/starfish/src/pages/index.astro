@@ -1,0 +1,91 @@
+---
+import { CORAL_API_URL } from "astro:env/server";
+import Card from "@shared/components/Card.astro";
+import CardGrid from "@shared/components/CardGrid.astro";
+import Container from "@shared/components/Container.astro";
+import Hero from "@shared/components/Hero.astro";
+import Layout from "@/layouts/Layout.astro";
+
+const tagline =
+  "An injectable game overlay and script loader for Minecraft 1.8.9.";
+---
+
+<Layout description={tagline}>
+  <Hero logo="/brand/starfish.svg" title="Starfish" tagline={tagline} />
+
+  <Container class="features">
+    <CardGrid>
+      <Card title="Lua Plugins">
+        Install others' plugins straight from the Starfish app, or write your
+        own with the full Lua API.
+      </Card>
+      <Card title="Native Integration">
+        Read and write packets, render natively inside the game window, and
+        intercept keyboard and mouse input.
+      </Card>
+      <Card title="Cross-Platform">
+        Attaches to any Minecraft 1.8.9 process* on Windows, Linux, and macOS,
+        with full feature parity.
+        <Fragment slot="footnote">
+          *Lunar Client and Badlion's macOS apps block all injection.
+        </Fragment>
+      </Card>
+    </CardGrid>
+  </Container>
+
+  <Container class="download">
+    <h2>Get Starfish</h2>
+    <p>Sign in with Discord to check your license and download.</p>
+    <a href={`${CORAL_API_URL}/api/v1/starfish/web/login`}>
+      Sign in with Discord
+    </a>
+  </Container>
+</Layout>
+
+<style>
+  .features {
+    padding-bottom: 3rem;
+  }
+
+  .download {
+    max-width: 32rem;
+    margin-bottom: 4rem;
+    padding: 1.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+    text-align: center;
+
+    & h2 {
+      margin-bottom: 0.375rem;
+      font-size: var(--text-lg);
+    }
+
+    & p {
+      color: var(--color-text-muted);
+      font-size: var(--text-sm);
+    }
+
+    & a {
+      display: inline-block;
+      margin-top: 1.25rem;
+      padding: 0.625rem 1.25rem;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm);
+      background: var(--color-surface-raised);
+      color: var(--color-text-secondary);
+      font-size: var(--text-sm);
+      font-weight: 500;
+      transition:
+        background-color var(--transition),
+        border-color var(--transition);
+
+      @media (hover: hover) {
+        &:hover {
+          border-color: var(--color-border-hover);
+          background: var(--color-surface-raised-hover);
+        }
+      }
+    }
+  }
+</style>

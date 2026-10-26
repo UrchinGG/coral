@@ -1,0 +1,53 @@
+:root {
+  --color-background: #0a0a0a;
+  --color-text: #ededed;
+  --color-text-secondary: rgb(255 255 255 / 0.7);
+  --color-text-muted: rgb(255 255 255 / 0.4);
+  --color-text-faint: rgb(255 255 255 / 0.2);
+  --color-surface: rgb(0 0 0 / 0.5);
+  --color-surface-hover: rgb(255 255 255 / 0.03);
+  --color-surface-raised: rgb(255 255 255 / 0.05);
+  --color-surface-raised-hover: rgb(255 255 255 / 0.1);
+  --color-border: rgb(255 255 255 / 0.08);
+  --color-border-hover: rgb(255 255 255 / 0.14);
+  --color-divider: rgb(255 255 255 / 0.06);
+  --color-panel: color-mix(in srgb, var(--color-background) 96%, white);
+  --color-danger: #f87171;
+  --color-warning: #fbbf24;
+  --color-discord: #5865f2;
+  --color-scrim: rgb(0 0 0 / 0.55);
+  --shadow-float: 0 10px 30px rgb(0 0 0 / 0.35);
+
+  --mc-gray: #aaaaaa;
+  --mc-green: #55ff55;
+  --mc-red: #ff5555;
+  --mc-chat: rgb(0 0 0 / 0.46);
+  --mc-shadow: color-mix(in srgb, currentColor 25%, black);
+
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  --font-minecraft: "Minecraft", var(--font-mono);
+
+  --text-3xs: 0.625rem;
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-code: 0.8125rem;
+  --text-lg: 1.125rem;
+  --text-2xl: 1.875rem;
+  --text-display: clamp(2.5rem, 7vw, 3.5rem);
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+
+  --width-narrow: 42rem;
+  --width-content: 56rem;
+  --width-wide: 72rem;
+  --gutter: 1.5rem;
+  --nav-height: 3.5rem;
+
+  --transition: 150ms ease;
+}

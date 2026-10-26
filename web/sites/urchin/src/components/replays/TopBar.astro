@@ -1,0 +1,187 @@
+---
+import Icon from "./Icon.astro";
+---
+
+<div class="replay-bar">
+  <div class="lead card">
+    <button
+      id="library-toggle"
+      class="icon-button library"
+      type="button"
+      aria-controls="library"
+      aria-expanded="false"
+      aria-label="Library"
+      data-tip="Library"
+    >
+      <Icon name="library" />
+      <span>Library</span>
+    </button>
+    <div class="heading">
+      <strong id="title"></strong>
+      <span id="subtitle"></span>
+    </div>
+  </div>
+  <div class="middle">
+    <slot />
+  </div>
+  <nav class="actions card" aria-label="Replay">
+    <button
+      id="copy-moment"
+      class="icon-button"
+      type="button"
+      aria-label="Copy a link to this moment"
+      data-tip
+      hidden
+    >
+      <Icon name="link" />
+    </button>
+    <a
+      id="download"
+      class="icon-button"
+      aria-label="Download replay"
+      data-tip
+      hidden
+    >
+      <Icon name="download" />
+    </a>
+    <button
+      id="help-toggle"
+      class="icon-button"
+      type="button"
+      aria-label="Help"
+      aria-haspopup="dialog"
+      data-tip
+      data-key="?"
+    >
+      <Icon name="help" />
+    </button>
+    <button
+      id="panel-toggle"
+      class="icon-button"
+      type="button"
+      aria-label="Match panel"
+      aria-controls="match"
+      aria-expanded="false"
+      data-tip
+    >
+      <Icon name="panel" />
+    </button>
+  </nav>
+</div>
+
+<style>
+  .replay-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-self: stretch;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: var(--text-xs);
+    pointer-events: none;
+  }
+
+  .lead,
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 0.125rem;
+    height: var(--bar-height);
+    padding-inline: 0.25rem;
+    border-radius: var(--radius-lg);
+    pointer-events: auto;
+  }
+
+  .lead {
+    justify-self: start;
+    max-width: 100%;
+    padding-right: 0.875rem;
+  }
+
+  .actions {
+    justify-self: end;
+  }
+
+  .middle {
+    display: flex;
+    justify-content: center;
+  }
+
+  .library {
+    display: inline-flex;
+    gap: 0.5rem;
+    width: auto;
+    padding: 0 0.625rem 0 0.5rem;
+    font-weight: 500;
+  }
+
+  .heading {
+    display: flex;
+    align-items: baseline;
+    gap: 0.625rem;
+    min-width: 0;
+    margin-left: 0.5rem;
+    padding-left: 0.75rem;
+    border-left: 1px solid var(--color-divider);
+    white-space: nowrap;
+  }
+
+  #title {
+    overflow: hidden;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    text-overflow: ellipsis;
+  }
+
+  #subtitle {
+    flex-shrink: 100;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--color-text-muted);
+    font-weight: 500;
+    text-overflow: ellipsis;
+
+    & :global(.map) {
+      color: var(--color-text-secondary);
+    }
+
+    & :global(.map + .details)::before {
+      content: " · ";
+    }
+  }
+
+  @media (width <= 56.25rem) {
+    #subtitle :global(.details) {
+      display: none;
+    }
+  }
+
+  @media (width < 40rem) {
+    .replay-bar {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .middle {
+      grid-row: 2;
+      grid-column: 1 / -1;
+    }
+
+    .library {
+      aspect-ratio: 1;
+      padding: 0;
+
+      & span {
+        display: none;
+      }
+    }
+
+    .heading {
+      margin-left: 0.25rem;
+      padding-left: 0.5rem;
+    }
+
+    #subtitle {
+      display: none;
+    }
+  }
+</style>

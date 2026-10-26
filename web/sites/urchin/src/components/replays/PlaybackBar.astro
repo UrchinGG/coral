@@ -1,0 +1,504 @@
+---
+import { CAMERAS } from "@/replays/cameras";
+import Icon from "./Icon.astro";
+---
+
+<section id="transport" class="transport card" aria-label="Playback">
+  <div class="timeline">
+    <span id="time" class="time">
+      0:00
+    </span>
+    <div class="track-wrap">
+      <div
+        id="scrubber"
+        class="track"
+        role="slider"
+        tabindex="0"
+        aria-label="Replay time"
+        aria-valuemin="0"
+        aria-valuemax="0"
+        aria-valuenow="0"
+        aria-valuetext="0:00"
+      >
+        <div class="rail">
+          <i class="hover"></i>
+          <i class="played"></i>
+        </div>
+        <div class="head" aria-hidden="true">
+          <i></i>
+        </div>
+      </div>
+      <div id="scrub-tip" class="tip card" role="tooltip" hidden></div>
+    </div>
+    <span id="duration" class="time total">
+      0:00
+    </span>
+  </div>
+
+  <div class="controls">
+    <div class="cameras segmented" role="radiogroup" aria-label="Camera">
+      {CAMERAS.map(({ id, name, tip }) => (
+        <button
+          type="button"
+          role="radio"
+          aria-label={name}
+          data-camera={id}
+          aria-checked={id === "map" ? "true" : "false"}
+          tabindex={id === "map" ? 0 : -1}
+          data-tip={tip}
+        >
+          <Icon name={id} />
+          <span>{name}</span>
+        </button>
+      ))}
+    </div>
+
+    <div class="buttons">
+      <button
+        id="step-back"
+        class="step"
+        type="button"
+        aria-label="Back 1 second"
+        data-tip="Back 1 s, hold to keep going"
+        data-key="←"
+      >
+        <Icon name="back" />
+        <span aria-hidden="true">1s</span>
+      </button>
+      <button
+        id="play"
+        class="play"
+        type="button"
+        aria-label="Play"
+        data-tip
+        data-key="P"
+      >
+        <svg class="icon-play" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M5 3.4v9.2L12.4 8z"></path>
+        </svg>
+        <svg class="icon-pause" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M5.6 3.8v8.4M10.4 3.8v8.4"></path>
+        </svg>
+      </button>
+      <button
+        id="step-forward"
+        class="step"
+        type="button"
+        aria-label="Forward 1 second"
+        data-tip="Forward 1 s, hold to keep going"
+        data-key="→"
+      >
+        <span aria-hidden="true">1s</span>
+        <Icon name="forward" />
+      </button>
+    </div>
+
+    <div class="options">
+      <button
+        id="sound"
+        class="sound"
+        type="button"
+        aria-label="Sound"
+        aria-pressed="true"
+        data-tip
+      >
+        <Icon name="sound" />
+        <Icon name="muted" />
+      </button>
+      <label class="speed" data-tip="Playback speed" data-key="− +">
+        <select id="speed" aria-label="Playback speed">
+          {[0.25, 0.5, 1, 2, 4].map((speed) => (
+            <option value={speed} selected={speed === 1}>
+              {speed}×
+            </option>
+          ))}
+        </select>
+        <Icon name="down" />
+      </label>
+    </div>
+  </div>
+</section>
+
+<style>
+  .transport {
+    position: absolute;
+    z-index: 10;
+    right: calc(1rem + var(--panel-inset));
+    bottom: 1rem;
+    left: 1rem;
+    max-width: 57.5rem;
+    margin-inline: auto;
+    padding: 0.5rem 0.75rem 0.625rem;
+    border-radius: var(--radius-lg);
+    container-type: inline-size;
+    transition: right var(--transition);
+
+    @media (width < 40rem) {
+      right: 0.5rem;
+      bottom: max(0.5rem, env(safe-area-inset-bottom));
+      left: 0.5rem;
+      padding: 0.25rem 0.625rem 0.5rem;
+    }
+  }
+
+  .timeline {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .time {
+    min-width: 2.25rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+
+  .total {
+    color: var(--color-text-muted);
+    font-weight: 500;
+    text-align: left;
+  }
+
+  .track-wrap {
+    position: relative;
+    min-width: 0;
+  }
+
+  .track {
+    --progress: 0;
+    --rail: 0.875rem;
+    position: relative;
+    height: 1.75rem;
+    margin: 0 0.375rem;
+    outline: 0;
+    cursor: pointer;
+    touch-action: none;
+    user-select: none;
+
+    @media (pointer: coarse) {
+      --rail: 1.25rem;
+      height: 2.5rem;
+    }
+  }
+
+  .rail {
+    position: absolute;
+    top: calc(var(--rail) - 2px);
+    right: 0;
+    left: 0;
+    height: 4px;
+    overflow: hidden;
+    border-radius: 2px;
+    background: var(--color-border-hover);
+    transition: scale var(--transition);
+
+    & i {
+      position: absolute;
+      inset: 0;
+      transform-origin: left;
+    }
+  }
+
+  .played {
+    background: var(--color-text);
+    scale: var(--progress) 1;
+  }
+
+  .hover {
+    background: var(--color-border-hover);
+    opacity: 0;
+    scale: var(--hover, 0) 1;
+    transition: opacity var(--transition);
+  }
+
+  .head {
+    position: absolute;
+    inset: 0;
+    translate: calc(var(--progress) * 100%) 0;
+    pointer-events: none;
+
+    & i {
+      position: absolute;
+      top: calc(var(--rail) - 7px);
+      left: -2px;
+      width: 4px;
+      height: 14px;
+      border-radius: 2px;
+      background: var(--color-text);
+      box-shadow: 0 0 0 2px var(--color-panel);
+      transition: scale var(--transition);
+    }
+  }
+
+  .track:is([data-dragging], :focus-visible) {
+    & .rail {
+      scale: 1 1.5;
+    }
+
+    & .head i {
+      scale: 1 1.3;
+    }
+  }
+
+  @media (hover: hover) {
+    .track:hover {
+      & .rail {
+        scale: 1 1.5;
+      }
+
+      & .head i {
+        scale: 1 1.3;
+      }
+
+      & .hover {
+        opacity: 1;
+      }
+    }
+  }
+
+  .track:focus-visible .rail {
+    outline: 2px solid var(--color-text-secondary);
+    outline-offset: 4px;
+  }
+
+  .tip {
+    position: absolute;
+    z-index: 1;
+    bottom: calc(100% + 0.25rem);
+    left: 0.375rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  .controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.25rem;
+  }
+
+  .cameras {
+    display: inline-flex;
+    justify-self: start;
+
+    & button {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+      height: 1.75rem;
+      padding: 0 0.625rem 0 0.5rem;
+    }
+
+    @media not (any-pointer: fine) {
+      & [data-camera="fly"] {
+        display: none;
+      }
+    }
+  }
+
+  .buttons {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .step,
+  .sound,
+  .speed select {
+    height: 2rem;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--color-text-secondary);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    transition:
+      background-color var(--transition),
+      color var(--transition);
+
+    @media (hover: hover) {
+      &:hover {
+        background: var(--color-surface-raised);
+        color: var(--color-text);
+      }
+    }
+  }
+
+  .step {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    padding: 0 0.5rem 0 0.375rem;
+
+    &#step-forward {
+      padding: 0 0.375rem 0 0.5rem;
+    }
+  }
+
+  .play {
+    display: grid;
+    place-items: center;
+    width: 3rem;
+    height: 2rem;
+    margin: 0 0.25rem;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--color-text);
+    color: var(--color-background);
+    transition: background-color var(--transition);
+
+    @media (hover: hover) {
+      &:hover {
+        background: var(--color-text-secondary);
+      }
+    }
+
+    & svg {
+      width: 1rem;
+      height: 1rem;
+      stroke: currentColor;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    & .icon-play {
+      fill: currentColor;
+      stroke-width: 1.2;
+    }
+
+    & .icon-pause {
+      display: none;
+      fill: none;
+      stroke-width: 2.4;
+    }
+
+    &[data-playing] {
+      & .icon-play {
+        display: none;
+      }
+
+      & .icon-pause {
+        display: block;
+      }
+    }
+  }
+
+  .options {
+    display: flex;
+    align-items: center;
+    justify-self: end;
+    gap: 0.25rem;
+  }
+
+  .sound {
+    display: grid;
+    place-items: center;
+    width: 2rem;
+
+    & :global(svg:last-child),
+    &[aria-pressed="false"] :global(svg:first-child) {
+      display: none;
+    }
+
+    &[aria-pressed="false"] :global(svg:last-child) {
+      display: block;
+    }
+  }
+
+  .speed {
+    position: relative;
+    display: flex;
+    align-items: center;
+    color: var(--color-text-secondary);
+
+    & select {
+      padding: 0 1.5rem 0 0.625rem;
+      appearance: none;
+      field-sizing: content;
+    }
+
+    & option {
+      background: var(--color-panel);
+    }
+
+    & svg {
+      position: absolute;
+      right: 0.375rem;
+      pointer-events: none;
+    }
+  }
+
+  @media (pointer: coarse) {
+    .head i {
+      top: calc(var(--rail) - 11px);
+      left: -3px;
+      width: 6px;
+      height: 22px;
+      border-radius: 3px;
+    }
+
+    .step,
+    .sound,
+    .speed select {
+      height: 2.75rem;
+    }
+
+    .speed select {
+      font-size: var(--text-base);
+    }
+
+    .sound {
+      width: 2.75rem;
+    }
+
+    .play {
+      width: 3.75rem;
+      height: 2.75rem;
+    }
+
+    .cameras button {
+      height: 2.375rem;
+      padding: 0 0.75rem;
+    }
+  }
+
+  @container (width <= 48.75rem) {
+    .cameras button {
+      padding: 0 0.5rem;
+
+      & span {
+        display: none;
+      }
+    }
+  }
+
+  @container (width <= 29.375rem) {
+    .timeline {
+      gap: 0.5rem;
+    }
+
+    .controls {
+      grid-template-columns: minmax(max-content, 1fr) auto minmax(
+          max-content,
+          1fr
+        );
+      gap: 0.25rem;
+    }
+
+    .buttons,
+    .options {
+      gap: 0;
+    }
+
+    .step span {
+      display: none;
+    }
+  }
+</style>

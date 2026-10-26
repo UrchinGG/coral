@@ -1,0 +1,38 @@
+---
+import Container from "./Container.astro";
+
+interface Props {
+  siteName: string;
+}
+
+const { siteName } = Astro.props;
+---
+
+<footer>
+  <Container width="wide" class="row">
+    <small>
+      &copy; {new Date().getFullYear()} {siteName}
+    </small>
+    <small>Not affiliated with Hypixel Inc., Mojang AB, or Microsoft.</small>
+  </Container>
+</footer>
+
+<style>
+  footer {
+    padding-block: 1.5rem;
+    border-top: 1px solid var(--color-divider);
+    color: var(--color-text-faint);
+    font-size: var(--text-xs);
+  }
+
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  small {
+    font-size: inherit;
+  }
+</style>
