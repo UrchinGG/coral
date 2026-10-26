@@ -82,6 +82,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        if: contains(env.PACKAGES, 'coral-admin')
+        with:
+          node-version: 22
+      - name: Build the admin panel that coral-admin's tests serve
+        if: contains(env.PACKAGES, 'coral-admin')
+        working-directory: crates/coral-admin/ui
+        run: npm ci && npm run build
       - run: mkdir -p crates/coral-admin/ui/dist
       - run: cargo test $(printf -- '-p %s ' $PACKAGES)
 
