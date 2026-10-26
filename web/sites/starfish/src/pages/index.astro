@@ -8,6 +8,12 @@ import Layout from "@/layouts/Layout.astro";
 
 const tagline =
   "An injectable game overlay and script loader for Minecraft 1.8.9.";
+
+const platforms = [
+  ["windows", "Windows"],
+  ["macos", "macOS"],
+  ["linux", "Linux"],
+];
 ---
 
 <Layout description={tagline}>
@@ -33,14 +39,49 @@ const tagline =
     </CardGrid>
   </Container>
 
-  <Container class="download">
+  <Container class="download" data-api={CORAL_API_URL}>
     <h2>Get Starfish</h2>
-    <p>Sign in with Discord to check your license and download.</p>
-    <a href={`${CORAL_API_URL}/api/v1/starfish/web/login`}>
-      Sign in with Discord
-    </a>
+    <div data-state="signed-out">
+      <p>Sign in with Discord to check your license and download.</p>
+      <a class="sign-in" href={`${CORAL_API_URL}/auth/discord`}>
+        Sign in with Discord
+      </a>
+    </div>
+    <div data-state="licensed" hidden>
+      <p>Choose your platform.</p>
+      <div class="platforms">
+        {platforms.map(([id, label]) => (
+          <a
+            href={`${CORAL_API_URL}/api/v1/starfish/download/latest?platform=${id}`}
+          >
+            {label}
+          </a>
+        ))}
+      </div>
+    </div>
+    <div data-state="unlicensed" hidden>
+      <p>This Discord account doesn't have a Starfish license yet.</p>
+    </div>
   </Container>
 </Layout>
+
+<script>
+  import { account, signInUrl } from "@shared/account";
+
+  const box = document.querySelector<HTMLElement>(".download")!;
+  const api = box.dataset.api!;
+  box.querySelector<HTMLAnchorElement>(".sign-in")!.href = signInUrl(api);
+
+  const me = await account(api);
+  const state = !me
+    ? "signed-out"
+    : me.starfish_licensed
+      ? "licensed"
+      : "unlicensed";
+  for (const panel of box.querySelectorAll<HTMLElement>("[data-state]")) {
+    panel.hidden = panel.dataset.state !== state;
+  }
+</script>
 
 <style>
   .features {
@@ -86,6 +127,18 @@ const tagline =
           background: var(--color-surface-raised-hover);
         }
       }
+    }
+  }
+
+  .platforms {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-top: 1.25rem;
+
+    & a {
+      margin-top: 0;
     }
   }
 </style>
