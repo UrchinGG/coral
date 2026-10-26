@@ -81,7 +81,7 @@ def main():
         "rust": bool(affected),
         "packages": " ".join(sorted(affected)),
         "services": " ".join(services),
-        "admin_ui": changed("crates/coral-admin/ui/"),
+        "admin_panel": changed("crates/coral-admin/ui/"),
         "coral_web": changed("coral-web/"),
         "deploy": changed("deploy/"),
     }
