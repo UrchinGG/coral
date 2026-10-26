@@ -52,13 +52,14 @@ def main():
     base = sys.argv[1] if len(sys.argv) > 1 else ""
     manual = not base
     clients = os.environ.get("CLIENTS") == "true"
+    site = os.environ.get("SITE") == "true"
     packages = workspace()
 
     files = [] if manual or set(base) == {"0"} else git("diff", "--name-only", base, "HEAD").splitlines()
     everything = (
         os.environ.get("EVERYTHING") == "true"
         or set(base) == {"0"}
-        or (manual and not clients)
+        or (manual and not clients and not site)
         or bool(REBUILD_EVERYTHING & set(files))
     )
 
@@ -83,6 +84,7 @@ def main():
         "services": " ".join(services),
         "admin_panel": changed("crates/coral-admin/ui/"),
         "coral_web": changed("coral-web/"),
+        "web": site or changed("web/"),
         "deploy": changed("deploy/"),
     }
     for key, value in outputs.items():

@@ -1,0 +1,12 @@
+name: Preview cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  remove:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, coral]
+    steps:
+      - run: ssh debian@coral-vm.tailde25ae.ts.net rm -rf "/srv/web/previews/pr-${{ github.event.pull_request.number }}"

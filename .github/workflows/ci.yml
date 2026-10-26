@@ -14,6 +14,10 @@ on:
         description: Rebuild and redeploy every service
         type: boolean
         default: false
+      site:
+        description: Rebuild and publish the websites
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -36,6 +40,7 @@ jobs:
       services: ${{ steps.affected.outputs.services }}
       admin_panel: ${{ steps.affected.outputs.admin_panel }}
       coral_web: ${{ steps.affected.outputs.coral_web }}
+      web: ${{ steps.affected.outputs.web }}
       deploy: ${{ steps.affected.outputs.deploy }}
     steps:
       - uses: actions/checkout@v4
@@ -58,6 +63,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || steps.passed.outputs.sha || github.event.before }}
           CLIENTS: ${{ inputs.clients }}
           EVERYTHING: ${{ inputs.everything }}
+          SITE: ${{ inputs.site }}
 
   fmt:
     needs: changes
@@ -137,6 +143,60 @@ jobs:
           node-version: 22
       - run: npm ci
       - run: npm run build
+
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: [self-hosted, linux, coral]
+    permissions:
+      contents: read
+      pull-requests: write
+    defaults:
+      run:
+        working-directory: web
+    env:
+      LIVE: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
+      PREVIEW: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx prettier --check .
+      - name: Build
+        env:
+          URCHIN_URL: ${{ github.event_name == 'pull_request' && format('https://pr-{0}.urchin.gg', github.event.pull_request.number) || 'https://urchin.gg' }}
+          STARFISH_URL: ${{ github.event_name == 'pull_request' && format('https://pr-{0}-starfish.urchin.gg', github.event.pull_request.number) || 'https://starfish.urchin.gg' }}
+        run: npm run build
+
+      - name: Publish
+        if: env.LIVE == 'true'
+        run: |
+          release="/srv/web/releases/$GITHUB_SHA"
+          ssh "$VM" mkdir -p "$release"
+          rsync -a --delete sites/urchin/dist/ "$VM:$release/urchin/"
+          rsync -a --delete sites/starfish/dist/ "$VM:$release/starfish/"
+          ssh "$VM" "cd /srv/web && ln -sfn releases/$GITHUB_SHA live.next && mv -T live.next live \
+            && ls -1t releases | tail -n +6 | xargs -r -I{} rm -rf releases/{}"
+
+      - name: Publish the preview
+        if: env.PREVIEW == 'true'
+        run: |
+          preview="/srv/web/previews/pr-$PR"
+          ssh "$VM" mkdir -p "$preview"
+          rsync -a --delete sites/urchin/dist/ "$VM:$preview/urchin/"
+          rsync -a --delete sites/starfish/dist/ "$VM:$preview/starfish/"
+
+      - name: Link the preview
+        if: env.PREVIEW == 'true' && (github.event.action == 'opened' || github.event.action == 'reopened')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -fsS -X POST -H "Authorization: Bearer $GH_TOKEN" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
+            -d "{\"body\":\"Preview: https://pr-$PR.urchin.gg and https://pr-$PR-starfish.urchin.gg\"}"
 
   images:
     needs: changes
