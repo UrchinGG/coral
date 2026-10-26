@@ -5,145 +5,177 @@ on:
     branches: [master]
   pull_request:
   workflow_dispatch:
+    inputs:
+      clients:
+        description: Rebuild what depends on the clients crate
+        type: boolean
+        default: false
+      everything:
+        description: Rebuild and redeploy every service
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
+  REGISTRY: infra-vm:5000
+  VM: debian@coral-vm.tailde25ae.ts.net
 
 jobs:
-  rust:
-    runs-on: ubuntu-latest
+  changes:
+    runs-on: [self-hosted, linux, coral]
+    outputs:
+      rust: ${{ steps.affected.outputs.rust }}
+      packages: ${{ steps.affected.outputs.packages }}
+      services: ${{ steps.affected.outputs.services }}
+      admin_ui: ${{ steps.affected.outputs.admin_ui }}
+      coral_web: ${{ steps.affected.outputs.coral_web }}
+      deploy: ${{ steps.affected.outputs.deploy }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - id: affected
+        run: python3 .github/affected.py "$BASE" | tee -a "$GITHUB_OUTPUT"
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CLIENTS: ${{ inputs.clients }}
+          EVERYTHING: ${{ inputs.everything }}
 
+  fmt:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: [self-hosted, linux, coral]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: [self-hosted, linux, coral]
+    env:
+      CARGO_TARGET_DIR: /srv/ci/coral/clippy
+      PACKAGES: ${{ needs.changes.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: mkdir -p crates/coral-admin/ui/dist
+      - run: cargo clippy --all-targets $(printf -- '-p %s ' $PACKAGES)
+
+  test:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: [self-hosted, linux, coral]
+    env:
+      CARGO_TARGET_DIR: /srv/ci/coral/test
+      PACKAGES: ${{ needs.changes.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: mkdir -p crates/coral-admin/ui/dist
+      - run: cargo test $(printf -- '-p %s ' $PACKAGES)
+
+  admin-ui:
+    needs: changes
+    if: needs.changes.outputs.admin_ui == 'true'
+    runs-on: [self-hosted, linux, coral]
+    defaults:
+      run:
+        working-directory: crates/coral-admin/ui
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: crates/coral-admin/ui/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm run lint
+      - run: npm test
 
-      - working-directory: crates/coral-admin/ui
-        run: npm ci
-      - working-directory: crates/coral-admin/ui
-        run: npm run build
-      - working-directory: crates/coral-admin/ui
-        run: npm run lint
-      - working-directory: crates/coral-admin/ui
-        run: npm test
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-
-      - uses: Swatinem/rust-cache@v2
-
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets
-      - run: cargo test --workspace
-
-  web:
-    runs-on: ubuntu-latest
+  coral-web:
+    needs: changes
+    if: needs.changes.outputs.coral_web == 'true'
+    runs-on: [self-hosted, linux, coral]
     defaults:
       run:
         working-directory: coral-web
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: coral-web/package-lock.json
-
       - run: npm ci
       - run: npm run build
 
+  images:
+    needs: changes
+    if: >-
+      github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+      && (needs.changes.outputs.services != '' || needs.changes.outputs.coral_web == 'true')
+    runs-on: [self-hosted, linux, coral]
+    outputs:
+      targets: ${{ steps.targets.outputs.targets }}
+    env:
+      SERVICES: ${{ needs.changes.outputs.services }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run this runner's build hook, if it has one
+        run: '[ -z "${BUILD_HOOK:-}" ] || "$BUILD_HOOK"'
+      - id: targets
+        run: echo "targets=$SERVICES${{ needs.changes.outputs.coral_web == 'true' && ' coral-web' || '' }}" | tee -a "$GITHUB_OUTPUT"
+      - name: Build and push
+        env:
+          TARGETS: ${{ steps.targets.outputs.targets }}
+        run: |
+          for target in $TARGETS; do
+            docker build --target "$target" \
+              --build-arg BINS="$SERVICES" \
+              --tag "$REGISTRY/$target:latest" \
+              --tag "$REGISTRY/$target:$GITHUB_SHA" .
+            docker push --all-tags "$REGISTRY/$target"
+          done
+
   deploy:
-    needs: [rust, web]
-    if: github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: [changes, fmt, clippy, test, admin-ui, coral-web, images]
+    if: >-
+      !cancelled() && !contains(needs.*.result, 'failure')
+      && github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+      && (needs.images.result == 'success' || needs.changes.outputs.deploy == 'true')
     runs-on: [self-hosted, linux, coral]
     timeout-minutes: 30
-    env:
-      REGISTRY: infra-vm:5000
-      CORAL_CLIENTS_CONTEXT: /srv/coral/clients
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Apply private overlay (Dockerfile, compose, clients crate)
-        run: tar -xf /srv/coral/overrides/coral-overrides.tar -C .
-
-      - name: Build coral images
-        run: docker compose --profile admin build coral-api coral-bot coral-sync coral-web coral-admin coral-verify
-
-      - name: Tag + push to local registry
-        run: |
-          PROJECT=$(basename "$GITHUB_WORKSPACE")
-          for svc in coral-api coral-bot coral-sync coral-web coral-admin coral-verify; do
-            docker tag "${PROJECT}-${svc}:latest" "${REGISTRY}/${svc}:latest"
-            docker push "${REGISTRY}/${svc}:latest"
-          done
-
-      - name: Refresh coral-vm SSH host keys
+      - name: Trust coral-vm's host key
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           ssh-keygen -R coral-vm.tailde25ae.ts.net 2>/dev/null || true
           ssh-keyscan -H coral-vm.tailde25ae.ts.net >> ~/.ssh/known_hosts
 
-      - name: Pull new images on coral-vm
-        run: |
-          ssh debian@coral-vm.tailde25ae.ts.net <<'REMOTE'
-            set -e
-            cd ~/coral-r730
-            docker compose pull coral-api coral-bot coral-sync coral-web coral-admin coral-verify
-          REMOTE
+      - name: Copy deploy files
+        run: rsync -a --delete deploy/ "$VM:coral-r730/deploy/"
 
-      - name: Roll coral-api (new replica → wait healthy → stop old)
-        run: |
-          ssh debian@coral-vm.tailde25ae.ts.net <<'REMOTE'
-            set -e
-            cd ~/coral-r730
-            OLD=$(docker compose ps -q coral-api)
-            if [ -z "$OLD" ]; then
-              docker compose up -d --wait --wait-timeout 180 coral-api
-              exit 0
-            fi
-            docker compose up -d --no-recreate --scale coral-api=2 coral-api
-            NEW=$(docker compose ps -q coral-api | grep -v "$OLD" | head -1)
-            if [ -z "$NEW" ]; then
-              echo "Failed to spawn new replica"; exit 1
-            fi
-            echo "OLD=$OLD NEW=$NEW"
-            for i in $(seq 1 90); do
-              h=$(docker inspect --format '{{.State.Health.Status}}' "$NEW" 2>/dev/null || echo missing)
-              [ "$h" = "healthy" ] && break
-              [ "$h" = "missing" ] && { echo "new container disappeared"; exit 1; }
-              sleep 2
-            done
-            if [ "$h" != "healthy" ]; then
-              echo "new replica never healthy ($h), reverting"
-              docker stop "$NEW" && docker rm -f "$NEW"
-              exit 1
-            fi
-            docker stop "$OLD" && docker rm -f "$OLD"
-          REMOTE
+      - name: Roll out
+        env:
+          TARGETS: ${{ needs.images.outputs.targets }}
+        run: ssh "$VM" bash coral-r730/deploy/rollout.sh $TARGETS
 
-      - name: Update bot, sync, web, admin
+      - name: Check api.urchin.gg
+        if: contains(needs.images.outputs.targets, 'coral-api')
         run: |
-          ssh debian@coral-vm.tailde25ae.ts.net <<'REMOTE'
-            set -e
-            cd ~/coral-r730
-            docker compose up -d --wait --wait-timeout 120 coral-bot coral-sync coral-web coral-admin coral-verify verify-tunnel
-            docker image prune -f
-          REMOTE
-
-      - name: Verify external endpoint serves the new build
-        run: |
-          for i in $(seq 1 12); do
-            if curl -fsS --max-time 10 https://api.urchin.gg/health | grep -q '"status":"healthy"'; then
-              echo "external /health passed on attempt $i"
-              exit 0
-            fi
+          for attempt in $(seq 12); do
+            curl -fsS --max-time 10 https://api.urchin.gg/health | grep -q '"status":"healthy"' && exit 0
             sleep 5
           done
-          echo "external /health did not return healthy within 60s"
+          echo "api.urchin.gg did not report healthy within a minute" >&2
           exit 1
