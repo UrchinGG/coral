@@ -1,0 +1,107 @@
+---
+import { CORAL_API_URL } from "astro:env/server";
+import Panel from "@/components/dashboard/Panel.astro";
+
+const platforms = [
+  ["windows", "Windows"],
+  ["macos", "macOS"],
+  ["linux", "Linux"],
+];
+---
+
+<Panel id="starfish" title="Starfish" hidden>
+  <div class="body licensed" hidden>
+    <section>
+      <h3>Download</h3>
+      <div class="platforms">
+        {platforms.map(([id, label]) => (
+          <a
+            class="button"
+            href={`${CORAL_API_URL}/api/v1/starfish/download/latest?platform=${id}`}
+          >
+            {label}
+          </a>
+        ))}
+      </div>
+    </section>
+
+    <section>
+      <h3>Device</h3>
+      <p class="device"></p>
+      <p class="changes"></p>
+    </section>
+  </div>
+
+  <p class="body unlicensed" hidden>
+    You don't have a Starfish license.
+  </p>
+</Panel>
+
+<script>
+  import { load, me } from "@/dashboard/api";
+  import { ago, monthYear } from "@/dashboard/format";
+  import type { Starfish } from "@/dashboard/types";
+
+  const panel = document.getElementById("starfish")!;
+  const text = (selector: string, value: string) =>
+    (panel.querySelector(selector)!.textContent = value);
+
+  function describeDevice({ device }: Starfish) {
+    if (!device) return "No device yet. Sign in to Starfish to register one.";
+    const registered = `Registered ${monthYear(device.registered_at)}`;
+    return device.last_seen
+      ? `${registered}, last seen ${ago(device.last_seen)}`
+      : registered;
+  }
+
+  const user = await me;
+  if (user) {
+    const licensed = user.starfish_licensed;
+    panel.querySelector<HTMLElement>(".licensed")!.hidden = !licensed;
+    panel.querySelector<HTMLElement>(".unlicensed")!.hidden = licensed;
+    panel.hidden = false;
+
+    const starfish = licensed
+      ? await load<Starfish>("/me/starfish")
+      : undefined;
+    if (starfish) {
+      text(".device", describeDevice(starfish));
+      text(".changes", `Device changes left: ${starfish.changes_left}`);
+    }
+  }
+</script>
+
+<style>
+  .body {
+    display: grid;
+    gap: 1.25rem;
+    padding: 1rem;
+  }
+
+  section {
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  h3 {
+    color: var(--color-text-muted);
+    font-size: var(--text-2xs);
+    font-weight: 500;
+  }
+
+  .platforms {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+  }
+
+  .device {
+    font-size: var(--text-sm);
+  }
+
+  .changes,
+  .unlicensed {
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+  }
+</style>

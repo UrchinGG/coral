@@ -1,0 +1,72 @@
+---
+import CopyButton from "@/components/dashboard/CopyButton.astro";
+---
+
+<div class="sign-in">
+  <p>
+    <slot />
+  </p>
+  <a
+    class="button primary"
+    href="https://www.microsoft.com/link"
+    target="_blank"
+    rel="noreferrer"
+  >
+    Sign in with Microsoft
+  </a>
+  <p class="manual">
+    or enter this code at{" "}
+    <a href="https://www.microsoft.com/link" target="_blank" rel="noreferrer">
+      microsoft.com/link
+    </a>
+  </p>
+  <div class="code">
+    <code></code>
+    <CopyButton />
+  </div>
+</div>
+
+<style>
+  .sign-in {
+    display: grid;
+    gap: 0.75rem;
+    padding: 0.875rem 1rem;
+    border-left: 3px solid var(--color-warning);
+    border-radius: var(--radius-xs) var(--radius) var(--radius) var(--radius-xs);
+    background: var(--color-surface-raised);
+  }
+
+  .sign-in p {
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+    line-height: 1.6;
+  }
+
+  .manual {
+    color: var(--color-text-muted);
+    text-align: center;
+
+    & a {
+      color: var(--color-text-secondary);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+  }
+
+  .code {
+    display: flex;
+    gap: 0.25rem;
+    align-items: center;
+    justify-content: center;
+    margin-top: -0.5rem;
+
+    & code {
+      padding: 0;
+      background: none;
+      color: var(--color-text);
+      font-size: 1.25rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+    }
+  }
+</style>
