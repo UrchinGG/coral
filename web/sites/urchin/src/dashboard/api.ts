@@ -1,10 +1,8 @@
-import { account, signInUrl } from "@shared/account";
+import { account } from "@shared/account";
 
 const base = document.querySelector<HTMLElement>(".dashboard")!.dataset.api!;
 
 export const me = account(base);
-
-export const signInLink = () => signInUrl(base);
 
 export function send(path: string, method = "GET", body?: unknown) {
   return fetch(`${base}${path}`, {

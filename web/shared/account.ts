@@ -1,6 +1,7 @@
 export interface Account {
   id: string;
   name: string;
+  username: string;
   avatar: string;
   rank: string | null;
   starfish_licensed: boolean;

@@ -4,7 +4,6 @@ import Container from "@shared/components/Container.astro";
 import ApiKeys from "@/components/dashboard/ApiKeys.astro";
 import Lent from "@/components/dashboard/Lent.astro";
 import Profile from "@/components/dashboard/Profile.astro";
-import SignedOut from "@/components/dashboard/SignedOut.astro";
 import Starfish from "@/components/dashboard/Starfish.astro";
 import Layout from "@/layouts/Layout.astro";
 import "@/styles/minecraft.css";
@@ -13,13 +12,18 @@ import "@/styles/dashboard.css";
 
 <Layout title="Dashboard" description="Your Urchin dashboard.">
   <Container width="narrow" class="dashboard" data-api={CORAL_API_URL}>
-    <SignedOut />
     <Profile />
     <ApiKeys />
     <Starfish />
     <Lent />
   </Container>
 </Layout>
+
+<script>
+  import { me } from "@/dashboard/api";
+
+  if (!(await me)) location.replace("/");
+</script>
 
 <style>
   .dashboard {

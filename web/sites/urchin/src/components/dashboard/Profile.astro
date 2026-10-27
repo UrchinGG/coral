@@ -13,7 +13,7 @@
   const user = await me;
   if (user) {
     identity.querySelector("img")!.src = user.avatar;
-    identity.querySelector("h1")!.textContent = user.name;
+    identity.querySelector("h1")!.textContent = `@${user.username}`;
     identity.querySelector(".rank")!.textContent = user.rank ?? "";
     identity.hidden = false;
   }
