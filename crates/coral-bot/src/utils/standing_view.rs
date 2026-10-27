@@ -249,7 +249,6 @@ mod tests {
     fn trusted_drops_the_report_line() {
         let mut m = member();
         m.tag_granted = true;
-        m.vote_granted = true;
         let tier = Tier::of(&m, AccessRank::Default, &R);
         assert_eq!(tier, Tier::Trusted);
         let lines = capability_lines(&m, &R, tier);
