@@ -1,7 +1,10 @@
-use std::time::{Duration, Instant};
+use std::fmt::Display;
+use std::hash::Hash;
+use std::time::Duration;
 
 use anyhow::Result;
 use chrono::Utc;
+use futures_util::future::OptionFuture;
 use serenity::all::*;
 
 use database::{
@@ -15,38 +18,115 @@ use crate::{
 };
 
 const LIMIT: i64 = 10;
+const WINDOW_SIZE: u8 = 1;
 const CACHE_TTL: Duration = Duration::from_secs(300);
 
 type Page = Vec<CreateComponent<'static>>;
+type CountRaw = (i64, i64, i64);
+type RatioRaw = (i64, i64, i64, i64, i64);
 
-#[derive(Default)]
 pub struct InfoCache {
-    statistics: Option<(Page, Instant)>,
-    leaderboards: Option<(Page, Instant)>,
+    statistics: moka::future::Cache<(), Page>,
+    leaderboard: LeaderboardCache,
+    usernames: moka::future::Cache<u64, String>,
 }
 
-fn fresh(slot: &Option<(Page, Instant)>) -> Option<Page> {
-    slot.as_ref()
-        .filter(|(_, at)| at.elapsed() < CACHE_TTL)
-        .map(|(page, _)| page.clone())
+impl InfoCache {
+    pub fn new() -> Self {
+        Self {
+            statistics: moka::future::Cache::builder()
+                .max_capacity(1)
+                .time_to_live(CACHE_TTL)
+                .build(),
+            leaderboard: LeaderboardCache::new(),
+            usernames: moka::future::Cache::builder()
+                .max_capacity(10_000)
+                .time_to_live(CACHE_TTL)
+                .build(),
+        }
+    }
+}
+
+impl Default for InfoCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct LeaderboardCache {
+    requesters: moka::future::Cache<(), Vec<CountRaw>>,
+    taggers: moka::future::Cache<Option<Period>, Vec<CountRaw>>,
+    reviewers: moka::future::Cache<(), Vec<RatioRaw>>,
+    user_requesters: moka::future::Cache<u64, Vec<CountRaw>>,
+    user_taggers: moka::future::Cache<(u64, Option<Period>), Vec<CountRaw>>,
+    user_reviewers: moka::future::Cache<u64, Vec<RatioRaw>>,
+}
+
+impl LeaderboardCache {
+    pub fn new() -> Self {
+        Self {
+            requesters: moka::future::Cache::builder()
+                .max_capacity(1)
+                .time_to_live(CACHE_TTL)
+                .build(),
+            taggers: moka::future::Cache::builder()
+                .max_capacity(5)
+                .time_to_live(CACHE_TTL)
+                .build(),
+            reviewers: moka::future::Cache::builder()
+                .max_capacity(1)
+                .time_to_live(CACHE_TTL)
+                .build(),
+            user_requesters: moka::future::Cache::builder()
+                .max_capacity(1000)
+                .time_to_live(CACHE_TTL)
+                .build(),
+            user_taggers: moka::future::Cache::builder()
+                .max_capacity(1000)
+                .time_to_live(CACHE_TTL)
+                .build(),
+            user_reviewers: moka::future::Cache::builder()
+                .max_capacity(1000)
+                .time_to_live(CACHE_TTL)
+                .build(),
+        }
+    }
+}
+
+impl Default for LeaderboardCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeaderboardCategory {
+    #[default]
+    Blacklist,
+    Reviews,
+}
+
+async fn cached<K, T, E>(
+    cache: &moka::future::Cache<K, Vec<T>>,
+    key: K,
+    fetch: impl Future<Output = Result<Vec<T>, E>>,
+) -> Vec<T>
+where
+    K: Hash + Eq + Send + Sync + 'static,
+    T: Clone + Send + Sync + 'static,
+    E: Display + Send + Sync + 'static,
+{
+    cache.try_get_with(key, fetch).await.unwrap_or_else(|e| {
+        tracing::warn!("leaderboard query failed: {e}");
+        Vec::new()
+    })
 }
 
 async fn statistics_page(ctx: &Context, data: &Data) -> Page {
-    if let Some(page) = fresh(&data.info_cache.lock().unwrap().statistics) {
-        return page;
-    }
-    let page = build_statistics(ctx, data).await;
-    data.info_cache.lock().unwrap().statistics = Some((page.clone(), Instant::now()));
-    page
-}
-
-async fn leaderboards_page(ctx: &Context, data: &Data) -> Page {
-    if let Some(page) = fresh(&data.info_cache.lock().unwrap().leaderboards) {
-        return page;
-    }
-    let page = build_leaderboards(ctx, data, None).await;
-    data.info_cache.lock().unwrap().leaderboards = Some((page.clone(), Instant::now()));
-    page
+    data.info_cache
+        .statistics
+        .get_with((), build_statistics(ctx, data))
+        .await
 }
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
@@ -57,8 +137,17 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
 
     let ctx = ctx.clone();
     let data = data.clone();
+    let user = command.user.id.get();
     tokio::spawn(async move {
-        leaderboards_page(&ctx, &data).await;
+        // pre-populate leaderboards cache in the background
+        build_leaderboards(
+            &ctx,
+            &data,
+            LeaderboardCategory::default(),
+            Some(user),
+            None,
+        )
+        .await;
     });
     Ok(())
 }
@@ -75,8 +164,11 @@ pub async fn handle_page(
     component
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
+    let user = component.user.id.get();
     let components = match component.data.custom_id.strip_prefix("info_page:") {
-        Some("leaderboards") => leaderboards_page(ctx, data).await,
+        Some("leaderboards") => {
+            build_leaderboards(ctx, data, LeaderboardCategory::default(), Some(user), None).await
+        }
         _ => statistics_page(ctx, data).await,
     };
     component
@@ -93,6 +185,7 @@ pub async fn handle_taggers(
     component
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
+    let user = component.user.id.get();
     let period = match &component.data.kind {
         ComponentInteractionDataKind::StringSelect { values } => {
             match values.first().map(String::as_str) {
@@ -103,10 +196,40 @@ pub async fn handle_taggers(
         }
         _ => None,
     };
-    let components = match period {
-        None => leaderboards_page(ctx, data).await,
-        Some(_) => build_leaderboards(ctx, data, period).await,
+    let components = build_leaderboards(
+        ctx,
+        data,
+        LeaderboardCategory::Blacklist,
+        Some(user),
+        period,
+    )
+    .await;
+    component
+        .edit_response(&ctx.http, page_response(components))
+        .await?;
+    Ok(())
+}
+
+pub async fn handle_leaderboard_category(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    data: &Data,
+) -> Result<()> {
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await?;
+    let user = component.user.id.get();
+    let category = match &component.data.kind {
+        ComponentInteractionDataKind::StringSelect { values } => {
+            match values.first().map(String::as_str) {
+                Some("blacklist") => LeaderboardCategory::Blacklist,
+                Some("reviews") => LeaderboardCategory::Reviews,
+                _ => LeaderboardCategory::default(),
+            }
+        }
+        _ => LeaderboardCategory::default(),
     };
+    let components = build_leaderboards(ctx, data, category, Some(user), None).await;
     component
         .edit_response(&ctx.http, page_response(components))
         .await?;
@@ -230,60 +353,182 @@ async fn build_statistics(ctx: &Context, data: &Data) -> Vec<CreateComponent<'st
 async fn build_leaderboards(
     ctx: &Context,
     data: &Data,
+    category: LeaderboardCategory,
+    user: Option<u64>,
     period: Option<Period>,
 ) -> Vec<CreateComponent<'static>> {
     let pool = data.db.pool();
-    let requesters = MemberRepository::new(pool)
-        .top_requesters(LIMIT)
-        .await
-        .unwrap_or_default();
-    let since = period.map(|p| p.last_reset(Utc::now()));
-    let taggers = BlacklistRepository::new(pool)
-        .top_taggers(since, LIMIT)
-        .await
-        .unwrap_or_default();
+    let cache = &data.info_cache.leaderboard;
 
-    let parts = vec![
+    let mut parts = vec![
         text("## Leaderboards"),
+        leaderboard_category_dropdown(category),
         separator(),
-        text(format!(
-            "### Top Requesters (All-time)\n{}",
-            leaderboard(ctx, &requesters).await
-        )),
-        separator(),
-        text("### Top Taggers"),
-        period_dropdown(period),
-        text(leaderboard(ctx, &taggers).await),
-        nav("leaderboards"),
     ];
+    parts.extend(match category {
+        LeaderboardCategory::Blacklist => {
+            let members = MemberRepository::new(pool);
+            let blacklist = BlacklistRepository::new(pool);
+            let since = period.map(|p| p.last_reset(Utc::now()));
+
+            let (top_requesters, top_taggers) = tokio::join!(
+                cached(&cache.requesters, (), members.top_requesters(LIMIT)),
+                cached(&cache.taggers, period, blacklist.top_taggers(since, LIMIT))
+            );
+            // get nearby requesters and taggers for the user, iff. they are not already in the top N
+            let (nearby_requesters, nearby_taggers) = tokio::join!(
+                OptionFuture::from(
+                    user.filter(|&u| !top_requesters.iter().any(|(_, id, _)| *id as u64 == u))
+                        .map(|u| cached(
+                            &cache.user_requesters,
+                            u,
+                            members.nearby_requesters(u as i64, WINDOW_SIZE),
+                        ))
+                ),
+                OptionFuture::from(
+                    user.filter(|&u| !top_taggers.iter().any(|(_, id, _)| *id as u64 == u))
+                        .map(|u| cached(
+                            &cache.user_taggers,
+                            (u, period),
+                            blacklist.nearby_taggers(since, u as i64, WINDOW_SIZE),
+                        ))
+                ),
+            );
+
+            vec![
+                text(format!(
+                    "### Top Requesters (All-time)\n{}{}",
+                    leaderboard(ctx, data, &counts(top_requesters)).await,
+                    nearby_section(
+                        nearby_requesters,
+                        |&(rank, _, _)| rank,
+                        async |n| leaderboard(ctx, data, &counts(n)).await
+                    )
+                    .await
+                )),
+                separator(),
+                text("### Top Taggers"),
+                period_dropdown(period),
+                text(format!(
+                    "{}{}",
+                    leaderboard(ctx, data, &counts(top_taggers)).await,
+                    nearby_section(
+                        nearby_taggers,
+                        |&(rank, _, _)| rank,
+                        async |n| leaderboard(ctx, data, &counts(n)).await
+                    )
+                    .await
+                )),
+            ]
+        }
+        LeaderboardCategory::Reviews => {
+            let members = MemberRepository::new(pool);
+            let reviewers = cached(&cache.reviewers, (), members.top_reviewers(LIMIT)).await;
+            let nearby_reviewers = OptionFuture::from(
+                user.filter(|&u| !reviewers.iter().any(|(_, id, _, _, _)| *id as u64 == u))
+                    .map(|u| {
+                        cached(
+                            &cache.user_reviewers,
+                            u,
+                            members.nearby_reviewers(u as i64, WINDOW_SIZE),
+                        )
+                    }),
+            )
+            .await;
+
+            vec![
+                text("### Top Reviewers (All-time)"),
+                text(format!(
+                    "{}{}",
+                    leaderboard(ctx, data, &counts_with_ratios(reviewers)).await,
+                    nearby_section(
+                        nearby_reviewers,
+                        |&(rank, _, _, _, _)| rank,
+                        async |n| leaderboard(ctx, data, &counts_with_ratios(n)).await,
+                    )
+                    .await,
+                )),
+            ]
+        }
+    });
+    parts.push(nav("leaderboards"));
 
     vec![CreateComponent::Container(CreateContainer::new(parts))]
 }
 
-async fn leaderboard(ctx: &Context, rows: &[(i64, i64)]) -> String {
+async fn leaderboard(ctx: &Context, data: &Data, rows: &[(i64, i64, String)]) -> String {
     if rows.is_empty() {
         return "-# No data yet".into();
     }
-    let names = futures_util::future::join_all(
-        rows.iter()
-            .map(|(id, _)| ctx.http.get_user(UserId::new(*id as u64))),
-    )
+    let cache = &data.info_cache.usernames;
+    let names = futures_util::future::join_all(rows.iter().map(|(_, id, _)| {
+        let id = *id as u64;
+        async move {
+            cache
+                .get_with(id, async {
+                    ctx.http
+                        .get_user(UserId::new(id))
+                        .await
+                        .map(|u| u.name.to_string())
+                        .unwrap_or_else(|_| "unknown".into())
+                })
+                .await
+        }
+    }))
     .await;
     rows.iter()
         .zip(names)
-        .enumerate()
-        .map(|(i, ((id, count), user))| {
-            let name = user
-                .map(|u| u.name.to_string())
-                .unwrap_or_else(|_| "unknown".into());
-            format!(
-                "{}. **{}** — <@{id}> `{name}`",
-                i + 1,
-                format_number(*count as u64)
-            )
-        })
+        .map(|((rank, id, stat), name)| format!("{rank}. **{stat}** — <@{id}> `{name}`"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn counts(rows: Vec<CountRaw>) -> Vec<(i64, i64, String)> {
+    rows.into_iter()
+        .map(|(rank, id, count)| (rank, id, format_number(count as u64)))
+        .collect()
+}
+
+fn counts_with_ratios(rows: Vec<RatioRaw>) -> Vec<(i64, i64, String)> {
+    rows.into_iter()
+        .map(|(rank, id, total, pos, neg)| {
+            let (p, n) = (pos as u64, neg as u64);
+            let ratio = match (p, n) {
+                (0, 0) => "-".to_string(),
+                (_, 0) => "∞".to_string(),
+                _ => {
+                    let h = (p * 100 + n / 2) / n; // hundredths, rounded
+                    format!("{}.{:02}", format_number(h / 100), h % 100)
+                }
+            };
+            (
+                rank,
+                id,
+                format!("{} ({ratio})", format_number(total as u64)),
+            )
+        })
+        .collect()
+}
+
+async fn nearby_section<T>(
+    nearby: Option<Vec<T>>,
+    rank: impl Fn(&T) -> i64,
+    f: impl AsyncFnOnce(Vec<T>) -> String,
+) -> String {
+    let rows: Vec<T> = nearby
+        .into_iter()
+        .flatten()
+        .filter(|i| rank(i) > LIMIT)
+        .collect();
+    let Some(first) = rows.first() else {
+        return String::new();
+    };
+    let sep = if rank(first) == LIMIT + 1 {
+        "\n"
+    } else {
+        "\n...\n"
+    };
+    format!("{sep}{}", f(rows).await)
 }
 
 async fn bot_stats(ctx: &Context) -> (u64, u64, u64, Option<String>) {
@@ -356,6 +601,29 @@ fn period_dropdown(active: Option<Period>) -> CreateContainerComponent<'static> 
     .collect::<Vec<_>>();
     CreateContainerComponent::ActionRow(CreateActionRow::SelectMenu(CreateSelectMenu::new(
         "info_taggers",
+        CreateSelectMenuKind::String {
+            options: options.into(),
+        },
+    )))
+}
+
+fn leaderboard_category_dropdown(active: LeaderboardCategory) -> CreateContainerComponent<'static> {
+    let active_key = match active {
+        LeaderboardCategory::Blacklist => "blacklist",
+        LeaderboardCategory::Reviews => "reviews",
+    };
+    let options = [("blacklist", "Blacklist"), ("reviews", "Reviews")]
+        .iter()
+        .map(|(value, label)| {
+            let mut option = CreateSelectMenuOption::new(*label, *value);
+            if *value == active_key {
+                option = option.default_selection(true);
+            }
+            option
+        })
+        .collect::<Vec<_>>();
+    CreateContainerComponent::ActionRow(CreateActionRow::SelectMenu(CreateSelectMenu::new(
+        "info_leaderboard_category",
         CreateSelectMenuKind::String {
             options: options.into(),
         },
