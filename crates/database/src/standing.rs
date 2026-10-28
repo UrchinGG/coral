@@ -43,9 +43,10 @@ pub fn evaluate_fresh(member: &Member, rules: &ReviewRules) -> Standing {
 fn evaluate_with(member: &Member, rules: &ReviewRules, grants: Grants) -> Standing {
     let strikes = strike_count(member);
     let held = grants == Grants::Held;
+    let can_tag = eval_tag(member, rules, strikes, held && member.tag_granted);
     Standing {
-        can_vote: eval_vote(member, rules, strikes, held && member.vote_granted),
-        can_tag: eval_tag(member, rules, strikes, held && member.tag_granted),
+        can_vote: can_tag || eval_vote(member, rules, strikes, held && member.vote_granted),
+        can_tag,
     }
 }
 
@@ -75,8 +76,11 @@ pub struct StandingExplanation {
 
 pub fn explain(member: &Member, rules: &ReviewRules) -> StandingExplanation {
     let strikes = strike_count(member);
-    let (can_vote, vote_reason) = explain_vote(member, rules, strikes);
     let (can_tag, tag_reason) = explain_tag(member, rules, strikes);
+    let (can_vote, vote_reason) = match explain_vote(member, rules, strikes) {
+        (false, _) if can_tag => (true, "eligible to tag".to_string()),
+        vote => vote,
+    };
     StandingExplanation {
         can_vote,
         vote_reason,
@@ -275,6 +279,18 @@ mod tests {
         assert!(evaluate(&m, &R).can_tag);
         m.incorrect_verdicts = 3;
         assert!(!evaluate(&m, &R).can_tag);
+    }
+
+    #[test]
+    fn tag_eligibility_grants_voting() {
+        let mut m = member(0, 0);
+        m.accurate_verdicts = 25;
+        m.rejected_tags = 3;
+        assert!(evaluate(&m, &R).can_vote);
+        assert!(explain(&m, &R).can_vote);
+        m.accurate_verdicts = 0;
+        m.tag_granted = true;
+        assert!(evaluate(&m, &R).can_vote);
     }
 
     #[test]
