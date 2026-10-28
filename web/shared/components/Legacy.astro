@@ -1,0 +1,42 @@
+---
+import { legacyRuns } from "@shared/minecraft";
+import "@shared/styles/minecraft.css";
+
+interface Props {
+  text: string;
+  class?: string;
+}
+
+const { text, class: className } = Astro.props;
+---
+
+<span class:list={["legacy", className]}>
+  {legacyRuns(text).map(({ text, color, shadow, bold, strike }) => (
+    <span
+      class:list={{ bold, strike }}
+      style={`--color: ${color}; --shadow: ${shadow}`}
+      set:text={text}
+    />
+  ))}
+</span>
+
+<style>
+  .legacy {
+    font-family: var(--font-minecraft);
+    white-space: pre;
+
+    & span {
+      color: var(--color);
+      text-shadow: calc(1em / 9) calc(1em / 9) 0 var(--shadow);
+    }
+
+    & .bold {
+      font-weight: 700;
+    }
+
+    & .strike {
+      text-decoration: line-through;
+      text-decoration-thickness: calc(1em / 9);
+    }
+  }
+</style>

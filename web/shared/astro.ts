@@ -25,6 +25,14 @@ export function siteConfig(site: string, port: number) {
         styles: ["normal"],
         subsets: ["latin"],
       },
+      {
+        provider: fontProviders.fontsource(),
+        name: "JetBrains Mono",
+        cssVariable: "--font-jetbrains-mono",
+        weights: ["400 500"],
+        styles: ["normal"],
+        subsets: ["latin"],
+      },
     ],
   });
 }

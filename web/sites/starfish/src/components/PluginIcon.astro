@@ -1,0 +1,36 @@
+---
+import Legacy from "@shared/components/Legacy.astro";
+
+interface Props {
+  prefix: string | null;
+  name: string;
+}
+
+const { prefix, name } = Astro.props;
+const initials = name
+  .split(/\s+/)
+  .map((word) => word.charAt(0))
+  .join("")
+  .slice(0, 3)
+  .toUpperCase();
+---
+
+<span class="icon" aria-hidden="true">
+  <Legacy text={prefix ?? `§7${initials}`} />
+</span>
+
+<style>
+  .icon {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-inset);
+    font-size: 12px;
+    line-height: 1;
+  }
+</style>

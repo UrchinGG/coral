@@ -14,7 +14,12 @@ const { title, heading, summary } = Astro.props;
 const groups = docGroups.map(({ group, pages }, index) => ({
   label: group,
   items: [
-    ...(index === 0 ? [{ title: "Introduction", href: "/docs" }] : []),
+    ...(index === 0
+      ? [
+          { title: "Introduction", href: "/docs" },
+          { title: "Publishing", href: "/docs/publishing" },
+        ]
+      : []),
     ...pages.map((page) => ({ title: page.title, href: `/docs/${page.slug}` })),
   ],
 }));

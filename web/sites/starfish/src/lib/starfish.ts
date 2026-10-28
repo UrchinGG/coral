@@ -29,6 +29,7 @@ type StarfishDocs = {
 };
 
 type Release = {
+  version: string;
   published_at: string;
   release_notes: string | null;
 };

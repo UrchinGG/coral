@@ -60,6 +60,7 @@
   h1,
   h2,
   h3 {
+    color: var(--color-text-strong);
     line-height: 1.15;
     letter-spacing: -0.025em;
     text-wrap: balance;
