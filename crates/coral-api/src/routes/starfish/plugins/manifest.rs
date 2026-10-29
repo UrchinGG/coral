@@ -76,6 +76,14 @@ pub fn extract_and_validate(
     })
 }
 
+/// The oldest Starfish a published release runs on, as its manifest declares it.
+pub fn min_starfish_version(manifest_json: &serde_json::Value) -> Option<String> {
+    ["min_starfish_version", "minStarfishVersion"]
+        .iter()
+        .find_map(|key| manifest_json.get(key)?.as_str())
+        .map(str::to_string)
+}
+
 pub fn sha256_bytes(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }

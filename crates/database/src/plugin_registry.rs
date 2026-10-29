@@ -154,6 +154,7 @@ pub struct InstalledWithLatest {
     pub latest_asset_sha256: Vec<u8>,
     pub latest_asset_size: i32,
     pub latest_created_at: DateTime<Utc>,
+    pub latest_manifest_json: serde_json::Value,
 }
 
 pub struct PluginRegistryRepository<'a> {
@@ -579,7 +580,8 @@ impl<'a> PluginRegistryRepository<'a> {
                 lr.changelog AS latest_changelog,
                 COALESCE(lr.asset_sha256, ir.asset_sha256) AS latest_asset_sha256,
                 COALESCE(lr.asset_size, ir.asset_size) AS latest_asset_size,
-                COALESCE(lr.created_at, ir.created_at) AS latest_created_at
+                COALESCE(lr.created_at, ir.created_at) AS latest_created_at,
+                COALESCE(lr.manifest_json, ir.manifest_json) AS latest_manifest_json
              FROM plugin_installs pi
              JOIN plugins p ON p.id = pi.plugin_id
              JOIN plugin_releases ir ON ir.id = pi.release_id

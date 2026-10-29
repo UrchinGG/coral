@@ -125,6 +125,9 @@ pub async fn list_installed(
                 yanked: false,
                 yanked_reason: None,
                 created_at: r.latest_created_at,
+                min_starfish_version: super::manifest::min_starfish_version(
+                    &r.latest_manifest_json,
+                ),
             },
             slug: r.slug,
             installed_version: r.installed_version,

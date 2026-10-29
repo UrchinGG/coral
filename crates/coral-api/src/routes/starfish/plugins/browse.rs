@@ -249,6 +249,7 @@ pub(super) fn release_to_dto(r: &database::PluginRelease) -> ReleaseInfoDto {
         yanked: r.yanked,
         yanked_reason: r.yanked_reason.clone(),
         created_at: r.created_at,
+        min_starfish_version: super::manifest::min_starfish_version(&r.manifest_json),
     }
 }
 
