@@ -13,8 +13,8 @@ use reqlog::MAX_BATCH_UUIDS;
 
 use crate::{
     auth::{
-        AuthenticatedMember, DeveloperKeyAuth, KEY_DISTINCT_UUID_BUDGET, SESSION_UUID_BUDGET,
-        SessionAuth,
+        AuthenticatedMember, DeveloperKeyAuth, KEY_DISTINCT_UUID_BUDGET, MinecraftAuth,
+        SESSION_UUID_BUDGET, SessionAuth,
     },
     cache::spawn_background_refresh,
     error::ApiError,
@@ -36,18 +36,10 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/players", post(batch_lookup))
 }
 
-async fn enforce_uuid_budget(
-    state: &AppState,
-    discord_id: i64,
-    count: usize,
-) -> Result<(), ApiError> {
+async fn enforce_uuid_budget(state: &AppState, budget: &str, count: usize) -> Result<(), ApiError> {
     match state
         .rate_limiter
-        .check_and_record_weighted(
-            &format!("sfuuids:{discord_id}"),
-            SESSION_UUID_BUDGET,
-            count as i64,
-        )
+        .check_and_record_weighted(budget, SESSION_UUID_BUDGET, count as i64)
         .await
     {
         Ok(RateLimitResult::Allowed { .. }) => Ok(()),
@@ -91,6 +83,7 @@ async fn enforce_distinct_uuid_budget(
 pub async fn batch_lookup(
     State(state): State<AppState>,
     session: Option<Extension<SessionAuth>>,
+    minecraft: Option<Extension<MinecraftAuth>>,
     member: Option<Extension<AuthenticatedMember>>,
     developer: Option<Extension<DeveloperKeyAuth>>,
     Json(req): Json<BatchRequest>,
@@ -111,14 +104,30 @@ pub async fn batch_lookup(
         .map(|u| normalize_uuid(u))
         .collect();
 
-    if let Some(Extension(session)) = &session {
-        enforce_uuid_budget(&state, session.discord_id, uuids.len()).await?;
-    } else {
-        if let (Some(Extension(member)), None) = (&member, &developer) {
-            enforce_distinct_uuid_budget(&state, member.0.discord_id, &uuids).await?;
+    match (&session, &minecraft) {
+        (Some(Extension(session)), _) => {
+            enforce_uuid_budget(
+                &state,
+                &format!("sfuuids:{}", session.discord_id),
+                uuids.len(),
+            )
+            .await?
         }
-        for uuid in &uuids {
-            spawn_background_refresh(&state, uuid);
+        (_, Some(Extension(minecraft))) => {
+            enforce_uuid_budget(
+                &state,
+                &format!("mcuuids:{}", minecraft.uuid.simple()),
+                uuids.len(),
+            )
+            .await?
+        }
+        _ => {
+            if let (Some(Extension(member)), None) = (&member, &developer) {
+                enforce_distinct_uuid_budget(&state, member.0.discord_id, &uuids).await?;
+            }
+            for uuid in &uuids {
+                spawn_background_refresh(&state, uuid);
+            }
         }
     }
 

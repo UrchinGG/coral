@@ -91,6 +91,20 @@ impl<'a> MemberRepository<'a> {
             .await
     }
 
+    pub async fn get_sole_owner(&self, uuid: &str) -> Result<Option<Member>, sqlx::Error> {
+        let owners: Vec<Member> = sqlx::query_as(&format!(
+            "SELECT {COLUMNS} FROM members
+             WHERE uuid = $1 OR id IN (SELECT member_id FROM minecraft_accounts WHERE uuid = $1)"
+        ))
+        .bind(uuid)
+        .fetch_all(self.pool)
+        .await?;
+        Ok(match <[Member; 1]>::try_from(owners) {
+            Ok([owner]) => Some(owner),
+            Err(_) => None,
+        })
+    }
+
     pub async fn create(&self, discord_id: i64) -> Result<Member, sqlx::Error> {
         sqlx::query_as(&format!(
             "INSERT INTO members (discord_id) VALUES ($1)
@@ -349,5 +363,65 @@ impl<'a> MemberRepository<'a> {
         .execute(self.pool)
         .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::PgPool;
+    use uuid::Uuid;
+
+    use crate::{AccountRepository, MemberRepository};
+
+    const BASE_DISCORD_ID: i64 = 920_000_000_000_000_000;
+
+    async fn test_pool() -> Option<PgPool> {
+        dotenvy::dotenv().ok();
+        PgPool::connect(&std::env::var("DATABASE_URL").ok()?)
+            .await
+            .ok()
+    }
+
+    #[tokio::test]
+    async fn an_account_has_a_sole_owner_only_when_one_member_links_it() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let members = MemberRepository::new(&pool);
+        let discord_id = BASE_DISCORD_ID + i64::from(Uuid::new_v4().as_fields().1);
+        let (primary, alt) = (
+            Uuid::new_v4().simple().to_string(),
+            Uuid::new_v4().simple().to_string(),
+        );
+
+        let owner = members.create(discord_id).await.unwrap();
+        members.set_uuid(discord_id, &primary).await.unwrap();
+        AccountRepository::new(&pool)
+            .add(owner.id, &alt)
+            .await
+            .unwrap();
+        assert_eq!(
+            members
+                .get_sole_owner(&primary)
+                .await
+                .unwrap()
+                .map(|m| m.id),
+            Some(owner.id)
+        );
+        assert_eq!(
+            members.get_sole_owner(&alt).await.unwrap().map(|m| m.id),
+            Some(owner.id)
+        );
+
+        let rival = members.create(discord_id + 1).await.unwrap();
+        members.set_uuid(rival.discord_id, &alt).await.unwrap();
+        assert!(members.get_sole_owner(&alt).await.unwrap().is_none());
+        assert!(
+            members
+                .get_sole_owner(&Uuid::new_v4().simple().to_string())
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 }

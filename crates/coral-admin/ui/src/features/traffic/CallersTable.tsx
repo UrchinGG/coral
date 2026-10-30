@@ -33,6 +33,7 @@ const KEY_KIND_LABEL: Record<KeyKind, string> = {
   invalid: "invalid key",
   unverified: "unverified key",
   legacy: "legacy key",
+  minecraft: "minecraft account",
 };
 
 const CLASS_LABEL: Record<StatusClass, string> = {

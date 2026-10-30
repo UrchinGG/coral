@@ -1,4 +1,4 @@
-use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
+use utoipa::openapi::security::{ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 use crate::{
@@ -8,6 +8,7 @@ use crate::{
         batch::{BatchRequest, BatchResponse},
         cubelify::CubelifyQuery,
         guild::{GuildSessionResponse, GuildSnapshotDataResponse, GuildSnapshotListResponse},
+        minecraft_auth::{ChallengeResponse, SignInRequest, SignInResponse},
         resolve::ResolveResponse,
         session::*,
         tags::{AddTagBody, LockRequest, RemoveTagBody, TargetQuery, UpdateTagBody},
@@ -20,6 +21,9 @@ use crate::{
 #[openapi(
     paths(
         crate::routes::cubelify::get_cubelify,
+
+        crate::routes::minecraft_auth::challenge,
+        crate::routes::minecraft_auth::sign_in,
 
         crate::routes::player::player_tags,
         crate::routes::player::player_face,
@@ -74,9 +78,11 @@ use crate::{
             PlayerStatsResponse,
             ResolveResponse,
             StoreCodeRequest, RedeemCodeResponse,
+            ChallengeResponse, SignInRequest, SignInResponse,
         )
     ),
     tags(
+        (name = "Authentication", description = "Sign in with a Minecraft account instead of an API key."),
         (name = "Cubelify", description = "Blacklist data formatted for the Cubelify overlay."),
         (name = "Player", description = "Hypixel player data, including tags, sessions, markers, winstreaks, and batch lookups."),
         (name = "Guild", description = "Historical guild snapshots and session deltas for guilds you are a member of."),
@@ -115,6 +121,8 @@ X-API-Key: <your-key>
 ```
 ?key=<your-key>
 ```
+
+Minecraft mods can sign in with the player's account instead. Request a challenge from `POST /v3/auth/minecraft/challenge`, pass its `server_id` to Mojang's `joinServer`, then exchange it at `POST /v3/auth/minecraft` for a token sent as `Authorization: Bearer <token>`. A token lasts 24 hours and reaches tag lookups and, for accounts linked to an Urchin member, tag writes.
 
 A personal key is issued through the Discord bot and carries the access rank of your Urchin account. A developer key carries an explicit set of permissions: Player Data, Hypixel, and All Sessions. Each endpoint states the rank or permission it requires. An endpoint without such a note accepts any valid key. A locked key is rejected with a 403, and a missing or unknown key returns a 401.
 
@@ -162,6 +170,10 @@ impl Modify for DocsAddon {
         components.add_security_scheme(
             "api_key",
             SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("X-API-Key"))),
+        );
+        components.add_security_scheme(
+            "minecraft_session",
+            SecurityScheme::Http(HttpBuilder::new().scheme(HttpAuthScheme::Bearer).build()),
         );
     }
 }

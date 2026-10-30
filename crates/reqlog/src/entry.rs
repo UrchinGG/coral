@@ -29,6 +29,7 @@ pub enum KeyKind {
     Invalid = 5,
     Unverified = 6,
     Legacy = 7,
+    Minecraft = 8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -61,6 +62,7 @@ pub struct Caller {
     pub key_kind: KeyKind,
     pub member_id: Option<i64>,
     pub actor_id: Option<i64>,
+    pub actor_uuid: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,7 +108,7 @@ pub struct LogEntry {
 }
 
 impl KeyKind {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::None,
         Self::Personal,
         Self::Developer,
@@ -115,6 +117,7 @@ impl KeyKind {
         Self::Invalid,
         Self::Unverified,
         Self::Legacy,
+        Self::Minecraft,
     ];
 
     pub fn code(self) -> i16 {
@@ -139,6 +142,7 @@ impl KeyKind {
             Self::Invalid => "invalid",
             Self::Unverified => "unverified",
             Self::Legacy => "legacy",
+            Self::Minecraft => "minecraft",
         }
     }
 }
@@ -213,6 +217,7 @@ impl Caller {
             key_kind,
             member_id: None,
             actor_id: None,
+            actor_uuid: None,
         }
     }
 
@@ -221,6 +226,7 @@ impl Caller {
             key_kind,
             member_id: Some(member_id),
             actor_id: None,
+            actor_uuid: None,
         }
     }
 
@@ -229,6 +235,16 @@ impl Caller {
             key_kind: KeyKind::Session,
             member_id,
             actor_id: Some(actor_id),
+            actor_uuid: None,
+        }
+    }
+
+    pub fn minecraft(member_id: Option<i64>, actor_uuid: Uuid) -> Self {
+        Self {
+            key_kind: KeyKind::Minecraft,
+            member_id,
+            actor_id: None,
+            actor_uuid: Some(actor_uuid),
         }
     }
 
@@ -237,6 +253,7 @@ impl Caller {
             key_kind: KeyKind::Internal,
             member_id: None,
             actor_id,
+            actor_uuid: None,
         }
     }
 }

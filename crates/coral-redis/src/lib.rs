@@ -1,4 +1,5 @@
 mod events;
+pub mod minecraft_session;
 pub mod minute_history;
 mod pool;
 mod rate_limit;

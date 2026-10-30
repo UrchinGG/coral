@@ -1,4 +1,4 @@
-export type KeyKind = "none" | "personal" | "developer" | "internal" | "session" | "invalid" | "unverified" | "legacy";
+export type KeyKind = "none" | "personal" | "developer" | "internal" | "session" | "invalid" | "unverified" | "legacy" | "minecraft";
 
 export type Cause =
   | "ok"
