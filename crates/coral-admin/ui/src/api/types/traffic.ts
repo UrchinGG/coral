@@ -70,9 +70,9 @@ export type TopCallers = Bounds & { callers: CallerTraffic[] };
 
 export type CallerFilter = { route: string | null; method: string | null; class: StatusClass | null; cause: Cause | null; sort: CallerSort };
 
-export type Limiter = "personal" | "developer" | "session" | "session_uuids" | "key_uuids" | "tagging";
+export type Limiter = "personal" | "developer" | "session" | "session_uuids" | "minecraft" | "minecraft_uuids" | "key_uuids" | "tagging";
 
-export type LimitUsage = { limiter: Limiter; used: number; limit: number };
+export type LimitUsage = { limiter: Limiter; player: string | null; used: number; limit: number };
 
 export type PressuredAccount = { account: EntityRef; limits: LimitUsage[] };
 

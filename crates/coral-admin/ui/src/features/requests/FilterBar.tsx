@@ -104,13 +104,13 @@ function RequesterPicker({ value, onChange }: { value: RequesterFilter | null; o
       <EntityPicker
         label="Requester"
         value={value === null ? null : requesterPickerValue(value)}
-        kinds={["account", "key"]}
+        kinds={["account", "player", "key"]}
         allowRaw
-        rawHint="Discord id, member id or key prefix"
-        placeholder="Account, Discord id, key prefix"
+        rawHint="Discord id, member id, Minecraft UUID or key prefix"
+        placeholder="Account, Minecraft account, key prefix"
         onChange={pick}
       />
-      {rejected !== null && <span className="text-11 text-danger">{rejected} is not a Discord id, member id or key prefix.</span>}
+      {rejected !== null && <span className="text-11 text-danger">{rejected} is not a Discord id, member id, Minecraft UUID or key prefix.</span>}
     </div>
   );
 }

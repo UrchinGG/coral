@@ -172,7 +172,7 @@ function Limits({ discordId }: { discordId: string }) {
         {(budgets) => (
           <div className="flex flex-col gap-3">
             {budgets.map((budget) => (
-              <LimitMeter key={budget.limiter} budget={budget} />
+              <LimitMeter key={`${budget.limiter}:${budget.player}`} budget={budget} />
             ))}
           </div>
         )}
@@ -191,7 +191,8 @@ function LimitMeter({ budget }: { budget: Budget }) {
       </div>
     );
   }
-  return <Meter used={budget.used} limit={budget.limit} label={vocabulary.label} unit={vocabulary.unit} />;
+  const label = budget.player === null ? vocabulary.label : <>{vocabulary.label} · <EntityLink entity={{ kind: "player", uuid: budget.player }} /></>;
+  return <Meter used={budget.used} limit={budget.limit} label={label} unit={vocabulary.unit} />;
 }
 
 function Standing({ discordId, standing, strikes }: { discordId: string; standing: StandingView; strikes: readonly StrikeRow[] }) {

@@ -1,22 +1,29 @@
 import { useQuery } from "@tanstack/react-query";
-import { Lock, LockOpen, Tag } from "lucide-react";
-import { useState } from "react";
+import { Ban, Lock, LockOpen, Tag } from "lucide-react";
+import { useState, type ReactNode } from "react";
 
 import { playerTagsQuery, usePlayerMutations } from "../../api/players";
 import type { LockView, TagType } from "../../api/types/players";
 import { Button } from "../../kit/Button";
+import { ConfirmButton } from "../../kit/ConfirmButton";
 import { ConfirmDialog } from "../../kit/Dialog";
 import { Input, Textarea } from "../../kit/Input";
 import { Select } from "../../kit/Select";
 import { toast } from "../../kit/toast";
 
-type PlayerActionsProps = { uuid: string; locked: LockView | null };
+type PlayerActionsProps = { uuid: string; locked: LockView | null; blocked: LockView | null };
 
-type Dialog = "tag" | "lock" | "unlock" | null;
+type Dialog = "tag" | "lock" | "unlock" | "block" | null;
 
-export function PlayerActions({ uuid, locked }: PlayerActionsProps) {
+export function PlayerActions({ uuid, locked, blocked }: PlayerActionsProps) {
   const [dialog, setDialog] = useState<Dialog>(null);
+  const { unblock } = usePlayerMutations(uuid);
   const close = () => setDialog(null);
+  const confirmUnblock = () =>
+    unblock.mutate(undefined, {
+      onSuccess: () => toast.ok("This Minecraft account can sign in again."),
+      onError: (error) => toast.error(`Could not unblock sign-in: ${error.message}`),
+    });
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Button icon={<Tag className="size-3" />} onClick={() => setDialog("tag")}>
@@ -31,9 +38,19 @@ export function PlayerActions({ uuid, locked }: PlayerActionsProps) {
           Unlock
         </Button>
       )}
+      {blocked === null ? (
+        <Button icon={<Ban className="size-3" />} onClick={() => setDialog("block")}>
+          Block sign-in
+        </Button>
+      ) : (
+        <ConfirmButton confirmLabel="Unblock" pending={unblock.isPending} onConfirm={confirmUnblock}>
+          Unblock sign-in
+        </ConfirmButton>
+      )}
       {dialog === "tag" && <AddTagDialog uuid={uuid} onClose={close} />}
       {dialog === "lock" && <LockDialog uuid={uuid} onClose={close} />}
       {dialog === "unlock" && <UnlockDialog uuid={uuid} onClose={close} />}
+      {dialog === "block" && <BlockDialog uuid={uuid} onClose={close} />}
     </div>
   );
 }
@@ -75,15 +92,38 @@ function AddTagDialog({ uuid, onClose }: { uuid: string; onClose: () => void }) 
 }
 
 function LockDialog({ uuid, onClose }: { uuid: string; onClose: () => void }) {
-  const [reason, setReason] = useState("");
   const { lock } = usePlayerMutations(uuid);
-  const confirm = async () => {
-    await lock.mutateAsync(reason.trim() === "" ? null : reason.trim());
+  const confirm = async (reason: string | null) => {
+    await lock.mutateAsync(reason);
     toast.ok("Player locked; only staff can change its tags now.");
   };
   return (
-    <ConfirmDialog open onClose={onClose} title="Lock player" confirmLabel="Lock" tone="danger" onConfirm={confirm}>
-      <span>Locked players keep their tags until staff change them.</span>
+    <ReasonDialog title="Lock player" confirmLabel="Lock" onConfirm={confirm} onClose={onClose}>
+      Locked players keep their tags until staff change them.
+    </ReasonDialog>
+  );
+}
+
+function BlockDialog({ uuid, onClose }: { uuid: string; onClose: () => void }) {
+  const { block } = usePlayerMutations(uuid);
+  const confirm = async (reason: string | null) => {
+    await block.mutateAsync(reason);
+    toast.ok("This Minecraft account can no longer sign in.");
+  };
+  return (
+    <ReasonDialog title="Block Minecraft sign-in" confirmLabel="Block" onConfirm={confirm} onClose={onClose}>
+      This account can no longer sign in to Urchin from the mod, and the sessions it already has stop working.
+    </ReasonDialog>
+  );
+}
+
+type ReasonDialogProps = { title: string; confirmLabel: string; children: ReactNode; onConfirm: (reason: string | null) => Promise<void>; onClose: () => void };
+
+function ReasonDialog({ title, confirmLabel, children, onConfirm, onClose }: ReasonDialogProps) {
+  const [reason, setReason] = useState("");
+  return (
+    <ConfirmDialog open onClose={onClose} title={title} confirmLabel={confirmLabel} tone="danger" onConfirm={() => onConfirm(reason.trim() === "" ? null : reason.trim())}>
+      <span>{children}</span>
       <Input label="Reason (optional)" value={reason} onChange={(event) => setReason(event.target.value)} />
     </ConfirmDialog>
   );

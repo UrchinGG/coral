@@ -2,6 +2,7 @@ import type { Cause, EntityRef, KeyKind } from "../../api/types/refs";
 import type { GroupQuery, GroupSort, RequestQuery, RequesterGroup, RollupFilter, StatusClass } from "../../api/types/request-explorer";
 import type { TimeRange } from "../../kit/TimeRangePicker";
 import { isSnowflake } from "../../lib/refs";
+import { normalizeUuid } from "../../lib/uuid";
 import { KEY_PREFIX_CHARS, keyPrefixOf } from "./key-prefix";
 
 export const EXPLORER_WINDOWS = ["1h", "6h", "24h", "7d", "14d"] as const;
@@ -20,6 +21,7 @@ export const SORT_PARAM = "sort";
 export type RequesterFilter =
   | { kind: "member"; memberId: number; discordId: string | null }
   | { kind: "actor"; discordId: string }
+  | { kind: "player"; uuid: string }
   | { kind: "key"; prefix: string; keyKind: KeyKind | null };
 
 export type ExplorerFilter = {
@@ -138,6 +140,8 @@ export function encodeRequester(requester: RequesterFilter): string {
       return joinParts("member", String(requester.memberId), requester.discordId);
     case "actor":
       return joinParts("actor", requester.discordId, null);
+    case "player":
+      return joinParts("player", requester.uuid, null);
     case "key":
       return joinParts("key", requester.prefix, requester.keyKind);
   }
@@ -148,6 +152,7 @@ export function parseRequester(raw: string | null): RequesterFilter | null {
   const [kind, id = "", extra = ""] = raw.split(REQUESTER_SEPARATOR);
   if (kind === "member" && MEMBER_ID.test(id)) return { kind, memberId: Number(id), discordId: isSnowflake(extra) ? extra : null };
   if (kind === "actor" && isSnowflake(id)) return { kind, discordId: id };
+  if (kind === "player" && normalizeUuid(id) !== null) return { kind, uuid: id };
   if (kind === "key" && id.length === KEY_PREFIX_CHARS) return { kind, prefix: id, keyKind: oneOf(extra, KEY_KINDS) };
   return null;
 }
@@ -158,6 +163,8 @@ export function describeRequester(requester: RequesterFilter): string {
       return `member #${requester.memberId}`;
     case "actor":
       return `Discord user ${requester.discordId}`;
+    case "player":
+      return `Minecraft account ${requester.uuid}`;
     case "key":
       return `key prefix ${requester.prefix}`;
   }
@@ -167,6 +174,8 @@ export function requesterFromText(text: string): RequesterFilter | null {
   const value = text.trim();
   if (isSnowflake(value)) return { kind: "actor", discordId: value };
   if (MEMBER_ID.test(value)) return { kind: "member", memberId: Number(value), discordId: null };
+  const uuid = normalizeUuid(value);
+  if (uuid !== null) return { kind: "player", uuid };
   if (value.length >= KEY_PREFIX_CHARS) return { kind: "key", prefix: keyPrefixOf(value), keyKind: null };
   return null;
 }
@@ -175,6 +184,7 @@ export function requesterFromRef(ref: EntityRef): RequesterFilter | null {
   if (ref.kind === "account") {
     return ref.member_id === null ? { kind: "actor", discordId: ref.discord_id } : { kind: "member", memberId: ref.member_id, discordId: ref.discord_id };
   }
+  if (ref.kind === "player") return { kind: "player", uuid: ref.uuid };
   if (ref.kind === "key") return { kind: "key", prefix: ref.prefix, keyKind: ref.key_kind };
   return null;
 }
@@ -185,6 +195,8 @@ export function requesterRef(requester: RequesterFilter): EntityRef | null {
       return requester.discordId === null ? null : { kind: "account", discord_id: requester.discordId, member_id: requester.memberId };
     case "actor":
       return { kind: "account", discord_id: requester.discordId, member_id: null };
+    case "player":
+      return { kind: "player", uuid: requester.uuid };
     case "key":
       return requester.keyKind === null ? null : { kind: "key", key_id: null, prefix: requester.prefix, key_kind: requester.keyKind };
   }
@@ -250,16 +262,26 @@ function unrolledFilters(filter: ExplorerFilter, q: string): string[] {
 }
 
 export function groupGaps(filter: ExplorerFilter, q: string): string[] {
-  return [...unrolledFilters(filter, q), ...(filter.requester?.kind === "key" ? ["key prefix"] : [])];
+  return [...unrolledFilters(filter, q), ...unrolledRequester(filter)];
 }
 
 export function histogramGaps(filter: ExplorerFilter, q: string): string[] {
   const seriesGaps: [string, boolean][] = [
     ["method", filter.method !== null],
     ["status code", filter.status !== null],
-    ["key prefix", filter.requester?.kind === "key"],
   ];
-  return [...unrolledFilters(filter, q), ...seriesGaps.filter(([, set]) => set).map(([name]) => name)];
+  return [...unrolledFilters(filter, q), ...seriesGaps.filter(([, set]) => set).map(([name]) => name), ...unrolledRequester(filter)];
+}
+
+function unrolledRequester(filter: ExplorerFilter): string[] {
+  switch (filter.requester?.kind) {
+    case "key":
+      return ["key prefix"];
+    case "player":
+      return ["Minecraft account"];
+    default:
+      return [];
+  }
 }
 
 export function parseStatusCode(text: string): number | null {
@@ -281,6 +303,8 @@ function requesterFields(requester: RequesterFilter | null): Pick<RollupFilter, 
       return { member: requester.memberId };
     case "actor":
       return { actor: requester.discordId };
+    case "player":
+      return { actor: requester.uuid };
     case "key":
       return { key_prefix: requester.prefix };
   }

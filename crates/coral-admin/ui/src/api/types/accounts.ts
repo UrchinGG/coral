@@ -193,9 +193,9 @@ export type KeyRecord = { key_id: number; kind: string; key: string; created_at:
 
 export type LinkRecord = { uuid: string; relation: LinkRelation; linked_at: string | null; unlinked_at: string | null };
 
-export type Limiter = "personal" | "developer" | "session" | "session_uuids" | "key_uuids" | "tagging";
+export type Limiter = "personal" | "developer" | "session" | "session_uuids" | "minecraft" | "minecraft_uuids" | "key_uuids" | "tagging";
 
-export type Budget = { limiter: Limiter; used: number; limit: number | null; window_s: number };
+export type Budget = { limiter: Limiter; player: string | null; used: number; limit: number | null; window_s: number };
 
 export type StarfishHwid = {
   id: number;

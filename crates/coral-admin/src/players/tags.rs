@@ -146,6 +146,15 @@ struct EventRow {
     ts: DateTime<Utc>,
 }
 
+impl NewLock {
+    pub fn reason(&self) -> Option<&str> {
+        self.reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+    }
+}
+
 impl PlayerEvents {
     pub async fn read(db: &Database, player: Uuid) -> Result<Self, AdminError> {
         let rows: Vec<EventRow> = sqlx::query_as(
@@ -304,11 +313,7 @@ pub async fn lock(
     lock: NewLock,
 ) -> Result<(), AdminError> {
     let uuid = player.simple().to_string();
-    let reason = lock
-        .reason
-        .as_deref()
-        .map(str::trim)
-        .filter(|reason| !reason.is_empty());
+    let reason = lock.reason();
     BlacklistRepository::new(db.pool())
         .lock_event(&uuid, reason, actor, None)
         .await

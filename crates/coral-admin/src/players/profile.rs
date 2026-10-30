@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
-use database::Database;
+use database::{Database, MinecraftBlockRepository};
 use serde::Serialize;
 use sqlx::FromRow;
 use uuid::Uuid;
 
 use super::lookups::RequestTotals;
-use super::tags::{Blacklist, PlayerEvents};
+use super::tags::{Blacklist, LockView, PlayerEvents};
 use crate::error::{AdminError, Context};
 use crate::names::LabelRequest;
 use crate::query::{HeldName, PlayerInput, PlayerKeys};
@@ -27,6 +27,7 @@ pub struct PlayerCore {
     pub names: Vec<PlayerName>,
     pub owners: Vec<Owner>,
     pub blacklist: Blacklist,
+    pub minecraft_block: Option<LockView>,
     pub snapshots: SnapshotSummary,
     pub session_markers: i64,
     pub requests: RequestTotals,
@@ -98,13 +99,19 @@ pub async fn read_core(state: &AppState, player: Uuid) -> Result<PlayerCore, Adm
     let coverage = state.coverage.current();
     let uuid = player.simple().to_string();
     let input = PlayerInput::Uuid(player);
-    let (keys, snapshots, owners, events, session_markers, tally) = tokio::try_join!(
+    let (keys, snapshots, owners, events, session_markers, tally, block) = tokio::try_join!(
         state.players.keys(&input),
         snapshot_names(&state.db, &uuid),
         owners(&state.db, &uuid),
         PlayerEvents::read(&state.db, player),
         session_markers(&state.db, &uuid),
         state.player_lookups.tally(player, &coverage),
+        async {
+            MinecraftBlockRepository::new(state.db.pool())
+                .get(player)
+                .await
+                .context("read the Minecraft block")
+        },
     )?;
     let labels = state
         .names
@@ -113,6 +120,7 @@ pub async fn read_core(state: &AppState, player: Uuid) -> Result<PlayerCore, Adm
                 .iter()
                 .filter_map(|owner| account_id(&owner.account))
                 .chain(events.mentioned.iter().copied())
+                .chain(block.as_ref().map(|block| block.blocked_by))
                 .collect(),
             minecraft: vec![uuid],
         })
@@ -124,6 +132,7 @@ pub async fn read_core(state: &AppState, player: Uuid) -> Result<PlayerCore, Adm
         names: player_names(&keys, &snapshots.spellings),
         owners,
         blacklist: events.blacklist(),
+        minecraft_block: block.map(LockView::from),
         snapshots: snapshots.summary,
         session_markers,
         requests: tally.totals(),

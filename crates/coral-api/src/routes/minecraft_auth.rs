@@ -3,6 +3,7 @@ use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
 use coral_redis::minecraft_session::{self, MinecraftUser};
+use database::MinecraftBlockRepository;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -69,6 +70,7 @@ pub async fn challenge(
     responses(
         (status = 200, description = "Signed in; send `token` as `Authorization: Bearer <token>` for 24 hours", body = SignInResponse),
         (status = 401, description = "The challenge is unknown, expired, or Mojang has no record of the join", body = crate::error::ErrorResponse),
+        (status = 403, description = "This Minecraft account is blocked from signing in", body = crate::error::ErrorResponse),
         (status = 502, description = "Mojang could not be reached", body = crate::error::ErrorResponse),
     ),
     tag = "Authentication",
@@ -91,13 +93,23 @@ pub async fn sign_in(
         .has_joined(&body.username, &body.server_id)
         .await?
         .ok_or_else(|| ApiError::Unauthorized("Mojang has no record of this join".into()))?;
+    let uuid = Uuid::parse_str(&player.uuid).map_err(|_| {
+        ApiError::Upstream(format!("Mojang returned an invalid UUID: {}", player.uuid))
+    })?;
+    if MinecraftBlockRepository::new(state.db.pool())
+        .get(uuid)
+        .await?
+        .is_some()
+    {
+        return Err(ApiError::Forbidden(
+            "this Minecraft account is blocked".into(),
+        ));
+    }
     Ok(Json(SignInResponse {
         token: minecraft_session::start(
             &state.redis,
             &MinecraftUser {
-                uuid: Uuid::parse_str(&player.uuid).map_err(|_| {
-                    ApiError::Upstream(format!("Mojang returned an invalid UUID: {}", player.uuid))
-                })?,
+                uuid,
                 username: player.username,
             },
         )

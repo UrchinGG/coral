@@ -6,8 +6,8 @@ use chrono::Utc;
 
 use coral_redis::{RateLimitResult, minecraft_session};
 use database::{
-    AccessRank, DeveloperKeyRepository, Member, MemberRepository, PluginRegistryRepository,
-    StarfishRepository,
+    AccessRank, DeveloperKeyRepository, Member, MemberRepository, MinecraftBlockRepository,
+    PluginRegistryRepository, StarfishRepository,
 };
 use reqlog::{Caller, Cause, KeyKind, record_caller, record_cause};
 use uuid::Uuid;
@@ -237,9 +237,18 @@ async fn authorize_with_minecraft(
         ));
     }
 
-    let member = MemberRepository::new(state.db.pool())
-        .get_sole_owner(&user.uuid.simple().to_string())
-        .await?;
+    let (member, block) = tokio::try_join!(
+        async {
+            MemberRepository::new(state.db.pool())
+                .get_sole_owner(&user.uuid.simple().to_string())
+                .await
+        },
+        async {
+            MinecraftBlockRepository::new(state.db.pool())
+                .get(user.uuid)
+                .await
+        },
+    )?;
     record_caller(Caller::minecraft(member.as_ref().map(|m| m.id), user.uuid));
     caller_rate_limit(
         state,
@@ -247,6 +256,10 @@ async fn authorize_with_minecraft(
         SESSION_RATE_LIMIT,
     )
     .await?;
+
+    if block.is_some() {
+        return Err(ApiError::Forbidden("minecraft account blocked".into()));
+    }
 
     if member.as_ref().is_some_and(|m| m.key_locked) {
         return Err(ApiError::Forbidden("account locked".into()));

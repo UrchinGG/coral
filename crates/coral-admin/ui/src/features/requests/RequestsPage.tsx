@@ -73,7 +73,7 @@ export function RequestsPage() {
 }
 
 function listFeatures(filter: ExplorerFilter): CoverageFeature[] {
-  const attributed = filter.route !== null || filter.cause !== null || filter.keyKind !== null || filter.country !== null || filter.requester?.kind === "actor";
+  const attributed = filter.route !== null || filter.cause !== null || filter.keyKind !== null || filter.country !== null || filter.requester?.kind === "actor" || filter.requester?.kind === "player";
   const features: CoverageFeature[] = ["log"];
   if (attributed) features.push("attribution");
   if (filter.player !== null) features.push("subjects", "body_subjects");

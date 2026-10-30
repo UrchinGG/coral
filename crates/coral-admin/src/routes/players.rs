@@ -30,6 +30,8 @@ pub fn router() -> Router<AppState> {
         .route("/{uuid}/tags/{tag_type}", delete(remove_tag))
         .route("/{uuid}/lock", post(lock))
         .route("/{uuid}/unlock", post(unlock))
+        .route("/{uuid}/block", post(block))
+        .route("/{uuid}/unblock", post(unblock))
         .route("/{uuid}/snapshots", get(snapshots))
         .route("/{uuid}/snapshots/at", get(snapshot_at))
 }
@@ -143,5 +145,27 @@ async fn unlock(
 ) -> Result<Json<Done>, AdminError> {
     let player = players::parse_player(&uuid)?;
     players::unlock(&state.db, actor.discord_id, player).await?;
+    Ok(Json(DONE))
+}
+
+async fn block(
+    State(state): State<AppState>,
+    Extension(actor): Extension<AdminActor>,
+    Path(uuid): Path<String>,
+    block: Result<Json<NewLock>, JsonRejection>,
+) -> Result<Json<Done>, AdminError> {
+    let player = players::parse_player(&uuid)?;
+    let Json(block) = block?;
+    players::block(&state.db, actor.discord_id, player, block).await?;
+    Ok(Json(DONE))
+}
+
+async fn unblock(
+    State(state): State<AppState>,
+    Extension(actor): Extension<AdminActor>,
+    Path(uuid): Path<String>,
+) -> Result<Json<Done>, AdminError> {
+    let player = players::parse_player(&uuid)?;
+    players::unblock(&state.db, actor.discord_id, player).await?;
     Ok(Json(DONE))
 }

@@ -5,14 +5,15 @@ use coral_redis::{
     KEY_DISTINCT_UUID_BUDGET, PERSONAL_RATE_LIMIT, RateLimiter, SESSION_RATE_LIMIT,
     SESSION_UUID_BUDGET, tag_limit_for_access,
 };
-use database::{MemberRepository, ReviewRulesRepository, standing};
+use database::{AccountRepository, MemberRepository, ReviewRulesRepository, standing};
 use serde::Serialize;
 use sqlx::FromRow;
+use uuid::Uuid;
 
 use super::AccountTarget;
 use crate::error::{AdminError, Context};
-use crate::serde_ts;
 use crate::state::AppState;
+use crate::{serde_id, serde_ts};
 
 pub const LIMIT_WINDOW_SECS: i64 = 300;
 
@@ -44,6 +45,8 @@ pub enum Limiter {
     Developer,
     Session,
     SessionUuids,
+    Minecraft,
+    MinecraftUuids,
     KeyUuids,
     Tagging,
 }
@@ -51,6 +54,8 @@ pub enum Limiter {
 #[derive(Debug, Serialize)]
 pub struct Budget {
     limiter: Limiter,
+    #[serde(serialize_with = "serde_id::uuid_undashed_opt")]
+    player: Option<Uuid>,
     used: i64,
     limit: Option<i64>,
     window_s: i64,
@@ -61,6 +66,7 @@ pub struct KnownLimiter {
     pub limiter: Limiter,
     pub name: String,
     pub limit: Option<i64>,
+    pub player: Option<Uuid>,
 }
 
 #[derive(FromRow)]
@@ -74,6 +80,7 @@ struct LimiterSource {
     personal_key: Option<String>,
     developer: Option<DeveloperLimit>,
     tag_level: Option<i16>,
+    minecraft: Vec<Uuid>,
 }
 
 pub async fn keys(
@@ -132,6 +139,7 @@ pub async fn limits(
         .zip(used)
         .map(|(known, used)| Budget {
             limiter: known.limiter,
+            player: known.player,
             used,
             limit: known.limit,
             window_s: LIMIT_WINDOW_SECS,
@@ -145,7 +153,7 @@ pub async fn known_limiters(
     target: AccountTarget,
 ) -> Result<Vec<KnownLimiter>, AdminError> {
     let pool = state.db.pool();
-    let (member, developer, rules) = tokio::try_join!(
+    let (member, developer, rules, minecraft) = tokio::try_join!(
         async {
             MemberRepository::new(pool)
                 .get_by_discord_id(target.discord_id)
@@ -159,6 +167,12 @@ pub async fn known_limiters(
                 .await
                 .context("read the review rules")
         },
+        async {
+            AccountRepository::new(pool)
+                .list_uuids(target.discord_id)
+                .await
+                .context("read the account's Minecraft accounts")
+        },
     )?;
     let source = LimiterSource {
         tag_level: member
@@ -166,6 +180,10 @@ pub async fn known_limiters(
             .map(|member| standing::effective_level(member, &rules)),
         personal_key: member.and_then(|member| member.api_key),
         developer,
+        minecraft: minecraft
+            .iter()
+            .filter_map(|uuid| Uuid::try_parse(uuid).ok())
+            .collect(),
     };
     Ok(limiters_for(target.discord_id, source))
 }
@@ -191,6 +209,7 @@ fn limiters_for(discord_id: i64, source: LimiterSource) -> Vec<KnownLimiter> {
             limiter: Limiter::Personal,
             name: key,
             limit: Some(PERSONAL_RATE_LIMIT),
+            player: None,
         });
     }
     if let Some(developer) = source.developer {
@@ -198,6 +217,7 @@ fn limiters_for(discord_id: i64, source: LimiterSource) -> Vec<KnownLimiter> {
             limiter: Limiter::Developer,
             name: developer.key,
             limit: Some(i64::from(developer.rate_limit)),
+            player: None,
         });
     }
     known.extend([
@@ -205,13 +225,16 @@ fn limiters_for(discord_id: i64, source: LimiterSource) -> Vec<KnownLimiter> {
             limiter: Limiter::Session,
             name: format!("sf:{discord_id}"),
             limit: Some(SESSION_RATE_LIMIT),
+            player: None,
         },
         KnownLimiter {
             limiter: Limiter::SessionUuids,
             name: format!("sfuuids:{discord_id}"),
             limit: Some(SESSION_UUID_BUDGET),
+            player: None,
         },
     ]);
+    known.extend(source.minecraft.into_iter().flat_map(minecraft_limiters));
     let Some(tag_level) = source.tag_level else {
         return known;
     };
@@ -221,19 +244,41 @@ fn limiters_for(discord_id: i64, source: LimiterSource) -> Vec<KnownLimiter> {
             limiter: Limiter::KeyUuids,
             name: format!("keyuuids:{discord_id}"),
             limit: Some(KEY_DISTINCT_UUID_BUDGET),
+            player: None,
         },
         KnownLimiter {
             limiter: Limiter::Tagging,
             name: format!("tag:{discord_id}"),
             limit: (tag_limit > 0).then_some(tag_limit),
+            player: None,
         },
     ]);
     known
 }
 
+fn minecraft_limiters(player: Uuid) -> [KnownLimiter; 2] {
+    let uuid = player.simple();
+    [
+        KnownLimiter {
+            limiter: Limiter::Minecraft,
+            name: format!("mc:{uuid}"),
+            limit: Some(SESSION_RATE_LIMIT),
+            player: Some(player),
+        },
+        KnownLimiter {
+            limiter: Limiter::MinecraftUuids,
+            name: format!("mcuuids:{uuid}"),
+            limit: Some(SESSION_UUID_BUDGET),
+            player: Some(player),
+        },
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const PLAYER: Uuid = Uuid::from_u128(0x2c1f_6a0e_7d4b_4f3a_9e1d_5b8c_0a6f_3e21);
 
     #[test]
     fn every_key_and_discord_limiter_of_a_member_is_known() {
@@ -246,6 +291,7 @@ mod tests {
                     rate_limit: 900,
                 }),
                 tag_level: Some(5),
+                minecraft: vec![PLAYER],
             },
         );
         let names: Vec<&str> = known.iter().map(|limiter| limiter.name.as_str()).collect();
@@ -256,12 +302,15 @@ mod tests {
                 "developer-key",
                 "sf:42",
                 "sfuuids:42",
+                "mc:2c1f6a0e7d4b4f3a9e1d5b8c0a6f3e21",
+                "mcuuids:2c1f6a0e7d4b4f3a9e1d5b8c0a6f3e21",
                 "keyuuids:42",
                 "tag:42"
             ]
         );
         assert_eq!(known[1].limit, Some(900));
-        assert_eq!(known[5].limit, None);
+        assert_eq!(known[4].player, Some(PLAYER));
+        assert_eq!(known[7].limit, None);
     }
 
     #[test]

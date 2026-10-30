@@ -13,6 +13,8 @@ const LIMITER_LABEL: Record<Limiter, string> = {
   developer: "developer key",
   session: "Starfish session",
   session_uuids: "Starfish batch players",
+  minecraft: "Minecraft session",
+  minecraft_uuids: "Minecraft batch players",
   key_uuids: "distinct players",
   tagging: "tagging",
 };
@@ -36,7 +38,7 @@ export function PressurePanel({ pressure }: { pressure: LimitPressure }) {
           <EntityLink entity={account.account} tab="activity" />
           <div className="flex flex-col gap-2">
             {account.limits.slice(0, SHOWN_LIMITS).map((limit) => (
-              <LimitMeter key={limit.limiter} limit={limit} minutes={minutes} />
+              <LimitMeter key={`${limit.limiter}:${limit.player}`} limit={limit} minutes={minutes} />
             ))}
           </div>
         </li>
@@ -46,5 +48,6 @@ export function PressurePanel({ pressure }: { pressure: LimitPressure }) {
 }
 
 function LimitMeter({ limit, minutes }: { limit: LimitUsage; minutes: number }) {
-  return <Meter used={limit.used} limit={limit.limit} label={`${LIMITER_LABEL[limit.limiter]} / ${minutes} min`} />;
+  const label = `${LIMITER_LABEL[limit.limiter]} / ${minutes} min`;
+  return <Meter used={limit.used} limit={limit.limit} label={limit.player === null ? label : <>{label} · <EntityLink entity={{ kind: "player", uuid: limit.player }} /></>} />;
 }

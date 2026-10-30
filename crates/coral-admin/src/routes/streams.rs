@@ -244,6 +244,7 @@ mod tests {
             member_discord_id: Some(354_598_337_325_826_048),
             actor_id: None,
             actor_member_id: None,
+            actor_uuid: None,
             ip: Some("203.0.113.9".into()),
             country: Some("NL".into()),
             user_agent: None,

@@ -29,6 +29,8 @@ export const LIMITER_LABEL: Record<Limiter, { label: string; unit: string }> = {
   developer: { label: "Developer key", unit: "per 5 min" },
   session: { label: "Starfish sessions", unit: "per 5 min" },
   session_uuids: { label: "Starfish players", unit: "distinct / 5 min" },
+  minecraft: { label: "Minecraft sessions", unit: "per 5 min" },
+  minecraft_uuids: { label: "Minecraft players", unit: "distinct / 5 min" },
   key_uuids: { label: "Key players", unit: "distinct / 5 min" },
   tagging: { label: "Tagging", unit: "per 5 min" },
 };

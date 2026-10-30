@@ -14,12 +14,12 @@ use super::locate::{self, Located, Lookup, StoredDetail, StoredSubject};
 use super::neighbors::{self, Direction, Neighbors, RequesterScope};
 use super::network::ClientNetwork;
 use super::params::{QueryParam, query_params};
-use super::rows::{account_id, extracted_subjects, listed_subjects, request_row};
+use super::rows::{account_id, extracted_subjects, listed_subjects, player_uuid, request_row};
 use crate::coverage::Coverage;
 use crate::error::AdminError;
 use crate::names::{LabelRequest, NameService};
 use crate::query::LogRow;
-use crate::refs::{Labels, RequestRow, Subject};
+use crate::refs::{EntityRef, Labels, RequestRow, Subject};
 use crate::security::json_error;
 
 const HOST_HEADER: &str = "host";
@@ -242,7 +242,11 @@ async fn related(db: &Database, facts: &Facts) -> Result<Related, AdminError> {
     let requester = attribution.requester();
     Ok(Related {
         caller: CallerDetail {
-            account: account_id(&requester).map(|_| requester),
+            account: matches!(
+                requester,
+                EntityRef::Account { .. } | EntityRef::Player { .. }
+            )
+            .then_some(requester),
             actor: attribution.actor(),
             key,
             starfish_user: starfish_user.flatten(),
@@ -282,9 +286,11 @@ fn labels_for(facts: &Facts, related: &Related) -> LabelRequest {
             .flatten()
             .filter_map(account_id)
             .collect(),
-        minecraft: facts
-            .players()
+        minecraft: accounts
             .into_iter()
+            .flatten()
+            .filter_map(player_uuid)
+            .chain(facts.players())
             .map(|player| player.simple().to_string())
             .collect(),
     }

@@ -11,7 +11,7 @@ use crate::refs::Match;
 pub const REQUEST_KEY: &str = "coalesce(l.request_id, md5('arl:' || l.id)::uuid)";
 const LEGACY_ROW: &str = "(l.request_id IS NULL OR uuid_extract_version(l.request_id) <> 7)";
 const LOG_COLUMNS: &str = "l.ts, l.method, l.route, l.path, l.query, l.status, l.outcome_status, \
-     l.cause, l.error, l.latency_ms, l.key_kind, l.key_prefix, l.member_id, l.actor_id, l.ip, \
+     l.cause, l.error, l.latency_ms, l.key_kind, l.key_prefix, l.member_id, l.actor_id, l.actor_uuid, l.ip, \
      l.country, l.user_agent, l.subjects";
 const SEMANTIC_STATUS: &str = "coalesce(l.outcome_status, l.status)";
 const RESOLVED_SUBJECT: &str = "x.name IS NOT NULL";
@@ -55,9 +55,11 @@ type Sql = QueryBuilder<'static, Postgres>;
 impl Condition {
     pub fn admits(&self, era: Era) -> bool {
         match self {
-            Self::Actor(_) | Self::Cause(_) | Self::KeyKind(_) | Self::Country(_) => {
-                era == Era::Attributed
-            }
+            Self::Actor(_)
+            | Self::ActorPlayer(_)
+            | Self::Cause(_)
+            | Self::KeyKind(_)
+            | Self::Country(_) => era == Era::Attributed,
             _ => true,
         }
     }
@@ -83,6 +85,9 @@ impl Condition {
             }
             Self::Actor(id) => {
                 sql.push("l.actor_id = ").push_bind(*id);
+            }
+            Self::ActorPlayer(uuid) => {
+                sql.push("l.actor_uuid = ").push_bind(*uuid);
             }
             Self::Ip(ip) => {
                 sql.push("l.ip = ").push_bind(ip.clone());

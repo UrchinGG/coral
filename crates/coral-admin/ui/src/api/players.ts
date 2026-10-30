@@ -133,6 +133,8 @@ export function usePlayerMutations(uuid: string) {
     removeTag: useMutation({ mutationFn: (tagType: string) => deleteJson<unknown>(`${base}/tags/${encodeURIComponent(tagType)}`), onSuccess: settle }),
     lock: useMutation({ mutationFn: (reason: string | null) => postJson<unknown>(`${base}/lock`, { reason }), onSuccess: settle }),
     unlock: useMutation({ mutationFn: () => postJson<unknown>(`${base}/unlock`, {}), onSuccess: settle }),
+    block: useMutation({ mutationFn: (reason: string | null) => postJson<unknown>(`${base}/block`, { reason }), onSuccess: settle }),
+    unblock: useMutation({ mutationFn: () => postJson<unknown>(`${base}/unblock`, {}), onSuccess: settle }),
   };
 }
 

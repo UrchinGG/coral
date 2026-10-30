@@ -1,5 +1,6 @@
 use database::Database;
 use reqlog::{ROUTE_SUBJECTS, RequestParts, SubjectSources};
+use uuid::Uuid;
 
 use super::network::{ClientNetwork, ClientNetworks};
 use crate::coverage::Coverage;
@@ -103,14 +104,17 @@ pub fn labels_for<'a>(
     rows: impl IntoIterator<Item = &'a LogRow>,
     subjects: impl Iterator<Item = &'a Subject>,
 ) -> LabelRequest {
-    let refs = rows
+    let refs: Vec<EntityRef> = rows
         .into_iter()
         .flat_map(|row| [Some(row.requester()), row.actor()])
-        .flatten();
+        .flatten()
+        .collect();
     LabelRequest {
-        discord: refs.filter_map(|entity| account_id(&entity)).collect(),
-        minecraft: subjects
-            .filter_map(|subject| subject.player)
+        discord: refs.iter().filter_map(account_id).collect(),
+        minecraft: refs
+            .iter()
+            .filter_map(player_uuid)
+            .chain(subjects.filter_map(|subject| subject.player))
             .map(|player| player.simple().to_string())
             .collect(),
     }
@@ -119,6 +123,13 @@ pub fn labels_for<'a>(
 pub fn account_id(entity: &EntityRef) -> Option<i64> {
     match entity {
         EntityRef::Account { discord_id, .. } => Some(*discord_id),
+        _ => None,
+    }
+}
+
+pub fn player_uuid(entity: &EntityRef) -> Option<Uuid> {
+    match entity {
+        EntityRef::Player { uuid } => Some(*uuid),
         _ => None,
     }
 }
@@ -146,7 +157,6 @@ fn reads_body_subjects(route: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
-    use uuid::Uuid;
 
     use super::*;
 
@@ -170,6 +180,7 @@ mod tests {
             member_discord_id: None,
             actor_id: None,
             actor_member_id: None,
+            actor_uuid: None,
             ip: None,
             country: None,
             user_agent: None,

@@ -1,5 +1,6 @@
 import type { UseQueryResult } from "@tanstack/react-query";
-import { Box, Lock } from "lucide-react";
+import { Ban, Box, Lock } from "lucide-react";
+import type { ReactNode } from "react";
 
 import type { LockView, PlayerCore, PlayerName } from "../../api/types/players";
 import { CopyField } from "../../kit/Copy";
@@ -29,7 +30,7 @@ export function PlayerHeader({ uuid, core }: PlayerHeaderProps) {
             <Identifiers uuid={uuid} />
           </div>
         </div>
-        {data !== undefined && <PlayerActions uuid={uuid} locked={data.blacklist.locked} />}
+        {data !== undefined && <PlayerActions uuid={uuid} locked={data.blacklist.locked} blocked={data.minecraft_block} />}
       </div>
       {data === undefined && core.error === null && <Skeleton className="h-3 w-2/3" />}
       {data === undefined && core.error !== null && <ErrorState error={core.error} onRetry={() => void core.refetch()} retrying={core.isFetching} />}
@@ -46,21 +47,26 @@ function Title({ uuid, core }: { uuid: string; core: PlayerCore | undefined }) {
       {core?.blacklist.active.map((tag) => (
         <TagPill key={tag.id} tag={tag} />
       ))}
-      {core !== undefined && core.blacklist.locked !== null && <LockedBy lock={core.blacklist.locked} />}
+      {core !== undefined && core.blacklist.locked !== null && (
+        <HeldBy hold={core.blacklist.locked} icon={<Lock className="size-3" />} label="locked" title="Tags on this player can only be changed by staff" />
+      )}
+      {core !== undefined && core.minecraft_block !== null && (
+        <HeldBy hold={core.minecraft_block} icon={<Ban className="size-3" />} label="sign-in blocked" title={core.minecraft_block.reason ?? "This Minecraft account cannot sign in to Urchin"} />
+      )}
     </div>
   );
 }
 
-function LockedBy({ lock }: { lock: LockView }) {
+function HeldBy({ hold, icon, label, title }: { hold: LockView; icon: ReactNode; label: string; title: string }) {
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5 text-12 text-muted">
-      <Pill tone="neutral" title="Tags on this player can only be changed by staff">
-        <Lock className="size-3" />
-        locked
+      <Pill tone="neutral" title={title}>
+        {icon}
+        {label}
       </Pill>
-      {lock.by !== null && (
+      {hold.by !== null && (
         <>
-          by <EntityLink entity={lock.by} />
+          by <EntityLink entity={hold.by} />
         </>
       )}
     </span>

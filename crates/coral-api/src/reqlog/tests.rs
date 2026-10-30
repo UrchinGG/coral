@@ -6,7 +6,7 @@ use chrono::{DateTime, SubsecRound};
 use clients::{HypixelClient, MojangClient, RateBudget};
 use coral_redis::RedisPool;
 use coral_redis::minecraft_session::{self, MinecraftUser};
-use database::{Database, permissions};
+use database::{Database, MinecraftBlockRepository, permissions};
 use reqlog::{Caller, Cause, KeyKind, LogEntry, LogReceiver, ROUTE_TEMPLATES};
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -749,6 +749,26 @@ async fn minecraft_sessions_reach_only_tag_routes() {
         .await;
     assert_eq!(sent.status, 401);
     assert_eq!(sent.entry.caller, Caller::anonymous(KeyKind::Unverified));
+}
+
+#[tokio::test]
+async fn blocked_minecraft_accounts_lose_their_sessions() {
+    let Some(mut harness) = harness().await else {
+        return;
+    };
+    let (uuid, bearer) = harness.minecraft_token(None).await;
+    MinecraftBlockRepository::new(harness.state.db.pool())
+        .block(uuid, Some("test"), 1)
+        .await
+        .unwrap();
+    let sent = harness
+        .get(
+            &format!("/v3/player/tags?player={PLAYER}"),
+            &[("authorization", &bearer)],
+        )
+        .await;
+    assert_eq!(sent.status, 403);
+    assert_eq!(sent.entry.caller, Caller::minecraft(None, uuid));
 }
 
 #[tokio::test]

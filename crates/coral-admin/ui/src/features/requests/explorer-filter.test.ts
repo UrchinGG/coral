@@ -78,6 +78,7 @@ describe("requester filters", () => {
       { kind: "member", memberId: 23025, discordId: "354598337325826048" },
       { kind: "member", memberId: 23025, discordId: null },
       { kind: "actor", discordId: "354598337325826048" },
+      { kind: "player", uuid: "2c1f6a0e7d4b4f3a9e1d5b8c0a6f3e21" },
       { kind: "key", prefix: "1a2b3c4d", keyKind: null },
     ] as const) {
       expect(parseRequester(encodeRequester(requester))).toEqual(requester);
@@ -89,6 +90,7 @@ describe("requester filters", () => {
   it("read typed snowflakes, member ids and key prefixes", () => {
     expect(requesterFromText(" 354598337325826048 ")).toEqual({ kind: "actor", discordId: "354598337325826048" });
     expect(requesterFromText("23025")).toEqual({ kind: "member", memberId: 23025, discordId: null });
+    expect(requesterFromText("2C1F6A0E-7D4B-4F3A-9E1D-5B8C0A6F3E21")).toEqual({ kind: "player", uuid: "2c1f6a0e7d4b4f3a9e1d5b8c0a6f3e21" });
     expect(requesterFromText("1a2b3c4d-5e6f")).toEqual({ kind: "key", prefix: "1a2b3c4d", keyKind: null });
     expect(requesterFromText("abc")).toBeNull();
   });
@@ -141,6 +143,13 @@ describe("query bodies", () => {
     expect(groupGaps(byKey, "")).toEqual(["key prefix"]);
     expect(histogramGaps(byKey, "")).toEqual(["key prefix"]);
     expect(groupGaps(EMPTY_FILTER, " ")).toEqual([]);
+  });
+
+  it("filter the list by a Minecraft account, which the rollups do not carry", () => {
+    const byPlayer: ExplorerFilter = { ...EMPTY_FILTER, requester: { kind: "player", uuid: "2c1f6a0e7d4b4f3a9e1d5b8c0a6f3e21" } };
+    expect(requestQueryOf(byPlayer, "", windowBounds(EMPTY_FILTER.range, ANCHOR))).toEqual({ from: "2026-10-14T11:00:00.000Z", actor: "2c1f6a0e7d4b4f3a9e1d5b8c0a6f3e21" });
+    expect(groupGaps(byPlayer, "")).toEqual(["Minecraft account"]);
+    expect(histogramGaps(byPlayer, "")).toEqual(["Minecraft account"]);
   });
 
   it("read the view and the group order from the URL, defaulting to the list by requests", () => {

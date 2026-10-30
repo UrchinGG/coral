@@ -40,6 +40,7 @@ export type PlayerCore = {
   names: PlayerName[];
   owners: PlayerOwner[];
   blacklist: { active: TagView[]; locked: LockView | null };
+  minecraft_block: LockView | null;
   snapshots: { count: number; first: string | null; last: string | null };
   session_markers: number;
   requests: { last_24h: number; last_14d: number; requesters_14d: number };

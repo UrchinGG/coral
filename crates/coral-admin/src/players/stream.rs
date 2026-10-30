@@ -23,7 +23,7 @@ const REQUEST_KEY: &str = "coalesce(l.request_id, md5('arl:' || l.id)::uuid)";
 const LEGACY_ROW: &str = "(l.request_id IS NULL OR uuid_extract_version(l.request_id) <> 7)";
 const PROBED_COLUMNS: &str = "s.ts, s.request_id, s.name, s.form";
 const LOG_COLUMNS: &str = "l.ts, l.method, l.route, l.path, l.query, l.status, l.outcome_status, \
-     l.cause, l.error, l.latency_ms, l.key_kind, l.key_prefix, l.member_id, l.actor_id, l.ip, \
+     l.cause, l.error, l.latency_ms, l.key_kind, l.key_prefix, l.member_id, l.actor_id, l.actor_uuid, l.ip, \
      l.country, l.user_agent, l.subjects";
 
 #[derive(Debug, Clone, Serialize)]
