@@ -7,7 +7,7 @@ import { readStored, writeStored } from "../lib/storage";
 const RECENT_STORAGE_KEY = "coral.recent.v1";
 export const RECENT_LIMIT = 8;
 
-const KEY_KINDS: readonly KeyKind[] = ["none", "personal", "developer", "internal", "session", "invalid", "unverified", "legacy"];
+const KEY_KINDS: readonly KeyKind[] = ["none", "personal", "developer", "internal", "session", "invalid", "unverified", "legacy", "minecraft"];
 
 const listeners = new Set<() => void>();
 let recent: readonly EntityRef[] | null = null;

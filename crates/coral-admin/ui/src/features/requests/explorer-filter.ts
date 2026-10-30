@@ -10,7 +10,7 @@ export const DEFAULT_WINDOW: ExplorerWindow = "1h";
 
 export const STATUS_CLASSES: readonly StatusClass[] = ["2xx", "4xx", "5xx", "error", "rate_limited"];
 export const CAUSES: readonly Cause[] = ["ok", "caller_limit", "upstream_limit", "upstream_error", "auth", "validation", "not_found", "internal", "unmatched"];
-export const KEY_KINDS: readonly KeyKind[] = ["none", "personal", "developer", "internal", "session", "invalid", "unverified", "legacy"];
+export const KEY_KINDS: readonly KeyKind[] = ["none", "personal", "developer", "internal", "session", "invalid", "unverified", "legacy", "minecraft"];
 export const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 export const GROUP_SORTS: readonly GroupSort[] = ["requests", "rate_limited", "errors", "subjects"];
 export const DEFAULT_GROUP_SORT: GroupSort = "requests";

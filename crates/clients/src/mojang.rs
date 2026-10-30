@@ -172,6 +172,14 @@ impl MojangClient {
         Ok((normalize_uuid(&data.id), data.name))
     }
 
+    pub async fn has_joined(
+        &self,
+        username: &str,
+        server_id: &str,
+    ) -> Result<Option<PlayerIdentity>, ClientError> {
+        has_joined(&self.http, username, server_id).await
+    }
+
     pub async fn get_profile(&self, uuid: &str) -> Result<PlayerProfile, ClientError> {
         self.get_profile_cached(uuid, PROFILE_RENDER_PREFIX, PROFILE_RENDER_TTL_SECS)
             .await
@@ -353,6 +361,31 @@ fn now_unix() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+pub async fn has_joined(
+    http: &Client,
+    username: &str,
+    server_id: &str,
+) -> Result<Option<PlayerIdentity>, ClientError> {
+    let response = http
+        .get(format!("{SESSION_API}/session/minecraft/hasJoined"))
+        .query(&[("username", username), ("serverId", server_id)])
+        .send()
+        .await?;
+
+    match response.status() {
+        StatusCode::OK => {
+            let data: MojangResponse = response.json().await?;
+            Ok(Some(PlayerIdentity {
+                uuid: normalize_uuid(&data.id),
+                username: data.name,
+            }))
+        }
+        StatusCode::NO_CONTENT => Ok(None),
+        StatusCode::TOO_MANY_REQUESTS => Err(ClientError::RateLimited),
+        other => Err(ClientError::MojangApi(other.as_u16())),
+    }
 }
 
 fn is_valid_username(s: &str) -> bool {

@@ -5,6 +5,7 @@ use axum::http::{Method, Request as HttpRequest};
 use chrono::{DateTime, SubsecRound};
 use clients::{HypixelClient, MojangClient, RateBudget};
 use coral_redis::RedisPool;
+use coral_redis::minecraft_session::{self, MinecraftUser};
 use database::{Database, permissions};
 use reqlog::{Caller, Cause, KeyKind, LogEntry, LogReceiver, ROUTE_TEMPLATES};
 use tower::ServiceExt;
@@ -681,4 +682,88 @@ async fn upstream_limits_reach_the_log_with_their_caller() {
         sent.entry.error.as_deref(),
         Some(r#"{"error":"Rate limited"}"#)
     );
+}
+
+impl Harness {
+    async fn minecraft_token(&self, linked_member: Option<i64>) -> (Uuid, String) {
+        let uuid = Uuid::new_v4();
+        if let Some(member_id) = linked_member {
+            sqlx::query("UPDATE members SET uuid = $1 WHERE id = $2")
+                .bind(uuid.simple().to_string())
+                .bind(member_id)
+                .execute(self.state.db.pool())
+                .await
+                .unwrap();
+        }
+        let user = MinecraftUser {
+            uuid,
+            username: "Tester".into(),
+        };
+        let token = minecraft_session::start(&self.state.redis, &user)
+            .await
+            .unwrap();
+        (uuid, format!("Bearer {token}"))
+    }
+}
+
+#[tokio::test]
+async fn minecraft_sessions_are_attributed_to_their_account() {
+    let Some(mut harness) = harness().await else {
+        return;
+    };
+    let tags = format!("/v3/player/tags?player={PLAYER}");
+
+    let (uuid, bearer) = harness.minecraft_token(None).await;
+    let sent = harness.get(&tags, &[("authorization", &bearer)]).await;
+    assert_eq!(sent.status, 200);
+    assert_eq!(sent.entry.caller, Caller::minecraft(None, uuid));
+    assert_eq!(sent.entry.detail.headers["authorization"], "[redacted]");
+
+    let (member_id, _) = harness.member(false).await;
+    let (uuid, bearer) = harness.minecraft_token(Some(member_id)).await;
+    let sent = harness.get(&tags, &[("authorization", &bearer)]).await;
+    assert_eq!(sent.status, 200);
+    assert_eq!(sent.entry.caller, Caller::minecraft(Some(member_id), uuid));
+}
+
+#[tokio::test]
+async fn minecraft_sessions_reach_only_tag_routes() {
+    let Some(mut harness) = harness().await else {
+        return;
+    };
+    let (_, bearer) = harness.minecraft_token(None).await;
+
+    let sent = harness
+        .get(
+            &format!("/v3/player/winstreaks?player={PLAYER}"),
+            &[("authorization", &bearer)],
+        )
+        .await;
+    assert_eq!(sent.status, 401);
+
+    let sent = harness
+        .get(
+            &format!("/v3/player/tags?player={PLAYER}"),
+            &[("authorization", "Bearer not-a-session")],
+        )
+        .await;
+    assert_eq!(sent.status, 401);
+    assert_eq!(sent.entry.caller, Caller::anonymous(KeyKind::Unverified));
+}
+
+#[tokio::test]
+async fn unlinked_minecraft_accounts_cannot_tag() {
+    let Some(mut harness) = harness().await else {
+        return;
+    };
+    let (_, bearer) = harness.minecraft_token(None).await;
+    let request = HttpRequest::post(format!("/v3/tags?player={PLAYER}"))
+        .header("authorization", &bearer)
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            r#"{"type":"caution","reason":"test"}"#,
+        ))
+        .unwrap();
+    let sent = harness.send(request).await;
+    assert_eq!(sent.status, 403);
 }

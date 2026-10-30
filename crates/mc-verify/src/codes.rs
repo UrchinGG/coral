@@ -2,7 +2,6 @@ use anyhow::{Result, bail};
 use rand::Rng;
 use reqwest::Client;
 use reqwest::header;
-use uuid::Uuid;
 
 const USER_AGENT: &str = "mc-verify";
 const CODE_MIN: u16 = 1000;
@@ -25,7 +24,7 @@ impl CodeStore {
         }
     }
 
-    pub async fn insert(&self, uuid: Uuid, username: String) -> Result<String> {
+    pub async fn insert(&self, uuid: &str, username: &str) -> Result<String> {
         let url = format!("{}/v3/verify/codes", self.api_url);
         for _ in 0..MAX_ATTEMPTS {
             let code = generate_code();
@@ -36,7 +35,7 @@ impl CodeStore {
                 .header(header::USER_AGENT, USER_AGENT)
                 .json(&serde_json::json!({
                     "code": code,
-                    "uuid": uuid.simple().to_string(),
+                    "uuid": uuid,
                     "username": username,
                 }))
                 .send()

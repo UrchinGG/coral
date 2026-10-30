@@ -1,4 +1,3 @@
-mod auth;
 mod codes;
 mod connection;
 mod protocol;

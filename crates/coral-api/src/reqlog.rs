@@ -32,6 +32,7 @@ const CLIENT_IP_HEADER: &str = "cf-connecting-ip";
 const FORWARDED_FOR_HEADER: &str = "x-forwarded-for";
 const COUNTRY_HEADER: &str = "cf-ipcountry";
 const USER_AGENT_HEADER: &str = "user-agent";
+const REDACTED: &str = "[redacted]";
 const KEY_QUERY_PREFIX: &str = "key=";
 const FIRST_ERROR_STATUS: u16 = StatusCode::BAD_REQUEST.as_u16();
 
@@ -266,7 +267,10 @@ async fn capture_error_body(response: Response) -> (Response, Option<String>) {
 fn header_json(headers: &HeaderMap) -> Value {
     let mut out = Map::new();
     for (name, value) in headers {
-        let value = String::from_utf8_lossy(value.as_bytes());
+        let value = match name.as_str() {
+            AUTHORIZATION_HEADER => REDACTED.into(),
+            _ => String::from_utf8_lossy(value.as_bytes()),
+        };
         match out.get_mut(name.as_str()) {
             Some(Value::String(existing)) => {
                 existing.push_str(", ");
@@ -286,7 +290,7 @@ fn header_text(headers: &HeaderMap, name: &str) -> Option<String> {
         .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
 }
 
-fn client_ip(headers: &HeaderMap) -> Option<IpAddr> {
+pub(crate) fn client_ip(headers: &HeaderMap) -> Option<IpAddr> {
     headers
         .get(CLIENT_IP_HEADER)
         .or_else(|| headers.get(FORWARDED_FOR_HEADER))

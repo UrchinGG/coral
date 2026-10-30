@@ -18,6 +18,8 @@ pub use extension::{
     extensions,
 };
 pub use hypixel::HypixelClient;
-pub use mojang::{MojangClient, PlayerIdentity, PlayerProfile, is_uuid, normalize_uuid};
+pub use mojang::{
+    MojangClient, PlayerIdentity, PlayerProfile, has_joined, is_uuid, normalize_uuid,
+};
 pub use ratelimit::RateBudget;
 pub use skin::{LocalSkinProvider, SkinImage, SkinProvider};

@@ -10,6 +10,7 @@ pub mod batch;
 pub mod cubelify;
 pub mod guild;
 pub mod hypixel;
+pub mod minecraft_auth;
 pub mod player;
 pub mod resolve;
 pub mod session;
@@ -51,6 +52,7 @@ pub fn router(state: AppState) -> Router<AppState> {
             ));
 
     Router::new()
+        .merge(minecraft_auth::router())
         .merge(public)
         .merge(internal)
         .merge(moderator)
