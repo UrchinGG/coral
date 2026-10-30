@@ -1,0 +1,112 @@
+---
+import DocsLayout from "@/layouts/DocsLayout.astro";
+
+const fields = [
+  [
+    "name",
+    "The identifier: lowercase letters, numbers and dashes, 3 to 64 characters. It can't change after publishing.",
+  ],
+  [
+    "displayName",
+    "The name shown in Starfish and on the website, up to 64 characters.",
+  ],
+  [
+    "prefix",
+    "Shown before the plugin's chat messages and as its icon. At most 3 characters, not counting color codes.",
+  ],
+  [
+    "version",
+    "major.minor.patch. Each published version must be higher than the last.",
+  ],
+  [
+    "description",
+    "One plain sentence, up to 100 characters. It's the only text shown for the plugin.",
+  ],
+  [
+    "dependencies",
+    "Other registry plugins this one needs. Mark the ones it can run without as optional.",
+  ],
+];
+
+const checks = [
+  "Your GitHub account is linked.",
+  "The version is higher than the last published one.",
+  "The plugin is under the 10 MB limit.",
+  "The plugin file is valid and the description is filled in.",
+];
+---
+
+<DocsLayout
+  title="Publishing Starfish Plugins"
+  heading="Publishing"
+  summary="Put a plugin on the registry so anyone can install it from Starfish."
+>
+  <section>
+    <h2>Start a Plugin</h2>
+    <p>
+      In Starfish, open Plugins, then Published, then New Plugin. Enter a
+      display name, an identifier and a description. Starfish creates
+      <code>plugins/&lt;identifier&gt;/init.lua</code> from the template.
+    </p>
+  </section>
+
+  <section>
+    <h2>The Plugin File</h2>
+    <dl>
+      {fields.map(([field, description]) => (
+        <div>
+          <dt>
+            <code>{field}</code>
+          </dt>
+          <dd>{description}</dd>
+        </div>
+      ))}
+    </dl>
+  </section>
+
+  <section>
+    <h2>Publish a Version</h2>
+    <ol>
+      <li>
+        <strong>Details.</strong> Pick Patch, Minor or Major, list what's new as
+        short plain lines, and check the description.
+      </li>
+      <li>
+        <strong>Review.</strong> Starfish checks everything before uploading:
+        <ul>
+          {checks.map((check) => (
+            <li>{check}</li>
+          ))}
+        </ul>
+        It also shows the public repository it publishes to,
+        <code>github.com/&lt;you&gt;/&lt;identifier&gt;</code>, and the files it
+        uploads.
+      </li>
+      <li>
+        <strong>Publish.</strong> Starfish uploads the files, creates the
+        version on GitHub and lists it on the registry.
+      </li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Manage Versions</h2>
+    <p>
+      Hide a version to stop new installs without deleting it. A version can be
+      deleted only while no players have it installed. Deleting the plugin
+      removes it from the registry; players who have it keep their copy.
+    </p>
+  </section>
+</DocsLayout>
+
+<style>
+  dl {
+    display: grid;
+    gap: 0.875rem;
+  }
+
+  dd {
+    margin: 0.25rem 0 0;
+    color: var(--color-text-secondary);
+  }
+</style>

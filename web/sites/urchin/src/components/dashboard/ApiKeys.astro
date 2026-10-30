@@ -1,0 +1,278 @@
+---
+import CopyButton from "@/components/dashboard/CopyButton.astro";
+import Panel from "@/components/dashboard/Panel.astro";
+---
+
+<Panel id="keys" title="API keys" hidden>
+  <div class="keys"></div>
+
+  <template>
+    <article>
+      <div class="title">
+        <h3></h3>
+        <span class="permissions"></span>
+      </div>
+
+      <div class="field">
+        <code class="masked">{"•".repeat(24)}</code>
+        <code class="shown"></code>
+        <button
+          class="icon"
+          type="button"
+          data-action="reveal"
+          aria-label="Show key"
+        >
+          <svg
+            class="eye"
+            viewBox="0 0 16 16"
+            width="16"
+            height="16"
+            aria-hidden="true"
+          >
+            <path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"></path>
+            <path d="M8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"></path>
+          </svg>
+          <svg
+            class="eye-off"
+            viewBox="0 0 16 16"
+            width="16"
+            height="16"
+            aria-hidden="true"
+          >
+            <path d="M6.5 3.7A6.7 6.7 0 0 1 8 3.5c4 0 6.5 4.5 6.5 4.5a12 12 0 0 1-1.8 2.3M4.3 4.9A11.6 11.6 0 0 0 1.5 8S4 12.5 8 12.5a6.4 6.4 0 0 0 3.4-1M2 2l12 12"></path>
+          </svg>
+        </button>
+        <CopyButton />
+      </div>
+
+      <dl>
+        <div>
+          <dt>Last 5 minutes</dt>
+          <dd>
+            <span class="used"></span> <span class="limit"></span>
+          </dd>
+          <meter></meter>
+        </div>
+        <div>
+          <dt>All time</dt>
+          <dd class="total"></dd>
+        </div>
+        <div>
+          <dt>Created</dt>
+          <dd class="created"></dd>
+        </div>
+      </dl>
+
+      <button
+        class="danger regenerate"
+        type="button"
+        data-action="regenerate"
+        data-confirm="Old key stops working. Sure?"
+      >
+        Regenerate
+      </button>
+      <p class="locked">This key is locked.</p>
+    </article>
+  </template>
+</Panel>
+
+<script>
+  import { bindActions, copy } from "@/dashboard/actions";
+  import { load, me } from "@/dashboard/api";
+  import { count, monthYear } from "@/dashboard/format";
+  import type { ApiKey, Keys } from "@/dashboard/types";
+
+  type Kind = keyof Keys;
+
+  const panel = document.getElementById("keys")!;
+  const list = panel.querySelector(".keys")!;
+  const template = panel.querySelector("template")!;
+  const names: Record<Kind, string> = {
+    personal: "Personal key",
+    developer: "Developer key",
+  };
+
+  function render(kind: Kind, key: ApiKey) {
+    const article = template.content.firstElementChild!.cloneNode(
+      true,
+    ) as HTMLElement;
+    const text = (selector: string, value: string) =>
+      (article.querySelector(selector)!.textContent = value);
+    const meter = article.querySelector("meter")!;
+
+    article.dataset.kind = kind;
+    article.toggleAttribute("data-locked", key.locked);
+    text("h3", names[kind]);
+    text(".permissions", key.permissions?.join(", ") ?? "");
+    text(".shown", key.key);
+    text(".used", count(key.used));
+    text(".limit", `/ ${count(key.limit)}`);
+    text(".total", count(key.total));
+    text(".created", monthYear(key.created_at));
+    article.querySelector<HTMLElement>(".copy")!.dataset.copy = key.key;
+    meter.max = key.limit;
+    meter.value = key.used;
+    return article;
+  }
+
+  function reveal(article: HTMLElement, shown: boolean) {
+    article.toggleAttribute("data-shown", shown);
+    article
+      .querySelector("[data-action=reveal]")!
+      .setAttribute("aria-label", shown ? "Hide key" : "Show key");
+  }
+
+  bindActions(panel, {
+    reveal: (button) => {
+      const article = button.closest("article")!;
+      reveal(article, !article.hasAttribute("data-shown"));
+    },
+    copy,
+    regenerate: async (button) => {
+      const article = button.closest("article")!;
+      const kind = article.dataset.kind as Kind;
+      const key = await load<ApiKey>(`/me/keys/${kind}/regenerate`, "POST");
+      if (!key) return;
+      const fresh = render(kind, key);
+      reveal(fresh, true);
+      article.replaceWith(fresh);
+    },
+  });
+
+  if (await me) {
+    panel.hidden = false;
+    const keys = await load<Keys>("/me/keys");
+    for (const kind of ["personal", "developer"] as const) {
+      const key = keys?.[kind];
+      if (key) list.append(render(kind, key));
+    }
+  }
+</script>
+
+<style>
+  article {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.875rem;
+    padding: 1rem;
+
+    & + article {
+      border-top: 1px solid var(--color-divider);
+    }
+  }
+
+  .title {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: baseline;
+
+    & h3 {
+      font-size: var(--text-sm);
+      font-weight: 500;
+    }
+
+    & .permissions {
+      color: var(--color-text-muted);
+      font-size: var(--text-xs);
+    }
+  }
+
+  .field {
+    display: flex;
+    align-items: center;
+    padding: 0.125rem 0.25rem 0.125rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+
+    & code {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      padding: 0;
+      background: none;
+      color: var(--color-text-secondary);
+      font-size: var(--text-xs);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .shown,
+  .eye-off,
+  [data-shown] :is(.masked, .eye) {
+    display: none;
+  }
+
+  [data-shown] :is(.shown, .eye-off) {
+    display: block;
+  }
+
+  dl {
+    display: grid;
+    grid-template-columns: 1.5fr 1fr 1fr;
+    gap: 1rem;
+
+    & div {
+      display: grid;
+      gap: 0.125rem;
+      align-content: start;
+    }
+
+    & dt {
+      color: var(--color-text-muted);
+      font-size: var(--text-2xs);
+    }
+
+    & dd {
+      font-size: var(--text-sm);
+      font-variant-numeric: tabular-nums;
+    }
+  }
+
+  meter {
+    width: 100%;
+    height: 0.25rem;
+    margin-top: 0.25rem;
+    border: 0;
+    border-radius: 999px;
+    background: var(--color-surface-raised-hover);
+    appearance: none;
+
+    &::-webkit-meter-bar {
+      height: 0.25rem;
+      border: 0;
+      border-radius: 999px;
+      background: var(--color-surface-raised-hover);
+    }
+
+    &::-webkit-meter-optimum-value {
+      border-radius: 999px;
+      background: var(--color-text-secondary);
+    }
+
+    &::-moz-meter-bar {
+      border-radius: 999px;
+      background: var(--color-text-secondary);
+    }
+  }
+
+  .limit {
+    color: var(--color-text-muted);
+  }
+
+  .regenerate {
+    justify-self: start;
+  }
+
+  .locked {
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+  }
+
+  [data-locked] .regenerate,
+  article:not([data-locked]) .locked {
+    display: none;
+  }
+</style>

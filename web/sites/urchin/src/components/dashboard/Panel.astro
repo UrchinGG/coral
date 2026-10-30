@@ -1,0 +1,50 @@
+---
+import type { HTMLAttributes } from "astro/types";
+
+interface Props extends HTMLAttributes<"section"> {
+  id: string;
+  title: string;
+  description?: string;
+}
+
+const { title, description, ...attributes } = Astro.props;
+---
+
+<section class="panel" {...attributes}>
+  <header>
+    <div>
+      <h2>{title}</h2>
+      {description && <p>{description}</p>}
+    </div>
+    <slot name="action" />
+  </header>
+  <slot />
+</section>
+
+<style>
+  .panel {
+    overflow: hidden;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+  }
+
+  header {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem;
+    border-bottom: 1px solid var(--color-divider);
+
+    & h2 {
+      font-size: var(--text-sm);
+      font-weight: 600;
+    }
+
+    & p {
+      color: var(--color-text-muted);
+      font-size: var(--text-xs);
+    }
+  }
+</style>

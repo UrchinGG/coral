@@ -1,0 +1,273 @@
+---
+import { CORAL_API_URL } from "astro:env/server";
+import Container from "@shared/components/Container.astro";
+import Legacy from "@shared/components/Legacy.astro";
+import ChatPreview from "@/components/ChatPreview.astro";
+import PluginIcon from "@/components/PluginIcon.astro";
+import ProcessesWindow from "@/components/ProcessesWindow.astro";
+import TabPreview from "@/components/TabPreview.astro";
+import { featuredPlugins } from "@/data/plugins";
+import { chatLog, tabList } from "@/data/showcase";
+import Layout from "@/layouts/Layout.astro";
+
+const tagline =
+  "An injectable game overlay and script loader for Minecraft 1.8.9.";
+
+const platforms = [
+  ["windows", "Windows"],
+  ["macos", "macOS"],
+  ["linux", "Linux"],
+];
+---
+
+<Layout description={tagline}>
+  <Container class="hero">
+    <h1>
+      <img src="/brand/starfish.svg" alt="" width="56" height="56" />
+      <Legacy text="§6S§eta§fr§bfi§3sh" />
+    </h1>
+    <p>{tagline}</p>
+    <a class="button primary" href="#download">
+      Download
+    </a>
+  </Container>
+
+  <Container width="wide" class="feature">
+    <div class="copy">
+      <h2>Cross-Platform</h2>
+      <p>
+        Attaches to any Minecraft 1.8.9 process* on Windows, Linux, and macOS,
+        with full feature parity.
+      </p>
+      <small>*Lunar Client and Badlion's macOS apps block all injection.</small>
+    </div>
+    <ProcessesWindow />
+  </Container>
+
+  <Container width="wide" class="feature flip">
+    <div class="copy">
+      <h2>Lua Plugins</h2>
+      <p>
+        Install others' plugins straight from the Starfish app, or write your
+        own with the full Lua API.
+      </p>
+    </div>
+    <ul class="plugins panel" role="list">
+      {featuredPlugins.map((plugin) => (
+        <li>
+          <PluginIcon prefix={plugin.prefix} name={plugin.name} />
+          <span class="body">
+            <span class="name">{plugin.name}</span>
+            <span class="description">{plugin.description}</span>
+          </span>
+        </li>
+      ))}
+    </ul>
+  </Container>
+
+  <Container width="wide" class="feature">
+    <div class="copy">
+      <h2>Native Integration</h2>
+      <p>
+        Read and write packets, render natively inside the game window, and
+        intercept keyboard and mouse input.
+      </p>
+    </div>
+    <div class="game">
+      <TabPreview {...tabList} label="Stats Overlay in a BedWars tab list" />
+      <ChatPreview
+        lines={chatLog}
+        label="An Urchin blacklist alert and Cheater Detector flags"
+      />
+    </div>
+  </Container>
+
+  <Container class="download">
+    <h2 id="download">Download</h2>
+    <p>Downloads need a Starfish license on your Discord account.</p>
+    <div class="platforms">
+      {platforms.map(([id, label]) => (
+        <a
+          class="button"
+          data-platform={id}
+          href={`${CORAL_API_URL}/api/v1/starfish/download/latest?platform=${id}`}
+        >
+          Download for {label}
+        </a>
+      ))}
+    </div>
+  </Container>
+</Layout>
+
+<script>
+  const platform = /Mac/.test(navigator.userAgent)
+    ? "macos"
+    : /Linux/.test(navigator.userAgent)
+      ? "linux"
+      : "windows";
+  const own = document.querySelector<HTMLElement>(
+    `[data-platform="${platform}"]`,
+  )!;
+  own.classList.add("primary");
+  own.parentElement!.prepend(own);
+</script>
+
+<style>
+  .hero {
+    display: grid;
+    justify-items: center;
+    gap: 1.25rem;
+    padding-block: 6rem 4rem;
+    text-align: center;
+
+    @media (width < 48rem) {
+      padding-block: 4rem 2rem;
+    }
+
+    & h1 {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      font-size: 36px;
+      line-height: 1;
+
+      @media (width < 30rem) {
+        font-size: 24px;
+
+        & img {
+          width: 40px;
+          height: 40px;
+        }
+      }
+    }
+
+    & p {
+      max-width: 24rem;
+      color: var(--color-text-secondary);
+      font-size: var(--text-lg);
+      text-wrap: balance;
+    }
+
+    & .button {
+      margin-top: 0.75rem;
+    }
+  }
+
+  .feature {
+    display: grid;
+    grid-template-columns: minmax(0, 22rem) minmax(0, 1fr);
+    align-items: center;
+    justify-items: center;
+    gap: 2.5rem 4rem;
+    padding-block: 5rem;
+
+    &.flip {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 22rem);
+
+      & .copy {
+        order: 1;
+      }
+    }
+
+    @media (width < 64rem) {
+      &,
+      &.flip {
+        grid-template-columns: minmax(0, 1fr);
+        padding-block: 3rem;
+      }
+
+      & .copy,
+      &.flip .copy {
+        order: -1;
+      }
+    }
+  }
+
+  .copy {
+    display: grid;
+    gap: 0.75rem;
+    justify-self: stretch;
+
+    & h2 {
+      font-size: var(--text-2xl);
+      font-weight: 700;
+    }
+
+    & p {
+      color: var(--color-text-secondary);
+      line-height: 1.6;
+    }
+
+    & small {
+      color: var(--color-text-muted);
+      font-size: var(--text-xs);
+    }
+  }
+
+  .plugins {
+    width: min(100%, 30rem);
+
+    & li {
+      display: flex;
+      align-items: center;
+      gap: 0.875rem;
+      padding: 0.875rem 1.25rem;
+
+      & + li {
+        border-top: 1px solid var(--color-divider);
+      }
+    }
+  }
+
+  .body {
+    display: grid;
+    gap: 0.125rem;
+  }
+
+  .name {
+    color: var(--color-text-strong);
+    font-size: var(--text-sm);
+    font-weight: 500;
+  }
+
+  .description {
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+  }
+
+  .game {
+    display: grid;
+    justify-items: start;
+    gap: 2rem;
+
+    @media (width < 44rem) {
+      zoom: 0.5;
+    }
+  }
+
+  .download {
+    display: grid;
+    justify-items: center;
+    gap: 1rem;
+    padding-block: 5rem;
+    border-top: 1px solid var(--color-divider);
+    text-align: center;
+
+    & h2 {
+      font-size: var(--text-2xl);
+      font-weight: 700;
+    }
+
+    & p {
+      color: var(--color-text-secondary);
+      font-size: var(--text-sm);
+    }
+  }
+
+  .platforms {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+</style>

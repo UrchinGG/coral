@@ -1,0 +1,199 @@
+---
+import Icon from "./Icon.astro";
+
+type Shortcut = readonly [action: string, input: string | readonly string[]];
+
+const keyboard = [
+  {
+    title: "Playback",
+    shortcuts: [
+      ["Play or pause", ["P", "Space"]],
+      ["Back or forward 1 s", ["←", "→"]],
+      ["Back or forward 10 s", ["Shift", "←", "→"]],
+      ["Slower or faster", ["−", "+"]],
+    ],
+  },
+  {
+    title: "Camera",
+    shortcuts: [
+      ["Next camera", ["C"]],
+      ["Previous or next player", [",", "."]],
+      ["Move the map, or fly", ["W", "A", "S", "D"]],
+      ["Fly up or down", ["Space", "Shift"]],
+    ],
+  },
+  {
+    title: "Mouse",
+    shortcuts: [
+      ["Follow a player", "Click them"],
+      ["Auto camera on or off", "Click the followed name"],
+      ["Turn the camera", "Drag"],
+      ["Move the map", "Right-drag"],
+      ["Zoom, or flying speed", "Scroll"],
+      ["Glide to a spot", "Double-click"],
+    ],
+  },
+  {
+    title: "Other",
+    shortcuts: [
+      ["Chat history", ["T"]],
+      ["These controls", ["?"]],
+    ],
+  },
+] satisfies { title: string; shortcuts: Shortcut[] }[];
+
+const touch = [
+  {
+    title: "Playback",
+    shortcuts: [
+      ["Play or pause", "Double-tap the middle"],
+      ["Back or forward 10 s", "Double-tap a side"],
+      ["Keep stepping 1 s", "Hold ‹ 1s or 1s ›"],
+    ],
+  },
+  {
+    title: "Camera",
+    shortcuts: [
+      ["Follow a player", "Tap them"],
+      ["Auto camera on or off", "Tap the followed name"],
+      ["Turn the camera", "Drag with one finger"],
+      ["Move the map", "Drag with two fingers"],
+      ["Zoom or turn", "Pinch or twist"],
+    ],
+  },
+] satisfies { title: string; shortcuts: Shortcut[] }[];
+
+const guides = [
+  { input: "keyboard", sections: keyboard },
+  { input: "touch", sections: touch },
+];
+---
+
+<dialog id="help" class="dialog card" aria-labelledby="help-title">
+  <form method="dialog">
+    <header class="head">
+      <h2 id="help-title">Controls</h2>
+      <button class="icon-button" type="submit" aria-label="Close">
+        <Icon name="close" />
+      </button>
+    </header>
+    {guides.map(({ input, sections }) => (
+      <div class:list={["sections", input]}>
+        {sections.map(({ title, shortcuts }) => (
+          <section>
+            <h3 class="label">{title}</h3>
+            <dl>
+              {shortcuts.map(([action, how]) => (
+                <div class="row">
+                  <dt>{action}</dt>
+                  <dd>
+                    {typeof how === "string"
+                      ? how
+                      : how.map((key) => <kbd>{key}</kbd>)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        ))}
+      </div>
+    ))}
+  </form>
+</dialog>
+
+<style>
+  .dialog {
+    width: min(44rem, 100vw - 1.5rem);
+    max-height: calc(100dvh - 2rem);
+    margin: auto;
+    padding: 0;
+    border-radius: var(--radius-lg);
+    color: var(--color-text);
+    font-size: var(--text-sm);
+    transition:
+      opacity var(--transition),
+      scale var(--transition),
+      display var(--transition) allow-discrete,
+      overlay var(--transition) allow-discrete;
+
+    &:not([open]) {
+      opacity: 0;
+      scale: 0.98;
+    }
+
+    @starting-style {
+      opacity: 0;
+      scale: 0.98;
+    }
+
+    &::backdrop {
+      background: var(--color-scrim);
+    }
+  }
+
+  .head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 0.75rem 0.75rem 1.25rem;
+    border-bottom: 1px solid var(--color-divider);
+
+    & h2 {
+      font-size: var(--text-base);
+    }
+  }
+
+  .sections {
+    columns: 2 17rem;
+    column-gap: 2.5rem;
+    padding: 1.25rem 1.25rem 0;
+  }
+
+  section {
+    padding-bottom: 1.25rem;
+    break-inside: avoid;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-block: 0.5rem;
+
+    & + & {
+      border-top: 1px solid var(--color-divider);
+    }
+  }
+
+  dt {
+    color: var(--color-text-secondary);
+  }
+
+  dd {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.25rem;
+    color: var(--color-text-muted);
+    text-align: right;
+
+    & kbd {
+      min-width: 1.5rem;
+      font-size: var(--text-xs);
+      line-height: 1.5rem;
+    }
+  }
+
+  @media not ((hover: none) and (pointer: coarse)) {
+    .touch {
+      display: none;
+    }
+  }
+
+  @media (hover: none) and (pointer: coarse) {
+    .keyboard {
+      display: none;
+    }
+  }
+</style>

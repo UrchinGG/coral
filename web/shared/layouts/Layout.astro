@@ -1,0 +1,30 @@
+---
+import type { ComponentProps } from "astro/types";
+import Footer from "@shared/components/Footer.astro";
+import Head from "@shared/components/Head.astro";
+import Header from "@shared/components/Header.astro";
+import "@shared/styles/global.css";
+
+interface Props extends ComponentProps<typeof Header> {
+  siteName: string;
+  logo: string;
+  title?: string;
+  description: string;
+}
+
+const { site, ...head } = Astro.props;
+---
+
+<html lang="en">
+  <Head {...head} />
+  <body>
+    <a class="skip" href="#content">
+      Skip to content
+    </a>
+    <Header site={site} />
+    <main id="content">
+      <slot />
+    </main>
+    <Footer siteName={head.siteName} />
+  </body>
+</html>

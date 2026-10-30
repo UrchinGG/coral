@@ -1,0 +1,30 @@
+{
+  "name": "urchin-web",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22.23.4"
+  },
+  "scripts": {
+    "dev": "astro dev --root sites/urchin",
+    "dev:starfish": "astro dev --root sites/starfish",
+    "build": "npm run build:urchin && npm run build:starfish",
+    "build:urchin": "astro check --root sites/urchin && astro build --root sites/urchin",
+    "build:starfish": "astro check --root sites/starfish && astro build --root sites/starfish",
+    "build:viewer": "wasm-pack build ../../urchin-replay/crates/replay-viewer --target web --release --no-pack --out-dir ../../../coral/web/sites/urchin/src/viewer/pkg",
+    "preview": "astro preview --root sites/urchin",
+    "preview:starfish": "astro preview --root sites/starfish",
+    "check": "astro check --root sites/urchin && astro check --root sites/starfish && prettier --check .",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "astro": "^7.4.2"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.12",
+    "@types/node": "^24.19.2",
+    "prettier": "^3.9.10",
+    "prettier-plugin-astro": "^1.1.2",
+    "typescript": "^6.0.3"
+  }
+}

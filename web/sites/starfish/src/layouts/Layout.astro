@@ -1,0 +1,18 @@
+---
+import BaseLayout from "@shared/layouts/Layout.astro";
+import "@/styles/controls.css";
+
+interface Props {
+  title?: string;
+  description: string;
+}
+---
+
+<BaseLayout
+  siteName="Starfish"
+  logo="/brand/starfish.svg"
+  site="starfish"
+  {...Astro.props}
+>
+  <slot />
+</BaseLayout>

@@ -1,0 +1,349 @@
+---
+import LentRow from "@/components/dashboard/LentRow.astro";
+import MicrosoftSignIn from "@/components/dashboard/MicrosoftSignIn.astro";
+import Panel from "@/components/dashboard/Panel.astro";
+
+const pauses = [
+  { label: "Pause for an hour", for: "hour" },
+  { label: "Pause until tomorrow", for: "tomorrow" },
+  { label: "Pause until I resume", for: "indefinitely" },
+];
+---
+
+<Panel id="lent" title="Lent Accounts" hidden>
+  <button slot="action" class="primary" type="button" data-action="open">
+    Add account
+  </button>
+
+  <div class="list">
+    <p class="empty">You haven't added any accounts yet.</p>
+  </div>
+
+  <LentRow />
+
+  <dialog>
+    <section data-step-for="code">
+      <h3>Add an account</h3>
+      <MicrosoftSignIn>
+        Sign in with the Minecraft account you want to add.
+      </MicrosoftSignIn>
+      <p class="waiting">
+        <span class="spinner" aria-hidden="true"></span>
+        Waiting for sign-in
+      </p>
+      <footer>
+        <button type="button" data-action="close">
+          Cancel
+        </button>
+      </footer>
+    </section>
+
+    <section data-step-for="expired">
+      <h3>The code expired</h3>
+      <p>Get a new one and try again.</p>
+      <footer>
+        <button type="button" data-action="close">
+          Cancel
+        </button>
+        <button class="primary" type="button" data-action="open">
+          Get a new code
+        </button>
+      </footer>
+    </section>
+
+    <section data-step-for="done">
+      <img alt="" width="56" height="56" />
+      <h3></h3>
+      <p>It'll start playing shortly.</p>
+      <button class="primary" type="button" data-action="close">
+        Done
+      </button>
+    </section>
+  </dialog>
+
+  <div class="menu" id="lent-menu" popover role="menu">
+    <p class="added"></p>
+    {pauses.map((pause) => (
+      <button
+        class="item pause"
+        type="button"
+        role="menuitem"
+        data-action="pause"
+        data-for={pause.for}
+      >
+        {pause.label}
+      </button>
+    ))}
+    <button
+      class="item resume"
+      type="button"
+      role="menuitem"
+      data-action="resume"
+    >
+      Resume
+    </button>
+    <hr />
+    <button
+      class="item danger"
+      type="button"
+      role="menuitem"
+      data-action="remove"
+    >
+      Remove
+    </button>
+  </div>
+</Panel>
+
+<script>
+  import { bindActions, closeDialog, copy } from "@/dashboard/actions";
+  import { load, me, send } from "@/dashboard/api";
+  import { monthYear, until } from "@/dashboard/format";
+  import { showName } from "@/dashboard/rank";
+  import { showCode } from "@/dashboard/sign-in";
+  import type {
+    LentAccount,
+    LentSignIn,
+    LentSignInResult,
+  } from "@/dashboard/types";
+
+  const POLL_INTERVAL = 5000;
+
+  const panel = document.getElementById("lent")!;
+  const list = panel.querySelector<HTMLElement>(".list")!;
+  const template = panel.querySelector<HTMLTemplateElement>("#lent-row")!;
+  const dialog = panel.querySelector("dialog")!;
+  const menu = panel.querySelector<HTMLElement>(".menu")!;
+  const removeItem = menu.querySelector<HTMLElement>("[data-action=remove]")!;
+  let current: HTMLElement;
+  let signInAttempt = 0;
+
+  const sleep = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+  const head = (uuid: string, size: number) =>
+    `https://mc-heads.net/avatar/${uuid}/${size}`;
+
+  function activity(account: LentAccount) {
+    switch (account.status) {
+      case "working":
+        return account.task ?? "Working";
+      case "idle":
+        return "Idle";
+      case "paused":
+        return account.paused_until
+          ? `Paused until ${until(account.paused_until)}`
+          : "Paused";
+      case "finishing":
+        return `Finishing up (${account.task?.toLowerCase() ?? "its task"})`;
+      case "signed-out":
+        return "Signed out";
+      case "banned":
+        return "Banned";
+    }
+  }
+
+  function showAccount(row: HTMLElement, account: LentAccount) {
+    row.dataset.uuid = account.uuid;
+    row.dataset.status = account.status;
+    row.dataset.added = monthYear(account.added_at);
+    row.querySelector("img")!.src = head(account.uuid, 40);
+    showName(row.querySelector(".name")!, account.name, account.rank);
+    row.querySelector(".detail")!.textContent = activity(account);
+    row
+      .querySelector("[data-action=menu]")!
+      .setAttribute("aria-label", `Manage ${account.name}`);
+
+    const reconnect = row.querySelector<HTMLElement>(".reconnect")!;
+    reconnect.hidden = !account.sign_in_code;
+    if (account.sign_in_code) showCode(reconnect, account.sign_in_code);
+  }
+
+  function addRow(account: LentAccount) {
+    const row = template.content.firstElementChild!.cloneNode(
+      true,
+    ) as HTMLElement;
+    showAccount(row, account);
+    list.querySelector(".empty")!.before(row);
+  }
+
+  async function change(
+    row: HTMLElement,
+    method: string,
+    action?: string,
+    body?: unknown,
+  ) {
+    menu.hidePopover();
+    const account = `/me/lent/${row.dataset.uuid}`;
+    const response = await send(
+      action ? `${account}/${action}` : account,
+      method,
+      body,
+    );
+    if (!response) return;
+    if (response.status === 204) row.remove();
+    else showAccount(row, await response.json());
+  }
+
+  function prepareMenu(button: HTMLElement) {
+    current = button.closest<HTMLElement>(".row")!;
+    menu.dataset.status = current.dataset.status;
+    menu.querySelector(".added")!.textContent =
+      `Added ${current.dataset.added}`;
+    removeItem.textContent = "Remove";
+    removeItem.dataset.confirm = "Remove account?";
+    delete removeItem.dataset.sure;
+
+    const box = button.getBoundingClientRect();
+    menu.style.top = `${box.bottom + 4}px`;
+    menu.style.right = `${innerWidth - box.right}px`;
+  }
+
+  function showAdded(account: LentAccount) {
+    const done = dialog.querySelector("[data-step-for=done]")!;
+    done.querySelector("img")!.src = head(account.uuid, 56);
+    done.querySelector("h3")!.textContent = `${account.name} is added`;
+    dialog.dataset.step = "done";
+    addRow(account);
+  }
+
+  async function signIn() {
+    const attempt = ++signInAttempt;
+    showCode(dialog, "");
+    dialog.dataset.step = "code";
+    if (!dialog.open) dialog.showModal();
+
+    const started = await load<LentSignIn>("/me/lent", "POST");
+    if (!started || attempt !== signInAttempt) return;
+    showCode(dialog, started.code);
+
+    while (true) {
+      await sleep(POLL_INTERVAL);
+      if (!dialog.open || attempt !== signInAttempt) return;
+      const result = await load<LentSignInResult>(
+        `/me/lent/sign-in/${started.id}`,
+      );
+      if (!result) {
+        dialog.dataset.step = "expired";
+        return;
+      }
+      if (result.account) return showAdded(result.account);
+    }
+  }
+
+  addEventListener("scroll", () => menu.hidePopover(), { passive: true });
+
+  bindActions(panel, {
+    open: signIn,
+    close: closeDialog,
+    copy,
+    menu: prepareMenu,
+    pause: (button) =>
+      change(current, "POST", "pause", { for: button.dataset.for }),
+    resume: () => change(current, "POST", "resume"),
+    remove: () => change(current, "DELETE"),
+    "stop-now": (button) => change(button.closest(".row")!, "POST", "stop"),
+  });
+
+  const user = await me;
+  if (user?.rank) {
+    panel.hidden = false;
+    const accounts = await load<LentAccount[]>("/me/lent");
+    accounts?.forEach(addRow);
+    if (accounts) list.dataset.loaded = "";
+  }
+</script>
+
+<style>
+  .empty {
+    display: none;
+    padding: 2rem 1rem;
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    text-align: center;
+  }
+
+  .list[data-loaded]:not(:has(.row)) .empty {
+    display: block;
+  }
+
+  dialog section {
+    display: none;
+    gap: 1rem;
+  }
+
+  [data-step="code"] [data-step-for="code"],
+  [data-step="expired"] [data-step-for="expired"],
+  [data-step="done"] [data-step-for="done"] {
+    display: grid;
+  }
+
+  [data-step-for="done"] {
+    justify-items: center;
+    text-align: center;
+
+    & img {
+      border-radius: var(--radius);
+      image-rendering: pixelated;
+    }
+
+    & .primary {
+      justify-self: stretch;
+    }
+  }
+
+  .waiting {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--text-xs);
+  }
+
+  .spinner {
+    width: 0.75rem;
+    height: 0.75rem;
+    border: 1.5px solid var(--color-text-faint);
+    border-top-color: var(--color-text-secondary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to {
+      rotate: 1turn;
+    }
+  }
+
+  .menu {
+    inset: auto;
+    width: 13rem;
+    margin: 0;
+    padding: 0.375rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-panel);
+    box-shadow: var(--shadow-float);
+    color: var(--color-text);
+
+    & hr {
+      margin: 0.375rem 0;
+      border: 0;
+      border-top: 1px solid var(--color-divider);
+    }
+  }
+
+  .added {
+    padding: 0.25rem 0.625rem 0.375rem;
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+  }
+
+  .menu:not(
+      [data-status="working"],
+      [data-status="idle"],
+      [data-status="signed-out"]
+    )
+    .pause,
+  .menu:not([data-status="paused"]) .resume {
+    display: none;
+  }
+</style>

@@ -1,0 +1,34 @@
+---
+import { CORAL_API_URL } from "astro:env/server";
+import Container from "@shared/components/Container.astro";
+import ApiKeys from "@/components/dashboard/ApiKeys.astro";
+import Lent from "@/components/dashboard/Lent.astro";
+import Profile from "@/components/dashboard/Profile.astro";
+import Starfish from "@/components/dashboard/Starfish.astro";
+import Layout from "@/layouts/Layout.astro";
+import "@shared/styles/minecraft.css";
+import "@/styles/dashboard.css";
+---
+
+<Layout title="Dashboard" description="Your Urchin dashboard.">
+  <Container width="narrow" class="dashboard" data-api={CORAL_API_URL}>
+    <Profile />
+    <ApiKeys />
+    <Starfish />
+    <Lent />
+  </Container>
+</Layout>
+
+<script>
+  import { me } from "@/dashboard/api";
+
+  if (!(await me)) location.replace("/");
+</script>
+
+<style>
+  .dashboard {
+    display: grid;
+    gap: 1.25rem;
+    padding-block: 2rem 4rem;
+  }
+</style>

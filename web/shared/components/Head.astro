@@ -1,0 +1,35 @@
+---
+import { Font } from "astro:assets";
+import { pagePath } from "@shared/links";
+
+interface Props {
+  siteName: string;
+  logo: string;
+  title?: string;
+  description: string;
+  edgeToEdge?: boolean;
+}
+
+const { siteName, logo, title, description, edgeToEdge } = Astro.props;
+const fullTitle = title ? `${title} | ${siteName}` : siteName;
+const viewport = edgeToEdge
+  ? "width=device-width, initial-scale=1, viewport-fit=cover"
+  : "width=device-width, initial-scale=1";
+---
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content={viewport} />
+  <title>{fullTitle}</title>
+  <meta name="description" content={description} />
+  <meta name="theme-color" content="#0e0f12" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content={siteName} />
+  <meta property="og:title" content={fullTitle} />
+  <meta property="og:description" content={description} />
+  <link rel="canonical" href={new URL(pagePath(Astro.url), Astro.site)} />
+  <link rel="icon" href={logo} type="image/svg+xml" />
+  <Font cssVariable="--font-inter" preload />
+  <Font cssVariable="--font-jetbrains-mono" />
+  <slot />
+</head>

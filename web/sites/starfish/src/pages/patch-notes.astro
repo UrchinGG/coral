@@ -1,0 +1,92 @@
+---
+import Container from "@shared/components/Container.astro";
+import Layout from "@/layouts/Layout.astro";
+import { releaseLines } from "@/lib/notes";
+import { releases } from "@/lib/starfish";
+
+const date = new Intl.DateTimeFormat("en-US", {
+  dateStyle: "long",
+  timeZone: "UTC",
+});
+---
+
+<Layout
+  title="Patch Notes"
+  description="What changed in each Starfish version."
+>
+  <Container width="narrow" class="patch-notes">
+    <h1>Patch Notes</h1>
+    <ol role="list">
+      {releases.map(({ version, published_at, release_notes }) => (
+        <li>
+          <div class="release">
+            <h2>{version}</h2>
+            <time datetime={published_at}>
+              {date.format(new Date(published_at))}
+            </time>
+          </div>
+          {release_notes && (
+            <ul>
+              {releaseLines(release_notes).map((line) => (
+                <li>{line}</li>
+              ))}
+            </ul>
+          )}
+        </li>
+      ))}
+    </ol>
+  </Container>
+</Layout>
+
+<style>
+  .patch-notes {
+    padding-block: 3rem 4rem;
+  }
+
+  h1 {
+    margin-bottom: 2rem;
+    font-size: var(--text-2xl);
+  }
+
+  ol {
+    display: grid;
+    gap: 2rem;
+  }
+
+  ol > li {
+    display: grid;
+    grid-template-columns: 9rem minmax(0, 1fr);
+    align-items: start;
+    gap: 0.75rem 1.5rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--color-divider);
+
+    @media (width < 36rem) {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  .release {
+    display: grid;
+    gap: 0.125rem;
+  }
+
+  h2 {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+
+  time {
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+  }
+
+  ul {
+    display: grid;
+    gap: 0.375rem;
+    padding-left: 1.125rem;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+  }
+</style>
