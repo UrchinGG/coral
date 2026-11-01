@@ -28,19 +28,34 @@ const { heading, summary, ...nav } = Astro.props;
   </article>
 </Container>
 
+<script>
+  const nav = document.querySelector<HTMLElement>(".docs aside nav")!;
+  const active = nav.querySelector<HTMLElement>("[aria-current]");
+  if (active) nav.scrollTop = active.offsetTop - nav.clientHeight / 2;
+</script>
+
 <style>
   .docs {
+    --top: calc(var(--nav-height) + 1px);
     display: grid;
-    grid-template-columns: 12rem minmax(0, 1fr);
-    gap: 3rem;
-    padding-block: 3rem 4rem;
+    grid-template-columns: 13rem minmax(0, 1fr);
+    gap: 2rem;
+    padding-bottom: 4rem;
+  }
+
+  .doc {
+    padding-top: 3rem;
   }
 
   aside > :global(nav) {
     position: sticky;
-    top: calc(var(--nav-height) + 1.5rem);
-    max-height: calc(100dvh - var(--nav-height) - 3rem);
+    top: var(--top);
+    height: calc(100dvh - var(--top));
+    padding: 3rem 1rem 2rem 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-color: var(--color-border) transparent;
+    scrollbar-width: thin;
   }
 
   .pages {
@@ -66,6 +81,10 @@ const { heading, summary, ...nav } = Astro.props;
       grid-template-columns: minmax(0, 1fr);
       gap: 2rem;
       padding-top: 1.5rem;
+    }
+
+    .doc {
+      padding-top: 0;
     }
 
     aside {
