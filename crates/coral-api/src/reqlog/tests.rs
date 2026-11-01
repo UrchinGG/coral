@@ -59,7 +59,6 @@ async fn harness_with(
         None,
         Some(starfish_config()),
         None,
-        crate::cache::DEFAULT_BACKGROUND_REFRESH_BUDGET,
     );
     let (request_log, log) = reqlog::channel();
     Some(Harness {

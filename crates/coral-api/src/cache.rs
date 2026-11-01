@@ -1,4 +1,5 @@
 use chrono::{DateTime, Duration, Utc};
+use clients::{ClientError, HypixelClient};
 use coral_redis::minute_history::{CHANGED_SNAPSHOTS, FIRST_SNAPSHOTS, SNAPSHOT_HISTORY};
 use database::{CacheRepository, GuildCacheRepository, GuildCurrentRepository, SnapshotResult};
 use redis::aio::ConnectionManager;
@@ -11,8 +12,6 @@ const SNAPSHOT_SOURCE: &str = "api";
 
 const GUILD_REFRESH_AGE_MINUTES: i64 = 5;
 const BACKGROUND_FRESH_MINUTES: i64 = 10;
-pub const DEFAULT_BACKGROUND_REFRESH_BUDGET: i64 = 90;
-const BACKGROUND_BUDGET_NAME: &str = "hypixel:background";
 
 pub fn parse_cache_age(raw: &str) -> Result<Duration, ApiError> {
     let invalid = || {
@@ -41,7 +40,7 @@ pub fn parse_cache_age(raw: &str) -> Result<Duration, ApiError> {
 }
 
 pub fn spawn_guild_refresh(state: &AppState, uuid: &str) {
-    let Some(hypixel) = state.hypixel.clone() else {
+    let Some(hypixel) = background_hypixel(state) else {
         return;
     };
     let state = state.clone();
@@ -55,11 +54,10 @@ pub fn spawn_guild_refresh(state: &AppState, uuid: &str) {
             return;
         };
         for guild_id in guild_ids {
-            if !take_background_budget(&state).await {
-                return;
-            }
-            if let Ok(Some(raw)) = hypixel.get_guild_by_id(&guild_id).await {
-                cache_guild(&state, &raw).await;
+            match hypixel.get_guild_by_id(&guild_id).await {
+                Ok(Some(raw)) => cache_guild(&state, &raw).await,
+                Err(ClientError::RateLimited) => return,
+                _ => {}
             }
         }
     });
@@ -78,7 +76,7 @@ pub async fn cache_guild(state: &AppState, raw: &Value) {
 }
 
 async fn discover_members(state: &AppState, raw: &Value) {
-    let Some(hypixel) = state.hypixel.as_deref() else {
+    let Some(hypixel) = background_hypixel(state) else {
         return;
     };
     let uuids: Vec<String> = raw["members"]
@@ -92,22 +90,23 @@ async fn discover_members(state: &AppState, raw: &Value) {
         return;
     };
     for uuid in undiscovered {
-        if !take_background_budget(state).await {
-            return;
-        }
-        if let Ok(Some(player)) = hypixel.get_player(&uuid).await {
-            store_player_snapshot(state, &uuid, &player, None).await;
+        match hypixel.get_player(&uuid).await {
+            Ok(Some(player)) => store_player_snapshot(state, &uuid, &player, None).await,
+            Err(ClientError::RateLimited) => return,
+            _ => {}
         }
     }
 }
 
 pub fn spawn_background_refresh(state: &AppState, uuid: &str) {
+    let Some(hypixel) = background_hypixel(state) else {
+        return;
+    };
     let (state, uuid) = (state.clone(), uuid.to_string());
     tokio::spawn(async move {
-        if is_fresh(&state, &uuid).await || !take_background_budget(&state).await {
-            return;
+        if !is_fresh(&state, &uuid).await {
+            fetch_and_store(&state, &hypixel, &uuid, None).await;
         }
-        refresh_player_cache(&state, &uuid, None).await;
     });
 }
 
@@ -116,10 +115,7 @@ pub async fn refresh_player_cache(
     uuid: &str,
     username: Option<&str>,
 ) -> Option<Value> {
-    let hypixel = state.hypixel.as_deref()?;
-    let data = hypixel.get_player(uuid).await.ok()??;
-    store_player_snapshot(state, uuid, &data, username).await;
-    Some(data)
+    fetch_and_store(state, state.hypixel.as_deref()?, uuid, username).await
 }
 
 pub async fn store_player_snapshot(
@@ -173,18 +169,19 @@ fn snapshot_counter(stored: &SnapshotResult) -> Option<&'static str> {
     }
 }
 
-async fn take_background_budget(state: &AppState) -> bool {
-    match state
-        .rate_limiter
-        .try_acquire(BACKGROUND_BUDGET_NAME, state.background_refresh_budget)
-        .await
-    {
-        Ok(granted) => granted,
-        Err(e) => {
-            tracing::warn!("Background Hypixel budget unavailable: {e}");
-            false
-        }
-    }
+fn background_hypixel(state: &AppState) -> Option<HypixelClient> {
+    state.hypixel.as_deref().map(HypixelClient::in_background)
+}
+
+async fn fetch_and_store(
+    state: &AppState,
+    hypixel: &HypixelClient,
+    uuid: &str,
+    username: Option<&str>,
+) -> Option<Value> {
+    let data = hypixel.get_player(uuid).await.ok()??;
+    store_player_snapshot(state, uuid, &data, username).await;
+    Some(data)
 }
 
 #[cfg(test)]

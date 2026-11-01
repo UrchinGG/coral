@@ -17,7 +17,7 @@ pub use extension::{
     ActionOutcome, Extension, ExtensionContext, ExtensionError, ExtensionFlag, FlagLevel,
     extensions,
 };
-pub use hypixel::HypixelClient;
+pub use hypixel::{BACKGROUND_FILL, HypixelClient};
 pub use mojang::{
     MojangClient, PlayerIdentity, PlayerProfile, has_joined, is_uuid, normalize_uuid,
 };

@@ -1,20 +1,19 @@
 use chrono::{DateTime, TimeDelta, Utc};
-use clients::HypixelBudget;
+use clients::{BACKGROUND_FILL, HypixelBudget};
 use coral_redis::minute_history::{
-    CHANGED_SNAPSHOTS, FIRST_SNAPSHOTS, HISTORY_TTL_SECS, HYPIXEL_ERRORS, HYPIXEL_HISTORY,
-    HYPIXEL_REQUESTS, SNAPSHOT_HISTORY,
+    CHANGED_SNAPSHOTS, FIRST_SNAPSHOTS, HISTORY_TTL_SECS, HYPIXEL_BACKGROUND, HYPIXEL_ERRORS,
+    HYPIXEL_HISTORY, HYPIXEL_REQUESTS, SNAPSHOT_HISTORY,
 };
-use coral_redis::{LIMIT_WINDOW_SECS, RateLimiter, RedisPool};
+use coral_redis::{LIMIT_WINDOW_SECS, RedisPool};
 use reqlog::rollup::{Span, floor_to};
 use serde::Serialize;
 
 use super::history::UpstreamHistory;
 use super::range::{RangeBounds, TrafficRange};
-use crate::error::{AdminError, Context};
+use crate::error::AdminError;
 use crate::serde_ts;
 
-pub const BACKGROUND_SHARE: f64 = 0.3;
-pub const BACKGROUND_LIMITER: &str = "hypixel:background";
+pub const BACKGROUND_COUNTERS: &[&str] = &[HYPIXEL_BACKGROUND];
 pub const HYPIXEL_COUNTERS: &[&str] = &[HYPIXEL_REQUESTS, HYPIXEL_ERRORS];
 pub const SNAPSHOT_COUNTERS: &[&str] = &[FIRST_SNAPSHOTS, CHANGED_SNAPSHOTS];
 
@@ -79,7 +78,7 @@ pub async fn upstream(
             to,
             now
         ),
-        background_used(redis),
+        background_used(redis, history, now),
         capacity(redis),
     )?;
     let buckets: Vec<Span> = range
@@ -124,16 +123,20 @@ pub async fn capacity(redis: &RedisPool) -> Result<Option<HypixelBudget>, AdminE
         .map_err(|error| AdminError::Redis(format!("read the upstream capacity: {error}")))
 }
 
-async fn background_used(redis: &RedisPool) -> Result<i64, AdminError> {
-    let used = RateLimiter::new(redis.clone())
-        .usage_many(&[BACKGROUND_LIMITER.to_string()])
-        .await
-        .context("count the background refresh budget")?;
-    Ok(used.into_iter().sum())
+async fn background_used(
+    redis: &RedisPool,
+    history: &UpstreamHistory,
+    now: DateTime<Utc>,
+) -> Result<i64, AdminError> {
+    let from = now - TimeDelta::seconds(LIMIT_WINDOW_SECS);
+    let counts = history
+        .read(redis, HYPIXEL_HISTORY, BACKGROUND_COUNTERS, from, now, now)
+        .await?;
+    Ok(counts.total(HYPIXEL_BACKGROUND, from, now))
 }
 
 fn background_limit(capacity: HypixelBudget) -> i64 {
-    (capacity.limit as f64 * BACKGROUND_SHARE).round() as i64
+    (capacity.limit as f64 * BACKGROUND_FILL).round() as i64
 }
 
 #[cfg(test)]
@@ -153,12 +156,12 @@ mod tests {
     }
 
     #[test]
-    fn the_background_share_is_a_fraction_of_the_capacity() {
+    fn background_refreshes_stop_at_their_share_of_the_capacity() {
         let capacity = HypixelBudget {
             used: 0,
             limit: 300,
             at: at(15, 0, 0),
         };
-        assert_eq!(background_limit(capacity), 90);
+        assert_eq!(background_limit(capacity), 225);
     }
 }

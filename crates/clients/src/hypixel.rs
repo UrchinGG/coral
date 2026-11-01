@@ -1,7 +1,9 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use coral_redis::minute_history::{HYPIXEL_ERRORS, HYPIXEL_HISTORY, HYPIXEL_REQUESTS};
+use coral_redis::minute_history::{
+    HYPIXEL_BACKGROUND, HYPIXEL_ERRORS, HYPIXEL_HISTORY, HYPIXEL_REQUESTS,
+};
 use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
 use reqwest::header::HeaderMap;
@@ -15,7 +17,8 @@ use crate::ratelimit::RateBudget;
 
 const HYPIXEL_API_BASE: &str = "https://api.hypixel.net/v2";
 const CACHE_TTL_SECS: u64 = 45;
-const RESERVE_FILL: f64 = 0.95;
+const LIVE_FILL: f64 = 0.95;
+pub const BACKGROUND_FILL: f64 = 0.75;
 const MAX_ATTEMPTS: u32 = 3;
 const DEFAULT_RETRY_SECS: i64 = 10;
 const BUSY_BACKOFF: Duration = Duration::from_millis(500);
@@ -30,6 +33,13 @@ pub struct HypixelClient {
     key: String,
     redis: ConnectionManager,
     budget: RateBudget,
+    lane: Lane,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lane {
+    Live,
+    Background,
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,7 +65,15 @@ impl HypixelClient {
             key,
             redis,
             budget,
+            lane: Lane::Live,
         })
+    }
+
+    pub fn in_background(&self) -> Self {
+        Self {
+            lane: Lane::Background,
+            ..self.clone()
+        }
     }
 
     pub async fn get_player(&self, uuid: &str) -> Result<Option<Value>, ClientError> {
@@ -108,7 +126,7 @@ impl HypixelClient {
 
     async fn request(&self, url: &str) -> Result<HypixelResponse, ClientError> {
         for attempt in 1..=MAX_ATTEMPTS {
-            if !self.budget.try_reserve(&self.key, RESERVE_FILL).await {
+            if !self.budget.try_reserve(&self.key, self.lane.fill()).await {
                 if attempt == MAX_ATTEMPTS {
                     return Err(ClientError::RateLimited);
                 }
@@ -163,6 +181,7 @@ impl HypixelClient {
         let mut redis = self.redis.clone();
         let recorded = record_upstream_at(
             &mut redis,
+            self.lane,
             response.status(),
             response.headers(),
             Utc::now(),
@@ -185,14 +204,24 @@ impl HypixelClient {
     }
 }
 
+impl Lane {
+    fn fill(self) -> f64 {
+        match self {
+            Self::Live => LIVE_FILL,
+            Self::Background => BACKGROUND_FILL,
+        }
+    }
+}
+
 async fn record_upstream_at(
     redis: &mut ConnectionManager,
+    lane: Lane,
     status: StatusCode,
     headers: &HeaderMap,
     at: DateTime<Utc>,
 ) -> Result<(), BudgetError> {
     let mut pipe = redis::pipe();
-    HYPIXEL_HISTORY.queue(&mut pipe, at, upstream_counters(status));
+    HYPIXEL_HISTORY.queue(&mut pipe, at, &upstream_counters(lane, status));
     if let Some(budget) = observed_budget(headers, at) {
         queue_hypixel_budget(&mut pipe, &budget)?;
     }
@@ -200,12 +229,15 @@ async fn record_upstream_at(
     Ok(())
 }
 
-fn upstream_counters(status: StatusCode) -> &'static [&'static str] {
-    if status.is_success() {
-        &[HYPIXEL_REQUESTS]
-    } else {
-        &[HYPIXEL_REQUESTS, HYPIXEL_ERRORS]
+fn upstream_counters(lane: Lane, status: StatusCode) -> Vec<&'static str> {
+    let mut counters = vec![HYPIXEL_REQUESTS];
+    if !status.is_success() {
+        counters.push(HYPIXEL_ERRORS);
     }
+    if lane == Lane::Background {
+        counters.push(HYPIXEL_BACKGROUND);
+    }
+    counters
 }
 
 fn observed_budget(headers: &HeaderMap, at: DateTime<Utc>) -> Option<HypixelBudget> {
@@ -263,6 +295,18 @@ mod tests {
     }
 
     #[test]
+    fn background_calls_are_counted_apart_from_live_ones() {
+        assert_eq!(
+            upstream_counters(Lane::Live, StatusCode::OK),
+            [HYPIXEL_REQUESTS]
+        );
+        assert_eq!(
+            upstream_counters(Lane::Background, StatusCode::OK),
+            [HYPIXEL_REQUESTS, HYPIXEL_BACKGROUND]
+        );
+    }
+
+    #[test]
     fn budget_needs_both_rate_headers() {
         assert_eq!(observed("300", None), None);
     }
@@ -290,19 +334,29 @@ mod tests {
         let () = redis.del(&written).await.unwrap();
 
         let spent = rate_headers("300", Some("64"));
-        record_upstream_at(&mut redis, StatusCode::OK, &spent, at)
+        record_upstream_at(&mut redis, Lane::Live, StatusCode::OK, &spent, at)
             .await
             .unwrap();
-        record_upstream_at(&mut redis, StatusCode::BAD_GATEWAY, &HeaderMap::new(), at)
-            .await
-            .unwrap();
+        record_upstream_at(
+            &mut redis,
+            Lane::Background,
+            StatusCode::BAD_GATEWAY,
+            &HeaderMap::new(),
+            at,
+        )
+        .await
+        .unwrap();
 
         let counts: HashMap<String, i64> = redis.hgetall(&slot.key).await.unwrap();
         let budget = hypixel_budget(&mut redis).await.unwrap();
         let () = redis.del(&written).await.unwrap();
         assert_eq!(
             counts,
-            HashMap::from([("t7".to_string(), 2), ("e7".to_string(), 1)])
+            HashMap::from([
+                ("t7".to_string(), 2),
+                ("e7".to_string(), 1),
+                ("b7".to_string(), 1)
+            ])
         );
         assert_eq!(
             budget,
