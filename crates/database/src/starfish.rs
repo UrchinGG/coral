@@ -278,9 +278,6 @@ impl<'a> StarfishRepository<'a> {
         Ok(())
     }
 
-    /// Points a near-match HWID record at the machine's current hash, so sessions bound to it
-    /// pass the exact HWID check. If the user already has another record with that exact hash,
-    /// that record is returned instead and nothing is changed.
     pub async fn rebind_drifted_hwid(
         &self,
         user_id: i64,

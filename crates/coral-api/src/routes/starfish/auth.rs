@@ -603,8 +603,6 @@ async fn handle_hwid_registration(
     Ok(new_hwid)
 }
 
-/// A near-match HWID is accepted as the same machine, so store its current hash on the record.
-/// Without this, sessions issued for it fail the exact HWID check on every request.
 async fn adopt_drifted_hwid(
     repo: &StarfishRepository<'_>,
     user_id: i64,
