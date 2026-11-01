@@ -527,6 +527,12 @@ async fn refresh_session(
         return Err(ApiError::Forbidden("license_inactive".into()));
     }
 
+    let hwid_record = if hwid_record.hwid_hash == req.hwid {
+        hwid_record
+    } else {
+        adopt_drifted_hwid(&repo, user.id, hwid_record.id, &req.hwid).await?
+    };
+
     repo.delete_user_sessions(user.id).await?;
 
     let new_refresh = generate_refresh_token();
@@ -573,10 +579,9 @@ async fn handle_hwid_registration(
         .find_fuzzy_hwid(user_id, components, HWID_FUZZY_MATCH_THRESHOLD)
         .await?
     {
-        repo.activate_hwid(user_id, fuzzy_match.id).await?;
-        repo.store_hwid_components(fuzzy_match.id, components)
-            .await?;
-        return Ok(fuzzy_match);
+        let record = adopt_drifted_hwid(repo, user_id, fuzzy_match.id, hwid).await?;
+        repo.store_hwid_components(record.id, components).await?;
+        return Ok(record);
     }
 
     if repo
@@ -596,4 +601,17 @@ async fn handle_hwid_registration(
     let new_hwid = repo.register_hwid(user_id, hwid).await?;
     repo.store_hwid_components(new_hwid.id, components).await?;
     Ok(new_hwid)
+}
+
+/// A near-match HWID is accepted as the same machine, so store its current hash on the record.
+/// Without this, sessions issued for it fail the exact HWID check on every request.
+async fn adopt_drifted_hwid(
+    repo: &StarfishRepository<'_>,
+    user_id: i64,
+    hwid_id: i64,
+    hwid: &str,
+) -> Result<database::starfish::StarfishHwid, ApiError> {
+    let record = repo.rebind_drifted_hwid(user_id, hwid_id, hwid).await?;
+    repo.activate_hwid(user_id, record.id).await?;
+    Ok(record)
 }
