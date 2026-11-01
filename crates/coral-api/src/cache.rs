@@ -148,9 +148,9 @@ async fn is_fresh(state: &AppState, uuid: &str) -> bool {
     let cutoff = Utc::now() - Duration::minutes(BACKGROUND_FRESH_MINUTES);
     matches!(
         CacheRepository::new(state.db.pool())
-            .get_latest_timestamp(uuid)
+            .last_checked(uuid)
             .await,
-        Ok(Some(ts)) if ts > cutoff
+        Ok(Some(checked)) if checked > cutoff
     )
 }
 

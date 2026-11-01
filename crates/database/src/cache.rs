@@ -73,11 +73,14 @@ impl<'a> CacheRepository<'a> {
             .collect())
     }
 
-    async fn register_player(&self, uuid: &str) -> Result<(), sqlx::Error> {
-        sqlx::query("INSERT INTO players (uuid) VALUES ($1) ON CONFLICT DO NOTHING")
-            .bind(uuid)
-            .execute(self.pool)
-            .await?;
+    async fn record_check(&self, uuid: &str) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO players (uuid, checked_at) VALUES ($1, now())
+             ON CONFLICT (uuid) DO UPDATE SET checked_at = EXCLUDED.checked_at",
+        )
+        .bind(uuid)
+        .execute(self.pool)
+        .await?;
         Ok(())
     }
 
@@ -97,7 +100,7 @@ impl<'a> CacheRepository<'a> {
         source: Option<&str>,
         username: Option<&str>,
     ) -> Result<SnapshotResult, sqlx::Error> {
-        self.register_player(uuid).await?;
+        self.record_check(uuid).await?;
         let latest_baseline = self.get_latest_baseline(uuid).await?;
         let first = latest_baseline.is_none();
 
@@ -188,18 +191,14 @@ impl<'a> CacheRepository<'a> {
         .map(|rows| rows.into_iter().map(|r| r.0).collect())
     }
 
-    pub async fn get_latest_timestamp(
-        &self,
-        uuid: &str,
-    ) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
-        sqlx::query_as::<_, (DateTime<Utc>,)>(
-            "SELECT timestamp FROM player_snapshots WHERE uuid = $1
-             ORDER BY timestamp DESC LIMIT 1",
+    pub async fn last_checked(&self, uuid: &str) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
+        sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
+            "SELECT checked_at FROM players WHERE uuid = $1",
         )
         .bind(uuid)
         .fetch_optional(self.pool)
         .await
-        .map(|r| r.map(|r| r.0))
+        .map(Option::flatten)
     }
 
     pub async fn get_latest_non_migration_timestamp(
@@ -620,6 +619,31 @@ mod tests {
             changed,
             SnapshotResult::Stored { first: false, .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_fetch_still_counts_as_a_check() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let uuid = format!("{:032x}", Utc::now().timestamp_nanos_opt().unwrap());
+        let repo = CacheRepository::new(&pool);
+        let data = json!({"kills": 1});
+
+        repo.store_snapshot(&uuid, &data, None, Some(TEST_SOURCE), None)
+            .await
+            .unwrap();
+        let first_check = repo.last_checked(&uuid).await.unwrap();
+        let unchanged = repo
+            .store_snapshot(&uuid, &data, None, Some(TEST_SOURCE), None)
+            .await
+            .unwrap();
+        let second_check = repo.last_checked(&uuid).await.unwrap();
+        forget_player(&pool, &uuid).await;
+
+        assert!(matches!(unchanged, SnapshotResult::NoChange));
+        assert!(first_check.is_some());
+        assert!(second_check > first_check);
     }
 
     #[tokio::test]

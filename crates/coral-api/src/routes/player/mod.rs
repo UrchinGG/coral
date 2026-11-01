@@ -17,7 +17,9 @@ use hypixel::extract_rank_prefix;
 
 use crate::{
     auth::{AuthenticatedMember, DeveloperKeyAuth},
-    cache::{parse_cache_age, refresh_player_cache, store_player_snapshot},
+    cache::{
+        parse_cache_age, refresh_player_cache, spawn_background_refresh, store_player_snapshot,
+    },
     error::{ApiError, ErrorResponse},
     responses::{PlayerStatsResponse, PlayerTagsResponse, tag_responses},
     state::AppState,
@@ -41,8 +43,8 @@ pub(crate) async fn resolve_player_data(
     let cache = CacheRepository::new(state.db.pool());
 
     if let Some(max_age) = max_cache_age {
-        if let Some(ts) = cache.get_latest_timestamp(uuid).await? {
-            if Utc::now() - ts <= max_age {
+        if let Some(checked) = cache.last_checked(uuid).await? {
+            if Utc::now() - checked <= max_age {
                 if let Some(snapshot) = cache.get_latest_snapshot(uuid).await? {
                     return Ok((Some(snapshot), true));
                 }
@@ -152,6 +154,16 @@ pub(crate) async fn player_display_name(state: &AppState, uuid: &str) -> Option<
         .and_then(format_display_name)
 }
 
+async fn stored_display_name(state: &AppState, uuid: &str) -> Option<String> {
+    match cached_display_name(state, uuid).await {
+        Some(name) => {
+            spawn_background_refresh(state, uuid);
+            Some(name)
+        }
+        None => player_display_name(state, uuid).await,
+    }
+}
+
 pub(crate) async fn cached_display_name(state: &AppState, uuid: &str) -> Option<String> {
     CacheRepository::new(state.db.pool())
         .get_latest_snapshot(uuid)
@@ -234,7 +246,7 @@ pub async fn player_tags(
         query.reveal_hidden,
     )
     .await;
-    let displayname = player_display_name(&state, &uuid).await;
+    let displayname = stored_display_name(&state, &uuid).await;
     Ok(Json(PlayerTagsResponse {
         uuid,
         displayname,
