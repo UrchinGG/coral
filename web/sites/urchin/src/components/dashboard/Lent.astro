@@ -4,15 +4,15 @@ import MicrosoftSignIn from "@/components/dashboard/MicrosoftSignIn.astro";
 import Panel from "@/components/dashboard/Panel.astro";
 
 const pauses = [
-  { label: "Pause for an hour", for: "hour" },
-  { label: "Pause until tomorrow", for: "tomorrow" },
-  { label: "Pause until I resume", for: "indefinitely" },
+  { label: "Pause for an Hour", for: "hour" },
+  { label: "Pause Until Tomorrow", for: "tomorrow" },
+  { label: "Pause Until I Resume", for: "indefinitely" },
 ];
 ---
 
 <Panel id="lent" title="Lent Accounts" hidden>
   <button slot="action" class="primary" type="button" data-action="open">
-    Add account
+    Add Account
   </button>
 
   <div class="list">
@@ -23,13 +23,13 @@ const pauses = [
 
   <dialog>
     <section data-step-for="code">
-      <h3>Add an account</h3>
+      <h3>Add an Account</h3>
       <MicrosoftSignIn>
         Sign in with the Minecraft account you want to add.
       </MicrosoftSignIn>
       <p class="waiting">
         <span class="spinner" aria-hidden="true"></span>
-        Waiting for sign-in
+        Waiting for Sign-In…
       </p>
       <footer>
         <button type="button" data-action="close">
@@ -39,14 +39,14 @@ const pauses = [
     </section>
 
     <section data-step-for="expired">
-      <h3>The code expired</h3>
+      <h3>Code Expired</h3>
       <p>Get a new one and try again.</p>
       <footer>
         <button type="button" data-action="close">
           Cancel
         </button>
         <button class="primary" type="button" data-action="open">
-          Get a new code
+          Get a New Code
         </button>
       </footer>
     </section>

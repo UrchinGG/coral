@@ -60,7 +60,7 @@ export const showRoster = (
           mark: String(left),
           tip: `Bed gone, ${left} player${left === 1 ? "" : "s"} left`,
         }
-      : { status: "alive", mark: "✓", tip: "Bed intact" };
+      : { status: "alive", mark: "✓", tip: "Bed Intact" };
   };
 
   const teams = [

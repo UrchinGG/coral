@@ -47,7 +47,8 @@ const platforms = [
     (panel.querySelector(selector)!.textContent = value);
 
   function describeDevice({ device }: Starfish) {
-    if (!device) return "No device yet. Sign in to Starfish to register one.";
+    if (!device)
+      return "You don't have a device yet. Sign in to Starfish to register one.";
     const registered = `Registered ${monthYear(device.registered_at)}`;
     return device.last_seen
       ? `${registered}, last seen ${ago(device.last_seen)}`

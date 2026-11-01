@@ -14,7 +14,7 @@ import Icon from "./Icon.astro";
         class="track"
         role="slider"
         tabindex="0"
-        aria-label="Replay time"
+        aria-label="Replay Time"
         aria-valuemin="0"
         aria-valuemax="0"
         aria-valuenow="0"
@@ -58,7 +58,7 @@ import Icon from "./Icon.astro";
         id="step-back"
         class="step"
         type="button"
-        aria-label="Back 1 second"
+        aria-label="Back 1 Second"
         data-tip="Back 1 s, hold to keep going"
         data-key="←"
       >
@@ -84,7 +84,7 @@ import Icon from "./Icon.astro";
         id="step-forward"
         class="step"
         type="button"
-        aria-label="Forward 1 second"
+        aria-label="Forward 1 Second"
         data-tip="Forward 1 s, hold to keep going"
         data-key="→"
       >
@@ -105,8 +105,8 @@ import Icon from "./Icon.astro";
         <Icon name="sound" />
         <Icon name="muted" />
       </button>
-      <label class="speed" data-tip="Playback speed" data-key="− +">
-        <select id="speed" aria-label="Playback speed">
+      <label class="speed" data-tip="Playback Speed" data-key="− +">
+        <select id="speed" aria-label="Playback Speed">
           {[0.25, 0.5, 1, 2, 4].map((speed) => (
             <option value={speed} selected={speed === 1}>
               {speed}×

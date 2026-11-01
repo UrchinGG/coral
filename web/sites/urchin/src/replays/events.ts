@@ -13,9 +13,9 @@ export type EventKind = GameEvent["kind"];
 
 export const EVENT_LABELS: Record<EventKind, string> = {
   kill: "Kill",
-  final: "Final kill",
-  bed: "Bed broken",
-  eliminated: "Team eliminated",
+  final: "Final Kill",
+  bed: "Bed Broken",
+  eliminated: "Team Eliminated",
 };
 
 const BED = /^BED DESTRUCTION > (\w+) Bed\b/;

@@ -49,7 +49,7 @@ export const showSummary = (
   const played = date && time ? hypixelTime(date, time) : undefined;
   const when = played ? LOCAL_TIME.format(played) : stamp;
 
-  document.title = `${heading} — Urchin`;
+  document.title = `${heading} | Urchin`;
   $("#title").textContent = [game, mode].filter(Boolean).join(" ") || name;
   const subtitle = $("#subtitle");
   subtitle.replaceChildren(
