@@ -1,0 +1,1 @@
+ALTER TABLE starfish_hwid_changes ADD COLUMN IF NOT EXISTS is_drift BOOLEAN NOT NULL DEFAULT false;

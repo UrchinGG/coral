@@ -252,7 +252,7 @@ impl<'a> StarfishRepository<'a> {
 
     pub async fn hwid_changes_since(&self, user_id: i64, days: i32) -> Result<i64, sqlx::Error> {
         let (count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM starfish_hwid_changes WHERE user_id = $1 AND changed_at > NOW() - make_interval(days => $2)",
+            "SELECT COUNT(*) FROM starfish_hwid_changes WHERE user_id = $1 AND NOT is_drift AND changed_at > NOW() - make_interval(days => $2)",
         )
         .bind(user_id)
         .bind(days)
@@ -276,6 +276,55 @@ impl<'a> StarfishRepository<'a> {
         .execute(self.pool)
         .await?;
         Ok(())
+    }
+
+    pub async fn rebind_drifted_hwid(
+        &self,
+        user_id: i64,
+        hwid_id: i64,
+        new_hash: &str,
+    ) -> Result<StarfishHwid, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+
+        let current: StarfishHwid = sqlx::query_as(
+            "SELECT * FROM starfish_hwids WHERE id = $1 AND user_id = $2 FOR UPDATE",
+        )
+        .bind(hwid_id)
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if current.hwid_hash == new_hash {
+            return Ok(current);
+        }
+
+        let existing: Option<StarfishHwid> =
+            sqlx::query_as("SELECT * FROM starfish_hwids WHERE user_id = $1 AND hwid_hash = $2")
+                .bind(user_id)
+                .bind(new_hash)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if let Some(existing) = existing {
+            return Ok(existing);
+        }
+
+        let updated: StarfishHwid =
+            sqlx::query_as("UPDATE starfish_hwids SET hwid_hash = $2 WHERE id = $1 RETURNING *")
+                .bind(hwid_id)
+                .bind(new_hash)
+                .fetch_one(&mut *tx)
+                .await?;
+
+        sqlx::query(
+            "INSERT INTO starfish_hwid_changes (user_id, old_hwid, new_hwid, is_drift) VALUES ($1, $2, $3, true)",
+        )
+        .bind(user_id)
+        .bind(&current.hwid_hash)
+        .bind(new_hash)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(updated)
     }
 
     pub async fn get_user_hwids(&self, user_id: i64) -> Result<Vec<StarfishHwid>, sqlx::Error> {
