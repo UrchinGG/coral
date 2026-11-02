@@ -6,7 +6,6 @@ use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use clients::{is_uuid, normalize_uuid};
 use coral_redis::RateLimitResult;
 use database::BlacklistRepository;
 use reqlog::MAX_BATCH_UUIDS;
@@ -18,6 +17,7 @@ use crate::{
     },
     cache::spawn_background_refresh,
     error::ApiError,
+    player_uuid::player_uuids,
     responses::{TagResponse, tag_responses},
     state::AppState,
 };
@@ -71,7 +71,7 @@ async fn enforce_distinct_uuid_budget(
 #[utoipa::path(
     post,
     path = "/v3/players",
-    description = "Looks up blacklist tags for up to 100 players in a single request. Only UUIDs are accepted; usernames are not resolved, and malformed entries are skipped. Personal API keys may query up to 1000 distinct players per 5 minutes; repeat lookups of the same players do not count again. Queried players may also be refreshed in the background. Tags with `hide_username` set omit both `added_by` and `added_by_username`.",
+    description = "Looks up blacklist tags for up to 100 players in a single request. Only player UUIDs are accepted; usernames are not resolved, and a batch containing anything else (a malformed entry, or an NPC or nicked player's version 1 or 2 UUID) is rejected with a 400 naming those entries. Personal API keys may query up to 1000 distinct players per 5 minutes; repeat lookups of the same players do not count again. Queried players may also be refreshed in the background. Tags with `hide_username` set omit both `added_by` and `added_by_username`.",
     request_body = BatchRequest,
     responses(
         (status = 200, description = "Batch lookup completed", body = BatchResponse),
@@ -97,12 +97,7 @@ pub async fn batch_lookup(
         )));
     }
 
-    let uuids: Vec<String> = req
-        .uuids
-        .iter()
-        .filter(|u| is_uuid(u))
-        .map(|u| normalize_uuid(u))
-        .collect();
+    let uuids = player_uuids(&req.uuids)?;
 
     match (&session, &minecraft) {
         (Some(Extension(session)), _) => {

@@ -25,6 +25,7 @@ mod cache;
 mod discord;
 mod error;
 mod openapi;
+mod player_uuid;
 mod reqlog;
 mod responses;
 mod routes;

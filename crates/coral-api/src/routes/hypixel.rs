@@ -12,6 +12,7 @@ use crate::{
     auth::DeveloperKeyAuth,
     cache::{parse_cache_age, store_player_snapshot},
     error::ApiError,
+    player_uuid::player_uuid,
     state::AppState,
 };
 
@@ -163,7 +164,7 @@ pub async fn guild(
         }
         (_, Some(player), _) => {
             let uuid = if is_uuid(player) {
-                normalize_uuid(player)
+                player_uuid(player)?
             } else {
                 normalize_uuid(&state.mojang.resolve(player).await?.uuid)
             };

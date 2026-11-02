@@ -15,14 +15,18 @@ use reqlog::{Caller, Cause, KeyKind, Outcome, record_caller, record_outcome};
 
 use crate::cache::spawn_background_refresh;
 use crate::error::report_server_error;
+use crate::player_uuid::is_player_uuid;
 use crate::responses::{CubelifyResponse, CubelifyScore, CubelifyTag};
 use crate::state::AppState;
 
 struct Rejection {
     outcome: Outcome,
+    response_status: StatusCode,
     message: &'static str,
     icon: &'static str,
 }
+
+type Rejected = (StatusCode, Json<CubelifyResponse>);
 
 const INVALID_KEY: Rejection = Rejection {
     outcome: Outcome {
@@ -30,6 +34,7 @@ const INVALID_KEY: Rejection = Rejection {
         cause: Cause::Auth,
         reason: "invalid_key",
     },
+    response_status: StatusCode::OK,
     message: "Invalid Key",
     icon: "mdi-key-remove",
 };
@@ -40,6 +45,7 @@ const KEY_LOCKED: Rejection = Rejection {
         cause: Cause::Auth,
         reason: "key_locked",
     },
+    response_status: StatusCode::OK,
     message: "Your key has been locked",
     icon: "mdi-account-lock-outline",
 };
@@ -50,8 +56,20 @@ const RATE_LIMITED: Rejection = Rejection {
         cause: Cause::CallerLimit,
         reason: "rate_limited",
     },
+    response_status: StatusCode::OK,
     message: "Rate limit exceeded",
     icon: "mdi-speedometer",
+};
+
+const NOT_A_PLAYER: Rejection = Rejection {
+    outcome: Outcome {
+        status: StatusCode::BAD_REQUEST.as_u16(),
+        cause: Cause::Validation,
+        reason: "not_a_player",
+    },
+    response_status: StatusCode::BAD_REQUEST,
+    message: "Not a player",
+    icon: "mdi-account-question",
 };
 
 const INTERNAL_ERROR: Rejection = Rejection {
@@ -60,6 +78,7 @@ const INTERNAL_ERROR: Rejection = Rejection {
         cause: Cause::Internal,
         reason: "internal_error",
     },
+    response_status: StatusCode::OK,
     message: "Internal Error",
     icon: "mdi-alert-circle",
 };
@@ -79,37 +98,37 @@ pub fn router(_state: AppState) -> Router<AppState> {
 #[utoipa::path(
     get,
     path = "/v3/cubelify",
-    description = "Returns a player's blacklist tags in the format expected by the Cubelify overlay: a score and a styled list. Authenticate with a personal key passed in the `key` query parameter. Errors are also returned with a 200 status and an error tag, so that the overlay can display them inline.",
+    description = "Returns a player's blacklist tags in the format expected by the Cubelify overlay: a score and a styled list. Authenticate with a personal key passed in the `key` query parameter. Errors are also returned with a 200 status and an error tag, so that the overlay can display them inline, except a `uuid` that is not a player's (NPCs and nicked players have version 1 or 2 UUIDs), which is rejected with a 400.",
     params(CubelifyQuery),
     responses(
         (status = 200, description = "Cubelify data", body = CubelifyResponse),
+        (status = 400, description = "The uuid is not a player's", body = CubelifyResponse),
     ),
     tag = "Cubelify",
 )]
 pub async fn get_cubelify(
     State(state): State<AppState>,
     Query(query): Query<CubelifyQuery>,
-) -> Json<CubelifyResponse> {
-    Json(
-        run_cubelify(&state, &query)
-            .await
-            .unwrap_or_else(|rejection| rejection),
-    )
+) -> Result<Json<CubelifyResponse>, Rejected> {
+    run_cubelify(&state, &query).await.map(Json)
 }
 
 async fn run_cubelify(
     state: &AppState,
     query: &CubelifyQuery,
-) -> Result<CubelifyResponse, CubelifyResponse> {
+) -> Result<CubelifyResponse, Rejected> {
     validate_api_key(state, &query.key).await?;
     check_rate_limit(state, &query.key).await?;
+    if !is_player_uuid(&query.uuid) {
+        return Err(reject(&NOT_A_PLAYER));
+    }
     let uuid = normalize_uuid(&query.uuid);
     spawn_background_refresh(state, &uuid);
     let tags = fetch_tags(state, &uuid).await?;
     Ok(build_response(state, &tags).await)
 }
 
-async fn validate_api_key(state: &AppState, api_key: &str) -> Result<(), CubelifyResponse> {
+async fn validate_api_key(state: &AppState, api_key: &str) -> Result<(), Rejected> {
     let Some(member) = MemberRepository::new(state.db.pool())
         .get_by_api_key(api_key)
         .await
@@ -126,7 +145,7 @@ async fn validate_api_key(state: &AppState, api_key: &str) -> Result<(), Cubelif
     Ok(())
 }
 
-async fn check_rate_limit(state: &AppState, api_key: &str) -> Result<(), CubelifyResponse> {
+async fn check_rate_limit(state: &AppState, api_key: &str) -> Result<(), Rejected> {
     match state
         .rate_limiter
         .check_and_record(api_key, crate::auth::PERSONAL_RATE_LIMIT)
@@ -138,19 +157,22 @@ async fn check_rate_limit(state: &AppState, api_key: &str) -> Result<(), Cubelif
     }
 }
 
-async fn fetch_tags(state: &AppState, uuid: &str) -> Result<Vec<PlayerEvent>, CubelifyResponse> {
+async fn fetch_tags(state: &AppState, uuid: &str) -> Result<Vec<PlayerEvent>, Rejected> {
     BlacklistRepository::new(state.db.pool())
         .get_active_tags(uuid)
         .await
         .map_err(|e| internal_failure("tag lookup failed", e))
 }
 
-fn reject(rejection: &Rejection) -> CubelifyResponse {
+fn reject(rejection: &Rejection) -> Rejected {
     record_outcome(rejection.outcome);
-    CubelifyResponse::error(rejection.message, rejection.icon)
+    (
+        rejection.response_status,
+        Json(CubelifyResponse::error(rejection.message, rejection.icon)),
+    )
 }
 
-fn internal_failure(context: &str, error: impl Display) -> CubelifyResponse {
+fn internal_failure(context: &str, error: impl Display) -> Rejected {
     report_server_error(&format!("{context}: {error}"));
     reject(&INTERNAL_ERROR)
 }

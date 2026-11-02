@@ -21,6 +21,7 @@ use crate::{
         parse_cache_age, refresh_player_cache, spawn_background_refresh, store_player_snapshot,
     },
     error::{ApiError, ErrorResponse},
+    player_uuid::player_uuid,
     responses::{PlayerStatsResponse, PlayerTagsResponse, tag_responses},
     state::AppState,
 };
@@ -105,7 +106,7 @@ pub async fn resolve_identifier(
     identifier: &str,
 ) -> Result<(String, Option<String>), ApiError> {
     if is_uuid(identifier) {
-        Ok((normalize_uuid(identifier), None))
+        Ok((player_uuid(identifier)?, None))
     } else {
         let id = state.mojang.resolve(identifier).await?;
         Ok((normalize_uuid(&id.uuid), Some(id.username)))
