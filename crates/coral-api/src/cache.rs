@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::error::ApiError;
 use crate::state::AppState;
-use crate::waste::{calling_key, charge_wasted_call};
+use crate::waste::{calling_personal_key, charge_wasted_call};
 
 const SNAPSHOT_SOURCE: &str = "api";
 
@@ -105,7 +105,7 @@ pub fn spawn_background_refresh(state: &AppState, uuid: &str) {
     let Some(hypixel) = background_hypixel(state) else {
         return;
     };
-    let caller = calling_key();
+    let personal_key = calling_personal_key();
     let (state, uuid) = (state.clone(), uuid.to_string());
     tokio::spawn(async move {
         if is_fresh(&state, &uuid).await {
@@ -119,18 +119,18 @@ pub fn spawn_background_refresh(state: &AppState, uuid: &str) {
             None => true,
         };
         if wasted {
-            charge_wasted_call(&state, caller).await;
+            charge_wasted_call(&state, personal_key).await;
         }
     });
 }
 
 pub fn spawn_snapshot_store(state: &AppState, uuid: &str, data: &Value, username: Option<String>) {
-    let caller = calling_key();
+    let personal_key = calling_personal_key();
     let (state, uuid, data) = (state.clone(), uuid.to_string(), data.clone());
     tokio::spawn(async move {
         let stored = store_player_snapshot(&state, &uuid, &data, username.as_deref()).await;
         if found_nothing(stored) {
-            charge_wasted_call(&state, caller).await;
+            charge_wasted_call(&state, personal_key).await;
         }
     });
 }

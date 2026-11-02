@@ -10,7 +10,6 @@ use utoipa::ToSchema;
 
 use clients::normalize_uuid;
 use coral_redis::RateLimitResult;
-use coral_redis::waste::KeyHolder;
 use database::{BlacklistRepository, MemberRepository, PlayerEvent};
 use reqlog::{Caller, Cause, KeyKind, Outcome, record_caller, record_outcome};
 
@@ -155,7 +154,7 @@ async fn validate_api_key(state: &AppState, api_key: &str) -> Result<(), Rejecte
     if member.key_locked {
         return Err(reject(&KEY_LOCKED));
     }
-    if is_blocked(state, KeyHolder::Personal(member.id)).await {
+    if is_blocked(state, member.id).await {
         return Err(reject(&WASTING_HYPIXEL_CALLS));
     }
     Ok(())

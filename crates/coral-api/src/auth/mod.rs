@@ -4,7 +4,6 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
 
-use coral_redis::waste::KeyHolder;
 use coral_redis::{RateLimitResult, minecraft_session};
 use database::{
     AccessRank, DeveloperKeyRepository, Member, MemberRepository, MinecraftBlockRepository,
@@ -505,7 +504,7 @@ async fn authenticate_key(state: &AppState, api_key: &str) -> Result<AuthResult,
         if member.key_locked {
             return Err(StatusCode::FORBIDDEN);
         }
-        refuse_wasteful_key(state, KeyHolder::Personal(member.id)).await?;
+        refuse_wasteful_key(state, member.id).await?;
         check_rate_limit(state, api_key, PERSONAL_RATE_LIMIT).await?;
         if let Err(e) = MemberRepository::new(state.db.pool())
             .increment_request_count(api_key)
@@ -525,7 +524,6 @@ async fn authenticate_key(state: &AppState, api_key: &str) -> Result<AuthResult,
         if dev_key.locked {
             return Err(StatusCode::FORBIDDEN);
         }
-        refuse_wasteful_key(state, KeyHolder::Developer(dev_key.member_id)).await?;
         let member = MemberRepository::new(state.db.pool())
             .get_by_id(dev_key.member_id)
             .await
@@ -561,13 +559,13 @@ async fn authenticate_personal_key(state: &AppState, api_key: &str) -> Result<Me
     if member.key_locked {
         return Err(StatusCode::FORBIDDEN);
     }
-    refuse_wasteful_key(state, KeyHolder::Personal(member.id)).await?;
+    refuse_wasteful_key(state, member.id).await?;
     check_rate_limit(state, api_key, PERSONAL_RATE_LIMIT).await?;
     Ok(member)
 }
 
-async fn refuse_wasteful_key(state: &AppState, holder: KeyHolder) -> Result<(), StatusCode> {
-    if !is_blocked(state, holder).await {
+async fn refuse_wasteful_key(state: &AppState, member: i64) -> Result<(), StatusCode> {
+    if !is_blocked(state, member).await {
         return Ok(());
     }
     record_outcome(WASTING_HYPIXEL_CALLS);

@@ -1,4 +1,3 @@
-use std::fmt;
 use std::sync::LazyLock;
 
 use chrono::{DateTime, TimeDelta, Utc};
@@ -10,10 +9,8 @@ pub const REFILL_PER_DAY: f64 = 2_500.0;
 pub const BLOCK_FOR: TimeDelta = TimeDelta::days(7);
 
 const SECS_PER_DAY: f64 = 86_400.0;
-const ALLOWANCE_PREFIX: &str = "waste:allowance:";
-const BLOCK_PREFIX: &str = "waste:block:";
-const PERSONAL: &str = "personal";
-const DEVELOPER: &str = "developer";
+const ALLOWANCE_PREFIX: &str = "waste:allowance:personal:";
+const BLOCK_PREFIX: &str = "waste:block:personal:";
 
 static CHARGE: LazyLock<redis::Script> = LazyLock::new(|| {
     redis::Script::new(
@@ -38,12 +35,6 @@ static CHARGE: LazyLock<redis::Script> = LazyLock::new(|| {
     )
 });
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum KeyHolder {
-    Personal(i64),
-    Developer(i64),
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Charge {
     Within,
@@ -52,35 +43,8 @@ pub enum Charge {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Block {
-    pub holder: KeyHolder,
+    pub member_id: i64,
     pub blocked_at: DateTime<Utc>,
-}
-
-impl KeyHolder {
-    pub fn member_id(self) -> i64 {
-        match self {
-            Self::Personal(member) | Self::Developer(member) => member,
-        }
-    }
-
-    fn parse(raw: &str) -> Option<Self> {
-        let (kind, member) = raw.split_once(':')?;
-        let member = member.parse().ok()?;
-        match kind {
-            PERSONAL => Some(Self::Personal(member)),
-            DEVELOPER => Some(Self::Developer(member)),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for KeyHolder {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Personal(member) => write!(f, "{PERSONAL}:{member}"),
-            Self::Developer(member) => write!(f, "{DEVELOPER}:{member}"),
-        }
-    }
 }
 
 impl Block {
@@ -91,12 +55,12 @@ impl Block {
 
 pub async fn charge(
     conn: &mut ConnectionManager,
-    holder: KeyHolder,
+    member_id: i64,
     now: DateTime<Utc>,
 ) -> redis::RedisResult<Charge> {
     let blocked: i64 = CHARGE
-        .key(allowance_key(holder))
-        .key(block_key(holder))
+        .key(allowance_key(member_id))
+        .key(block_key(member_id))
         .arg(now.timestamp())
         .arg(ALLOWANCE)
         .arg(REFILL_PER_DAY / SECS_PER_DAY)
@@ -109,11 +73,8 @@ pub async fn charge(
     })
 }
 
-pub async fn is_blocked(
-    conn: &mut ConnectionManager,
-    holder: KeyHolder,
-) -> redis::RedisResult<bool> {
-    conn.exists(block_key(holder)).await
+pub async fn is_blocked(conn: &mut ConnectionManager, member_id: i64) -> redis::RedisResult<bool> {
+    conn.exists(block_key(member_id)).await
 }
 
 pub async fn blocks(conn: &mut ConnectionManager) -> redis::RedisResult<Vec<Block>> {
@@ -134,28 +95,28 @@ pub async fn blocks(conn: &mut ConnectionManager) -> redis::RedisResult<Vec<Bloc
         .zip(blocked_at)
         .filter_map(|(key, at)| {
             Some(Block {
-                holder: KeyHolder::parse(key.strip_prefix(BLOCK_PREFIX)?)?,
+                member_id: key.strip_prefix(BLOCK_PREFIX)?.parse().ok()?,
                 blocked_at: DateTime::from_timestamp(at?, 0)?,
             })
         })
         .collect())
 }
 
-pub async fn lift(conn: &mut ConnectionManager, holder: KeyHolder) -> redis::RedisResult<bool> {
+pub async fn lift(conn: &mut ConnectionManager, member_id: i64) -> redis::RedisResult<bool> {
     let (lifted, _): (i64, i64) = redis::pipe()
-        .del(block_key(holder))
-        .del(allowance_key(holder))
+        .del(block_key(member_id))
+        .del(allowance_key(member_id))
         .query_async(conn)
         .await?;
     Ok(lifted == 1)
 }
 
-fn allowance_key(holder: KeyHolder) -> String {
-    format!("{ALLOWANCE_PREFIX}{holder}")
+fn allowance_key(member_id: i64) -> String {
+    format!("{ALLOWANCE_PREFIX}{member_id}")
 }
 
-fn block_key(holder: KeyHolder) -> String {
-    format!("{BLOCK_PREFIX}{holder}")
+fn block_key(member_id: i64) -> String {
+    format!("{BLOCK_PREFIX}{member_id}")
 }
 
 #[cfg(test)]
@@ -168,16 +129,8 @@ mod tests {
         Some(RedisPool::connect(&url).await.ok()?.connection())
     }
 
-    fn fresh_holder() -> KeyHolder {
-        KeyHolder::Developer(i64::from(rand::random::<u32>()) + i64::from(u32::MAX))
-    }
-
-    #[test]
-    fn holders_round_trip_through_their_key() {
-        for holder in [KeyHolder::Personal(12), KeyHolder::Developer(7)] {
-            assert_eq!(KeyHolder::parse(&holder.to_string()), Some(holder));
-        }
-        assert_eq!(KeyHolder::parse("session:3"), None);
+    fn fresh_member() -> i64 {
+        i64::from(rand::random::<u32>()) + i64::from(u32::MAX)
     }
 
     #[tokio::test]
@@ -185,29 +138,29 @@ mod tests {
         let Some(mut conn) = test_conn().await else {
             return;
         };
-        let holder = fresh_holder();
+        let member = fresh_member();
         let now = Utc::now();
         for _ in 1..ALLOWANCE as i64 {
             assert_eq!(
-                charge(&mut conn, holder, now).await.unwrap(),
+                charge(&mut conn, member, now).await.unwrap(),
                 Charge::Within
             );
         }
-        assert!(!is_blocked(&mut conn, holder).await.unwrap());
+        assert!(!is_blocked(&mut conn, member).await.unwrap());
         assert_eq!(
-            charge(&mut conn, holder, now).await.unwrap(),
+            charge(&mut conn, member, now).await.unwrap(),
             Charge::Blocked
         );
-        assert!(is_blocked(&mut conn, holder).await.unwrap());
+        assert!(is_blocked(&mut conn, member).await.unwrap());
         assert!(
             blocks(&mut conn)
                 .await
                 .unwrap()
                 .iter()
-                .any(|b| b.holder == holder)
+                .any(|b| b.member_id == member)
         );
-        assert!(lift(&mut conn, holder).await.unwrap());
-        assert!(!is_blocked(&mut conn, holder).await.unwrap());
+        assert!(lift(&mut conn, member).await.unwrap());
+        assert!(!is_blocked(&mut conn, member).await.unwrap());
     }
 
     #[tokio::test]
@@ -215,13 +168,13 @@ mod tests {
         let Some(mut conn) = test_conn().await else {
             return;
         };
-        let holder = fresh_holder();
+        let member = fresh_member();
         let gap = TimeDelta::seconds((SECS_PER_DAY / REFILL_PER_DAY).ceil() as i64);
         let start = Utc::now();
         for call in 0..2 * ALLOWANCE as i32 {
             let at = start + gap * call;
-            assert_eq!(charge(&mut conn, holder, at).await.unwrap(), Charge::Within);
+            assert_eq!(charge(&mut conn, member, at).await.unwrap(), Charge::Within);
         }
-        lift(&mut conn, holder).await.unwrap();
+        lift(&mut conn, member).await.unwrap();
     }
 }

@@ -4,7 +4,7 @@ use axum::http::StatusCode;
 use axum::routing::{delete, post};
 use axum::{Extension, Json, Router};
 use chrono::{TimeDelta, Utc};
-use coral_redis::waste::{self, KeyHolder};
+use coral_redis::waste;
 use coral_redis::{BlacklistEvent, EventPublisher};
 use database::{
     AccessRank, DeveloperKeyRepository, MemberRepository, StarfishRepository, StrikeRepository,
@@ -361,25 +361,16 @@ async fn lift_waste_block(
 ) -> Result<StatusCode, AdminError> {
     let audited = Audited::member(&state, actor, &raw).await?;
     let member = audited.target.member()?;
-    let mut redis = state.redis.connection();
-    let mut lifted = Vec::new();
-    for holder in [KeyHolder::Personal(member), KeyHolder::Developer(member)] {
-        if waste::lift(&mut redis, holder)
-            .await
-            .context("lift the block for wasting Hypixel calls")?
-        {
-            lifted.push(holder.to_string());
-        }
-    }
-    if lifted.is_empty() {
+    let lifted = waste::lift(&mut state.redis.connection(), member)
+        .await
+        .context("lift the block for wasting Hypixel calls")?;
+    if !lifted {
         return Err(AdminError::NotFound(format!(
-            "Discord user {} has no key blocked for wasting Hypixel calls",
+            "Discord user {} has no personal key blocked for wasting Hypixel calls",
             audited.target.discord_id
         )));
     }
-    audited
-        .record("lift_waste_block", json!({ "keys": lifted }))
-        .await;
+    audited.record("lift_waste_block", json!({})).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
