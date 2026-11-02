@@ -19,6 +19,7 @@ use crate::{
     error::ApiError,
     player_uuid::player_uuids,
     responses::{TagResponse, tag_responses},
+    routes::player::cached_display_name,
     state::AppState,
 };
 
@@ -30,6 +31,7 @@ pub(crate) struct BatchRequest {
 #[derive(Serialize, ToSchema)]
 pub(crate) struct BatchResponse {
     pub players: HashMap<String, Vec<TagResponse>>,
+    pub displaynames: HashMap<String, String>,
 }
 
 pub fn router() -> Router<AppState> {
@@ -71,7 +73,7 @@ async fn enforce_distinct_uuid_budget(
 #[utoipa::path(
     post,
     path = "/v3/players",
-    description = "Looks up blacklist tags for up to 100 players in a single request. Only player UUIDs are accepted; usernames are not resolved, and a batch containing anything else (a malformed entry, or an NPC or nicked player's version 1 or 2 UUID) is rejected with a 400 naming those entries. Personal API keys may query up to 1000 distinct players per 5 minutes; repeat lookups of the same players do not count again. Queried players may also be refreshed in the background. Tags with `hide_username` set omit both `added_by` and `added_by_username`.",
+    description = "Looks up blacklist tags for up to 100 players in a single request. Only player UUIDs are accepted; usernames are not resolved, and a batch containing anything else (a malformed entry, or an NPC or nicked player's version 1 or 2 UUID) is rejected with a 400 naming those entries. Personal API keys may query up to 1000 distinct players per 5 minutes; repeat lookups of the same players do not count again. Tagged players' formatted Hypixel display names are listed under `displaynames` when coral has a stored profile for them. Queried players may also be refreshed in the background. Tags with `hide_username` set omit both `added_by` and `added_by_username`.",
     request_body = BatchRequest,
     responses(
         (status = 200, description = "Batch lookup completed", body = BatchResponse),
@@ -133,12 +135,21 @@ pub async fn batch_lookup(
 
     let mut names = HashMap::new();
     let mut players = HashMap::new();
+    let mut displaynames = HashMap::new();
     for (uuid, tags) in batch {
+        if !tags.is_empty()
+            && let Some(displayname) = cached_display_name(&state, &uuid).await
+        {
+            displaynames.insert(uuid.clone(), displayname);
+        }
         players.insert(
             uuid,
             tag_responses(&tags, &state.discord, &mut names, false).await,
         );
     }
 
-    Ok(Json(BatchResponse { players }))
+    Ok(Json(BatchResponse {
+        players,
+        displaynames,
+    }))
 }
