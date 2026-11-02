@@ -124,6 +124,10 @@ pub async fn store_player_snapshot(
     data: &Value,
     username: Option<&str>,
 ) {
+    if belongs_to_another_player(uuid, data) {
+        tracing::error!("not storing a snapshot of {uuid}: the payload is for another player");
+        return;
+    }
     let stored = CacheRepository::new(state.db.pool())
         .store_snapshot(uuid, data, None, Some(SNAPSHOT_SOURCE), username)
         .await;
@@ -138,6 +142,12 @@ pub async fn store_player_snapshot(
     if let Err(e) = count_snapshot(&mut redis, &stored, Utc::now()).await {
         tracing::warn!("failed to count a stored snapshot of {uuid}: {e}");
     }
+}
+
+fn belongs_to_another_player(uuid: &str, data: &Value) -> bool {
+    data.get("uuid")
+        .and_then(Value::as_str)
+        .is_some_and(|payload| !payload.replace('-', "").eq_ignore_ascii_case(uuid))
 }
 
 async fn is_fresh(state: &AppState, uuid: &str) -> bool {
@@ -217,6 +227,17 @@ mod tests {
                 .await
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn a_payload_for_another_uuid_is_rejected() {
+        let uuid = "8142bd741f604dab9bd9fff68da88c6e";
+        let other = json!({"uuid": "8a3224705e894270a2b7cbc197c242ba"});
+        let dashed = json!({"uuid": "8142BD74-1F60-4DAB-9BD9-FFF68DA88C6E"});
+        assert!(belongs_to_another_player(uuid, &other));
+        assert!(!belongs_to_another_player(uuid, &json!({"uuid": uuid})));
+        assert!(!belongs_to_another_player(uuid, &json!({"kills": 1})));
+        assert!(!belongs_to_another_player(uuid, &dashed));
     }
 
     #[tokio::test]
