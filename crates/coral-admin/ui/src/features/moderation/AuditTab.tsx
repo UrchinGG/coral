@@ -25,6 +25,7 @@ const KNOWN_ACTIONS = [
   "delete_release",
   "extension",
   "lock_member",
+  "lift_waste_block",
   "lock_player",
   "publish_review_guide",
   "recompute_rollups",

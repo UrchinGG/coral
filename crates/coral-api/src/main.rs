@@ -30,6 +30,7 @@ mod reqlog;
 mod responses;
 mod routes;
 mod state;
+mod waste;
 
 use state::{AppState, StarfishConfig};
 

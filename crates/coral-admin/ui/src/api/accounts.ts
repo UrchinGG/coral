@@ -158,6 +158,7 @@ export const accountActions = {
   setDevKeyRateLimit: (discordId: string, rateLimit: number) => postJson<void>(accountPath(discordId, "/dev-key/rate-limit"), { rate_limit: rateLimit }),
   setDevKeyPermissions: (discordId: string, permissions: number) => postJson<void>(accountPath(discordId, "/dev-key/permissions"), { permissions }),
   resetLimits: (discordId: string) => postJson<ResetLimits>(accountPath(discordId, "/limits/reset"), {}),
+  liftWasteBlock: (discordId: string) => deleteJson<void>(accountPath(discordId, "/waste-block")),
   setLicense: (discordId: string, status: LicenseStatus) => postJson<void>(accountPath(discordId, "/starfish/license"), { status }),
   revokeSessions: (discordId: string) => postJson<void>(accountPath(discordId, "/starfish/sessions/revoke"), {}),
 };

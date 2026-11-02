@@ -1,7 +1,7 @@
 import type { FlagLevel } from "./extension";
 import type { EntityRef } from "./refs";
 
-export type FlagKind = "upstream" | "writer" | "pressure" | "probe" | "spike" | "extension";
+export type FlagKind = "upstream" | "writer" | "pressure" | "probe" | "waste" | "always_on" | "extension";
 
 export type Flag = {
   key: string;

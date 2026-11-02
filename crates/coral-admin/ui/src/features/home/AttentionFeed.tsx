@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, TriangleAlert } from "lucide-react";
 import { Link } from "react-router-dom";
 
-import { flagsQuery, useDismissFlag } from "../../api/flags";
+import { flagsQuery, useDismissFlag, useLiftWasteBlock } from "../../api/flags";
 import type { Flag, FlagFailure, FlagKind } from "../../api/types/flags";
 import type { FlagLevel } from "../../api/types/extension";
 import { Button } from "../../kit/Button";
@@ -22,7 +22,8 @@ const KIND_LABEL: Record<FlagKind, string> = {
   writer: "writer",
   pressure: "limit pressure",
   probe: "auth probing",
-  spike: "traffic spike",
+  waste: "wasting hypixel calls",
+  always_on: "always on",
   extension: "extension",
 };
 
@@ -77,11 +78,23 @@ function FlagRow({ flag }: { flag: Flag }) {
             Investigate <ArrowRight className="size-3" />
           </Link>
         )}
+        {flag.kind === "waste" && <LiftBlock flag={flag} />}
         <Button size="sm" variant="ghost" onClick={() => dismiss.mutate(flag.key)} disabled={dismiss.isPending}>
           Dismiss 24h
         </Button>
       </div>
     </li>
+  );
+}
+
+function LiftBlock({ flag }: { flag: Flag }) {
+  const lift = useLiftWasteBlock();
+  const account = flag.refs.find((ref) => ref.kind === "account");
+  if (account === undefined) return null;
+  return (
+    <Button size="sm" onClick={() => lift.mutate(account.discord_id)} disabled={lift.isPending}>
+      Lift block
+    </Button>
   );
 }
 

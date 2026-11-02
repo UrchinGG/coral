@@ -4,6 +4,7 @@ use axum::http::StatusCode;
 use axum::routing::{delete, post};
 use axum::{Extension, Json, Router};
 use chrono::{TimeDelta, Utc};
+use coral_redis::waste::{self, KeyHolder};
 use coral_redis::{BlacklistEvent, EventPublisher};
 use database::{
     AccessRank, DeveloperKeyRepository, MemberRepository, StarfishRepository, StrikeRepository,
@@ -117,6 +118,7 @@ pub fn router() -> Router<AppState> {
             post(set_dev_key_permissions),
         )
         .route("/{discord_id}/limits/reset", post(reset_limits))
+        .route("/{discord_id}/waste-block", delete(lift_waste_block))
         .route("/{discord_id}/starfish/license", post(set_license))
         .route(
             "/{discord_id}/starfish/sessions/revoke",
@@ -348,6 +350,35 @@ async fn set_dev_key_locked(
     }
     audited
         .record("set_dev_key_locked", json!({ "locked": body.locked }))
+        .await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn lift_waste_block(
+    State(state): State<AppState>,
+    Extension(actor): Extension<AdminActor>,
+    Path(raw): Path<String>,
+) -> Result<StatusCode, AdminError> {
+    let audited = Audited::member(&state, actor, &raw).await?;
+    let member = audited.target.member()?;
+    let mut redis = state.redis.connection();
+    let mut lifted = Vec::new();
+    for holder in [KeyHolder::Personal(member), KeyHolder::Developer(member)] {
+        if waste::lift(&mut redis, holder)
+            .await
+            .context("lift the block for wasting Hypixel calls")?
+        {
+            lifted.push(holder.to_string());
+        }
+    }
+    if lifted.is_empty() {
+        return Err(AdminError::NotFound(format!(
+            "Discord user {} has no key blocked for wasting Hypixel calls",
+            audited.target.discord_id
+        )));
+    }
+    audited
+        .record("lift_waste_block", json!({ "keys": lifted }))
         .await;
     Ok(StatusCode::NO_CONTENT)
 }

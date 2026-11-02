@@ -275,7 +275,7 @@ mod tests {
                 member_id: None
             })
         );
-        for text in ["review_guide", "rollups", "spike:42:2026-10-15", "12345"] {
+        for text in ["review_guide", "rollups", "always_on:personal:42", "12345"] {
             assert_eq!(target_ref("other", text), None, "{text}");
         }
     }

@@ -38,6 +38,13 @@ pub fn record_caller(caller: Caller) {
     update(|recorded| recorded.caller = Some(caller));
 }
 
+pub fn current_caller() -> Option<Caller> {
+    CONTEXT
+        .try_with(|context| context.lock().caller)
+        .ok()
+        .flatten()
+}
+
 pub fn record_cause(cause: Cause) {
     update(|recorded| recorded.cause = Some(cause));
 }
@@ -87,6 +94,18 @@ mod tests {
         })
         .await;
         assert_eq!(context.take().caller, Some(Caller::session(Some(2), 9)));
+    }
+
+    #[tokio::test]
+    async fn the_caller_can_be_read_back_inside_the_request() {
+        let context = Arc::new(RequestContext::default());
+        let caller = scope(context, async {
+            record_caller(Caller::member(KeyKind::Developer, 3));
+            current_caller()
+        })
+        .await;
+        assert_eq!(caller, Some(Caller::member(KeyKind::Developer, 3)));
+        assert_eq!(current_caller(), None);
     }
 
     #[test]

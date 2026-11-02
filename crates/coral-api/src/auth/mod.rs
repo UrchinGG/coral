@@ -4,12 +4,13 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
 
+use coral_redis::waste::KeyHolder;
 use coral_redis::{RateLimitResult, minecraft_session};
 use database::{
     AccessRank, DeveloperKeyRepository, Member, MemberRepository, MinecraftBlockRepository,
     PluginRegistryRepository, StarfishRepository,
 };
-use reqlog::{Caller, Cause, KeyKind, record_caller, record_cause};
+use reqlog::{Caller, Cause, KeyKind, Outcome, record_caller, record_cause, record_outcome};
 use uuid::Uuid;
 
 use crate::error::{ApiError, report_server_error};
@@ -17,12 +18,18 @@ use crate::routes::starfish::auth::validate_hwid;
 use crate::routes::starfish::session_auth::resolve_verified_session;
 use crate::routes::starfish::{is_owner, require_starfish};
 use crate::state::AppState;
+use crate::waste::is_blocked;
 
 const ELEVATED_CANONICAL_PATH: &str = "/v3/hypixel/player";
 const ELEVATED_STRIPPED_PATH: &str = "/hypixel/player";
 const ATTEST_MAX_SKEW_SECS: i64 = 120;
 const ACTOR_HEADER: &str = "X-Coral-Actor";
 const BEARER_PREFIX: &str = "Bearer ";
+const WASTING_HYPIXEL_CALLS: Outcome = Outcome {
+    status: StatusCode::FORBIDDEN.as_u16(),
+    cause: Cause::Auth,
+    reason: "wasting_hypixel_calls",
+};
 
 #[derive(Clone)]
 pub struct AuthenticatedMember(pub Member);
@@ -498,6 +505,7 @@ async fn authenticate_key(state: &AppState, api_key: &str) -> Result<AuthResult,
         if member.key_locked {
             return Err(StatusCode::FORBIDDEN);
         }
+        refuse_wasteful_key(state, KeyHolder::Personal(member.id)).await?;
         check_rate_limit(state, api_key, PERSONAL_RATE_LIMIT).await?;
         if let Err(e) = MemberRepository::new(state.db.pool())
             .increment_request_count(api_key)
@@ -517,6 +525,7 @@ async fn authenticate_key(state: &AppState, api_key: &str) -> Result<AuthResult,
         if dev_key.locked {
             return Err(StatusCode::FORBIDDEN);
         }
+        refuse_wasteful_key(state, KeyHolder::Developer(dev_key.member_id)).await?;
         let member = MemberRepository::new(state.db.pool())
             .get_by_id(dev_key.member_id)
             .await
@@ -552,8 +561,17 @@ async fn authenticate_personal_key(state: &AppState, api_key: &str) -> Result<Me
     if member.key_locked {
         return Err(StatusCode::FORBIDDEN);
     }
+    refuse_wasteful_key(state, KeyHolder::Personal(member.id)).await?;
     check_rate_limit(state, api_key, PERSONAL_RATE_LIMIT).await?;
     Ok(member)
+}
+
+async fn refuse_wasteful_key(state: &AppState, holder: KeyHolder) -> Result<(), StatusCode> {
+    if !is_blocked(state, holder).await {
+        return Ok(());
+    }
+    record_outcome(WASTING_HYPIXEL_CALLS);
+    Err(StatusCode::FORBIDDEN)
 }
 
 async fn check_rate_limit(state: &AppState, api_key: &str, limit: i64) -> Result<(), StatusCode> {

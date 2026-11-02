@@ -11,7 +11,6 @@ use crate::boot::BootSource;
 use crate::coverage::CoverageCache;
 use crate::discord::DiscordContext;
 use crate::extensions;
-use crate::flags::SpikeBaselines;
 use crate::jobs::JobRegistry;
 use crate::names::{NameService, NameWorkers};
 use crate::players::PlayerLookups;
@@ -50,7 +49,6 @@ pub struct AppState {
     pub scan_rates: ScanRates,
     pub boot: BootSource,
     pub extensions: Arc<[Arc<dyn Extension>]>,
-    pub spikes: SpikeBaselines,
     pub upstream_history: UpstreamHistory,
 }
 
@@ -100,7 +98,6 @@ impl AppState {
             boot: BootSource::from_env(coverage.clone(), extensions::summaries(&extensions)),
             views: ViewCache::new(),
             search: SearchLimits::new(),
-            spikes: SpikeBaselines::new(),
             upstream_history: UpstreamHistory::new(),
             coverage,
             names,

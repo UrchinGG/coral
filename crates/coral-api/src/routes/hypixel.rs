@@ -10,7 +10,7 @@ use database::{GuildCurrentRepository, permissions};
 
 use crate::{
     auth::DeveloperKeyAuth,
-    cache::{parse_cache_age, store_player_snapshot},
+    cache::{parse_cache_age, spawn_snapshot_store},
     error::ApiError,
     player_uuid::player_uuid,
     state::AppState,
@@ -103,10 +103,7 @@ pub async fn player(
     let (data, stale) = resolve_player_data(&state, &uuid, max_cache_age).await?;
 
     if !stale && let Some(ref player) = data {
-        let (state, uuid, player) = (state.clone(), uuid.clone(), player.clone());
-        tokio::spawn(async move {
-            store_player_snapshot(&state, &uuid, &player, username_hint.as_deref()).await;
-        });
+        spawn_snapshot_store(&state, &uuid, player, username_hint);
     }
 
     Ok(Json(

@@ -7,6 +7,7 @@ use serde_json::Value;
 
 use crate::error::ApiError;
 use crate::state::AppState;
+use crate::waste::{calling_key, charge_wasted_call};
 
 const SNAPSHOT_SOURCE: &str = "api";
 
@@ -91,7 +92,9 @@ async fn discover_members(state: &AppState, raw: &Value) {
     };
     for uuid in undiscovered {
         match hypixel.get_player(&uuid).await {
-            Ok(Some(player)) => store_player_snapshot(state, &uuid, &player, None).await,
+            Ok(Some(player)) => {
+                store_player_snapshot(state, &uuid, &player, None).await;
+            }
             Err(ClientError::RateLimited) => return,
             _ => {}
         }
@@ -102,10 +105,32 @@ pub fn spawn_background_refresh(state: &AppState, uuid: &str) {
     let Some(hypixel) = background_hypixel(state) else {
         return;
     };
+    let caller = calling_key();
     let (state, uuid) = (state.clone(), uuid.to_string());
     tokio::spawn(async move {
-        if !is_fresh(&state, &uuid).await {
-            fetch_and_store(&state, &hypixel, &uuid, None).await;
+        if is_fresh(&state, &uuid).await {
+            return;
+        }
+        let Ok(player) = hypixel.get_player(&uuid).await else {
+            return;
+        };
+        let wasted = match player {
+            Some(data) => found_nothing(store_player_snapshot(&state, &uuid, &data, None).await),
+            None => true,
+        };
+        if wasted {
+            charge_wasted_call(&state, caller).await;
+        }
+    });
+}
+
+pub fn spawn_snapshot_store(state: &AppState, uuid: &str, data: &Value, username: Option<String>) {
+    let caller = calling_key();
+    let (state, uuid, data) = (state.clone(), uuid.to_string(), data.clone());
+    tokio::spawn(async move {
+        let stored = store_player_snapshot(&state, &uuid, &data, username.as_deref()).await;
+        if found_nothing(stored) {
+            charge_wasted_call(&state, caller).await;
         }
     });
 }
@@ -115,7 +140,9 @@ pub async fn refresh_player_cache(
     uuid: &str,
     username: Option<&str>,
 ) -> Option<Value> {
-    fetch_and_store(state, state.hypixel.as_deref()?, uuid, username).await
+    let data = state.hypixel.as_deref()?.get_player(uuid).await.ok()??;
+    store_player_snapshot(state, uuid, &data, username).await;
+    Some(data)
 }
 
 pub async fn store_player_snapshot(
@@ -123,25 +150,25 @@ pub async fn store_player_snapshot(
     uuid: &str,
     data: &Value,
     username: Option<&str>,
-) {
+) -> Option<SnapshotResult> {
     if belongs_to_another_player(uuid, data) {
         tracing::error!("not storing a snapshot of {uuid}: the payload is for another player");
-        return;
+        return None;
     }
     let stored = CacheRepository::new(state.db.pool())
         .store_snapshot(uuid, data, None, Some(SNAPSHOT_SOURCE), username)
-        .await;
-    let stored = match stored {
-        Ok(stored) => stored,
-        Err(e) => {
-            tracing::warn!("failed to store a snapshot of {uuid}: {e}");
-            return;
-        }
-    };
+        .await
+        .inspect_err(|e| tracing::warn!("failed to store a snapshot of {uuid}: {e}"))
+        .ok()?;
     let mut redis = state.redis.connection();
     if let Err(e) = count_snapshot(&mut redis, &stored, Utc::now()).await {
         tracing::warn!("failed to count a stored snapshot of {uuid}: {e}");
     }
+    Some(stored)
+}
+
+fn found_nothing(stored: Option<SnapshotResult>) -> bool {
+    matches!(stored, Some(SnapshotResult::NoChange))
 }
 
 fn belongs_to_another_player(uuid: &str, data: &Value) -> bool {
@@ -181,17 +208,6 @@ fn snapshot_counter(stored: &SnapshotResult) -> Option<&'static str> {
 
 fn background_hypixel(state: &AppState) -> Option<HypixelClient> {
     state.hypixel.as_deref().map(HypixelClient::in_background)
-}
-
-async fn fetch_and_store(
-    state: &AppState,
-    hypixel: &HypixelClient,
-    uuid: &str,
-    username: Option<&str>,
-) -> Option<Value> {
-    let data = hypixel.get_player(uuid).await.ok()??;
-    store_player_snapshot(state, uuid, &data, username).await;
-    Some(data)
 }
 
 #[cfg(test)]

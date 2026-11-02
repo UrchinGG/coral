@@ -5,6 +5,7 @@ mod pool;
 mod rate_limit;
 pub mod review_media;
 pub mod verify;
+pub mod waste;
 pub mod web_session;
 
 pub use events::*;

@@ -1,6 +1,7 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { toast } from "../kit/toast";
+import { accountActions } from "./accounts";
 import { postJson } from "./http";
 import { keys } from "./keys";
 import { getQuery, liveQuery, POLL_FLAGS_MS } from "./queryClient";
@@ -32,6 +33,16 @@ export function useDismissFlag() {
       if (context?.previous !== undefined) client.setQueryData(keys.flags(), context.previous);
       toast.error(`Could not dismiss the flag: ${error.message}`);
     },
+    onSettled: () => client.invalidateQueries({ queryKey: keys.flags() }),
+  });
+}
+
+export function useLiftWasteBlock() {
+  const client = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: (discordId) => accountActions.liftWasteBlock(discordId),
+    onSuccess: () => toast.ok("Block lifted; the key works again."),
+    onError: (error) => toast.error(`Could not lift the block: ${error.message}`),
     onSettled: () => client.invalidateQueries({ queryKey: keys.flags() }),
   });
 }

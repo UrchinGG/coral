@@ -18,7 +18,7 @@ use hypixel::extract_rank_prefix;
 use crate::{
     auth::{AuthenticatedMember, DeveloperKeyAuth},
     cache::{
-        parse_cache_age, refresh_player_cache, spawn_background_refresh, store_player_snapshot,
+        parse_cache_age, refresh_player_cache, spawn_background_refresh, spawn_snapshot_store,
     },
     error::{ApiError, ErrorResponse},
     player_uuid::player_uuid,
@@ -185,13 +185,6 @@ fn resolve_username(hint: Option<String>, player_data: &Option<Value>, uuid: &st
     })
 }
 
-fn spawn_cache_update(state: &AppState, uuid: &str, data: &Value, username: Option<String>) {
-    let (state, uuid, data) = (state.clone(), uuid.to_string(), data.clone());
-    tokio::spawn(async move {
-        store_player_snapshot(&state, &uuid, &data, username.as_deref()).await;
-    });
-}
-
 #[utoipa::path(
     get,
     path = "/v3/player/tags",
@@ -307,7 +300,7 @@ pub async fn player_stats(
 
     if !stale {
         if let Some(ref data) = player_data {
-            spawn_cache_update(&state, &uuid, data, mojang_name);
+            spawn_snapshot_store(&state, &uuid, data, mojang_name);
         }
     }
 

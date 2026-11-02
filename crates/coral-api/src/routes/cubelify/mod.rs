@@ -10,6 +10,7 @@ use utoipa::ToSchema;
 
 use clients::normalize_uuid;
 use coral_redis::RateLimitResult;
+use coral_redis::waste::KeyHolder;
 use database::{BlacklistRepository, MemberRepository, PlayerEvent};
 use reqlog::{Caller, Cause, KeyKind, Outcome, record_caller, record_outcome};
 
@@ -18,6 +19,7 @@ use crate::error::report_server_error;
 use crate::player_uuid::is_player_uuid;
 use crate::responses::{CubelifyResponse, CubelifyScore, CubelifyTag};
 use crate::state::AppState;
+use crate::waste::is_blocked;
 
 struct Rejection {
     outcome: Outcome,
@@ -48,6 +50,17 @@ const KEY_LOCKED: Rejection = Rejection {
     response_status: StatusCode::OK,
     message: "Your key has been locked",
     icon: "mdi-account-lock-outline",
+};
+
+const WASTING_HYPIXEL_CALLS: Rejection = Rejection {
+    outcome: Outcome {
+        status: StatusCode::FORBIDDEN.as_u16(),
+        cause: Cause::Auth,
+        reason: "wasting_hypixel_calls",
+    },
+    response_status: StatusCode::OK,
+    message: "Key blocked for wasting Hypixel requests",
+    icon: "mdi-key-alert",
 };
 
 const RATE_LIMITED: Rejection = Rejection {
@@ -141,6 +154,9 @@ async fn validate_api_key(state: &AppState, api_key: &str) -> Result<(), Rejecte
 
     if member.key_locked {
         return Err(reject(&KEY_LOCKED));
+    }
+    if is_blocked(state, KeyHolder::Personal(member.id)).await {
+        return Err(reject(&WASTING_HYPIXEL_CALLS));
     }
     Ok(())
 }
