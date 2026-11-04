@@ -56,8 +56,8 @@ pub(crate) struct RemoveTagBody {
     pub silent: bool,
 }
 
-/// Overwrites an existing tag. `tag_type` identifies the existing tag (must currently be active).
-/// `new_type` may equal `tag_type` to replace just the reason; otherwise it switches the tag type.
+/// Overwrites an existing tag. `type` identifies the existing tag (must currently be active).
+/// `new_type` may equal `type` to replace just the reason; otherwise it switches the tag type.
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct UpdateTagBody {
     #[serde(rename = "type")]
