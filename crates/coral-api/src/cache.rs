@@ -115,7 +115,10 @@ pub fn spawn_background_refresh(state: &AppState, uuid: &str) {
             return;
         };
         let wasted = match player {
-            Some(data) => found_nothing(store_player_snapshot(&state, &uuid, &data, None).await),
+            Some(data) => {
+                let stored = store_player_snapshot(&state, &uuid, &data, None).await;
+                wasted_on_offline_player(&data, stored)
+            }
             None => true,
         };
         if wasted {
@@ -129,7 +132,7 @@ pub fn spawn_snapshot_store(state: &AppState, uuid: &str, data: &Value, username
     let (state, uuid, data) = (state.clone(), uuid.to_string(), data.clone());
     tokio::spawn(async move {
         let stored = store_player_snapshot(&state, &uuid, &data, username.as_deref()).await;
-        if found_nothing(stored) {
+        if wasted_on_offline_player(&data, stored) {
             charge_wasted_call(&state, personal_key).await;
         }
     });
@@ -167,8 +170,13 @@ pub async fn store_player_snapshot(
     Some(stored)
 }
 
-fn found_nothing(stored: Option<SnapshotResult>) -> bool {
-    matches!(stored, Some(SnapshotResult::NoChange))
+fn wasted_on_offline_player(player: &Value, stored: Option<SnapshotResult>) -> bool {
+    matches!(stored, Some(SnapshotResult::NoChange)) && is_offline(player)
+}
+
+fn is_offline(player: &Value) -> bool {
+    let at = |field| player.get(field).and_then(Value::as_i64);
+    matches!((at("lastLogin"), at("lastLogout")), (Some(login), Some(logout)) if logout >= login)
 }
 
 fn belongs_to_another_player(uuid: &str, data: &Value) -> bool {
@@ -243,6 +251,18 @@ mod tests {
                 .await
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn only_an_unchanged_offline_player_is_wasted() {
+        let offline = json!({"lastLogin": 1, "lastLogout": 2});
+        let online = json!({"lastLogin": 2, "lastLogout": 1});
+        let hidden = json!({"kills": 1});
+        let unchanged = || Some(SnapshotResult::NoChange);
+        assert!(wasted_on_offline_player(&offline, unchanged()));
+        assert!(!wasted_on_offline_player(&online, unchanged()));
+        assert!(!wasted_on_offline_player(&hidden, unchanged()));
+        assert!(!wasted_on_offline_player(&offline, None));
     }
 
     #[test]

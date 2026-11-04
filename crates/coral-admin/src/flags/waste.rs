@@ -42,7 +42,7 @@ fn waste_flag(block: Block, discord_id: i64) -> Flag {
         FlagLevel::Danger,
         format!("waste:{}:{}", block.member_id, block.blocked_at.timestamp()),
         format!(
-            "Personal key blocked until {}: its lookups made {} Hypixel calls that found nothing, faster than the {} a day it is allowed",
+            "Personal key blocked until {}: its lookups made {} Hypixel calls on offline players that found nothing, faster than the {} a day it is allowed",
             block.until().format(UNTIL_FORMAT),
             grouped(ALLOWANCE as i64),
             grouped(REFILL_PER_DAY as i64),
@@ -71,7 +71,7 @@ mod tests {
         assert_eq!(flag.level, FlagLevel::Danger);
         assert_eq!(
             flag.summary,
-            "Personal key blocked until Nov 9, 14:05 UTC: its lookups made 500 Hypixel calls that found nothing, faster than the 2,500 a day it is allowed"
+            "Personal key blocked until Nov 9, 14:05 UTC: its lookups made 500 Hypixel calls on offline players that found nothing, faster than the 2,500 a day it is allowed"
         );
         assert_eq!(
             flag.refs,
