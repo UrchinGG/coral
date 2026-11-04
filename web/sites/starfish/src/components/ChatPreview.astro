@@ -1,0 +1,25 @@
+---
+import Legacy from "@shared/components/Legacy.astro";
+
+interface Props {
+  lines: string[];
+  label: string;
+}
+
+const { lines, label } = Astro.props;
+---
+
+<figure class="chat" aria-label={label}>
+  {lines.map((line) => (
+    <Legacy text={line || " "} />
+  ))}
+</figure>
+
+<style>
+  .chat {
+    display: grid;
+    width: max-content;
+    font-size: 18px;
+    line-height: 18px;
+  }
+</style>

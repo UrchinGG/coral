@@ -1,0 +1,109 @@
+<div id="toast" class="toast card" role="status" aria-live="polite"></div>
+
+<div id="seek-hint" class="seek-hint card" aria-hidden="true"></div>
+
+<div id="error" class="error card" role="alert" hidden>
+  <strong id="error-title"></strong>
+  <p id="error-message"></p>
+</div>
+
+<div id="tooltip" class="tooltip card" role="tooltip" hidden>
+  <span id="tooltip-text"></span>
+  <kbd id="tooltip-key"></kbd>
+</div>
+
+<style>
+  .toast {
+    position: absolute;
+    z-index: 15;
+    bottom: calc(var(--transport-inset) + 0.625rem);
+    left: calc((100% - var(--panel-inset)) / 2);
+    max-width: min(32.5rem, 100% - 2rem);
+    padding: 0.5625rem 0.875rem;
+    border-radius: var(--radius-lg);
+    font-weight: 500;
+    opacity: 0;
+    pointer-events: none;
+    translate: -50% 0.5rem;
+    transition:
+      opacity var(--transition),
+      translate var(--transition);
+
+    &[data-shown] {
+      opacity: 1;
+      translate: -50% 0;
+    }
+  }
+
+  .seek-hint {
+    position: absolute;
+    z-index: 12;
+    top: 42%;
+    left: 50%;
+    padding: 0.625rem 1rem;
+    border-radius: var(--radius-lg);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    opacity: 0;
+    pointer-events: none;
+    translate: -50% -50%;
+    transition: opacity var(--transition);
+
+    &[data-shown] {
+      opacity: 1;
+    }
+
+    &[data-side="left"] {
+      left: 18%;
+    }
+
+    &[data-side="right"] {
+      left: 82%;
+    }
+  }
+
+  .error {
+    position: absolute;
+    z-index: 22;
+    right: calc(1rem + var(--panel-inset));
+    bottom: calc(var(--transport-inset) + 0.625rem);
+    left: 1rem;
+    display: grid;
+    gap: 0.25rem;
+    max-width: 35rem;
+    margin-inline: auto;
+    padding: 0.75rem 1rem;
+    border-left: 4px solid var(--color-danger);
+    border-radius: var(--radius-xs) var(--radius) var(--radius) var(--radius-xs);
+    line-height: 1.5;
+
+    & p {
+      color: var(--color-text-secondary);
+      overflow-wrap: anywhere;
+    }
+  }
+
+  .tooltip {
+    position: fixed;
+    z-index: 100;
+    top: 0;
+    left: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    max-width: 20rem;
+    padding: 0.3125rem 0.5rem;
+    border-radius: var(--radius-sm);
+    font-weight: 500;
+    pointer-events: none;
+    white-space: nowrap;
+
+    & kbd {
+      min-width: 1rem;
+      padding: 0 0.25rem;
+      font-size: var(--text-3xs);
+      line-height: 1rem;
+    }
+  }
+</style>

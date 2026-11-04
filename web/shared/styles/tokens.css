@@ -1,0 +1,75 @@
+:root {
+  --color-background: #0e0f12;
+  --color-inset: #0a0b0d;
+  --color-text-strong: #f4f5f7;
+  --color-text: #dadbdf;
+  --color-text-secondary: #9a9da4;
+  --color-text-muted: #8a8d94;
+  --color-text-faint: #6a6d74;
+  --color-surface: #131418;
+  --color-surface-hover: #1a1c21;
+  --color-surface-raised: #17191d;
+  --color-surface-raised-hover: #1a1c21;
+  --color-border: #25272d;
+  --color-border-hover: #34373e;
+  --color-divider: #1c1e23;
+  --color-panel: #17191d;
+  --color-success: #55ff55;
+  --color-success-fill: #204324;
+  --color-success-border: #307b33;
+  --color-warning: #ffaa00;
+  --color-warning-fill: #423213;
+  --color-warning-border: #7b560d;
+  --color-danger: #ff5555;
+  --color-danger-fill: #422124;
+  --color-danger-border: #7b3133;
+  --color-info: #5c9dff;
+  --color-discord: #5865f2;
+  --color-scrim: rgb(0 0 0 / 0.55);
+  --shadow-float: 0 10px 30px rgb(0 0 0 / 0.35);
+
+  --mc-dark-aqua: #00aaaa;
+  --mc-dark-red: #aa0000;
+  --mc-dark-purple: #aa00aa;
+  --mc-gold: #ffaa00;
+  --mc-gray: #aaaaaa;
+  --mc-dark-gray: #555555;
+  --mc-blue: #5555ff;
+  --mc-green: #55ff55;
+  --mc-aqua: #55ffff;
+  --mc-red: #ff5555;
+  --mc-light-purple: #ff55ff;
+  --mc-yellow: #ffff55;
+  --mc-white: #ffffff;
+  --mc-chat: rgb(0 0 0 / 0.46);
+  --mc-shadow: color-mix(in srgb, currentColor 25%, black);
+
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-mono:
+    var(--font-jetbrains-mono), "Cascadia Code", Consolas, ui-monospace,
+    monospace;
+  --font-minecraft: "Minecraft", var(--font-mono);
+
+  --text-3xs: 0.625rem;
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-code: 0.8125rem;
+  --text-lg: 1.125rem;
+  --text-2xl: 1.875rem;
+  --text-display: clamp(2.5rem, 7vw, 3rem);
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+
+  --width-narrow: 42rem;
+  --width-content: 56rem;
+  --width-wide: 72rem;
+  --gutter: 1.5rem;
+  --nav-height: 3.5rem;
+
+  --transition: 150ms ease;
+}

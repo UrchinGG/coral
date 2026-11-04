@@ -1,0 +1,265 @@
+---
+import { STARFISH_URL } from "astro:env/server";
+import Container from "@shared/components/Container.astro";
+import Discord from "@shared/components/Discord.astro";
+import Legacy from "@shared/components/Legacy.astro";
+import { DISCORD_URL } from "@shared/links";
+import Layout from "@/layouts/Layout.astro";
+import "@shared/styles/controls.css";
+
+const tagline =
+  "Urchin is a community blacklist for Hypixel. Players tag cheaters and snipers from Discord, and the tags show up in your overlay.";
+
+const tags = [
+  {
+    icon: "§cS",
+    name: "Sniper",
+    description: "Cheaters that target players or teams and then requeue",
+  },
+  {
+    icon: "§6BC",
+    name: "Blatant Cheater",
+    description:
+      "Obvious cheats that would be impossible on a vanilla client, like scaffold, speedmine, or other packet manipulation",
+  },
+  {
+    icon: "§6CC",
+    name: "Closet Cheater",
+    description: "Subtler cheats like bridge assist and aim assist",
+  },
+  {
+    icon: "§5CCC",
+    name: "Confirmed Cheater",
+    description:
+      "Proven to be cheating by our staff team, with evidence typically available upon request",
+  },
+  {
+    icon: "§7RN",
+    name: "Replays Needed",
+    description: "Send replays of this player so our staff can review",
+  },
+];
+
+const uses = [
+  {
+    name: "Discord",
+    href: DISCORD_URL,
+    description:
+      "Join our server to access cheater reports and get support. Add the bot to your account or server to check tags and stats and get an API key.",
+  },
+  {
+    name: "Starfish",
+    href: STARFISH_URL,
+    description:
+      "Run the same injectable mod our staff team uses, with keyless tab list stats in games and replays, an anticheat, Urchin integration, and powerful custom plugins. Inject it into any 1.8.9 client on Windows, macOS, or Linux.",
+  },
+  {
+    name: "Mod",
+    description:
+      "Get a chat alert when a tagged player joins, hover a tag to see who added it and why, and tag players without leaving the game. It runs on OneClient for 1.8.9 and 26.3.",
+  },
+  {
+    name: "Overlays",
+    href: DISCORD_URL,
+    description:
+      "Add Urchin tags to your overlay of choice. Run `/help` on Discord for Cubelify instructions.",
+  },
+  {
+    name: "API",
+    href: "/docs",
+    description:
+      "Add Urchin integration to your project using our powerful and reliable API. Interact with the blacklist and see historical Hypixel stats for any player or guild.",
+  },
+];
+---
+
+<Layout description={tagline}>
+  <Container width="wide" class="hero">
+    <div class="intro">
+      <h1>
+        <img src="/brand/urchin.svg" alt="" width="54" height="54" />
+        Urchin
+      </h1>
+      <p>{tagline}</p>
+      <div class="actions">
+        <a class="button primary" href={DISCORD_URL}>
+          <Discord />
+          Join the Discord
+        </a>
+        <a class="button" href="/docs">
+          Read the API Docs
+        </a>
+      </div>
+    </div>
+
+    <ul class="tags panel" role="list" aria-label="Tags">
+      {tags.map(({ icon, name, description }) => (
+        <li>
+          <span class="icon" aria-hidden="true">
+            <Legacy text={`§8[${icon}§8]`} />
+          </span>
+          <span class="body">
+            <span class="name">{name}</span>
+            <span class="description">{description}</span>
+          </span>
+        </li>
+      ))}
+    </ul>
+  </Container>
+
+  <Container width="wide" class="uses">
+    <h2>Use Urchin</h2>
+    <ul role="list">
+      {uses.map(({ name, href, description }) => (
+        <li>
+          <h3>{href ? <a href={href}>{name}</a> : name}</h3>
+          <p>
+            {description
+              .split("`")
+              .map((part, index) => (index % 2 ? <code>{part}</code> : part))}
+          </p>
+        </li>
+      ))}
+    </ul>
+  </Container>
+</Layout>
+
+<style>
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 32rem);
+    align-items: center;
+    gap: 3rem 4rem;
+    padding-block: 6rem;
+
+    @media (width < 60rem) {
+      grid-template-columns: minmax(0, 1fr);
+      padding-block: 4rem 3rem;
+    }
+  }
+
+  .intro {
+    display: grid;
+    justify-items: start;
+    gap: 1.25rem;
+
+    & h1 {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      font-size: var(--text-display);
+      line-height: 1;
+      letter-spacing: -0.025em;
+    }
+
+    & p {
+      max-width: 28rem;
+      color: var(--color-text-secondary);
+      font-size: var(--text-lg);
+      line-height: 1.6;
+      text-wrap: pretty;
+    }
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+
+  .tags {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+
+    & li {
+      display: grid;
+      grid-template-columns: subgrid;
+      grid-column: 1 / -1;
+      align-items: center;
+      column-gap: 1.25rem;
+      padding: 0.875rem 1.25rem;
+
+      & + li {
+        border-top: 1px solid var(--color-divider);
+      }
+    }
+  }
+
+  .icon {
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  .body {
+    display: grid;
+    gap: 0.125rem;
+  }
+
+  .name {
+    color: var(--color-text-strong);
+    font-size: var(--text-sm);
+    font-weight: 500;
+  }
+
+  .description {
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+    line-height: 1.6;
+  }
+
+  .uses {
+    display: grid;
+    gap: 2rem;
+    padding-block: 4rem 6rem;
+    border-top: 1px solid var(--color-divider);
+
+    & h2 {
+      font-size: var(--text-2xl);
+      font-weight: 700;
+    }
+
+    & ul {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+      gap: 2rem 3rem;
+    }
+
+    & li {
+      display: grid;
+      align-content: start;
+      gap: 0.5rem;
+    }
+
+    & h3 {
+      justify-self: start;
+      color: var(--color-text-strong);
+      font-size: var(--text-base);
+      font-weight: 600;
+      line-height: 1.5;
+    }
+
+    & a {
+      text-decoration: underline transparent;
+      text-underline-offset: 0.25em;
+      transition: text-decoration-color var(--transition);
+
+      @media (hover: hover) {
+        &:hover {
+          text-decoration-color: currentColor;
+        }
+      }
+    }
+
+    & p {
+      color: var(--color-text-secondary);
+      font-size: var(--text-sm);
+      line-height: 1.6;
+    }
+
+    & code {
+      color: var(--color-text);
+      font-size: var(--text-code);
+    }
+  }
+</style>

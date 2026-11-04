@@ -1,0 +1,113 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 2.25rem;
+  padding: 0 0.875rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font: 500 var(--text-sm) / 1 var(--font-sans);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--transition),
+    border-color var(--transition),
+    color var(--transition);
+
+  & svg {
+    flex: none;
+    fill: currentColor;
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      border-color: var(--color-border-hover);
+      color: var(--color-text);
+    }
+  }
+}
+
+.button.primary {
+  border-color: var(--color-text-strong);
+  background: var(--color-text-strong);
+  color: var(--color-background);
+
+  @media (hover: hover) {
+    &:hover {
+      border-color: var(--color-text);
+      background: var(--color-text);
+      color: var(--color-background);
+    }
+  }
+}
+
+.button.strong {
+  border-color: var(--color-border-hover);
+  background: var(--color-border);
+  color: var(--color-text-strong);
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 2.25rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-inset);
+  color: var(--color-text-muted);
+
+  &:focus-within {
+    outline: 2px solid var(--color-text-secondary);
+    outline-offset: 2px;
+  }
+
+  & input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: none;
+    color: var(--color-text);
+    font: var(--text-sm) var(--font-sans);
+  }
+
+  & svg {
+    flex: none;
+    fill: currentColor;
+  }
+}
+
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-inset);
+
+  & button {
+    padding: 0.3125rem 0.75rem;
+    border: 0;
+    border-radius: var(--radius-xs);
+    background: none;
+    color: var(--color-text-secondary);
+    font: 500 var(--text-xs) var(--font-sans);
+    cursor: pointer;
+  }
+
+  & [aria-pressed="true"] {
+    background: var(--color-border);
+    color: var(--color-text-strong);
+  }
+}
+
+.panel {
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}

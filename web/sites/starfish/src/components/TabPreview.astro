@@ -1,0 +1,77 @@
+---
+import Legacy from "@shared/components/Legacy.astro";
+
+interface Props {
+  header: string[];
+  rows: { skin: string; text: string }[];
+  label: string;
+}
+
+const { header, rows, label } = Astro.props;
+---
+
+<figure class="tab" aria-label={label}>
+  {header.map((line) => (
+    <Legacy text={line} class="line" />
+  ))}
+  <div class="entries">
+    {rows.map(({ skin, text }) => (
+      <div class="entry">
+        <span class="head" style={`--skin: url(/skins/${skin}.png)`}></span>
+        <Legacy text={text} />
+        <svg class="ping" viewBox="0 0 10 8" aria-hidden="true">
+          {[2, 3, 4, 5, 6].map((height, index) => (
+            <rect x={index * 2} y={7 - height} width="1" height={height} />
+          ))}
+        </svg>
+      </div>
+    ))}
+  </div>
+</figure>
+
+<style>
+  .tab {
+    display: grid;
+    justify-items: center;
+    width: max-content;
+    font-size: 18px;
+    line-height: 18px;
+  }
+
+  .entries {
+    display: grid;
+    gap: 2px;
+    padding-block: 2px;
+  }
+
+  .entry {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    height: 16px;
+    padding-right: 2px;
+    line-height: 16px;
+  }
+
+  .head {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    background-image: var(--skin), var(--skin);
+    background-position:
+      -80px -16px,
+      -16px -16px;
+    background-size: 128px;
+    image-rendering: pixelated;
+  }
+
+  .ping {
+    flex: none;
+    width: 20px;
+    height: 16px;
+    margin-left: auto;
+    padding-left: 2px;
+    box-sizing: content-box;
+    fill: #3ce03c;
+  }
+</style>

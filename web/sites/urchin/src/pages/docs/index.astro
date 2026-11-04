@@ -1,0 +1,90 @@
+---
+import Layout from "@/layouts/Layout.astro";
+
+const theme = `
+  .dark-mode {
+    --scalar-background-1: var(--color-background);
+    --scalar-background-2: color-mix(in srgb, var(--color-background) 96%, white);
+    --scalar-background-3: color-mix(in srgb, var(--color-background) 90%, white);
+    --scalar-color-1: var(--color-text);
+    --scalar-color-2: var(--color-text-secondary);
+    --scalar-color-3: var(--color-text-muted);
+    --scalar-color-accent: var(--color-text);
+    --scalar-background-accent: var(--color-surface-raised);
+    --scalar-border-color: var(--color-border);
+    --scalar-font: var(--font-sans);
+    --scalar-font-code: var(--font-mono);
+    --scalar-custom-header-height: var(--nav-height);
+  }
+
+  .scalar-app .t-doc__header {
+    padding: 0.75rem var(--gutter);
+  }
+
+  .scalar-app .t-doc__header > header {
+    position: relative;
+    height: 2.75rem;
+    gap: 0.625rem;
+    padding-inline: 1rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-panel);
+    color: var(--color-text-secondary);
+
+    & > span {
+      font-size: var(--text-sm);
+      font-weight: 400;
+    }
+  }
+
+  .scalar-app .t-doc__header > header > button {
+    width: auto;
+    height: auto;
+    margin: 0;
+    padding: 0;
+    background: none;
+    color: inherit;
+
+    & svg {
+      display: none;
+    }
+
+    &::before {
+      content: "▶";
+      font-size: 0.625rem;
+    }
+
+    &::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+    }
+  }
+
+  .scalar-app .t-doc__header:has(> header + *) > header > button::before {
+    content: "▼";
+  }
+`;
+---
+
+<Layout
+  title="API"
+  description="HTTP reference for the Urchin blacklist and Hypixel player data."
+>
+  <div id="reference"></div>
+</Layout>
+
+<script
+  is:inline
+  src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.73.1"
+></script>
+<script is:inline define:vars={{ theme }}>
+  Scalar.createApiReference("#reference", {
+    url: "/openapi.json",
+    theme: "none",
+    customCss: theme,
+    forceDarkModeState: "dark",
+    hideDarkModeToggle: true,
+    withDefaultFonts: false,
+  });
+</script>

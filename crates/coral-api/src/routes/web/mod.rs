@@ -55,6 +55,7 @@ struct DiscordUser {
 struct Me {
     id: String,
     name: String,
+    username: String,
     avatar: String,
     rank: Option<&'static str>,
     starfish_licensed: bool,
@@ -141,6 +142,7 @@ async fn me(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Me
             .map(AccessRank::label),
         starfish_licensed: starfish_licensed(&state, user.discord_id).await?,
         name: user.name,
+        username: user.username,
         avatar: user.avatar,
     }))
 }
@@ -185,7 +187,8 @@ async fn start_session(state: &AppState, code: Option<&str>) -> Result<String, A
     let user = WebUser {
         discord_id,
         avatar: avatar_url(discord_id, user.avatar.as_deref()),
-        name: user.global_name.unwrap_or(user.username),
+        name: user.global_name.unwrap_or_else(|| user.username.clone()),
+        username: user.username,
     };
     session::start_session(state, &user).await
 }

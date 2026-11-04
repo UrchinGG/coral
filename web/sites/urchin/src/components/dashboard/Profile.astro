@@ -1,0 +1,50 @@
+<section class="identity" hidden>
+  <img alt="" width="48" height="48" />
+  <div>
+    <h1></h1>
+    <span class="rank"></span>
+  </div>
+</section>
+
+<script>
+  import { me } from "@/dashboard/api";
+
+  const identity = document.querySelector<HTMLElement>(".identity")!;
+  const user = await me;
+  if (user) {
+    identity.querySelector("img")!.src = user.avatar;
+    identity.querySelector("h1")!.textContent = `@${user.username}`;
+    identity.querySelector(".rank")!.textContent = user.rank ?? "";
+    identity.hidden = false;
+  }
+</script>
+
+<style>
+  .identity {
+    display: flex;
+    gap: 0.875rem;
+    align-items: center;
+
+    & img {
+      border-radius: 50%;
+    }
+
+    & div {
+      display: grid;
+      gap: 0.125rem;
+    }
+
+    & h1 {
+      font-size: var(--text-lg);
+    }
+  }
+
+  .rank {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+
+    &:empty {
+      display: none;
+    }
+  }
+</style>
