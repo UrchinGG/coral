@@ -1,8 +1,10 @@
+import { useQuery } from "@tanstack/react-query";
 import { Lock, LockOpen, RefreshCw, ShieldAlert, UserCog } from "lucide-react";
 import { useState } from "react";
 
-import { accountActions, accountKeys } from "../../api/accounts";
+import { accountActions, accountKeys, wasteStandingQuery } from "../../api/accounts";
 import type { AccountCore, Budget, MemberView } from "../../api/types/accounts";
+import type { WasteStanding } from "../../api/types/traffic";
 import { Button } from "../../kit/Button";
 import { ConfirmButton } from "../../kit/ConfirmButton";
 import { ConfirmDialog } from "../../kit/Dialog";
@@ -23,6 +25,7 @@ export function AccountActions({ core, member }: { core: AccountCore; member: Me
   return (
     <div className="flex flex-wrap items-start gap-1.5">
       <LockToggle discordId={discordId} member={member} />
+      <LiftWasteBlock discordId={discordId} />
       <Button icon={<RefreshCw className="size-3" />} onClick={() => setDialog("regenerate")}>
         Regenerate key
       </Button>
@@ -52,6 +55,22 @@ function LockToggle({ discordId, member }: ActionProps) {
     <ConfirmButton variant={lock ? "danger" : "default"} confirmLabel={lock ? "Lock key" : "Unlock key"} onConfirm={() => toggle.mutate(lock)} pending={toggle.isPending}>
       {lock ? <Lock className="size-3" /> : <LockOpen className="size-3" />}
       {lock ? "Lock key" : "Unlock key"}
+    </ConfirmButton>
+  );
+}
+
+function LiftWasteBlock({ discordId }: { discordId: string }) {
+  const waste = useQuery(wasteStandingQuery(discordId));
+  const lift = useAccountMutation(discordId, {
+    run: () => accountActions.liftWasteBlock(discordId),
+    success: () => "Block lifted; the key works again.",
+    patches: [patchQuery<WasteStanding, void>(accountKeys.section(discordId, "waste"), (standing) => ({ ...standing, spent: 0, blocked_until: null }))],
+  });
+  if (waste.data === undefined || waste.data.blocked_until === null) return null;
+  return (
+    <ConfirmButton confirmLabel="Lift the waste block" onConfirm={() => lift.mutate()} pending={lift.isPending}>
+      <LockOpen className="size-3" />
+      Lift waste block
     </ConfirmButton>
   );
 }

@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { KeyRound } from "lucide-react";
 import { useState } from "react";
 
-import { accountActions, keyHistoryQuery, limitsQuery, linkHistoryQuery } from "../../api/accounts";
+import { accountActions, keyHistoryQuery, limitsQuery, linkHistoryQuery, wasteStandingQuery } from "../../api/accounts";
 import { KEY_PREFIX_LENGTH } from "../../api/apiKeys";
 import type { AccountCore, Budget, KeyRecord, MemberView, StandingView, StrikeRow } from "../../api/types/accounts";
 import type { KeyKind, KeyRef } from "../../api/types/refs";
@@ -15,10 +15,11 @@ import { Meter } from "../../kit/Meter";
 import { QueryContent } from "../../kit/QueryContent";
 import { Section } from "../../kit/Section";
 import { EmptyState } from "../../kit/States";
-import { plural } from "../../lib/format";
+import { formatNumber, plural } from "../../lib/format";
 import { refIdentity } from "../../lib/refs";
 import { useTimeFormat } from "../../lib/time";
 import { dashUuid } from "../../lib/uuid";
+import { WasteMeter } from "../traffic/WasteMeter";
 import { DeveloperKey } from "./DeveloperKey";
 import { useAccountMutation } from "./useAccountMutation";
 import { LIMITER_LABEL, STRIKE_TONE } from "./vocabulary";
@@ -32,6 +33,7 @@ export function AccountRail({ core }: { core: AccountCore }) {
       {core.member !== null && <DeveloperKey discordId={discordId} devKey={core.keys.developer} />}
       {core.member !== null && <KeyHistory discordId={discordId} />}
       <Limits discordId={discordId} />
+      {core.member !== null && <WasteAllowance discordId={discordId} />}
       {core.standing !== null && <Standing discordId={discordId} standing={core.standing} strikes={core.strikes.items} />}
     </aside>
   );
@@ -177,6 +179,16 @@ function Limits({ discordId }: { discordId: string }) {
           </div>
         )}
       </QueryContent>
+    </Section>
+  );
+}
+
+function WasteAllowance({ discordId }: { discordId: string }) {
+  const waste = useQuery(wasteStandingQuery(discordId));
+  const refill = waste.data === undefined ? null : `refills ${formatNumber(waste.data.refill_per_day)} a day`;
+  return (
+    <Section title="Waste allowance" fetching={waste.isFetching && waste.data !== undefined} actions={<span className="text-11 text-subtle">{refill}</span>}>
+      <QueryContent query={waste}>{(standing) => <WasteMeter usage={standing} allowance={standing.allowance} />}</QueryContent>
     </Section>
   );
 }

@@ -41,6 +41,7 @@ mod session;
 mod state;
 mod traffic;
 mod views;
+mod waste;
 
 const REDIS_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const WEB_SCHEMES: [&str; 2] = ["http", "https"];

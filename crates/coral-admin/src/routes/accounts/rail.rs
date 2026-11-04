@@ -13,6 +13,7 @@ use uuid::Uuid;
 use super::AccountTarget;
 use crate::error::{AdminError, Context};
 use crate::state::AppState;
+use crate::waste::{self, WasteStanding};
 use crate::{serde_id, serde_ts};
 
 pub const LIMIT_WINDOW_SECS: i64 = 300;
@@ -146,6 +147,16 @@ pub async fn limits(
         })
         .collect();
     Ok(Json(budgets))
+}
+
+pub async fn waste(
+    State(state): State<AppState>,
+    Path(raw): Path<String>,
+) -> Result<Json<WasteStanding>, AdminError> {
+    let target = AccountTarget::resolve(&state, &raw).await?;
+    Ok(Json(
+        waste::standing(&state.redis, target.member_id, Utc::now()).await?,
+    ))
 }
 
 pub async fn known_limiters(

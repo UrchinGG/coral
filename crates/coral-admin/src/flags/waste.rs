@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use clients::FlagLevel;
 use coral_redis::RedisPool;
 use coral_redis::waste::{self, ALLOWANCE, Block, REFILL_PER_DAY};
@@ -8,6 +6,7 @@ use sqlx::PgPool;
 use super::{Flag, FlagKind, grouped};
 use crate::error::{AdminError, Context};
 use crate::refs::EntityRef;
+use crate::waste::discord_ids;
 
 const UNTIL_FORMAT: &str = "%b %-d, %H:%M UTC";
 
@@ -24,16 +23,6 @@ pub async fn flags(pool: &PgPool, redis: &RedisPool) -> Result<Vec<Flag>, AdminE
             Some(waste_flag(block, discord_id))
         })
         .collect())
-}
-
-async fn discord_ids(pool: &PgPool, members: &[i64]) -> Result<HashMap<i64, i64>, AdminError> {
-    let rows: Vec<(i64, i64)> =
-        sqlx::query_as("SELECT id, discord_id FROM members WHERE id = ANY($1)")
-            .bind(members)
-            .fetch_all(pool)
-            .await
-            .context("find the accounts of blocked keys")?;
-    Ok(rows.into_iter().collect())
 }
 
 fn waste_flag(block: Block, discord_id: i64) -> Flag {

@@ -61,6 +61,7 @@ pub fn router() -> Router<AppState> {
         .route("/{discord_id}/keys", get(rail::keys))
         .route("/{discord_id}/links", get(rail::links))
         .route("/{discord_id}/limits", get(rail::limits))
+        .route("/{discord_id}/waste", get(rail::waste))
         .route("/{discord_id}/starfish", get(starfish::starfish))
         .merge(mutations::router())
 }

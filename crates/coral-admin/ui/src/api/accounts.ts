@@ -29,8 +29,9 @@ import type {
 } from "./types/accounts";
 import type { Labels, Page } from "./types/refs";
 import type { RequestRow } from "./types/requests";
+import type { WasteStanding } from "./types/traffic";
 
-type AccountSection = "activity" | "network" | "lookups-summary" | "lookups-top" | "lookups" | "timeline" | "keys" | "links" | "limits" | "starfish" | "requests";
+type AccountSection = "activity" | "network" | "lookups-summary" | "lookups-top" | "lookups" | "timeline" | "keys" | "links" | "limits" | "waste" | "starfish" | "requests";
 
 export const LICENSE_STATUSES = ["inactive", "active", "suspended"] as const;
 export type LicenseStatus = (typeof LICENSE_STATUSES)[number];
@@ -136,6 +137,14 @@ export function limitsQuery(discordId: string) {
   return queryOptions({
     queryKey: accountKeys.section(discordId, "limits"),
     queryFn: ({ signal, queryKey }) => getJson<Budget[]>(accountPath(discordId, "/limits"), { signal, timingKey: queryKey }),
+    ...liveQuery(POLL_LIMITS_MS),
+  });
+}
+
+export function wasteStandingQuery(discordId: string) {
+  return queryOptions({
+    queryKey: accountKeys.section(discordId, "waste"),
+    queryFn: ({ signal, queryKey }) => getJson<WasteStanding>(accountPath(discordId, "/waste"), { signal, timingKey: queryKey }),
     ...liveQuery(POLL_LIMITS_MS),
   });
 }

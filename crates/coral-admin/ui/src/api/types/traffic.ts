@@ -84,6 +84,14 @@ export type LimitPressure = {
   accounts: PressuredAccount[];
 };
 
+export type WasteUsage = { spent: number; blocked_until: string | null };
+
+export type WasteStanding = WasteUsage & { allowance: number; refill_per_day: number };
+
+export type WastingKey = WasteUsage & { account: EntityRef };
+
+export type WasteOverview = { allowance: number; refill_per_day: number; keys: WastingKey[] };
+
 export type UpstreamPoint = { t: string; requests: number; errors: number };
 
 export type SnapshotPoint = { t: string; first: number; delta: number };

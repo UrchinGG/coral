@@ -3,7 +3,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { keys } from "./keys";
 import { getQuery, listQuery, liveQuery, POLL_LIMITS_MS, POLL_PULSE_MS } from "./queryClient";
 import { PULSE_RANGE, rangeParams } from "./traffic";
-import type { CallerFilter, LimitPressure, RouteTraffic, TopCallers, TrafficRange, TrafficSeries, UpstreamTraffic } from "./types/traffic";
+import type { CallerFilter, LimitPressure, RouteTraffic, TopCallers, TrafficRange, TrafficSeries, UpstreamTraffic, WasteOverview } from "./types/traffic";
 
 const TOP_CALLERS = 20;
 
@@ -12,6 +12,7 @@ const panelKeys = {
   routes: (range: TrafficRange) => [...keys.traffic.all(), "routes", range] as const,
   callers: (range: TrafficRange, filter: CallerFilter) => [...keys.traffic.all(), "callers", range, filter] as const,
   pressure: () => [...keys.traffic.all(), "pressure"] as const,
+  waste: () => [...keys.traffic.all(), "waste"] as const,
   upstream: (range: TrafficRange) => [...keys.traffic.all(), "upstream", range] as const,
 };
 
@@ -43,6 +44,14 @@ export function pressureQuery() {
   return queryOptions({
     queryKey: panelKeys.pressure(),
     queryFn: getQuery<LimitPressure>("/traffic/pressure"),
+    ...liveQuery(POLL_LIMITS_MS),
+  });
+}
+
+export function wasteQuery() {
+  return queryOptions({
+    queryKey: panelKeys.waste(),
+    queryFn: getQuery<WasteOverview>("/traffic/waste"),
     ...liveQuery(POLL_LIMITS_MS),
   });
 }

@@ -47,6 +47,12 @@ pub struct Block {
     pub blocked_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Allowance {
+    pub member_id: i64,
+    pub spent: f64,
+}
+
 impl Block {
     pub fn until(&self) -> DateTime<Utc> {
         self.blocked_at + BLOCK_FOR
@@ -63,7 +69,7 @@ pub async fn charge(
         .key(block_key(member_id))
         .arg(now.timestamp())
         .arg(ALLOWANCE)
-        .arg(REFILL_PER_DAY / SECS_PER_DAY)
+        .arg(refill_per_second())
         .arg(BLOCK_FOR.num_seconds())
         .invoke_async(conn)
         .await?;
@@ -77,15 +83,21 @@ pub async fn is_blocked(conn: &mut ConnectionManager, member_id: i64) -> redis::
     conn.exists(block_key(member_id)).await
 }
 
+pub async fn block(
+    conn: &mut ConnectionManager,
+    member_id: i64,
+) -> redis::RedisResult<Option<Block>> {
+    let blocked_at: Option<i64> = conn.get(block_key(member_id)).await?;
+    Ok(blocked_at
+        .and_then(|at| DateTime::from_timestamp(at, 0))
+        .map(|blocked_at| Block {
+            member_id,
+            blocked_at,
+        }))
+}
+
 pub async fn blocks(conn: &mut ConnectionManager) -> redis::RedisResult<Vec<Block>> {
-    let mut keys: Vec<String> = Vec::new();
-    let mut found = conn
-        .scan_match::<_, String>(format!("{BLOCK_PREFIX}*"))
-        .await?;
-    while let Some(key) = found.next_item().await {
-        keys.push(key);
-    }
-    drop(found);
+    let keys = keys_with_prefix(conn, BLOCK_PREFIX).await?;
     if keys.is_empty() {
         return Ok(Vec::new());
     }
@@ -102,6 +114,46 @@ pub async fn blocks(conn: &mut ConnectionManager) -> redis::RedisResult<Vec<Bloc
         .collect())
 }
 
+pub async fn spent(
+    conn: &mut ConnectionManager,
+    member_id: i64,
+    now: DateTime<Utc>,
+) -> redis::RedisResult<f64> {
+    let (spent, at): (Option<f64>, Option<i64>) = redis::cmd("HMGET")
+        .arg(allowance_key(member_id))
+        .arg("spent")
+        .arg("at")
+        .query_async(conn)
+        .await?;
+    Ok(drained(spent, at, now))
+}
+
+pub async fn allowances(
+    conn: &mut ConnectionManager,
+    now: DateTime<Utc>,
+) -> redis::RedisResult<Vec<Allowance>> {
+    let keys = keys_with_prefix(conn, ALLOWANCE_PREFIX).await?;
+    if keys.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut pipe = redis::pipe();
+    for key in &keys {
+        pipe.cmd("HMGET").arg(key).arg("spent").arg("at");
+    }
+    let readings: Vec<(Option<f64>, Option<i64>)> = pipe.query_async(conn).await?;
+    Ok(keys
+        .iter()
+        .zip(readings)
+        .filter_map(|(key, (spent, at))| {
+            Some(Allowance {
+                member_id: key.strip_prefix(ALLOWANCE_PREFIX)?.parse().ok()?,
+                spent: drained(spent, at, now),
+            })
+        })
+        .filter(|allowance| allowance.spent > 0.0)
+        .collect())
+}
+
 pub async fn lift(conn: &mut ConnectionManager, member_id: i64) -> redis::RedisResult<bool> {
     let (lifted, _): (i64, i64) = redis::pipe()
         .del(block_key(member_id))
@@ -109,6 +161,31 @@ pub async fn lift(conn: &mut ConnectionManager, member_id: i64) -> redis::RedisR
         .query_async(conn)
         .await?;
     Ok(lifted == 1)
+}
+
+async fn keys_with_prefix(
+    conn: &mut ConnectionManager,
+    prefix: &str,
+) -> redis::RedisResult<Vec<String>> {
+    let mut keys = Vec::new();
+    let mut found = conn.scan_match::<_, String>(format!("{prefix}*")).await?;
+    while let Some(key) = found.next_item().await {
+        keys.push(key);
+    }
+    Ok(keys)
+}
+
+fn drained(spent: Option<f64>, at: Option<i64>, now: DateTime<Utc>) -> f64 {
+    match (spent, at) {
+        (Some(spent), Some(at)) => {
+            (spent - (now.timestamp() - at) as f64 * refill_per_second()).max(0.0)
+        }
+        _ => 0.0,
+    }
+}
+
+fn refill_per_second() -> f64 {
+    REFILL_PER_DAY / SECS_PER_DAY
 }
 
 fn allowance_key(member_id: i64) -> String {
@@ -127,6 +204,19 @@ mod tests {
     async fn test_conn() -> Option<ConnectionManager> {
         let url = std::env::var("REDIS_URL").ok()?;
         Some(RedisPool::connect(&url).await.ok()?.connection())
+    }
+
+    #[test]
+    fn spent_allowance_drains_at_the_refill_rate() {
+        let start = DateTime::from_timestamp(0, 0).unwrap();
+        let fifty_refilled = start + TimeDelta::seconds((50.0 / refill_per_second()) as i64);
+        assert_eq!(drained(Some(100.0), Some(0), start), 100.0);
+        assert!((drained(Some(100.0), Some(0), fifty_refilled) - 50.0).abs() < 0.01);
+        assert_eq!(
+            drained(Some(10.0), Some(0), start + TimeDelta::days(1)),
+            0.0
+        );
+        assert_eq!(drained(None, None, start), 0.0);
     }
 
     fn fresh_member() -> i64 {
@@ -159,7 +249,12 @@ mod tests {
                 .iter()
                 .any(|b| b.member_id == member)
         );
+        assert_eq!(
+            block(&mut conn, member).await.unwrap().map(|b| b.member_id),
+            Some(member)
+        );
         assert!(lift(&mut conn, member).await.unwrap());
+        assert_eq!(block(&mut conn, member).await.unwrap(), None);
         assert!(!is_blocked(&mut conn, member).await.unwrap());
     }
 

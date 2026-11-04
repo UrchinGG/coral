@@ -2,7 +2,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { GitCompareArrows } from "lucide-react";
 
 import { trafficSummaryQuery } from "../../api/traffic";
-import { callersQuery, pressureQuery, routesQuery, seriesQuery, upstreamQuery } from "../../api/traffic-panels";
+import { callersQuery, pressureQuery, routesQuery, seriesQuery, upstreamQuery, wasteQuery } from "../../api/traffic-panels";
 import type { TrafficWindow } from "../../api/types/traffic";
 import { useSession } from "../../app/boot";
 import { Button } from "../../kit/Button";
@@ -12,6 +12,7 @@ import { Section } from "../../kit/Section";
 import { Skeleton, SkeletonRows } from "../../kit/States";
 import type { ChartRange } from "../../kit/TimeSeriesChart";
 import { TimeRangePicker, type TimeRange } from "../../kit/TimeRangePicker";
+import { formatNumber } from "../../lib/format";
 import { useTimeFormat } from "../../lib/time";
 import { CallerFilters, CallersTable } from "./CallersTable";
 import { PressurePanel } from "./PressurePanel";
@@ -20,6 +21,7 @@ import { TrafficChart } from "./TrafficChart";
 import { TrafficKpis } from "./TrafficKpis";
 import { compareFlag, DEFAULT_WINDOW, TRAFFIC_WINDOWS, useTrafficView, type TrafficView } from "./traffic-view";
 import { UpstreamPanel } from "./UpstreamPanel";
+import { WastePanel } from "./WastePanel";
 
 const ROLLUP_FEATURES = ["rollups"] as const;
 
@@ -32,6 +34,7 @@ export function TrafficPage() {
   const callers = useQuery(callersQuery(view.scope, view.callers));
   const pressure = useQuery(pressureQuery());
   const upstream = useQuery(upstreamQuery(view.scope));
+  const waste = useQuery(wasteQuery());
 
   const onRange = (range: TimeRange<TrafficWindow>) =>
     range.kind === "window" ? update({ window: range.window, from: null, to: null }) : update({ window: null, from: range.from, to: range.to });
@@ -99,6 +102,17 @@ export function TrafficPage() {
           <QueryContent query={upstream}>{(data) => <UpstreamPanel upstream={data} />}</QueryContent>
         </Section>
       </div>
+      <Section
+        title="Waste allowances"
+        count="personal keys spending or blocked"
+        flush
+        fetching={isRefetching(waste)}
+        actions={<span className="text-11 text-subtle">{waste.data === undefined ? "polled every 10 s" : `refills ${formatNumber(waste.data.refill_per_day)} a day · polled every 10 s`}</span>}
+      >
+        <QueryContent query={waste} skeleton={<SkeletonRows count={3} />}>
+          {(data) => <WastePanel overview={data} />}
+        </QueryContent>
+      </Section>
     </>
   );
 }
