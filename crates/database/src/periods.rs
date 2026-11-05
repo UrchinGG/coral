@@ -1,6 +1,6 @@
 use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
 pub enum Period {
     Daily,
     Weekly,

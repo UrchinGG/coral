@@ -857,6 +857,7 @@ dependencies = [
  "hypixel",
  "image",
  "mctext",
+ "moka",
  "rand 0.8.5",
  "redis",
  "render",
