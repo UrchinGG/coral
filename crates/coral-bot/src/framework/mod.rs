@@ -58,6 +58,7 @@ pub struct Data {
     pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
     pub started_at: i64,
     pub info_cache: Arc<Mutex<commands::admin::info::InfoCache>>,
+    pub leaderboard_cache: Arc<Mutex<commands::user::leaderboard::LeaderboardCache>>,
 }
 
 impl Data {
@@ -137,6 +138,7 @@ impl Handler {
             commands::user::dashboard::register(),
             commands::user::help::register(),
             commands::admin::info::register(),
+            commands::user::leaderboard::register(),
             commands::admin::manage::register(),
             commands::admin::strike::register(),
             commands::blacklist::evidence_post::confirm::register(),
@@ -214,6 +216,7 @@ impl Handler {
             "dashboard" => commands::user::dashboard::run(ctx, command, &self.data).await,
             "help" => commands::user::help::run(ctx, command, &self.data).await,
             "info" => commands::admin::info::run(ctx, command, &self.data).await,
+            "leaderboard" => commands::user::leaderboard::run(ctx, command, &self.data).await,
             "manage" => commands::admin::manage::run(ctx, command, &self.data).await,
             "strike" => commands::admin::strike::run(ctx, command, &self.data).await,
             "confirm" => {
@@ -333,17 +336,16 @@ impl Handler {
                 )
                 .await
             }
-            "info_taggers" => {
-                commands::admin::info::handle_taggers(ctx, component, &self.data).await
-            }
             "prestige_color_codes" => {
                 commands::stats::prestiges::handle_color_codes(ctx, component, &self.data).await
             }
             _ if id.starts_with("guild_pg:") => {
                 commands::blacklist::guild::handle_page(ctx, component, &self.data).await
             }
-            _ if id.starts_with("info_page:") => {
-                commands::admin::info::handle_page(ctx, component, &self.data).await
+            _ if id.starts_with(commands::user::leaderboard::BOARD_SELECT)
+                || id.starts_with(commands::user::leaderboard::PERIOD_SELECT) =>
+            {
+                commands::user::leaderboard::handle_select(ctx, component, &self.data).await
             }
             "help_button" => {
                 commands::user::help::handle_help_button(ctx, component, &self.data).await
