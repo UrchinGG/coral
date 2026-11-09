@@ -26,6 +26,7 @@ mod discord;
 mod error;
 mod openapi;
 mod player_uuid;
+mod rate_limit_headers;
 mod reqlog;
 mod responses;
 mod routes;
@@ -172,6 +173,7 @@ fn build_router(state: AppState, request_log: reqlog::RequestLog) -> Router {
             request_log,
             reqlog::log_requests,
         ))
+        .layer(axum::middleware::from_fn(rate_limit_headers::add_headers))
         .with_state(state)
 }
 

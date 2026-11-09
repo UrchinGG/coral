@@ -6,7 +6,6 @@ use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use coral_redis::RateLimitResult;
 use database::BlacklistRepository;
 use reqlog::MAX_BATCH_UUIDS;
 
@@ -44,8 +43,8 @@ async fn enforce_uuid_budget(state: &AppState, budget: &str, count: usize) -> Re
         .check_and_record_weighted(budget, SESSION_UUID_BUDGET, count as i64)
         .await
     {
-        Ok(RateLimitResult::Allowed { .. }) => Ok(()),
-        Ok(RateLimitResult::Exceeded) => Err(ApiError::RateLimited),
+        Ok(result) if crate::rate_limit_headers::admit(result) => Ok(()),
+        Ok(_) => Err(ApiError::RateLimited),
         Err(_) => Ok(()),
     }
 }
@@ -64,8 +63,8 @@ async fn enforce_distinct_uuid_budget(
         )
         .await
     {
-        Ok(RateLimitResult::Allowed { .. }) => Ok(()),
-        Ok(RateLimitResult::Exceeded) => Err(ApiError::RateLimited),
+        Ok(result) if crate::rate_limit_headers::admit(result) => Ok(()),
+        Ok(_) => Err(ApiError::RateLimited),
         Err(e) => Err(ApiError::Internal(format!("uuid budget check failed: {e}"))),
     }
 }

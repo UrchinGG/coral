@@ -6,7 +6,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::Deserialize;
 use utoipa::ToSchema;
 
-use coral_redis::{BlacklistEvent, RateLimitResult};
+use coral_redis::BlacklistEvent;
 use database::{ReviewRulesRepository, TagOp, TagOpError};
 
 use crate::{
@@ -188,8 +188,8 @@ async fn enforce_tag_limit(state: &AppState, member: &database::Member) -> Resul
         .check_tag_limit(member.discord_id, effective_level(state, member).await?)
         .await
     {
-        Ok(RateLimitResult::Allowed { .. }) => Ok(()),
-        Ok(RateLimitResult::Exceeded) => Err(ApiError::RateLimited),
+        Ok(result) if crate::rate_limit_headers::admit(result) => Ok(()),
+        Ok(_) => Err(ApiError::RateLimited),
         Err(_) => Err(ApiError::Internal("rate limit check failed".into())),
     }
 }
