@@ -4,7 +4,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
 
-use coral_redis::{RateLimitResult, minecraft_session};
+use coral_redis::minecraft_session;
 use database::{
     AccessRank, DeveloperKeyRepository, Member, MemberRepository, MinecraftBlockRepository,
     PluginRegistryRepository, StarfishRepository,
@@ -436,8 +436,8 @@ pub(crate) async fn caller_rate_limit(
     limit: i64,
 ) -> Result<(), ApiError> {
     match state.rate_limiter.check_and_record(key, limit).await {
-        Ok(RateLimitResult::Allowed { .. }) => Ok(()),
-        Ok(RateLimitResult::Exceeded) => Err(ApiError::RateLimited),
+        Ok(result) if crate::rate_limit_headers::admit(result) => Ok(()),
+        Ok(_) => Err(ApiError::RateLimited),
         Err(_) => Ok(()),
     }
 }
@@ -574,8 +574,8 @@ async fn refuse_wasteful_key(state: &AppState, member: i64) -> Result<(), Status
 
 async fn check_rate_limit(state: &AppState, api_key: &str, limit: i64) -> Result<(), StatusCode> {
     match state.rate_limiter.check_and_record(api_key, limit).await {
-        Ok(RateLimitResult::Allowed { .. }) => Ok(()),
-        Ok(RateLimitResult::Exceeded) => {
+        Ok(result) if crate::rate_limit_headers::admit(result) => Ok(()),
+        Ok(_) => {
             record_cause(Cause::CallerLimit);
             Err(StatusCode::TOO_MANY_REQUESTS)
         }

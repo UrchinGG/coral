@@ -130,6 +130,17 @@ A personal key is issued through the Discord bot and carries the access rank of 
 
 Each key is rate limited within a rolling five-minute window. A personal key allows 600 requests per window, while a developer key uses the limit assigned when it was issued. Once that limit is reached, further requests receive a 429 response until the window resets. Blacklist writes count against a separate per-account allowance that is determined by your rank.
 
+Responses from rate limited endpoints carry these headers. When a request is subject to more than one limit, they describe the tightest:
+
+| Header | Meaning |
+| ------ | ------- |
+| `X-RateLimit-Limit` | Requests allowed per window |
+| `X-RateLimit-Remaining` | Requests left in the current window |
+| `X-RateLimit-Reset` | Seconds until a request in the window expires and frees a slot |
+| `Retry-After` | On a 429 only: seconds to wait before the next request can succeed |
+
+Requests refused with a 429 still count toward the window, so retry no sooner than `Retry-After`.
+
 ## Players and timestamps
 
 Endpoints that accept a player take a UUID, with or without dashes, or a username that is resolved through Mojang. Timestamps are returned as Unix milliseconds, usually accompanied by a human-readable form.

@@ -9,7 +9,6 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 
 use clients::normalize_uuid;
-use coral_redis::RateLimitResult;
 use database::{BlacklistRepository, MemberRepository, PlayerEvent};
 use reqlog::{Caller, Cause, KeyKind, Outcome, record_caller, record_outcome};
 
@@ -166,8 +165,8 @@ async fn check_rate_limit(state: &AppState, api_key: &str) -> Result<(), Rejecte
         .check_and_record(api_key, crate::auth::PERSONAL_RATE_LIMIT)
         .await
     {
-        Ok(RateLimitResult::Allowed { .. }) => Ok(()),
-        Ok(RateLimitResult::Exceeded) => Err(reject(&RATE_LIMITED)),
+        Ok(result) if crate::rate_limit_headers::admit(result) => Ok(()),
+        Ok(_) => Err(reject(&RATE_LIMITED)),
         Err(e) => Err(internal_failure("rate limit check failed", e)),
     }
 }

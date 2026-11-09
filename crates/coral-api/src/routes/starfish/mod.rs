@@ -8,13 +8,11 @@ mod users;
 
 use std::sync::Arc;
 
-use axum::Router;
-use coral_redis::RateLimitResult;
-
 use crate::{
     error::ApiError,
     state::{AppState, StarfishConfig},
 };
+use axum::Router;
 
 pub const MOUNT_PREFIX: &str = "/api/v1/starfish";
 
@@ -27,8 +25,8 @@ pub(crate) fn require_starfish(state: &AppState) -> Result<Arc<StarfishConfig>, 
 
 pub(crate) async fn rate_limit(state: &AppState, key: &str, limit: i64) -> Result<(), ApiError> {
     match state.rate_limiter.check_and_record(key, limit).await {
-        Ok(RateLimitResult::Allowed { .. }) => Ok(()),
-        Ok(RateLimitResult::Exceeded) => Err(ApiError::RateLimited),
+        Ok(result) if crate::rate_limit_headers::admit(result) => Ok(()),
+        Ok(_) => Err(ApiError::RateLimited),
         Err(_) => Ok(()),
     }
 }
