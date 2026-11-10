@@ -11,7 +11,7 @@ const { lines, label } = Astro.props;
 
 <figure class="chat" aria-label={label}>
   {lines.map((line) => (
-    <Legacy text={line || " "} />
+    <Legacy text={line} />
   ))}
 </figure>
 

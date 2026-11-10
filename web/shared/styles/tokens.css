@@ -42,6 +42,8 @@
   --mc-yellow: #ffff55;
   --mc-white: #ffffff;
   --mc-chat: rgb(0 0 0 / 0.46);
+  --mc-tab: rgb(0 0 0 / 0.5);
+  --mc-tab-row: rgb(255 255 255 / 0.125);
   --mc-shadow: color-mix(in srgb, currentColor 25%, black);
 
   --font-sans: var(--font-inter), system-ui, sans-serif;

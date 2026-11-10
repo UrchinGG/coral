@@ -1,24 +1,36 @@
 ---
 import Legacy from "@shared/components/Legacy.astro";
+import type { tabList } from "@/data/showcase";
 
-interface Props {
-  header: string[];
-  rows: { skin: string; text: string }[];
-  label: string;
-}
+type Props = typeof tabList & { label: string };
 
-const { header, rows, label } = Astro.props;
+const { title, rows, label } = Astro.props;
+const SEPARATOR = "§8|";
 ---
 
 <figure class="tab" aria-label={label}>
-  {header.map((line) => (
-    <Legacy text={line} class="line" />
-  ))}
-  <div class="entries">
-    {rows.map(({ skin, text }) => (
-      <div class="entry">
-        <span class="head" style={`--skin: url(/skins/${skin}.png)`}></span>
-        <Legacy text={text} />
+  <Legacy text={title} />
+  <div class="table">
+    <div class="row">
+      <Legacy text="§7✫" class="star" />
+      <Legacy text={SEPARATOR} />
+      <Legacy text="§7Name" />
+      <Legacy text={SEPARATOR} />
+      <Legacy text="§7FKDR" />
+      <Legacy text={SEPARATOR} />
+      <Legacy text="§7Finals" />
+    </div>
+    {rows.map(({ skin, team, badge, star, name, fkdr, finals }) => (
+      <div class="row entry">
+        <span class="head" style={`--skin: url(/skins/${skin}.png)`} />
+        <Legacy text={`${team} ${badge}`} />
+        <Legacy text={star} class="star" />
+        <Legacy text={SEPARATOR} />
+        <Legacy text={name} />
+        <Legacy text={SEPARATOR} />
+        <Legacy text={fkdr} />
+        <Legacy text={SEPARATOR} />
+        <Legacy text={finals} />
         <svg class="ping" viewBox="0 0 10 8" aria-hidden="true">
           {[2, 3, 4, 5, 6].map((height, index) => (
             <rect x={index * 2} y={7 - height} width="1" height={height} />
@@ -34,28 +46,39 @@ const { header, rows, label } = Astro.props;
     display: grid;
     justify-items: center;
     width: max-content;
+    padding: 2px;
+    background: var(--mc-tab);
     font-size: 18px;
     line-height: 18px;
   }
 
-  .entries {
+  .table {
     display: grid;
-    gap: 2px;
+    grid-template-columns: 16px repeat(8, auto) 20px;
+    gap: 2px 8px;
     padding-block: 2px;
   }
 
-  .entry {
-    display: flex;
+  .row {
+    display: grid;
+    grid-template-columns: subgrid;
+    grid-column: 1 / -1;
     align-items: center;
-    gap: 2px;
     height: 16px;
     padding-right: 2px;
     line-height: 16px;
+
+    & > :global(.star) {
+      grid-column: 3;
+      justify-self: end;
+    }
+  }
+
+  .entry {
+    background: var(--mc-tab-row);
   }
 
   .head {
-    flex: none;
-    width: 16px;
     height: 16px;
     background-image: var(--skin), var(--skin);
     background-position:
@@ -66,12 +89,8 @@ const { header, rows, label } = Astro.props;
   }
 
   .ping {
-    flex: none;
     width: 20px;
     height: 16px;
-    margin-left: auto;
-    padding-left: 2px;
-    box-sizing: content-box;
     fill: #3ce03c;
   }
 </style>
