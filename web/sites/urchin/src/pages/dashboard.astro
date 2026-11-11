@@ -1,5 +1,4 @@
 ---
-import { CORAL_API_URL } from "astro:env/server";
 import Container from "@shared/components/Container.astro";
 import ApiKeys from "@/components/dashboard/ApiKeys.astro";
 import Lent from "@/components/dashboard/Lent.astro";
@@ -11,7 +10,7 @@ import "@/styles/dashboard.css";
 ---
 
 <Layout title="Dashboard" description="Your Urchin dashboard">
-  <Container width="narrow" class="dashboard" data-api={CORAL_API_URL}>
+  <Container width="narrow" class="dashboard">
     <Profile />
     <ApiKeys />
     <Starfish />

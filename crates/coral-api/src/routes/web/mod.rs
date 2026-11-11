@@ -3,13 +3,12 @@ pub(crate) mod session;
 use axum::{
     Json, Router,
     extract::{Query, State},
-    http::{HeaderMap, Method, StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     response::{AppendHeaders, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use database::{AccessRank, MemberRepository, StarfishRepository};
 
@@ -21,7 +20,7 @@ use crate::{
 
 use coral_redis::web_session::{self, WebUser};
 
-const CALLBACK: &str = "https://api.urchin.gg/auth/discord/callback";
+const CALLBACK: &str = "https://urchin.gg/auth/discord/callback";
 const DISCORD_AUTHORIZE: &str = "https://discord.com/oauth2/authorize";
 const DISCORD_TOKEN: &str = "https://discord.com/api/v10/oauth2/token";
 const DISCORD_USER: &str = "https://discord.com/api/v10/users/@me";
@@ -62,19 +61,11 @@ struct Me {
 }
 
 pub fn router() -> Router<AppState> {
-    let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::predicate(|origin, _| {
-            origin.to_str().is_ok_and(session::is_urchin)
-        }))
-        .allow_credentials(true)
-        .allow_methods([Method::GET, Method::POST]);
-
     Router::new()
         .route("/auth/discord", get(sign_in))
         .route("/auth/discord/callback", get(callback))
         .route("/auth/me", get(me))
         .route("/auth/logout", post(sign_out))
-        .layer(cors)
 }
 
 async fn sign_in(

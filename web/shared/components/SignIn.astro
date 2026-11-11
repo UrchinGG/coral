@@ -1,13 +1,10 @@
 ---
-import { CORAL_API_URL, URCHIN_URL } from "astro:env/server";
+import { URCHIN_URL } from "astro:env/server";
+import { SIGN_IN } from "../account";
 ---
 
-<div class="account" data-api={CORAL_API_URL}>
-  <a
-    class="sign-in"
-    href={`${CORAL_API_URL}/auth/discord`}
-    aria-label="Sign In"
-  >
+<div class="account">
+  <a class="sign-in" href={SIGN_IN} aria-label="Sign In">
     <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
       <path d="M8 7.75a2.75 2.75 0 1 0 0-5.5 2.75 2.75 0 0 0 0 5.5zM2.75 13.75c.5-2.3 2.6-3.75 5.25-3.75s4.75 1.45 5.25 3.75"></path>
     </svg>
@@ -40,21 +37,18 @@ import { CORAL_API_URL, URCHIN_URL } from "astro:env/server";
   import { account, signInUrl, signOut } from "../account";
 
   const root = document.querySelector<HTMLElement>(".account")!;
-  const api = root.dataset.api!;
   const signIn = root.querySelector<HTMLAnchorElement>(".sign-in")!;
   const profile = root.querySelector<HTMLButtonElement>(".profile")!;
 
-  signIn.href = signInUrl(api);
-  const me = await account(api);
+  signIn.href = signInUrl();
+  const me = await account();
   if (me) {
     signIn.hidden = true;
     profile.hidden = false;
     profile.querySelector("img")!.src = me.avatar;
     root.querySelector(".who strong")!.textContent = me.name;
     root.querySelector(".who span")!.textContent = me.rank ?? "";
-    root
-      .querySelector(".sign-out")!
-      .addEventListener("click", () => signOut(api));
+    root.querySelector(".sign-out")!.addEventListener("click", signOut);
   }
 </script>
 

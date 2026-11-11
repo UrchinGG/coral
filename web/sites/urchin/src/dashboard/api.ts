@@ -1,13 +1,10 @@
 import { account } from "@shared/account";
 
-const base = document.querySelector<HTMLElement>(".dashboard")!.dataset.api!;
-
-export const me = account(base);
+export const me = account();
 
 export function send(path: string, method = "GET", body?: unknown) {
-  return fetch(`${base}${path}`, {
+  return fetch(path, {
     method,
-    credentials: "include",
     headers: body ? { "content-type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   }).then(

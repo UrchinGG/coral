@@ -2,14 +2,7 @@
     auto_https off
 }
 
-(site) {
-    encode zstd gzip
-    header /_astro/* Cache-Control "public, max-age=31536000, immutable"
-    try_files {path}.html {path} {path}/index.html
-    file_server
-}
-
-:8080 {
+(coral-api) {
     reverse_proxy {
         dynamic a {
             name coral-api
@@ -26,14 +19,54 @@
     }
 }
 
+(site) {
+    encode zstd gzip
+    header /_astro/* Cache-Control "public, max-age=31536000, immutable"
+    try_files {path}.html {path} {path}/index.html
+    file_server
+}
+
+(urchin) {
+    @account path /auth/* /me/*
+    handle @account {
+        import coral-api
+    }
+    handle {
+        root * {args[0]}
+        import site
+    }
+}
+
+(starfish) {
+    @backend path /api/* /auth/*
+    handle @backend {
+        import coral-api
+    }
+    handle {
+        root * {args[0]}
+        import site
+    }
+}
+
+:8080 {
+    @site_only {
+        path /auth/* /me/* /api/*
+        not path /api/v1/starfish/*
+    }
+    respond @site_only 404
+    import coral-api
+}
+
 http://urchin.gg {
-    root * /srv/web/live/urchin
-    import site
+    import urchin /srv/web/live/urchin
 }
 
 http://starfish.urchin.gg {
-    root * /srv/web/live/starfish
-    import site
+    import starfish /srv/web/live/starfish
+}
+
+http://starfish.hexze.dev {
+    redir https://starfish.urchin.gg{uri} permanent
 }
 
 http://*.urchin.gg {
@@ -42,12 +75,10 @@ http://*.urchin.gg {
     header X-Robots-Tag noindex
 
     handle @urchin {
-        root * /srv/web/previews/pr-{re.urchin.1}/urchin
-        import site
+        import urchin /srv/web/previews/pr-{re.urchin.1}/urchin
     }
     handle @starfish {
-        root * /srv/web/previews/pr-{re.starfish.1}/starfish
-        import site
+        import starfish /srv/web/previews/pr-{re.starfish.1}/starfish
     }
     respond 404
 }

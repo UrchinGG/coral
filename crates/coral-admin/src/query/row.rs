@@ -11,7 +11,7 @@ const LEGACY_KEYED: &str = "key";
 const LEGACY_KEYLESS: &str = "none";
 const TOO_MANY_REQUESTS: i16 = 429;
 const UPSTREAM_LIMIT_BODY: &str = r#"{"error":"Rate limited"}"#;
-const STARFISH_PREFIX: &str = "/api/v1/starfish/";
+const STARFISH_PREFIX: &str = "/api/v1/";
 
 #[derive(Debug, Clone, PartialEq, Eq, FromRow)]
 pub struct LogRow {
@@ -300,7 +300,7 @@ pub mod tests {
         };
         assert_eq!(upstream.cause(), Cause::UpstreamLimit);
         let starfish = LogRow {
-            path: "/api/v1/starfish/heartbeat".into(),
+            path: "/api/v1/heartbeat".into(),
             ..upstream.clone()
         };
         assert_eq!(starfish.cause(), Cause::CallerLimit);

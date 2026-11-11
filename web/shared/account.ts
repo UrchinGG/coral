@@ -7,18 +7,20 @@ export interface Account {
   starfish_licensed: boolean;
 }
 
+export const SIGN_IN = "https://urchin.gg/auth/discord";
+
 let current: Promise<Account | undefined> | undefined;
 
-export const account = (api: string) =>
-  (current ??= fetch(`${api}/auth/me`, { credentials: "include" }).then(
+export const account = () =>
+  (current ??= fetch("/auth/me").then(
     (response) => (response.ok ? response.json() : undefined),
     () => undefined,
   ));
 
-export const signInUrl = (api: string) =>
-  `${api}/auth/discord?return=${encodeURIComponent(location.href)}`;
+export const signInUrl = () =>
+  `${SIGN_IN}?return=${encodeURIComponent(location.href)}`;
 
-export const signOut = async (api: string) => {
-  await fetch(`${api}/auth/logout`, { method: "POST", credentials: "include" });
+export const signOut = async () => {
+  await fetch("/auth/logout", { method: "POST" });
   location.reload();
 };

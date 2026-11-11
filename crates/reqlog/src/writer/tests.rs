@@ -354,7 +354,7 @@ async fn late_batches_mark_dirty_ranges_and_fold_network_rows() {
     late.request_id = crate::request_id_for(late.ts);
     late.caller = Caller::member(KeyKind::Personal, member_id);
     late.status = 200;
-    let mut session = entry("/api/v1/starfish/users/me", None, None);
+    let mut session = entry("/api/v1/users/me", None, None);
     session.ts -= Duration::minutes(10);
     session.request_id = crate::request_id_for(session.ts);
     session.caller = Caller::session(None, discord_id);

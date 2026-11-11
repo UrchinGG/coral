@@ -19,7 +19,7 @@ use crate::session::{self, SESSION_COOKIE, SessionStore};
 const LOGIN_PATH: &str = "/login";
 const LOGOUT_PATH: &str = "/auth/logout";
 const ASSETS_PREFIX: &str = "/assets/";
-const SIGN_IN_URL: &str = "https://api.urchin.gg/auth/discord";
+const SIGN_IN_URL: &str = "https://urchin.gg/auth/discord";
 const LOGIN_TEMPLATE: &str = include_str!("login.html");
 const SIGN_IN_PROMPT: &str = r#"<p>Sign in with the Discord account registered as an owner to continue.</p>
 <a href="{sign_in}">Sign in with Discord</a>"#;

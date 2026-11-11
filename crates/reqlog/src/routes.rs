@@ -35,35 +35,35 @@ pub const ROUTE_TEMPLATES: &[&str] = &[
     "/v3/verify/codes",
     "/v3/verify/codes/{code}",
     "/v3/cubelify",
-    "/api/v1/starfish/auth/device",
-    "/api/v1/starfish/auth/poll",
-    "/api/v1/starfish/auth/oauth-url",
-    "/api/v1/starfish/auth/oauth-callback",
-    "/api/v1/starfish/auth/refresh",
-    "/api/v1/starfish/auth/logout",
-    "/api/v1/starfish/license/validate",
-    "/api/v1/starfish/license/check",
-    "/api/v1/starfish/heartbeat",
-    "/api/v1/starfish/download/info",
-    "/api/v1/starfish/download/releases",
-    "/api/v1/starfish/download/latest",
-    "/api/v1/starfish/users/me",
-    "/api/v1/starfish/users/me/link-github",
-    "/api/v1/starfish/plugins",
-    "/api/v1/starfish/plugins/disabled",
-    "/api/v1/starfish/plugins/installed",
-    "/api/v1/starfish/plugins/attestation-info",
-    "/api/v1/starfish/plugins/mine",
-    "/api/v1/starfish/plugins/publish",
-    "/api/v1/starfish/plugins/{slug}",
-    "/api/v1/starfish/plugins/{slug}/body",
-    "/api/v1/starfish/plugins/{slug}/install",
-    "/api/v1/starfish/plugins/{slug}/rate",
-    "/api/v1/starfish/plugins/{slug}/official",
-    "/api/v1/starfish/plugins/{slug}/disable",
-    "/api/v1/starfish/plugins/{slug}/releases/{version}",
-    "/api/v1/starfish/plugins/{slug}/releases/{version}/yank",
-    "/api/v1/starfish/plugins/{slug}/releases/{version}/unyank",
+    "/api/v1/auth/device",
+    "/api/v1/auth/poll",
+    "/api/v1/auth/oauth-url",
+    "/api/v1/auth/oauth-callback",
+    "/api/v1/auth/refresh",
+    "/api/v1/auth/logout",
+    "/api/v1/license/validate",
+    "/api/v1/license/check",
+    "/api/v1/heartbeat",
+    "/api/v1/download/info",
+    "/api/v1/download/releases",
+    "/api/v1/download/latest",
+    "/api/v1/users/me",
+    "/api/v1/users/me/link-github",
+    "/api/v1/plugins",
+    "/api/v1/plugins/disabled",
+    "/api/v1/plugins/installed",
+    "/api/v1/plugins/attestation-info",
+    "/api/v1/plugins/mine",
+    "/api/v1/plugins/publish",
+    "/api/v1/plugins/{slug}",
+    "/api/v1/plugins/{slug}/body",
+    "/api/v1/plugins/{slug}/install",
+    "/api/v1/plugins/{slug}/rate",
+    "/api/v1/plugins/{slug}/official",
+    "/api/v1/plugins/{slug}/disable",
+    "/api/v1/plugins/{slug}/releases/{version}",
+    "/api/v1/plugins/{slug}/releases/{version}/yank",
+    "/api/v1/plugins/{slug}/releases/{version}/unyank",
 ];
 
 const PLAYER_LOOKUP_TEMPLATES: &[&str] = &[
@@ -286,8 +286,8 @@ mod tests {
             "^/v3/resolve/[^/]+$"
         );
         assert_eq!(
-            template_path_pattern("/api/v1/starfish/plugins/{slug}/releases/{version}"),
-            "^/api/v1/starfish/plugins/[^/]+/releases/[^/]+$"
+            template_path_pattern("/api/v1/plugins/{slug}/releases/{version}"),
+            "^/api/v1/plugins/[^/]+/releases/[^/]+$"
         );
         assert_eq!(template_path_pattern("/openapi.json"), r"^/openapi\.json$");
     }
@@ -296,8 +296,8 @@ mod tests {
     fn a_template_head_is_the_literal_text_before_its_first_parameter() {
         assert_eq!(template_head("/v3/resolve/{identifier}"), "/v3/resolve/");
         assert_eq!(
-            template_head("/api/v1/starfish/plugins/{slug}/releases/{version}"),
-            "/api/v1/starfish/plugins/"
+            template_head("/api/v1/plugins/{slug}/releases/{version}"),
+            "/api/v1/plugins/"
         );
         assert_eq!(template_head("/v3/players"), "/v3/players");
     }
@@ -310,12 +310,12 @@ mod tests {
             Some("/v3/resolve/{identifier}")
         );
         assert_eq!(
-            template_for_path("/api/v1/starfish/plugins/disabled"),
-            Some("/api/v1/starfish/plugins/disabled")
+            template_for_path("/api/v1/plugins/disabled"),
+            Some("/api/v1/plugins/disabled")
         );
         assert_eq!(
-            template_for_path("/api/v1/starfish/plugins/bedwars/releases/1.2.0/yank"),
-            Some("/api/v1/starfish/plugins/{slug}/releases/{version}/yank")
+            template_for_path("/api/v1/plugins/bedwars/releases/1.2.0/yank"),
+            Some("/api/v1/plugins/{slug}/releases/{version}/yank")
         );
         assert_eq!(template_for_path("/v3/resolve/"), None);
         assert_eq!(template_for_path("/v3/resolve/a/b"), None);
@@ -326,7 +326,7 @@ mod tests {
     fn static_templates_exclude_parameterised_routes() {
         let statics: Vec<&str> = static_templates().collect();
         assert!(statics.contains(&"/v3/players"));
-        assert!(statics.contains(&"/api/v1/starfish/plugins/disabled"));
+        assert!(statics.contains(&"/api/v1/plugins/disabled"));
         assert!(!statics.contains(&"/v3/resolve/{identifier}"));
     }
 

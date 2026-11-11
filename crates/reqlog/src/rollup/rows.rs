@@ -13,7 +13,7 @@ const LEGACY_ANONYMOUS: &str = "none";
 const PERSONAL_KEY: &str = "personal";
 const DEVELOPER_KEY: &str = "developer";
 const UPSTREAM_LIMIT_ERROR: &str = r#"{"error":"Rate limited"}"#;
-const STARFISH_ROUTES: &str = "/api/v1/starfish/";
+const STARFISH_ROUTES: &str = "/api/v1/";
 const BIN_ORIGIN: &str = "1970-01-01 00:00:00+00";
 
 pub fn rolled_rows() -> String {
@@ -243,7 +243,7 @@ mod tests {
         let markers = case.find("'/v3/player/sessions/markers/{name}'").unwrap();
         let resolve = case.find("'/v3/resolve/{identifier}'").unwrap();
         let yank = case
-            .find("'/api/v1/starfish/plugins/{slug}/releases/{version}/yank'")
+            .find("'/api/v1/plugins/{slug}/releases/{version}/yank'")
             .unwrap();
         assert!(statics < markers && markers < resolve && resolve < yank);
         assert!(case.contains(
