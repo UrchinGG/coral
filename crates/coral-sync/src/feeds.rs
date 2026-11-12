@@ -1,6 +1,9 @@
 //! Change feeds: `WebSocket {base}/changes?after=N`. A source replays everything
 //! after `N`, then streams `{"seq": N, "members": ["<discord_id>", …]}`;
 //! `{"reset": true}` means `N` is too old and every cached value is stale.
+//!
+//! Every source is tried; one whose upgrade answers 404 has no feed and is pulled
+//! instead. While a feed is down its cached values fall back to the maximum age.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
@@ -9,9 +12,10 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::task::AbortHandle;
-use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
+use tokio_tungstenite::tungstenite::http::StatusCode;
+use tokio_tungstenite::tungstenite::{Error, Message};
 
 use coral_redis::SyncEvent;
 use database::{SyncSource, SyncSourceRepository};
@@ -20,6 +24,8 @@ use crate::framework::Data;
 
 const MIN_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
+/// How often a source without a feed is asked again, in case it gains one.
+const NO_FEED_RETRY: Duration = Duration::from_secs(3600);
 
 /// The running followers, one per source with a feed.
 #[derive(Clone, Default)]
@@ -27,14 +33,28 @@ pub struct Feeds(Arc<Mutex<HashMap<i64, Follower>>>);
 
 struct Follower {
     task: AbortHandle,
-    connected: bool,
-    error: Option<String>,
+    status: FeedStatus,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FeedState {
+    Connecting,
+    Connected,
+    /// The source answered 404 to the upgrade: it is pulled, not pushed.
+    None,
+    Disconnected,
+}
+
+#[derive(Clone, Serialize)]
 pub struct FeedStatus {
-    pub connected: bool,
+    pub state: FeedState,
     pub error: Option<String>,
+}
+
+enum FeedError {
+    NoFeed,
+    Failed(String),
 }
 
 #[derive(Deserialize)]
@@ -52,8 +72,10 @@ impl Feeds {
         let task = tokio::spawn(follow(data.clone(), source_id)).abort_handle();
         let follower = Follower {
             task,
-            connected: false,
-            error: None,
+            status: FeedStatus {
+                state: FeedState::Connecting,
+                error: None,
+            },
         };
         if let Some(old) = self.lock().insert(source_id, follower) {
             old.task.abort();
@@ -67,16 +89,19 @@ impl Feeds {
     }
 
     pub fn status(&self, source_id: i64) -> Option<FeedStatus> {
-        self.lock().get(&source_id).map(|follower| FeedStatus {
-            connected: follower.connected,
-            error: follower.error.clone(),
-        })
+        self.lock()
+            .get(&source_id)
+            .map(|follower| follower.status.clone())
     }
 
-    fn report(&self, source_id: i64, connected: bool, error: Option<String>) {
+    pub fn is_connected(&self, source_id: i64) -> bool {
+        self.status(source_id)
+            .is_some_and(|status| status.state == FeedState::Connected)
+    }
+
+    fn report(&self, source_id: i64, state: FeedState, error: Option<String>) {
         if let Some(follower) = self.lock().get_mut(&source_id) {
-            follower.connected = connected;
-            follower.error = error;
+            follower.status = FeedStatus { state, error };
         }
     }
 
@@ -91,7 +116,6 @@ pub async fn start_all(data: &Data) {
     match SyncSourceRepository::new(data.db.pool()).list().await {
         Ok(sources) => sources
             .iter()
-            .filter(|source| source.has_feed)
             .for_each(|source| data.feeds.start(data, source.id)),
         Err(e) => tracing::error!("Feeds not started: read the sources: {e}"),
     }
@@ -107,40 +131,53 @@ async fn follow(data: Data, source_id: i64) {
             Ok(Some(source)) => source,
             Ok(None) => return,
             Err(e) => {
-                data.feeds.report(source_id, false, Some(e.to_string()));
+                data.feeds
+                    .report(source_id, FeedState::Disconnected, Some(e.to_string()));
                 tokio::time::sleep(backoff).await;
                 continue;
             }
         };
-        let error = match follow_once(&data, &source).await {
+        match follow_once(&data, &source).await {
             Ok(()) => {
                 backoff = MIN_BACKOFF;
-                None
+                data.feeds.report(source_id, FeedState::Disconnected, None);
             }
-            Err(e) => Some(e),
-        };
-        data.feeds.report(source_id, false, error);
+            Err(FeedError::NoFeed) => {
+                data.feeds.report(source_id, FeedState::None, None);
+                tokio::time::sleep(NO_FEED_RETRY).await;
+                continue;
+            }
+            Err(FeedError::Failed(e)) => {
+                data.feeds
+                    .report(source_id, FeedState::Disconnected, Some(e));
+            }
+        }
         tokio::time::sleep(backoff).await;
         backoff = (backoff * 2).min(MAX_BACKOFF);
     }
 }
 
-async fn follow_once(data: &Data, source: &SyncSource) -> Result<(), String> {
+async fn follow_once(data: &Data, source: &SyncSource) -> Result<(), FeedError> {
+    let failed = |e: &dyn std::fmt::Display| FeedError::Failed(e.to_string());
     let mut request = feed_url(&source.base_url, source.last_seq.unwrap_or(0))
         .into_client_request()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| failed(&e))?;
     if let Some(key) = &source.api_key {
-        let bearer = HeaderValue::from_str(&format!("Bearer {key}")).map_err(|e| e.to_string())?;
+        let bearer = HeaderValue::from_str(&format!("Bearer {key}")).map_err(|e| failed(&e))?;
         request.headers_mut().insert("Authorization", bearer);
     }
-    let (mut socket, _) = tokio_tungstenite::connect_async(request)
-        .await
-        .map_err(|e| e.to_string())?;
-    data.feeds.report(source.id, true, None);
+    let (mut socket, _) = match tokio_tungstenite::connect_async(request).await {
+        Ok(connected) => connected,
+        Err(Error::Http(response)) if response.status() == StatusCode::NOT_FOUND => {
+            return Err(FeedError::NoFeed);
+        }
+        Err(e) => return Err(failed(&e)),
+    };
+    data.feeds.report(source.id, FeedState::Connected, None);
     tracing::info!("Following the {} feed", source.name);
     while let Some(message) = socket.next().await {
-        match message.map_err(|e| e.to_string())? {
-            Message::Text(text) => apply(data, source, &text).await?,
+        match message.map_err(|e| failed(&e))? {
+            Message::Text(text) => apply(data, source, &text).await.map_err(|e| failed(&e))?,
             Message::Close(_) => break,
             _ => {}
         }
@@ -226,6 +263,7 @@ mod demo_tests {
 
     use chrono::Utc;
     use serde_json::{Value, json};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::task::JoinHandle;
 
@@ -256,14 +294,13 @@ mod demo_tests {
         }
     }
 
-    async fn register(data: &Data, base_url: &str, has_feed: bool) -> SyncSource {
+    async fn register(data: &Data, base_url: &str) -> SyncSource {
         let name = format!("demo_{}", Utc::now().timestamp_nanos_opt().unwrap());
         SyncSourceRepository::new(data.db.pool())
             .add(&NewSyncSource {
                 name: &name,
                 base_url,
                 api_key: None,
-                has_feed,
                 max_age_secs: 3600,
                 created_by: 1,
             })
@@ -288,7 +325,6 @@ mod demo_tests {
             name: "demo".into(),
             base_url: demo.base_url.clone(),
             api_key: None,
-            has_feed: false,
             max_age_secs: 1,
             last_seq: None,
             created_at: Utc::now(),
@@ -310,7 +346,7 @@ mod demo_tests {
             return;
         };
         let demo = demo().await;
-        let source = register(&data, &demo.base_url, false).await;
+        let source = register(&data, &demo.base_url).await;
         demo.source.set(11, Some(json!({"rank": "gold"})));
 
         let gold = Some(json!({"rank": "gold"}));
@@ -335,7 +371,7 @@ mod demo_tests {
             return;
         };
         let demo = demo().await;
-        let source = register(&data, &demo.base_url, true).await;
+        let source = register(&data, &demo.base_url).await;
         let repo = SyncSourceRepository::new(data.db.pool());
         repo.store(source.id, 21, Some(&json!({"rank": "iron"})))
             .await
@@ -346,7 +382,7 @@ mod demo_tests {
 
         data.feeds.start(&data, source.id);
         eventually("the feed to connect", async || {
-            data.feeds.status(source.id).is_some_and(|s| s.connected)
+            data.feeds.is_connected(source.id)
         })
         .await;
         demo.source.set(21, Some(json!({"rank": "gold"})));
@@ -370,6 +406,35 @@ mod demo_tests {
             repo.cached(source.id, 22).await.unwrap().unwrap().stale
         })
         .await;
+        data.feeds.stop(source.id);
+    }
+
+    #[tokio::test]
+    async fn a_source_that_refuses_the_upgrade_has_no_feed() {
+        let Some(data) = crate::testing::test_data().await else {
+            return;
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut request = [0; 4096];
+                let _ = stream.read(&mut request).await;
+                let not_found =
+                    b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
+                let _ = stream.write_all(not_found).await;
+            }
+        });
+        let source = register(&data, &base_url).await;
+
+        data.feeds.start(&data, source.id);
+        eventually("the source to be marked feedless", async || {
+            data.feeds
+                .status(source.id)
+                .is_some_and(|status| status.state == FeedState::None)
+        })
+        .await;
+        assert!(!data.feeds.is_connected(source.id));
         data.feeds.stop(source.id);
     }
 

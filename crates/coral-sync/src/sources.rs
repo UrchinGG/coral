@@ -117,7 +117,7 @@ pub async fn external(
         .flatten();
     if let Some(cached) = &cached
         && !cached.stale
-        && (source.has_feed
+        && (data.feeds.is_connected(source.id)
             || (Utc::now() - cached.fetched_at).num_seconds() < i64::from(source.max_age_secs))
     {
         return Ok(cached.value.clone());

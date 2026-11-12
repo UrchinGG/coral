@@ -31,6 +31,7 @@ use database::{
 };
 
 use crate::events::publish;
+use crate::feeds::FeedState;
 use crate::framework::Data;
 use crate::sources::{self, HypixelRead};
 
@@ -122,10 +123,9 @@ struct SourceView {
     id: String,
     name: String,
     base_url: String,
-    has_feed: bool,
     max_age_secs: i32,
     last_seq: Option<i64>,
-    connected: bool,
+    feed: FeedState,
     error: Option<String>,
 }
 
@@ -135,7 +135,6 @@ struct NewSourceBody {
     name: String,
     base_url: String,
     api_key: Option<String>,
-    has_feed: bool,
     max_age_secs: Option<i32>,
 }
 
@@ -626,22 +625,18 @@ async fn add_source(
             name: &body.name,
             base_url,
             api_key: body.api_key.as_deref().filter(|key| !key.is_empty()),
-            has_feed: body.has_feed,
             max_age_secs,
             created_by: actor,
         })
         .await?
         .ok_or_else(|| SettingsError::Rejected(format!("A source named {} exists.", body.name)))?;
-    if added.has_feed {
-        state.data.feeds.start(&state.data, added.id);
-    }
+    state.data.feeds.start(&state.data, added.id);
     Ok(Json(Change {
         job: None,
         audit: json!({
             "source_id": added.id,
             "name": added.name,
             "base_url": added.base_url,
-            "has_feed": added.has_feed,
             "max_age_secs": added.max_age_secs,
         }),
     }))
@@ -670,10 +665,11 @@ fn source_view(data: &Data, source: &SyncSource) -> SourceView {
         id: source.id.to_string(),
         name: source.name.clone(),
         base_url: source.base_url.clone(),
-        has_feed: source.has_feed,
         max_age_secs: source.max_age_secs,
         last_seq: source.last_seq,
-        connected: status.as_ref().is_some_and(|status| status.connected),
+        feed: status
+            .as_ref()
+            .map_or(FeedState::Connecting, |status| status.state),
         error: status.and_then(|status| status.error),
     }
 }

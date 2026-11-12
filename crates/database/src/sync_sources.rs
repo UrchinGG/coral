@@ -2,17 +2,16 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{FromRow, PgPool};
 
-const SOURCE_COLUMNS: &str =
-    "id, name, base_url, api_key, has_feed, max_age_secs, last_seq, created_at";
+const SOURCE_COLUMNS: &str = "id, name, base_url, api_key, max_age_secs, last_seq, created_at";
 
-/// An external data source the sync reads, keyed by Discord ID.
+/// An external data source the sync reads, keyed by Discord ID. Whether it has a
+/// change feed is found by trying it, not stored.
 #[derive(Debug, Clone, FromRow)]
 pub struct SyncSource {
     pub id: i64,
     pub name: String,
     pub base_url: String,
     pub api_key: Option<String>,
-    pub has_feed: bool,
     pub max_age_secs: i32,
     pub last_seq: Option<i64>,
     pub created_at: DateTime<Utc>,
@@ -31,7 +30,6 @@ pub struct NewSyncSource<'a> {
     pub name: &'a str,
     pub base_url: &'a str,
     pub api_key: Option<&'a str>,
-    pub has_feed: bool,
     pub max_age_secs: i32,
     pub created_by: i64,
 }
@@ -65,15 +63,14 @@ impl<'a> SyncSourceRepository<'a> {
     /// `None` when a source with that name already exists.
     pub async fn add(&self, source: &NewSyncSource<'_>) -> Result<Option<SyncSource>, sqlx::Error> {
         sqlx::query_as(&format!(
-            "INSERT INTO sync_sources (name, base_url, api_key, has_feed, max_age_secs, created_by)
-             VALUES ($1, $2, $3, $4, $5, $6)
+            "INSERT INTO sync_sources (name, base_url, api_key, max_age_secs, created_by)
+             VALUES ($1, $2, $3, $4, $5)
              ON CONFLICT (name) DO NOTHING
              RETURNING {SOURCE_COLUMNS}"
         ))
         .bind(source.name)
         .bind(source.base_url)
         .bind(source.api_key)
-        .bind(source.has_feed)
         .bind(source.max_age_secs)
         .bind(source.created_by)
         .fetch_optional(self.pool)
@@ -236,7 +233,6 @@ mod tests {
                 name: &name,
                 base_url: "http://demo",
                 api_key: None,
-                has_feed: true,
                 max_age_secs: 3600,
                 created_by: 1,
             })
@@ -247,7 +243,6 @@ mod tests {
             name: &name,
             base_url: "http://other",
             api_key: None,
-            has_feed: false,
             max_age_secs: 60,
             created_by: 1,
         };

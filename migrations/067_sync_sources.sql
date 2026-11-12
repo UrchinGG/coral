@@ -3,7 +3,6 @@ CREATE TABLE IF NOT EXISTS sync_sources (
     name text NOT NULL UNIQUE,
     base_url text NOT NULL,
     api_key text,
-    has_feed boolean NOT NULL,
     max_age_secs integer NOT NULL,
     last_seq bigint,
     created_by bigint NOT NULL,

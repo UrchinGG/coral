@@ -13,7 +13,6 @@ import { Section } from "../../kit/Section";
 import { EmptyState } from "../../kit/States";
 import { membersPhrase, startedText } from "./labels";
 
-const DEFAULT_MAX_AGE_SECS = 3600;
 const SOURCES_INVALIDATE = [keys.server.sources()] as const;
 
 type DataSourcesProps = { usedIds: string[]; memberCount: number | undefined };
@@ -100,16 +99,23 @@ function SourceRow({ source, used, onToggle }: { source: SyncSource; used: boole
 }
 
 function freshness(source: SyncSource): string {
-  if (!source.has_feed) return `Pulled; values kept for ${Math.round(source.max_age_secs / 60)} min`;
-  const state = source.connected ? "Feed connected" : "Feed disconnected";
-  return source.last_seq === null ? state : `${state}; last change #${source.last_seq}`;
+  const kept = `values kept for ${Math.round(source.max_age_secs / 60)} min`;
+  switch (source.feed) {
+    case "connected":
+      return source.last_seq === null ? "Feed connected" : `Feed connected; last change #${source.last_seq}`;
+    case "none":
+      return `No change feed; ${kept}`;
+    case "connecting":
+      return "Connecting to the feed…";
+    case "disconnected":
+      return `Feed disconnected; ${kept} until it is back`;
+  }
 }
 
 function AddSource() {
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
-  const [hasFeed, setHasFeed] = useState(true);
   const add = useAction({
     run: (source: NewSyncSource) => addSyncSource(source),
     pending: (source) => `Adding ${source.name}…`,
@@ -123,7 +129,7 @@ function AddSource() {
   });
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    add.mutate({ name: name.trim(), base_url: baseUrl.trim(), api_key: apiKey === "" ? null : apiKey, has_feed: hasFeed, max_age_secs: hasFeed ? null : DEFAULT_MAX_AGE_SECS });
+    add.mutate({ name: name.trim(), base_url: baseUrl.trim(), api_key: apiKey === "" ? null : apiKey });
   };
 
   return (
@@ -132,10 +138,6 @@ function AddSource() {
         <Input label="Name" mono value={name} onChange={(event) => setName(event.target.value)} placeholder="rbw" className="w-40" />
         <Input label="Base URL" mono value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://rbw.urchin.gg/coral/v1" className="w-80" />
         <Input label="Key" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="optional" className="w-48" />
-        <label className="flex h-7 items-center gap-2 text-12">
-          <input type="checkbox" checked={hasFeed} onChange={(event) => setHasFeed(event.target.checked)} className="size-3.5 accent-accent" />
-          Has a change feed
-        </label>
         <Button type="submit" variant="primary" pending={add.isPending} disabled={name.trim() === "" || baseUrl.trim() === ""}>
           Add source
         </Button>
