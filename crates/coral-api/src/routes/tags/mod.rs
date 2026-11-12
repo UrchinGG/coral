@@ -376,7 +376,7 @@ pub async fn update_tag(
 
 #[utoipa::path(
     post, path = "/v3/player/lock",
-    description = "Locks a player so that no tag can be added or modified until the lock is lifted. Requires the Moderator rank.",
+    description = "Locks a player so that no tag can be added or modified until the lock is lifted. Requires the Moderator rank, and the `Tags` permission when called with a developer key.",
     params(("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID")),
     request_body = LockRequest,
     responses(
@@ -420,7 +420,7 @@ pub async fn lock_player(
 
 #[utoipa::path(
     delete, path = "/v3/player/lock",
-    description = "Lifts a player lock. Requires the Moderator rank.",
+    description = "Lifts a player lock. Requires the Moderator rank, and the `Tags` permission when called with a developer key.",
     params(("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID")),
     responses(
         (status = 204, description = "Player unlocked"),

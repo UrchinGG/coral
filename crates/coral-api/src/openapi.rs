@@ -137,7 +137,7 @@ X-API-Key: <your-key>
 
 Minecraft mods can sign in with the player's account instead. Request a challenge from `POST /v3/auth/minecraft/challenge`, pass its `server_id` to Mojang's `joinServer`, then exchange it at `POST /v3/auth/minecraft` for a token sent as `Authorization: Bearer <token>`. A token lasts 24 hours and reaches tag lookups and, for accounts linked to an Urchin member, tag writes.
 
-A personal key is issued through the Discord bot and carries the access rank of your Urchin account. A developer key carries an explicit set of permissions: Player Data, Hypixel, All Sessions, and Link Accounts. Each endpoint states the rank or permission it requires. An endpoint without such a note accepts any valid key. A locked key is rejected with a 403, and a missing or unknown key returns a 401.
+A personal key is issued through the Discord bot and carries the access rank of your Urchin account. A developer key carries an explicit set of permissions: Player Data, Hypixel, All Sessions, Link Accounts, and Tags. Adding, removing, overwriting, and locking tags with a developer key requires the Tags permission, and the key then acts with the access rank of the account it belongs to. Each endpoint states the rank or permission it requires. An endpoint without such a note accepts any valid key. A locked key is rejected with a 403, and a missing or unknown key returns a 401.
 
 ## Rate limits
 
