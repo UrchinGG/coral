@@ -23,6 +23,14 @@ const MEMBERS_PER_PAGE: u16 = 1000;
 pub type CancelToken = Arc<AtomicBool>;
 
 /// A server's settings plus the external sources it chose.
+/// Activity keeps a member's custom nickname part and leaves unlinked members alone;
+/// a link change applies everything.
+#[derive(Clone, Copy)]
+enum Trigger {
+    Link,
+    Activity,
+}
+
 pub(crate) struct ServerSync {
     pub settings: Settings,
     pub sources: Vec<SyncSource>,
@@ -90,18 +98,11 @@ fn is_cancelled(token: &CancelToken) -> bool {
     token.load(Ordering::Relaxed)
 }
 
-pub(crate) fn is_home_guild(data: &Data, guild_id: GuildId) -> bool {
-    data.home_guild_id == Some(guild_id)
-}
-
 pub async fn handle_member_update(ctx: &Context, data: &Data, member: &Member) {
     if member.user.bot() {
         return;
     }
     let guild_id = member.guild_id;
-    if !is_home_guild(data, guild_id) {
-        return;
-    }
     let Ok(Some(settings)) = load_settings(data, guild_id).await else {
         return;
     };
@@ -131,54 +132,82 @@ pub fn handle_message_activity(ctx: &Context, data: &Data, message: &Message) {
     if message.author.bot() {
         return;
     }
-    let Some(guild_id) = message.guild_id else {
-        return;
-    };
-    if !is_home_guild(data, guild_id) {
+    if message.guild_id.is_none() {
         return;
     }
     let user_id = message.author.id;
     if is_on_cooldown(data, user_id) {
         return;
     }
+    set_cooldown(data, user_id);
 
     let ctx = ctx.clone();
     let data = data.clone();
-    tokio::spawn(async move {
-        if let Err(e) = try_sync_from_message(&ctx, &data, guild_id, user_id).await {
-            tracing::warn!("Sync from message failed for {user_id} in {guild_id}: {e}");
-        }
-    });
+    tokio::spawn(async move { sync_everywhere(&ctx, &data, user_id, Trigger::Activity).await });
 }
 
+/// A link changed or a source reported a change: sync the member in every server.
 pub async fn sync_user(ctx: Context, data: Data, user_id: UserId) {
-    let Some(guild_id) = data.home_guild_id else {
-        tracing::debug!("User sync skipped: HOME_GUILD_ID not configured");
-        return;
-    };
-    let Ok(Some(settings)) = load_settings(&data, guild_id).await else {
-        return;
-    };
-    let Ok(member) = guild_id.member(&ctx.http, user_id).await else {
-        return;
-    };
+    sync_everywhere(&ctx, &data, user_id, Trigger::Link).await;
+}
 
-    let result = match linked_uuid(&data, user_id).await {
+async fn sync_everywhere(ctx: &Context, data: &Data, user_id: UserId, trigger: Trigger) {
+    let configs = match GuildConfigRepository::new(data.db.pool()).get_all().await {
+        Ok(configs) => configs,
+        Err(e) => {
+            tracing::warn!("Sync of {user_id} skipped: read the server configs: {e}");
+            return;
+        }
+    };
+    // shortcut: asks Discord whether the member is in each configured server; keep a membership index from member events once there are more than tens of servers.
+    for config in configs {
+        let guild_id = GuildId::new(config.guild_id as u64);
+        if let Err(e) = sync_in(ctx, data, guild_id, user_id, trigger).await {
+            tracing::warn!("Sync of {user_id} in {guild_id} failed: {e}");
+        }
+    }
+}
+
+async fn sync_in(
+    ctx: &Context,
+    data: &Data,
+    guild_id: GuildId,
+    user_id: UserId,
+    trigger: Trigger,
+) -> Result<()> {
+    let Some(server) = load_settings(data, guild_id).await? else {
+        return Ok(());
+    };
+    if matches!(trigger, Trigger::Activity) && !server.syncs_anything() {
+        return Ok(());
+    }
+    let Ok(member) = guild_id.member(&ctx.http, user_id).await else {
+        return Ok(());
+    };
+    let preserve_custom = matches!(trigger, Trigger::Activity);
+    match linked_uuid(data, user_id).await {
         Some(uuid) => {
-            let Some(hypixel) = sources::hypixel(&data, &uuid, HypixelRead::Fresh).await else {
-                return;
+            let Some(hypixel) = sources::hypixel(data, &uuid, HypixelRead::Fresh).await else {
+                return Ok(());
             };
             sync_member(
-                &ctx, &data, guild_id, &member, &uuid, &settings, &hypixel, false,
+                ctx,
+                data,
+                guild_id,
+                &member,
+                &uuid,
+                &server,
+                &hypixel,
+                preserve_custom,
             )
-            .await
+            .await?;
         }
-        None => sync_unlinked_member(&ctx, &data, guild_id, &member, &settings).await,
-    };
-
-    if let Err(e) = result {
-        tracing::warn!("User sync failed for {} in {guild_id}: {e}", user_id.get());
+        None if matches!(trigger, Trigger::Link) => {
+            sync_unlinked_member(ctx, data, guild_id, &member, &server).await?;
+        }
+        None => {}
     }
+    Ok(())
 }
 
 pub async fn sync_guild_cached(
@@ -189,35 +218,6 @@ pub async fn sync_guild_cached(
     progress: &Progress,
 ) -> Result<()> {
     try_sync_guild(ctx, data, guild_id, cancel, progress).await
-}
-
-async fn try_sync_from_message(
-    ctx: &Context,
-    data: &Data,
-    guild_id: GuildId,
-    user_id: UserId,
-) -> Result<()> {
-    set_cooldown(data, user_id);
-
-    let Some(settings) = load_settings(data, guild_id).await? else {
-        return Ok(());
-    };
-    if !settings.syncs_anything() {
-        return Ok(());
-    }
-    let Some(uuid) = linked_uuid(data, user_id).await else {
-        return Ok(());
-    };
-    let Some(hypixel) = sources::hypixel(data, &uuid, HypixelRead::Fresh).await else {
-        return Ok(());
-    };
-
-    let member = guild_id.member(&ctx.http, user_id).await?;
-    sync_member(
-        ctx, data, guild_id, &member, &uuid, &settings, &hypixel, true,
-    )
-    .await?;
-    Ok(())
 }
 
 async fn try_sync_guild(

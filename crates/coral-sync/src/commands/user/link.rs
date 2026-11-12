@@ -99,7 +99,7 @@ pub async fn handle_link_button(
 }
 
 pub async fn handle_guild_join(ctx: &Context, new_member: &Member, data: &Data) -> Result<()> {
-    if new_member.user.bot() || !crate::service::is_home_guild(data, new_member.guild_id) {
+    if new_member.user.bot() {
         return Ok(());
     }
     let discord_id = new_member.user.id.get() as i64;
