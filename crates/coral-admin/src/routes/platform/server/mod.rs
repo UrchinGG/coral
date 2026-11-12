@@ -19,6 +19,8 @@ use crate::sync_settings::SyncSettings;
 pub mod directory;
 pub mod jobs;
 
+const SOURCES_TARGET: &str = "sync_sources";
+
 pub fn home_guild(state: &AppState) -> Result<GuildId, AdminError> {
     state
         .discord
@@ -199,6 +201,68 @@ pub async fn strip_role(
     Ok(started(job))
 }
 
+pub async fn sources(State(state): State<AppState>) -> Result<Json<Value>, AdminError> {
+    Ok(Json(sync_settings(&state)?.read("/sources").await?))
+}
+
+pub async fn add_source(
+    State(state): State<AppState>,
+    Extension(actor): Extension<AdminActor>,
+    body: Result<Json<Value>, JsonRejection>,
+) -> Result<StatusCode, AdminError> {
+    let Json(body) = body?;
+    let target = Target::Sources;
+    forward(
+        &state,
+        &actor,
+        Method::POST,
+        "/sources",
+        target,
+        Some(body),
+        "add_sync_source",
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn remove_source(
+    State(state): State<AppState>,
+    Extension(actor): Extension<AdminActor>,
+    Path(source_id): Path<i64>,
+) -> Result<StatusCode, AdminError> {
+    let path = format!("/sources/{source_id}");
+    let target = Target::Sources;
+    forward(
+        &state,
+        &actor,
+        Method::DELETE,
+        &path,
+        target,
+        None,
+        "remove_sync_source",
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn set_used_sources(
+    State(state): State<AppState>,
+    Extension(actor): Extension<AdminActor>,
+    body: Result<Json<Value>, JsonRejection>,
+) -> Result<Json<Value>, AdminError> {
+    let Json(body) = body?;
+    let job = change(
+        &state,
+        &actor,
+        Method::PUT,
+        "/sources",
+        Some(body),
+        "set_sync_sources",
+    )
+    .await?;
+    Ok(started(job))
+}
+
 /// Forwards a write for the home server, audits what the sync reports it did, and
 /// returns the job it started, if any.
 pub async fn change(
@@ -210,19 +274,46 @@ pub async fn change(
     action: &str,
 ) -> Result<Value, AdminError> {
     let guild_id = home_guild(state)?;
+    let path = format!("/guilds/{guild_id}{path}");
+    forward(
+        state,
+        actor,
+        method,
+        &path,
+        Target::Server(guild_id),
+        body,
+        action,
+    )
+    .await
+}
+
+/// What an audit row names: the server, or the sync's source registry.
+enum Target {
+    Server(GuildId),
+    Sources,
+}
+
+async fn forward(
+    state: &AppState,
+    actor: &AdminActor,
+    method: Method,
+    path: &str,
+    target: Target,
+    body: Option<Value>,
+    action: &str,
+) -> Result<Value, AdminError> {
     let mut change = sync_settings(state)?
-        .write(
-            method,
-            &format!("/guilds/{guild_id}{path}"),
-            actor.discord_id,
-            body,
-        )
+        .write(method, path, actor.discord_id, body)
         .await?;
+    let target = match target {
+        Target::Server(guild_id) => guild_id.to_string(),
+        Target::Sources => SOURCES_TARGET.to_string(),
+    };
     crate::audit::log(
         state,
         actor.discord_id,
         action,
-        &guild_id.to_string(),
+        &target,
         change["audit"].take(),
     )
     .await;

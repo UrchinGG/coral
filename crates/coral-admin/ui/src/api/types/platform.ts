@@ -95,8 +95,22 @@ export type ServerConfig = {
   guild_id: string;
   config: ServerConfigValues;
   rules: AutoroleRule[];
+  source_ids: string[];
   preview_context: Record<string, unknown> | null;
 };
+
+export type SyncSource = {
+  id: string;
+  name: string;
+  base_url: string;
+  has_feed: boolean;
+  max_age_secs: number;
+  last_seq: number | null;
+  connected: boolean;
+  error: string | null;
+};
+
+export type NewSyncSource = { name: string; base_url: string; api_key: string | null; has_feed: boolean; max_age_secs: number | null };
 
 export type DiscordRole = { id: string; name: string; color: string | null; position: number; managed: boolean; assignable: boolean; bot_assignable: boolean | null };
 

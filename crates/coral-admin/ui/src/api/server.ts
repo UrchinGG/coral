@@ -3,7 +3,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { deleteJson, getJson, postJson, putJson } from "./http";
 import { keys } from "./keys";
 import { configQuery, getQuery, STALE_LIST_MS } from "./queryClient";
-import type { Directory, Population, ServerConfig, StartedJob, SyncJobs } from "./types/platform";
+import type { Directory, NewSyncSource, Population, ServerConfig, StartedJob, SyncJobs, SyncSource } from "./types/platform";
 
 export const SERVER_INVALIDATES = [keys.server.config(), keys.server.jobs()] as const;
 
@@ -21,6 +21,10 @@ export function populationQuery() {
 
 export function syncJobsQuery() {
   return queryOptions({ queryKey: keys.server.jobs(), queryFn: getQuery<SyncJobs>("/server/jobs"), staleTime: STALE_LIST_MS });
+}
+
+export function syncSourcesQuery() {
+  return queryOptions({ queryKey: keys.server.sources(), queryFn: getQuery<SyncSource[]>("/server/sources"), staleTime: STALE_LIST_MS });
 }
 
 export function refreshDirectory(): Promise<Directory> {
@@ -61,6 +65,18 @@ export function removeAutorole(ruleId: number): Promise<void> {
 
 export function stripRole(roleId: string): Promise<StartedJob> {
   return postJson<StartedJob>(`/server/roles/${roleId}/strip`, {});
+}
+
+export function addSyncSource(source: NewSyncSource): Promise<void> {
+  return postJson<void>("/server/sources", source);
+}
+
+export function removeSyncSource(sourceId: string): Promise<void> {
+  return deleteJson<void>(`/server/sources/${sourceId}`);
+}
+
+export function setUsedSources(sourceIds: string[]): Promise<StartedJob> {
+  return putJson<StartedJob>("/server/sources/used", { source_ids: sourceIds });
 }
 
 export function cancelSyncJob(jobId: number): Promise<void> {

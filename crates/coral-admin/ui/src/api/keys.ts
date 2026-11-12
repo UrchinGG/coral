@@ -63,6 +63,7 @@ export const keys = {
     directory: () => ["server", "directory"] as const,
     population: () => ["server", "population"] as const,
     jobs: () => ["server", "jobs"] as const,
+    sources: () => ["server", "sources"] as const,
   },
   starfish: {
     all: () => ["starfish"] as const,
