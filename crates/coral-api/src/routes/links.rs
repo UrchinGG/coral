@@ -12,16 +12,21 @@ use utoipa::ToSchema;
 use clients::normalize_uuid;
 use coral_redis::SyncEvent;
 use database::{AccountRepository, CacheRepository, LinkRole, MemberRepository, permissions};
+use redis::AsyncCommands;
 
 use crate::auth::{AuthenticatedMember, DeveloperKeyAuth, InternalAuth};
 use crate::cache::spawn_snapshot_store;
 use crate::error::{ApiError, ErrorResponse};
 use crate::routes::player::{resolve_identifier, resolve_player_data};
-use crate::routes::starfish::rate_limit;
 use crate::state::AppState;
 
 const VERIFY_HOST: &str = "link.urchin.gg";
-const CODE_ATTEMPTS_PER_WINDOW: i64 = 10;
+const FAILED_CODES_PER_USER: i64 = 10;
+/// Backstop for a leaked key rotating Discord IDs, sized for a bot serving a busy server.
+/// With 4-digit codes that live 120 s, a key at this ceiling hits a given live code
+/// about 0.4% of the time.
+const FAILED_CODES_PER_KEY: i64 = 100;
+const FAILED_CODE_WINDOW_SECS: i64 = 300;
 const MAX_SUGGESTIONS: usize = 25;
 
 #[derive(Serialize, ToSchema)]
@@ -118,10 +123,24 @@ impl<S: Send + Sync> FromRequestParts<S> for LinkCaller {
 }
 
 impl LinkCaller {
-    fn code_attempt_bucket(&self, discord_id: u64) -> String {
+    /// Failed codes are counted per Discord user, so one player can't lock out a whole
+    /// server sharing a bot's key, and per developer key as a ceiling.
+    fn failed_code_buckets(&self, discord_id: u64) -> Vec<(String, i64)> {
         match self {
-            Self::Internal => format!("link_code:discord:{discord_id}"),
-            Self::Developer { member_id } => format!("link_code:key:{member_id}"),
+            Self::Internal => vec![(
+                format!("link_code_failures:discord:{discord_id}"),
+                FAILED_CODES_PER_USER,
+            )],
+            Self::Developer { member_id } => vec![
+                (
+                    format!("link_code_failures:key:{member_id}:discord:{discord_id}"),
+                    FAILED_CODES_PER_USER,
+                ),
+                (
+                    format!("link_code_failures:key:{member_id}"),
+                    FAILED_CODES_PER_KEY,
+                ),
+            ],
         }
     }
 }
@@ -207,7 +226,7 @@ pub async fn link_methods(
 #[utoipa::path(
     post,
     path = "/v3/links/{discord_id}",
-    description = "Links a Minecraft account to a Discord user once Coral has checked the proof. Coral looks up the Discord username itself; the caller only says which Discord user asked. An account linked elsewhere moves to this user. Requires the `Link Accounts` permission; the `force` method requires the internal key. Code attempts are limited to 10 per five minutes per key.",
+    description = "Links a Minecraft account to a Discord user once Coral has checked the proof. Coral looks up the Discord username itself; the caller only says which Discord user asked. An account linked elsewhere moves to this user. Requires the `Link Accounts` permission; the `force` method requires the internal key. Failed codes are limited to 10 per five minutes per Discord user, and 100 per developer key.",
     params(("discord_id" = String, Path, description = "Discord user ID")),
     request_body = LinkRequest,
     responses(
@@ -215,7 +234,7 @@ pub async fn link_methods(
         (status = 403, description = "Missing permission, or the proof does not match", body = ErrorResponse),
         (status = 404, description = "Unknown or expired code, or unknown player", body = ErrorResponse),
         (status = 409, description = "Already linked to this user", body = ErrorResponse),
-        (status = 429, description = "Too many code attempts", body = ErrorResponse),
+        (status = 429, description = "Too many failed codes", body = ErrorResponse),
         (status = 503, description = "Hypixel is unreachable and the stored profile does not show this Discord user", body = ErrorResponse),
     ),
     tag = "Links",
@@ -358,15 +377,26 @@ async fn redeem_code(
     discord_id: u64,
     code: &str,
 ) -> Result<LinkedAccount, ApiError> {
-    rate_limit(
-        state,
-        &caller.code_attempt_bucket(discord_id),
-        CODE_ATTEMPTS_PER_WINDOW,
-    )
-    .await?;
-    let player = coral_redis::verify::redeem_code(&mut state.redis.connection(), code)
-        .await
-        .ok_or_else(|| ApiError::NotFound("invalid or expired code".into()))?;
+    let mut redis = state.redis.connection();
+    let buckets = caller.failed_code_buckets(discord_id);
+    for (bucket, limit) in &buckets {
+        let failures: Option<i64> = redis.get(bucket).await.map_err(redis_failure)?;
+        if failures.unwrap_or(0) >= *limit {
+            return Err(ApiError::RateLimited);
+        }
+    }
+    let Some(player) = coral_redis::verify::redeem_code(&mut redis, code).await else {
+        for (bucket, _) in &buckets {
+            let failures: i64 = redis.incr(bucket, 1).await.map_err(redis_failure)?;
+            if failures == 1 {
+                let _: () = redis
+                    .expire(bucket, FAILED_CODE_WINDOW_SECS)
+                    .await
+                    .map_err(redis_failure)?;
+            }
+        }
+        return Err(ApiError::NotFound("invalid or expired code".into()));
+    };
     Ok(LinkedAccount {
         uuid: player.uuid.simple().to_string(),
         username: Some(player.username),
@@ -469,6 +499,10 @@ async fn resync(state: &AppState, discord_ids: impl IntoIterator<Item = u64>) {
             .publish(&SyncEvent::SyncUser { discord_id })
             .await;
     }
+}
+
+fn redis_failure(error: redis::RedisError) -> ApiError {
+    ApiError::Internal(format!("link code limit: {error}"))
 }
 
 fn not_linked() -> ApiError {
@@ -735,13 +769,32 @@ mod api_tests {
     }
 
     #[tokio::test]
-    async fn code_guessing_is_limited_per_key() {
+    async fn failed_codes_are_limited_per_user_then_per_key() {
         let Some(api) = api().await else {
             return;
         };
         let key = api.developer(permissions::LINK_ACCOUNTS).await;
         let guess = json!({"method": "code", "code": "not-a-code"});
-        for _ in 0..CODE_ATTEMPTS_PER_WINDOW {
+        let guesser = format!("/v3/links/{}", discord_id());
+        for _ in 0..FAILED_CODES_PER_USER {
+            assert_eq!(
+                api.call(Method::POST, &guesser, &key, guess.clone())
+                    .await
+                    .0,
+                404
+            );
+        }
+        assert_eq!(
+            api.call(Method::POST, &guesser, &key, guess.clone())
+                .await
+                .0,
+            429
+        );
+
+        let (status, _) = api.link_by_code(&key, discord_id(), &player()).await;
+        assert_eq!(status, 200, "another player on the same key still links");
+
+        for _ in FAILED_CODES_PER_USER..FAILED_CODES_PER_KEY {
             let uri = format!("/v3/links/{}", discord_id());
             assert_eq!(
                 api.call(Method::POST, &uri, &key, guess.clone()).await.0,
@@ -750,6 +803,18 @@ mod api_tests {
         }
         let uri = format!("/v3/links/{}", discord_id());
         assert_eq!(api.call(Method::POST, &uri, &key, guess).await.0, 429);
+    }
+
+    #[tokio::test]
+    async fn correct_codes_do_not_count_as_failures() {
+        let Some(api) = api().await else {
+            return;
+        };
+        let key = api.developer(permissions::LINK_ACCOUNTS).await;
+        for _ in 0..=FAILED_CODES_PER_USER {
+            let (status, _) = api.link_by_code(&key, discord_id(), &player()).await;
+            assert_eq!(status, 200);
+        }
     }
 
     #[tokio::test]
