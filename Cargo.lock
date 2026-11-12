@@ -908,6 +908,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serenity",
+ "sqlx",
  "thiserror 2.0.17",
  "tikv-jemallocator",
  "tokio",

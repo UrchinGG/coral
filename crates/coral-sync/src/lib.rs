@@ -7,6 +7,7 @@ pub mod feeds;
 pub mod framework;
 pub mod interact;
 pub mod jobs;
+pub mod layout;
 pub mod review_media;
 pub mod service;
 pub mod settings;

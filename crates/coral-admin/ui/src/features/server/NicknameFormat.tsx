@@ -15,12 +15,12 @@ type NicknameFormatProps = { template: string | null; previewContext: Record<str
 const SUGGESTION_LIMIT = 10;
 
 const BASE_FIELDS = [
-  "displayname",
+  "hypixel.displayname",
   "discord.name",
-  "stats.Bedwars.active_star",
+  "hypixel.stats.Bedwars.active_star",
   "bedwars.bracket_open",
   "bedwars.bracket_close",
-  "achievements.bedwars_level",
+  "hypixel.achievements.bedwars_level",
   "coral.access",
   "blacklist.tag",
 ] as const;
@@ -45,11 +45,11 @@ const LEVEL_GLYPHS = [
 ] as const;
 
 const DEFAULT_TEMPLATE = [
-  "{bedwars.bracket_open}{achievements.bedwars_level}{",
-  `if ${STAR_GLYPHS.map(([star, glyph]) => `stats.Bedwars.active_star == "${star}": "${glyph}"`).join(",\n")},`,
-  `${LEVEL_GLYPHS.map(([level, glyph]) => `achievements.bedwars_level < ${level}: "${glyph}"`).join(",\n")},`,
+  "{bedwars.bracket_open}{hypixel.achievements.bedwars_level}{",
+  `if ${STAR_GLYPHS.map(([star, glyph]) => `hypixel.stats.Bedwars.active_star == "${star}": "${glyph}"`).join(",\n")},`,
+  `${LEVEL_GLYPHS.map(([level, glyph]) => `hypixel.achievements.bedwars_level < ${level}: "${glyph}"`).join(",\n")},`,
   'else: "✭"',
-  "}{bedwars.bracket_close} {displayname} | {discord.name}",
+  "}{bedwars.bracket_close} {hypixel.displayname} | {discord.name}",
 ].join("\n");
 
 export function NicknameFormat({ template, previewContext, memberCount }: NicknameFormatProps) {
@@ -156,7 +156,7 @@ function SyntaxReference() {
         <dd className="m-0">Conditional; follow-up branches may omit the left operand</dd>
       </dl>
       <span>
-        <span className="font-medium text-fg">Fields:</span> <code>displayname</code> · <code>achievements.*</code> · <code>stats.Bedwars.*</code> · <code>discord.name</code> · <code>blacklist.&lt;tag&gt;</code> · <code>coral.access</code> (0 default, 1 trusted, 2 helper, 3 moderator, 4 admin, 5 owner)
+        <span className="font-medium text-fg">Fields:</span> <code>hypixel.displayname</code> · <code>hypixel.achievements.*</code> · <code>hypixel.stats.Bedwars.*</code> · <code>discord.name</code> · <code>blacklist.&lt;tag&gt;</code> · <code>coral.access</code> (0 default, 1 trusted, 2 helper, 3 moderator, 4 admin, 5 owner)
       </span>
       <span>
         <span className="font-medium text-fg">Operators:</span> <code>+ - * / %</code> · <code>== != &lt; &lt;= &gt; &gt;=</code> · <code>and or not</code>

@@ -262,7 +262,7 @@ mod demo_tests {
     use std::time::Instant;
 
     use chrono::Utc;
-    use serde_json::{Value, json};
+    use serde_json::json;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::task::JoinHandle;
@@ -440,11 +440,11 @@ mod demo_tests {
 
     #[test]
     fn a_source_value_reaches_the_nickname() {
-        let mut context = json!({"displayname": "Nelly", "discord": {"name": "nelly"}});
+        let mut context =
+            json!({"hypixel": {"displayname": "Nelly"}, "discord": {"name": "nelly"}});
         sources::add_external(&mut context, "demo", json!({"rank": "gold"}));
-        sources::add_external(&mut context, "displayname", json!("clobbered"));
         let settings = Settings {
-            nickname_template: Some("[{demo.rank}] {displayname}".into()),
+            nickname_template: Some("[{demo.rank}] {hypixel.displayname}".into()),
             link_role: None,
             unlinked_role: None,
             rules: Vec::new(),
@@ -455,6 +455,5 @@ mod demo_tests {
         };
         let changes = engine::linked_changes(&settings, &context, &current, false, false);
         assert_eq!(changes.nickname.as_deref(), Some("[gold] Nelly"));
-        assert_eq!(context["displayname"], Value::from("Nelly"));
     }
 }

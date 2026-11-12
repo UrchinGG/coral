@@ -184,6 +184,45 @@ impl<'a> GuildConfigRepository<'a> {
         Ok(())
     }
 
+    /// Servers whose template and rules were written for a context layout older than `version`.
+    pub async fn outdated_contexts(&self, version: i16) -> Result<Vec<i64>, sqlx::Error> {
+        sqlx::query_scalar("SELECT guild_id FROM guild_config WHERE context_version < $1")
+            .bind(version)
+            .fetch_all(self.pool)
+            .await
+    }
+
+    /// Stores a server's rewritten template and rule conditions and its new layout
+    /// version, all or nothing.
+    pub async fn rewrite_context(
+        &self,
+        guild_id: i64,
+        version: i16,
+        template: Option<&str>,
+        conditions: &[(i64, String)],
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "UPDATE guild_config SET nickname_template = $2, context_version = $3 WHERE guild_id = $1",
+        )
+        .bind(guild_id)
+        .bind(template)
+        .bind(version)
+        .execute(&mut *tx)
+        .await?;
+        for (rule_id, condition) in conditions {
+            sqlx::query(
+                "UPDATE guild_role_rules SET condition = $3 WHERE id = $1 AND guild_id = $2",
+            )
+            .bind(rule_id)
+            .bind(guild_id)
+            .bind(condition)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await
+    }
+
     pub async fn remove_role_rule(&self, rule_id: i64) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM guild_role_rules WHERE id = $1")
             .bind(rule_id)

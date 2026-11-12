@@ -5,7 +5,7 @@ export type CompareOp = (typeof COMPARE_OPS)[number];
 
 export const COMPARE_OPS = [">=", ">", "==", "!=", "<", "<="] as const;
 
-const FIRST_FIELD = "achievements.bedwars_level";
+const FIRST_FIELD = "hypixel.achievements.bedwars_level";
 
 export const EMPTY_BUILDER: BuilderRow[] = [{ joiner: "and", field: FIRST_FIELD, op: ">=", value: "" }];
 

@@ -21,6 +21,7 @@ const DEFAULT_SETTINGS_PORT: u16 = 8090;
 async fn main() -> Result<()> {
     init_logging();
     let data = init_data().await?;
+    coral_sync::layout::upgrade(&data).await?;
     feeds::start_all(&data).await;
     let mut client = build_client(data.clone()).await?;
     tokio::spawn(coral_sync::settings::serve(

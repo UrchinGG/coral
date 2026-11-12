@@ -1,6 +1,6 @@
 //! What Coral knows about a member, by source. Each source fills its own namespace
-//! of the context the engine reads, except Hypixel, which still sits at the root
-//! until the one-time template rewrite moves it under `hypixel.*`.
+//! of the context the engine reads: `hypixel`, Coral's own (see `layout`), and one per
+//! external source.
 //!
 //! External sources are rows, not code: each speaks the same protocol, keyed by
 //! Discord ID. `GET {base}/members/{discord_id}` answers a JSON object or 404.
@@ -17,25 +17,13 @@ use database::{
 };
 
 use crate::framework::Data;
+use crate::layout;
 
 /// Hypixel is pulled: a stored profile older than this is refreshed before use.
 pub const HYPIXEL_MAX_AGE: Duration = Duration::from_secs(4 * 3600);
 const PAUSE_NAME_UPDATES: &str = "pause_name_updates";
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_SOURCE_NAME_LEN: usize = 32;
-/// Namespaces Coral fills itself, plus the Hypixel root fields templates use most.
-const RESERVED_NAMES: &[&str] = &[
-    "achievements",
-    "bedwars",
-    "blacklist",
-    "coral",
-    "discord",
-    "displayname",
-    "hypixel",
-    "standing",
-    "stats",
-];
-
 static HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
         .timeout(LOOKUP_TIMEOUT)
@@ -165,39 +153,31 @@ pub fn valid_source_name(name: &str) -> bool {
     chars.next().is_some_and(|c| c.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
         && name.len() <= MAX_SOURCE_NAME_LEN
-        && !RESERVED_NAMES.contains(&name)
+        && name != layout::HYPIXEL
+        && !layout::CORAL_NAMESPACES.contains(&name)
 }
 
-/// Puts a source's value under its name. While Hypixel still sits at the root, a
-/// name that collides with a Hypixel field is skipped rather than overwrite it.
 pub fn add_external(context: &mut Value, name: &str, value: Value) {
-    if context.get(name).is_some() {
-        tracing::warn!("source {name} collides with a context field and was left out");
-        return;
-    }
     context[name] = value;
 }
 
 pub fn context(hypixel: &Value, discord_name: Option<&str>, coral: &CoralFacts) -> Value {
-    let mut ctx = hypixel.clone();
-
-    if ctx.pointer("/achievements/bedwars_level").is_none() {
-        ctx["achievements"]["bedwars_level"] = json!(0);
+    let mut player = hypixel.clone();
+    if player.pointer("/achievements/bedwars_level").is_none() {
+        player["achievements"]["bedwars_level"] = json!(0);
     }
-    let active_bracket = ctx
+    let active_bracket = player
         .pointer("/stats/Bedwars/active_prestige_bracket")
         .and_then(|v| v.as_str());
     let (bracket_open, bracket_close) = hypixel::nickname_bracket_glyphs(active_bracket);
-    ctx["bedwars"] = json!({
-        "bracket_open": bracket_open,
-        "bracket_close": bracket_close,
-    });
-
-    ctx["discord"] = json!({ "name": discord_name });
-    ctx["coral"] = json!({ "access": coral.access, "linked": true });
-    ctx["standing"] = json!({ "trusted": coral.trusted });
-    ctx["blacklist"] = blacklist(&coral.tags);
-    ctx
+    json!({
+        layout::HYPIXEL: player,
+        "bedwars": { "bracket_open": bracket_open, "bracket_close": bracket_close },
+        "discord": { "name": discord_name },
+        "coral": { "access": coral.access, "linked": true },
+        "standing": { "trusted": coral.trusted },
+        "blacklist": blacklist(&coral.tags),
+    })
 }
 
 fn blacklist(tags: &[String]) -> Value {
