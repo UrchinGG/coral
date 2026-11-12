@@ -1,0 +1,210 @@
+@view-transition {
+  navigation: none;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+:root {
+  overscroll-behavior: none;
+}
+
+body {
+  overflow: hidden;
+  font-size: var(--text-xs);
+}
+
+button,
+input,
+select {
+  color: inherit;
+  font: inherit;
+}
+
+button,
+select {
+  cursor: pointer;
+}
+
+* {
+  scrollbar-color: var(--color-surface-raised-hover) transparent;
+  scrollbar-width: thin;
+}
+
+.icon-button {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-secondary);
+  transition:
+    background-color var(--transition),
+    color var(--transition);
+
+  @media (hover: hover) {
+    &:hover {
+      background: var(--color-surface-raised);
+      color: var(--color-text);
+    }
+  }
+
+  &[aria-expanded="true"] {
+    background: var(--color-surface-raised-hover);
+    color: var(--color-text);
+  }
+
+  @media (pointer: coarse) {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 2.25rem;
+  padding: 0 0.875rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-raised);
+  color: var(--color-text-secondary);
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    border-color var(--transition),
+    background-color var(--transition),
+    color var(--transition);
+
+  @media (hover: hover) {
+    &:hover {
+      border-color: var(--color-border-hover);
+      background: var(--color-surface-raised-hover);
+      color: var(--color-text);
+    }
+  }
+
+  @media (pointer: coarse) {
+    height: 2.75rem;
+  }
+}
+
+.field {
+  min-width: 0;
+  height: 2.25rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  background: var(--color-surface);
+  color: var(--color-text);
+  transition: border-color var(--transition);
+
+  &::placeholder {
+    color: var(--color-text-muted);
+  }
+
+  &:focus {
+    border-color: var(--color-text-muted);
+  }
+
+  @media (pointer: coarse) {
+    height: 2.75rem;
+    font-size: var(--text-base);
+  }
+}
+
+.card {
+  border: 1px solid var(--color-border);
+  background: var(--color-panel);
+  box-shadow: var(--shadow-float);
+}
+
+.segmented {
+  display: flex;
+  gap: 0.125rem;
+  padding: 0.125rem;
+  border-radius: var(--radius);
+  background: var(--color-surface-raised);
+
+  & > button {
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--color-text-muted);
+    font-weight: 500;
+    transition:
+      background-color var(--transition),
+      color var(--transition);
+
+    @media (hover: hover) {
+      &:hover {
+        color: var(--color-text);
+      }
+    }
+
+    &:is([aria-selected="true"], [aria-pressed="true"], [aria-checked="true"]) {
+      background: var(--color-surface-raised-hover);
+      color: var(--color-text);
+    }
+  }
+}
+
+h2 {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 1.25rem;
+  padding: 0 0.3125rem;
+  border-radius: var(--radius-xs);
+  background: var(--color-surface-raised-hover);
+  color: var(--color-text);
+  font: 600 var(--text-2xs)/1.25rem var(--font-sans);
+  text-align: center;
+}
+
+.mc {
+  font-family: var(--font-minecraft);
+  font-weight: 400;
+  text-shadow: calc(1em / 9) calc(1em / 9) 0 var(--mc-shadow);
+}
+
+.nick {
+  color: var(--color-danger);
+}
+
+.face {
+  --size: 1.25rem;
+  flex: none;
+  width: var(--size);
+  height: var(--size);
+  border-radius: var(--radius-xs);
+  background-color: var(--color-surface-raised-hover);
+  background-image: var(--face), var(--face);
+  background-position:
+    calc(var(--size) * -5) calc(var(--size) * -1),
+    calc(var(--size) * -1) calc(var(--size) * -1);
+  background-size: calc(var(--size) * 8) auto;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+  transition: filter var(--transition);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    transition-duration: 0s !important;
+    animation-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,67 @@
+---
+interface Props {
+  title: string;
+  href?: string;
+  level?: 2 | 3 | 4;
+}
+
+const { title, href, level = 2 } = Astro.props;
+const Element = href ? "a" : "div";
+const Heading = `h${level}` as const;
+---
+
+<Element class="card" href={href}>
+  <Heading class="title">{title}</Heading>
+  <p>
+    <slot />
+  </p>
+  {Astro.slots.has("footnote") && (
+    <small>
+      <slot name="footnote" />
+    </small>
+  )}
+</Element>
+
+<style>
+  .card {
+    display: flex;
+    flex-direction: column;
+    padding: 1.25rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+  }
+
+  a.card {
+    transition:
+      border-color var(--transition),
+      background-color var(--transition);
+
+    @media (hover: hover) {
+      &:hover {
+        border-color: var(--color-border-hover);
+        background: var(--color-surface-hover);
+      }
+    }
+  }
+
+  .title {
+    margin-bottom: 0.375rem;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    font-weight: 600;
+  }
+
+  p {
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+    line-height: 1.6;
+  }
+
+  small {
+    margin-top: auto;
+    padding-top: 0.75rem;
+    color: var(--color-text-faint);
+    font-size: var(--text-3xs);
+  }
+</style>

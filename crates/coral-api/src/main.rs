@@ -168,6 +168,10 @@ fn build_router(state: AppState, request_log: reqlog::RequestLog) -> Router {
             routes::starfish::MOUNT_PREFIX,
             routes::starfish::router(state.clone()),
         )
+        .nest(
+            routes::starfish::LEGACY_MOUNT_PREFIX,
+            routes::starfish::router(state.clone()),
+        )
         .merge(routes::web::router())
         .layer(axum::middleware::from_fn_with_state(
             request_log,

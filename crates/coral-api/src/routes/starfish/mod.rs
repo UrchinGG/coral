@@ -14,7 +14,9 @@ use crate::{
 };
 use axum::Router;
 
-pub const MOUNT_PREFIX: &str = "/api/v1/starfish";
+pub const MOUNT_PREFIX: &str = "/api/v1";
+/// Released Starfish builds call this path for licensing and updates.
+pub const LEGACY_MOUNT_PREFIX: &str = "/api/v1/starfish";
 
 pub(crate) fn require_starfish(state: &AppState) -> Result<Arc<StarfishConfig>, ApiError> {
     state

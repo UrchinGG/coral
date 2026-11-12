@@ -1,0 +1,56 @@
+<div class="player">
+  <img alt="" width="40" height="40" loading="lazy" />
+  <div class="text">
+    <span class="name"></span>
+    <span class="detail"></span>
+  </div>
+</div>
+
+<style>
+  .player {
+    display: flex;
+    flex: 1;
+    gap: 0.875rem;
+    align-items: center;
+    min-width: 0;
+  }
+
+  img {
+    flex: none;
+    border-radius: var(--radius-sm);
+    image-rendering: pixelated;
+    transition: opacity var(--transition);
+  }
+
+  .text {
+    display: grid;
+    gap: 0.125rem;
+    min-width: 0;
+
+    & span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .name {
+    font-size: var(--text-sm);
+    font-weight: 500;
+  }
+
+  .name :global(.rank) {
+    font-family: var(--font-minecraft);
+    font-size: var(--text-xs);
+    font-weight: 400;
+
+    &:last-of-type {
+      margin-right: 0.375rem;
+    }
+  }
+
+  .detail {
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+  }
+</style>

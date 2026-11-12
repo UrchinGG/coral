@@ -483,7 +483,7 @@ mod tests {
             let start = page.find("href=\"").unwrap() + "href=\"".len();
             let href = &page[start..start + page[start..].find('"').unwrap()];
             assert!(
-                href.starts_with("https://api.urchin.gg/auth/discord?"),
+                href.starts_with("https://urchin.gg/auth/discord?"),
                 "{uri}: {href}"
             );
             assert_eq!(query_param(href, "return"), return_to, "{uri}");

@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.json",
+  "include": [".astro/types.d.ts", "**/*", "../../shared/**/*"],
+  "exclude": ["dist", "public", "src/viewer/pkg"],
+  "compilerOptions": {
+    "paths": { "@/*": ["./src/*"], "@shared/*": ["../../shared/*"] }
+  }
+}

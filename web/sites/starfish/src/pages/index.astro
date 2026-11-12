@@ -1,0 +1,208 @@
+---
+import Container from "@shared/components/Container.astro";
+import Legacy from "@shared/components/Legacy.astro";
+import { DISCORD_URL } from "@shared/links";
+import ChatPreview from "@/components/ChatPreview.astro";
+import ProcessesWindow from "@/components/ProcessesWindow.astro";
+import TabPreview from "@/components/TabPreview.astro";
+import { chatLog, tabList } from "@/data/showcase";
+import Layout from "@/layouts/Layout.astro";
+
+const tagline =
+  "Starfish is an injectable game overlay and script loader. It attaches to any Minecraft 1.8.9 process on Windows, macOS, and Linux, with full feature parity.";
+
+const features = [
+  {
+    name: "Tablist Stats",
+    description:
+      "See every player's stars, FKDR, and finals in the tablist, in games and replays, with no API key.",
+  },
+  {
+    name: "Blacklist Alerts",
+    description:
+      "Get an alert when a player tagged on Urchin joins, see tags in the tablist and on nametags, and tag players without leaving the game.",
+  },
+  {
+    name: "Cheater Detection",
+    description:
+      "Get an alert when a player's behavior matches patterns that can indicate cheating.",
+  },
+  {
+    name: "Nick Resolving",
+    description:
+      "See the real name behind a nick when it can be resolved, in chat, in the tablist, and on nametags.",
+  },
+  {
+    name: "BedWars Utilities",
+    description:
+      "See a player's stats when they talk, count parties joining your lobby, see height limit distance, and track your magic milk timer.",
+  },
+];
+---
+
+<Layout description={tagline}>
+  <Container width="wide" class="hero">
+    <div class="intro">
+      <h1>
+        <Legacy text="§6S§eta§fr§bfi§3sh" />
+      </h1>
+      <p>{tagline}</p>
+      <a class="button primary" href={DISCORD_URL}>
+        Get Starfish
+      </a>
+    </div>
+    <ProcessesWindow />
+  </Container>
+
+  <Container width="wide" class="plugins">
+    <div class="overview">
+      <div class="copy">
+        <h2>Plugins</h2>
+        <p>
+          Install others' plugins straight from the Starfish app, or write your
+          own with the full Lua API.
+        </p>
+        <a class="button" href="/docs">
+          Read the Docs
+        </a>
+      </div>
+      <div class="game panel">
+        <div class="scene">
+          <TabPreview {...tabList} label="Stats Overlay in a BedWars tablist" />
+          <ChatPreview lines={chatLog} label="An Urchin blacklist alert" />
+        </div>
+      </div>
+    </div>
+    <ul role="list">
+      {features.map(({ name, description }) => (
+        <li>
+          <h3>{name}</h3>
+          <p>{description}</p>
+        </li>
+      ))}
+    </ul>
+  </Container>
+</Layout>
+
+<style>
+  .hero,
+  .overview {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 3rem 4rem;
+
+    @media (width < 64rem) {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  .hero {
+    padding-block: 6rem;
+
+    @media (width < 64rem) {
+      padding-block: 4rem 3rem;
+    }
+  }
+
+  .intro {
+    display: grid;
+    justify-items: start;
+    gap: 1.25rem;
+
+    & h1 {
+      font-size: 54px;
+      line-height: 1;
+
+      @media (width < 30rem) {
+        font-size: 36px;
+      }
+    }
+
+    & p {
+      max-width: 28rem;
+      color: var(--color-text-secondary);
+      font-size: var(--text-lg);
+      line-height: 1.6;
+      text-wrap: pretty;
+    }
+
+    & .button {
+      margin-top: 0.5rem;
+    }
+  }
+
+  .plugins {
+    display: grid;
+    gap: 4rem;
+    padding-block: 4rem 6rem;
+    border-top: 1px solid var(--color-divider);
+
+    & ul {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+      gap: 2rem 3rem;
+    }
+
+    & li {
+      display: grid;
+      align-content: start;
+      gap: 0.5rem;
+    }
+
+    & h3 {
+      color: var(--color-text-strong);
+      font-size: var(--text-base);
+      font-weight: 600;
+      line-height: 1.5;
+    }
+
+    & li p {
+      color: var(--color-text-secondary);
+      font-size: var(--text-sm);
+      line-height: 1.6;
+    }
+  }
+
+  .copy {
+    display: grid;
+    justify-items: start;
+    gap: 0.75rem;
+
+    & h2 {
+      font-size: var(--text-2xl);
+      font-weight: 700;
+    }
+
+    & p {
+      max-width: 28rem;
+      color: var(--color-text-secondary);
+      line-height: 1.6;
+      text-wrap: pretty;
+    }
+
+    & .button {
+      margin-top: 0.5rem;
+    }
+  }
+
+  .game {
+    display: grid;
+    place-content: center;
+    padding: 2rem 2.5rem;
+    background: var(--color-inset);
+
+    @media (width < 44rem) {
+      padding-inline: 1rem;
+    }
+  }
+
+  .scene {
+    display: grid;
+    gap: 24px;
+
+    @media (width < 44rem) {
+      zoom: 0.5;
+    }
+  }
+</style>

@@ -13,6 +13,7 @@ const TTL_SECS: u64 = 30 * 24 * 60 * 60;
 pub struct WebUser {
     pub discord_id: i64,
     pub name: String,
+    pub username: String,
     pub avatar: String,
 }
 
