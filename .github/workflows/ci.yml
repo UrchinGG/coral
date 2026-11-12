@@ -25,6 +25,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_HOME: /home/ci-runner/.cargo
+  RUSTUP_HOME: /home/ci-runner/.rustup
   REGISTRY: infra-vm:5000
   VM: debian@coral-vm.tailde25ae.ts.net
 
@@ -46,7 +48,22 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
+      - run: echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+      # Every runner on this host shares one ~/.cargo, so a job that rewrites the rustup
+      # binaries while another runs them fails with "Text file busy". The toolchain is
+      # updated only here, before any other job starts, only when a new stable is out,
+      # and under a host-wide lock so overlapping runs take turns.
+      - name: Update the shared Rust toolchain if a new stable is out
+        run: |
+          flock /tmp/coral-ci-rustup.lock sh -euc '
+            if rustup check | grep -i "^stable-.*update available" >/dev/null; then
+              rustup update stable --no-self-update
+            fi
+            for component in rustfmt clippy; do
+              rustup component list --installed | grep "^$component" >/dev/null \
+                || rustup component add "$component"
+            done
+          '
       - name: Find the last push that passed
         id: passed
         if: github.event_name == 'push'
@@ -71,9 +88,7 @@ jobs:
     runs-on: [self-hosted, linux, coral]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
+      - run: echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
       - run: cargo fmt --all -- --check
 
   clippy:
@@ -85,9 +100,7 @@ jobs:
       PACKAGES: ${{ needs.changes.outputs.packages }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      - run: echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
       - run: mkdir -p crates/coral-admin/ui/dist
       - run: cargo clippy --all-targets $(printf -- '-p %s ' $PACKAGES)
 
@@ -100,7 +113,7 @@ jobs:
       PACKAGES: ${{ needs.changes.outputs.packages }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - run: echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
       - uses: actions/setup-node@v4
         if: contains(env.PACKAGES, 'coral-admin')
         with:
