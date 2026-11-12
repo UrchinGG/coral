@@ -26,9 +26,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_HOME: /home/ci-runner/.cargo
-  RUSTUP_HOME: /home/ci-runner/.rustup
   # Every cargo command holds this shared; .github/rust-toolchain.sh takes it exclusively.
-  RUST_LOCK: /tmp/coral-ci-rustup.lock
+  # It lives in CARGO_HOME so it is shared by exactly the runners that share the toolchain.
+  RUST_LOCK: /home/ci-runner/.cargo/ci-toolchain.lock
   REGISTRY: infra-vm:5000
   VM: debian@coral-vm.tailde25ae.ts.net
 
