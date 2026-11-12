@@ -25,6 +25,10 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_HOME: /home/ci-runner/.cargo
+  RUSTUP_HOME: /home/ci-runner/.rustup
+  # Every cargo command holds this shared; .github/rust-toolchain.sh takes it exclusively.
+  RUST_LOCK: /tmp/coral-ci-rustup.lock
   REGISTRY: infra-vm:5000
   VM: debian@coral-vm.tailde25ae.ts.net
 
@@ -46,7 +50,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
+      - run: echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+      - name: Update the shared Rust toolchain if a new stable is out
+        run: .github/rust-toolchain.sh
       - name: Find the last push that passed
         id: passed
         if: github.event_name == 'push'
@@ -58,7 +64,7 @@ jobs:
             | python3 -c 'import json, sys; runs = json.load(sys.stdin)["workflow_runs"]; print("sha=" + (runs[0]["head_sha"] if runs else ""))' \
             | tee -a "$GITHUB_OUTPUT"
       - id: affected
-        run: python3 .github/affected.py "$BASE" | tee -a "$GITHUB_OUTPUT"
+        run: flock -s "$RUST_LOCK" python3 .github/affected.py "$BASE" | tee -a "$GITHUB_OUTPUT"
         env:
           BASE: ${{ github.event.pull_request.base.sha || steps.passed.outputs.sha || github.event.before }}
           CLIENTS: ${{ inputs.clients }}
@@ -71,10 +77,8 @@ jobs:
     runs-on: [self-hosted, linux, coral]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - run: cargo fmt --all -- --check
+      - run: echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+      - run: flock -s "$RUST_LOCK" cargo fmt --all -- --check
 
   clippy:
     needs: changes
@@ -85,11 +89,9 @@ jobs:
       PACKAGES: ${{ needs.changes.outputs.packages }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      - run: echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
       - run: mkdir -p crates/coral-admin/ui/dist
-      - run: cargo clippy --all-targets $(printf -- '-p %s ' $PACKAGES)
+      - run: flock -s "$RUST_LOCK" cargo clippy --all-targets $(printf -- '-p %s ' $PACKAGES)
 
   test:
     needs: changes
@@ -100,7 +102,7 @@ jobs:
       PACKAGES: ${{ needs.changes.outputs.packages }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - run: echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
       - uses: actions/setup-node@v4
         if: contains(env.PACKAGES, 'coral-admin')
         with:
@@ -110,7 +112,7 @@ jobs:
         working-directory: crates/coral-admin/ui
         run: npm ci && npm run build
       - run: mkdir -p crates/coral-admin/ui/dist
-      - run: cargo test $(printf -- '-p %s ' $PACKAGES)
+      - run: flock -s "$RUST_LOCK" cargo test $(printf -- '-p %s ' $PACKAGES)
 
   admin-panel:
     needs: changes
