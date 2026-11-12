@@ -39,6 +39,7 @@ mod serde_id;
 mod serde_ts;
 mod session;
 mod state;
+mod sync_settings;
 mod traffic;
 mod views;
 mod waste;
