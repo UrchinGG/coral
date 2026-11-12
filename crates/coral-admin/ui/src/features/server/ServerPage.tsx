@@ -16,16 +16,18 @@ import { useUrlEnum } from "../../lib/url-state";
 import { PageHead } from "../platform/PageHead";
 import { When } from "../platform/When";
 import { Autoroles } from "./Autoroles";
+import { DataSources } from "./DataSources";
 import { LinkSettings } from "./LinkSettings";
 import { NicknameFormat } from "./NicknameFormat";
 import { ActiveJobs, SyncJobs } from "./SyncJobs";
 
-const SERVER_TABS = ["linking", "nicknames", "autoroles", "jobs"] as const;
+const SERVER_TABS = ["linking", "nicknames", "autoroles", "sources", "jobs"] as const;
 type ServerTab = (typeof SERVER_TABS)[number];
 const TAB_ITEMS = [
   { value: "linking", label: "Account linking" },
   { value: "nicknames", label: "Display names" },
   { value: "autoroles", label: "Autoroles" },
+  { value: "sources", label: "Data sources" },
   { value: "jobs", label: "Bulk updates" },
 ] as const;
 
@@ -64,6 +66,8 @@ function SettingsPanel({ tab, config, directory, memberCount }: { tab: Exclude<S
       return <NicknameFormat key={config.config.nickname_template ?? ""} template={config.config.nickname_template} previewContext={config.preview_context} memberCount={memberCount} />;
     case "autoroles":
       return <Autoroles rules={config.rules} roles={directory?.roles} previewContext={config.preview_context} memberCount={memberCount} />;
+    case "sources":
+      return <DataSources usedIds={config.source_ids} memberCount={memberCount} />;
   }
 }
 

@@ -17,6 +17,7 @@ coral-redis = { path = "../coral-redis" }
 expr.workspace = true
 hypixel.workspace = true
 
+axum.workspace = true
 serenity.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -28,7 +29,13 @@ anyhow.workspace = true
 thiserror.workspace = true
 reqwest.workspace = true
 chrono.workspace = true
+futures-util = "0.3"
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 uuid.workspace = true
+
+[dev-dependencies]
+sqlx.workspace = true
+tower = { workspace = true, features = ["util"] }
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = "0.6"

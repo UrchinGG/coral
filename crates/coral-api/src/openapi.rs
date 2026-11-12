@@ -8,6 +8,10 @@ use crate::{
         batch::{BatchRequest, BatchResponse},
         cubelify::CubelifyQuery,
         guild::{GuildSessionResponse, GuildSnapshotDataResponse, GuildSnapshotListResponse},
+        links::{
+            LinkMethodsResponse, LinkProof, LinkRequest, LinkResponse, LinkedAccount, LinkedAs,
+            LinksResponse, SetPrimaryRequest,
+        },
         minecraft_auth::{ChallengeResponse, SignInRequest, SignInResponse},
         resolve::ResolveResponse,
         session::*,
@@ -60,6 +64,12 @@ use crate::{
         crate::routes::resolve::resolve_player,
         crate::routes::verify::store_code,
         crate::routes::verify::redeem_code,
+
+        crate::routes::links::get_links,
+        crate::routes::links::link_methods,
+        crate::routes::links::link_account,
+        crate::routes::links::set_primary,
+        crate::routes::links::unlink_account,
         crate::health_check,
     ),
     components(
@@ -79,6 +89,8 @@ use crate::{
             ResolveResponse,
             StoreCodeRequest, RedeemCodeResponse,
             ChallengeResponse, SignInRequest, SignInResponse,
+            LinksResponse, LinkedAccount, LinkMethodsResponse, LinkRequest, LinkProof,
+            LinkResponse, LinkedAs, SetPrimaryRequest,
         )
     ),
     tags(
@@ -89,6 +101,7 @@ use crate::{
         (name = "Blacklist", description = "Blacklist write operations: adding, removing, and overwriting tags, and locking players."),
         (name = "Internal", description = "Privileged endpoints that require a developer permission or an Admin key."),
         (name = "Hypixel", description = "Unmodified passthrough to the Hypixel API."),
+        (name = "Links", description = "Linking Minecraft accounts to Discord users. Coral checks every proof itself."),
     ),
     modifiers(&DocsAddon),
     info(
@@ -124,7 +137,7 @@ X-API-Key: <your-key>
 
 Minecraft mods can sign in with the player's account instead. Request a challenge from `POST /v3/auth/minecraft/challenge`, pass its `server_id` to Mojang's `joinServer`, then exchange it at `POST /v3/auth/minecraft` for a token sent as `Authorization: Bearer <token>`. A token lasts 24 hours and reaches tag lookups and, for accounts linked to an Urchin member, tag writes.
 
-A personal key is issued through the Discord bot and carries the access rank of your Urchin account. A developer key carries an explicit set of permissions: Player Data, Hypixel, and All Sessions. Each endpoint states the rank or permission it requires. An endpoint without such a note accepts any valid key. A locked key is rejected with a 403, and a missing or unknown key returns a 401.
+A personal key is issued through the Discord bot and carries the access rank of your Urchin account. A developer key carries an explicit set of permissions: Player Data, Hypixel, All Sessions, and Link Accounts. Each endpoint states the rank or permission it requires. An endpoint without such a note accepts any valid key. A locked key is rejected with a 403, and a missing or unknown key returns a 401.
 
 ## Rate limits
 

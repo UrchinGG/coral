@@ -32,6 +32,8 @@ enum Token {
     Colon,
 }
 
+const KEYWORDS: &[&str] = &["and", "or", "not", "if", "else"];
+
 fn tokenize(input: &str) -> Result<Vec<Token>> {
     let mut tokens = Vec::new();
     let chars: Vec<char> = input.chars().collect();
@@ -516,6 +518,12 @@ fn eval(expr: &Expr, ctx: &Value) -> EvalResult {
                     let d = r.as_number();
                     EvalResult::Number(if d == 0.0 { 0.0 } else { l.as_number() % d })
                 }
+                // Nothing is not a number: it is neither above nor below anything.
+                BinOp::Gt | BinOp::Lt | BinOp::Ge | BinOp::Le
+                    if matches!(l, EvalResult::Null) || matches!(r, EvalResult::Null) =>
+                {
+                    EvalResult::Bool(false)
+                }
                 BinOp::Gt => EvalResult::Bool(l.as_number() > r.as_number()),
                 BinOp::Lt => EvalResult::Bool(l.as_number() < r.as_number()),
                 BinOp::Ge => EvalResult::Bool(l.as_number() >= r.as_number()),
@@ -654,6 +662,85 @@ pub fn validate_condition(condition: &str) -> Result<()> {
     Ok(())
 }
 
+/// Moves every field path whose root is not in `keep` under `prefix`:
+/// `stats.x > 1` becomes `hypixel.stats.x > 1` for prefix `hypixel`. String literals,
+/// numbers, keywords and the rest of a dotted path are left as written.
+pub fn prefix_fields(expression: &str, prefix: &str, keep: &[&str]) -> String {
+    let chars: Vec<char> = expression.chars().collect();
+    let mut out = String::with_capacity(expression.len() + prefix.len());
+    let mut after_dot = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let start = i;
+        if c == '"' {
+            i += 1;
+            while i < chars.len() && chars[i] != '"' {
+                i += 1;
+            }
+            i = (i + 1).min(chars.len());
+        } else if c.is_ascii_digit() {
+            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                i += 1;
+            }
+        } else if c.is_ascii_alphanumeric() || c == '_' {
+            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            let is_root = !after_dot && !KEYWORDS.contains(&word.as_str());
+            if is_root && word != prefix && !keep.contains(&word.as_str()) {
+                out.push_str(prefix);
+                out.push('.');
+            }
+        } else {
+            i += 1;
+        }
+        out.extend(&chars[start..i]);
+        if !c.is_whitespace() {
+            after_dot = c == '.';
+        }
+    }
+    out
+}
+
+/// [`prefix_fields`] applied to every `{…}` part of a nickname template, keeping the
+/// `..` truncation marker and any `:.Nf` format spec as written.
+pub fn prefix_template_fields(template: &str, prefix: &str, keep: &[&str]) -> String {
+    let chars: Vec<char> = template.chars().collect();
+    let mut out = String::with_capacity(template.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] != '{' {
+            out.push(chars[i]);
+            i += 1;
+            continue;
+        }
+        let (inner, end) = extract_brace_content(&chars, i + 1);
+        let closed = end == i + 1 + inner.chars().count() + 1;
+        i = end;
+        let lead_len = inner.len() - inner.trim_start().len();
+        let (lead, body) = inner.split_at(lead_len);
+        let (marker, body) = match body.strip_prefix("..") {
+            Some(rest) => ("..", rest),
+            None => ("", body),
+        };
+        let (expression, spec) = match split_format_spec(body) {
+            (expression, Some(_)) => body.split_at(expression.len()),
+            (expression, None) => (expression, ""),
+        };
+        out.push('{');
+        out.push_str(lead);
+        out.push_str(marker);
+        out.push_str(&prefix_fields(expression, prefix, keep));
+        out.push_str(spec);
+        if closed {
+            out.push('}');
+        }
+    }
+    out
+}
+
 pub fn validate_template(template: &str) -> Result<()> {
     let chars: Vec<char> = template.chars().collect();
     let mut i = 0;
@@ -705,5 +792,89 @@ fn split_format_spec(inner: &str) -> (&str, Option<String>) {
             }
         }
         None => (inner, None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn root_fields_move_under_the_prefix_and_nothing_else_does() {
+        let keep = ["discord", "bedwars"];
+        assert_eq!(
+            prefix_fields(
+                r#"stats.Bedwars.wins > 10 and discord.name == "stats.x" or not achievements.level"#,
+                "hypixel",
+                &keep
+            ),
+            r#"hypixel.stats.Bedwars.wins > 10 and discord.name == "stats.x" or not hypixel.achievements.level"#
+        );
+        assert_eq!(
+            prefix_fields(
+                "if level >= 1.5: (level + 2) * 3, else: 0",
+                "hypixel",
+                &keep
+            ),
+            "if hypixel.level >= 1.5: (hypixel.level + 2) * 3, else: 0"
+        );
+        assert_eq!(
+            prefix_fields("hypixel.level", "hypixel", &keep),
+            "hypixel.level"
+        );
+        assert_eq!(
+            prefix_fields("stats . Bedwars", "hypixel", &keep),
+            "hypixel.stats . Bedwars"
+        );
+    }
+
+    #[test]
+    fn templates_keep_their_text_markers_and_format_specs() {
+        let keep = ["discord", "bedwars"];
+        assert_eq!(
+            prefix_template_fields(
+                "{bedwars.bracket_open}{achievements.level}] { ..displayname } | {ratio:.2f} {discord.name}",
+                "hypixel",
+                &keep
+            ),
+            "{bedwars.bracket_open}{hypixel.achievements.level}] { ..hypixel.displayname } | {hypixel.ratio:.2f} {discord.name}"
+        );
+        assert_eq!(
+            prefix_template_fields("plain {", "hypixel", &keep),
+            "plain {"
+        );
+    }
+
+    #[test]
+    fn a_rewritten_template_renders_the_same_against_the_moved_context() {
+        let keep = ["discord", "bedwars"];
+        let root = json!({"displayname": "Nelly", "achievements": {"level": 120}, "ratio": 1.234});
+        let moved = json!({"hypixel": root.clone()});
+        let template = r#"[{if achievements.level >= 100: "★", else: ""}{achievements.level}] {..displayname} {ratio:.2f}"#;
+        let rewritten = prefix_template_fields(template, "hypixel", &keep);
+        assert!(validate_template(&rewritten).is_ok());
+        assert_eq!(
+            render_template(&rewritten, &moved).to_truncated(32),
+            render_template(template, &root).to_truncated(32)
+        );
+    }
+
+    #[test]
+    fn a_missing_field_is_neither_above_nor_below_anything() {
+        let ctx = json!({"rbw": {"elo": 800}});
+        for condition in [
+            "rbw.wins < 10",
+            "rbw.wins > 10",
+            "rbw.wins <= 0",
+            "rbw.wins >= 0",
+            "0 < rbw.wins",
+        ] {
+            assert!(!eval_condition(condition, &ctx).unwrap(), "{condition}");
+        }
+        assert!(eval_condition("rbw.elo < 1000", &ctx).unwrap());
+        assert!(!eval_condition("rbw.wins == 0", &ctx).unwrap());
+        assert!(eval_condition("rbw.wins != 0", &ctx).unwrap());
     }
 }

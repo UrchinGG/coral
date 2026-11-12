@@ -1,5 +1,5 @@
 use axum::Router;
-use axum::routing::{get, post, put};
+use axum::routing::{delete, get, post, put};
 
 use crate::error::AdminError;
 use crate::state::AppState;
@@ -51,6 +51,9 @@ fn server_router() -> Router<AppState> {
             put(server::update_rule).delete(server::remove_rule),
         )
         .route("/roles/{role_id}/strip", post(server::strip_role))
+        .route("/sources", get(server::sources).post(server::add_source))
+        .route("/sources/used", put(server::set_used_sources))
+        .route("/sources/{source_id}", delete(server::remove_source))
         .route("/jobs", get(server::jobs::list))
         .route("/jobs/{job_id}/cancel", post(server::jobs::cancel))
         .route("/jobs/{job_id}/events", get(server::jobs::events))

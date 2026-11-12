@@ -565,13 +565,10 @@ function evalExpr(expr: Expr, ctx: JsonValue): EvalValue {
         case "mod":
           return asNumber(r) === 0 ? 0 : asNumber(l) % asNumber(r);
         case "gt":
-          return asNumber(l) > asNumber(r);
         case "lt":
-          return asNumber(l) < asNumber(r);
         case "ge":
-          return asNumber(l) >= asNumber(r);
         case "le":
-          return asNumber(l) <= asNumber(r);
+          return compareOrdered(expr.op, l, r);
         case "eq":
           return evalEquality(l, r);
         case "ne":
@@ -582,6 +579,21 @@ function evalExpr(expr: Expr, ctx: JsonValue): EvalValue {
           return asBool(l) || asBool(r);
       }
     }
+  }
+}
+
+// Nothing is not a number: it is neither above nor below anything.
+function compareOrdered(op: "gt" | "lt" | "ge" | "le", l: EvalValue, r: EvalValue): boolean {
+  if (l === null || r === null) return false;
+  switch (op) {
+    case "gt":
+      return asNumber(l) > asNumber(r);
+    case "lt":
+      return asNumber(l) < asNumber(r);
+    case "ge":
+      return asNumber(l) >= asNumber(r);
+    case "le":
+      return asNumber(l) <= asNumber(r);
   }
 }
 

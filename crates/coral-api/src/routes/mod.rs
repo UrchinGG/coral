@@ -10,6 +10,7 @@ pub mod batch;
 pub mod cubelify;
 pub mod guild;
 pub mod hypixel;
+pub mod links;
 pub mod minecraft_auth;
 pub mod player;
 pub mod resolve;
@@ -36,6 +37,7 @@ pub fn router(state: AppState) -> Router<AppState> {
     let internal = Router::new()
         .merge(player::internal_router())
         .merge(hypixel::router())
+        .merge(links::router())
         .merge(resolve::router())
         .merge(verify::router())
         .route_layer(middleware::from_fn_with_state(

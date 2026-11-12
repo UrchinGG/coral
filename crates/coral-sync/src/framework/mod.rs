@@ -31,8 +31,9 @@ pub struct Data {
     pub redis_url: String,
     pub redis: Option<coral_redis::RedisPool>,
     pub sync_cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
-    pub job_cancel_tokens: Arc<Mutex<HashMap<i64, crate::sync::CancelToken>>>,
+    pub job_cancel_tokens: Arc<Mutex<HashMap<i64, crate::service::CancelToken>>>,
     pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
+    pub feeds: crate::feeds::Feeds,
 }
 
 impl Data {
@@ -192,7 +193,7 @@ impl EventHandler for Handler {
                 let data = self.data.clone();
                 crate::events::spawn_sync_subscriber(ctx.clone(), data.clone());
                 crate::jobs::spawn_startup_sweep(ctx.clone(), data.clone());
-                tokio::spawn(async move { crate::sync::startup_sync(ctx, data).await });
+                tokio::spawn(async move { crate::service::startup_sync(ctx, data).await });
             }
             FullEvent::InteractionCreate { interaction, .. } => {
                 self.data
@@ -219,7 +220,7 @@ impl EventHandler for Handler {
                     tokio::spawn(async move {
                         match guild_id.member(&ctx.http, user_id).await {
                             Ok(member) => {
-                                crate::sync::handle_member_update(&ctx, &data, &member).await
+                                crate::service::handle_member_update(&ctx, &data, &member).await
                             }
                             Err(e) => tracing::debug!("Failed to fetch member for update: {e}"),
                         }
@@ -227,7 +228,7 @@ impl EventHandler for Handler {
                 }
             }
             FullEvent::Message { new_message, .. } => {
-                crate::sync::handle_message_activity(ctx, &self.data, new_message);
+                crate::service::handle_message_activity(ctx, &self.data, new_message);
                 crate::review_media::relay_thread_media(&self.data, new_message);
             }
             _ => {}

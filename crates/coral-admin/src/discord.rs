@@ -3,17 +3,21 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result, anyhow};
 use serenity::all::*;
 
+use crate::sync_settings::SyncSettings;
+
 const BOT_TOKEN_ENV: &str = "DISCORD_TOKEN";
 const SYNC_TOKEN_ENV: &str = "CORAL_SYNC_DISCORD_TOKEN";
 const HOME_GUILD_ENV: &str = "HOME_GUILD_ID";
 const REVIEW_FORUM_ENV: &str = "REVIEW_FORUM_ID";
 const BOT_MISSING: &str = "DISCORD_TOKEN not configured";
 const SYNC_MISSING: &str = "CORAL_SYNC_DISCORD_TOKEN / DISCORD_TOKEN not configured";
+const SYNC_SETTINGS_MISSING: &str = "SYNC_SETTINGS_URL / INTERNAL_API_KEY not configured";
 
 #[derive(Clone)]
 pub struct DiscordContext {
     bot: Option<Arc<Http>>,
     sync: Option<Arc<Http>>,
+    sync_settings: Option<Arc<SyncSettings>>,
     pub home_guild_id: Option<i64>,
     pub review_forum_id: Option<i64>,
 }
@@ -30,6 +34,7 @@ impl DiscordContext {
         Ok(Self {
             bot,
             sync,
+            sync_settings: SyncSettings::from_env().map(Arc::new),
             home_guild_id: env_id(HOME_GUILD_ENV),
             review_forum_id: env_id(REVIEW_FORUM_ENV),
         })
@@ -41,6 +46,12 @@ impl DiscordContext {
 
     pub fn sync(&self) -> Result<&Http> {
         self.sync.as_deref().ok_or_else(|| anyhow!(SYNC_MISSING))
+    }
+
+    pub fn sync_settings(&self) -> Result<Arc<SyncSettings>> {
+        self.sync_settings
+            .clone()
+            .ok_or_else(|| anyhow!(SYNC_SETTINGS_MISSING))
     }
 
     pub fn shared_bot(&self) -> Option<Arc<Http>> {

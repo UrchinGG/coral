@@ -24,9 +24,9 @@ type EditorMode = "builder" | "expression";
 
 const SUGGESTION_LIMIT = 10;
 const CONDITION_FIELDS = [
-  "achievements.bedwars_level",
-  "stats.Bedwars.wins_bedwars",
-  "stats.Bedwars.final_kills_bedwars",
+  "hypixel.achievements.bedwars_level",
+  "hypixel.stats.Bedwars.wins_bedwars",
+  "hypixel.stats.Bedwars.final_kills_bedwars",
   "coral.access",
   "blacklist.tag",
   "discord.name",
@@ -152,7 +152,7 @@ function AddRule({ rules, roles, previewContext, memberCount }: AutorolesProps) 
       {mode === "builder" ? (
         <ConditionBuilder rows={rows} onChange={setRows} fields={CONDITION_FIELDS} />
       ) : (
-        <ExpressionEditor label="New rule condition" value={expression} onChange={setExpression} mode="condition" placeholder="achievements.bedwars_level >= 500" error={expression.trim() === "" ? null : error} suggestions={fieldSuggestions(previewContext)} />
+        <ExpressionEditor label="New rule condition" value={expression} onChange={setExpression} mode="condition" placeholder="hypixel.achievements.bedwars_level >= 500" error={expression.trim() === "" ? null : error} suggestions={fieldSuggestions(previewContext)} />
       )}
       <div className="flex flex-wrap items-center gap-2">
         {mode === "builder" && condition.trim() !== "" && <HighlightedCode text={condition} />}
