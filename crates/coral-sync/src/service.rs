@@ -161,9 +161,22 @@ async fn sync_everywhere(ctx: &Context, data: &Data, user_id: UserId, trigger: T
             return;
         }
     };
+    // A config outlives the bot leaving its server; asking Discord about a member of a
+    // server the bot is not in only fails.
+    // shortcut: reads one page of the bot's servers (200); page through them past that.
+    let joined: Vec<GuildId> = match ctx.http.get_guilds(None, None).await {
+        Ok(guilds) => guilds.into_iter().map(|guild| guild.id).collect(),
+        Err(e) => {
+            tracing::warn!("Sync of {user_id} skipped: list the bot's servers: {e}");
+            return;
+        }
+    };
     // shortcut: asks Discord whether the member is in each configured server; keep a membership index from member events once there are more than tens of servers.
-    for config in configs {
-        let guild_id = GuildId::new(config.guild_id as u64);
+    for guild_id in configs
+        .iter()
+        .map(|config| GuildId::new(config.guild_id as u64))
+        .filter(|guild_id| joined.contains(guild_id))
+    {
         if let Err(e) = sync_in(ctx, data, guild_id, user_id, trigger).await {
             tracing::warn!("Sync of {user_id} in {guild_id} failed: {e}");
         }
@@ -234,9 +247,28 @@ struct ShadowSample {
 }
 
 pub async fn shadow_guild(http: &Http, data: &Data, guild_id: GuildId) -> Result<Option<Shadow>> {
-    let Some(server) = load_settings(data, guild_id).await? else {
-        return Ok(None);
+    match load_settings(data, guild_id).await? {
+        Some(server) => Ok(Some(shadow(http, data, guild_id, server).await?)),
+        None => Ok(None),
+    }
+}
+
+/// The shadow run for settings given directly, with no external sources: for checking
+/// a server before its settings live in this build's tables.
+pub async fn shadow_settings(
+    http: &Http,
+    data: &Data,
+    guild_id: GuildId,
+    settings: Settings,
+) -> Result<Shadow> {
+    let server = ServerSync {
+        settings,
+        sources: Vec::new(),
     };
+    shadow(http, data, guild_id, server).await
+}
+
+async fn shadow(http: &Http, data: &Data, guild_id: GuildId, server: ServerSync) -> Result<Shadow> {
     let members: Vec<Member> = fetch_all_members(http, guild_id)
         .await?
         .into_iter()
@@ -283,7 +315,7 @@ pub async fn shadow_guild(http: &Http, data: &Data, guild_id: GuildId) -> Result
             shadow.samples.push(sample(&member, changes));
         }
     }
-    Ok(Some(shadow))
+    Ok(shadow)
 }
 
 /// The plan a resync job would act on: stored snapshots only, no custom suffixes.
