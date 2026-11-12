@@ -4,6 +4,7 @@ use serenity::all::*;
 
 use database::{DeveloperKeyRepository, MemberRepository, StrikeRepository, permissions};
 
+use crate::api::{ApiError, LinkProof, LinkRefusal};
 use crate::{
     audit,
     commands::blacklist::channel,
@@ -500,11 +501,18 @@ async fn link_member(
     data: &Data,
     invoker_id: u64,
     target_id: u64,
-    uuid: &str,
+    proof: LinkProof<'_>,
     action: &str,
-) -> Result<()> {
-    crate::accounts::link_primary(data, target_id, uuid).await?;
-    audit::record(data, invoker_id, action, target_id, json!({"uuid": uuid})).await;
+) -> Result<(), ApiError> {
+    let linked = data.api.link_account(target_id, proof, true).await?.linked;
+    audit::record(
+        data,
+        invoker_id,
+        action,
+        target_id,
+        json!({"uuid": linked.uuid}),
+    )
+    .await;
     Ok(())
 }
 
@@ -676,39 +684,34 @@ pub async fn handle_register_modal(
         return interact::send_modal_error(ctx, modal, "Error", "Insufficient permissions").await;
     }
 
-    let stats = match data.api.get_player_stats(&username).await {
-        Ok(s) => s,
-        Err(_) => {
-            return interact::send_modal_error(
-                ctx,
-                modal,
-                "Error",
-                &format!("Could not find player: {username}"),
-            )
-            .await;
-        }
-    };
-
-    let uuid = stats.uuid.replace('-', "");
-    let discord_user = UserId::new(target_id).to_user(&ctx.http).await;
-    let discord_name = discord_user.as_ref().map(|u| u.name.as_str()).unwrap_or("");
-
-    let verified = stats
-        .hypixel
-        .as_ref()
-        .map(|h| crate::accounts::is_discord_linked(h, discord_name))
-        .unwrap_or(false);
-
-    if verified {
-        link_member(data, invoker_id, target_id, &uuid, VERIFIED_LINK_ACTION).await?;
-        return refresh_main_from_modal(ctx, modal, data, invoker_rank, target_id).await;
+    let proof = LinkProof::Social(&username);
+    match link_member(data, invoker_id, target_id, proof, VERIFIED_LINK_ACTION).await {
+        Ok(()) => return refresh_main_from_modal(ctx, modal, data, invoker_rank, target_id).await,
+        Err(error) => match error.link_refusal() {
+            Some(LinkRefusal::AlreadyLinked) => {
+                return refresh_main_from_modal(ctx, modal, data, invoker_rank, target_id).await;
+            }
+            Some(_) => {}
+            None => return Err(error.into()),
+        },
     }
+
+    let Ok(player) = data.api.resolve(&username).await else {
+        return interact::send_modal_error(
+            ctx,
+            modal,
+            "Error",
+            &format!("Could not find player: {username}"),
+        )
+        .await;
+    };
+    let uuid = player.uuid.replace('-', "");
 
     let container = CreateComponent::Container(
         CreateContainer::new(vec![
             text(format!(
                 "## Discord Mismatch\n**{}** (`{uuid}`) does not have <@{target_id}>'s Discord linked in Hypixel social settings.\n\nForce link anyway?",
-                stats.username
+                player.username
             )),
             separator(),
             CreateContainerComponent::ActionRow(CreateActionRow::buttons(vec![
@@ -748,7 +751,12 @@ pub async fn handle_force_link(
             .await;
     }
 
-    link_member(data, invoker_id, target_id, &uuid, FORCED_LINK_ACTION).await?;
+    let proof = LinkProof::Force(&uuid);
+    match link_member(data, invoker_id, target_id, proof, FORCED_LINK_ACTION).await {
+        Ok(()) => {}
+        Err(error) if error.link_refusal() == Some(LinkRefusal::AlreadyLinked) => {}
+        Err(error) => return Err(error.into()),
+    }
     refresh_main(ctx, component, data, invoker_rank, target_id).await
 }
 

@@ -79,16 +79,9 @@ pub async fn handle_link_button(
     component: &ComponentInteraction,
     data: &Data,
 ) -> Result<()> {
-    let discord_id = component.user.id.get();
-    let repo = MemberRepository::new(data.db.pool());
-    if repo.get_by_discord_id(discord_id as i64).await?.is_none() {
-        repo.create(discord_id as i64).await?;
-    }
-
     let components = crate::commands::admin::accounts_panel::build_accounts_for_self(
         data,
-        discord_id,
-        &component.user.name,
+        component.user.id.get(),
     )
     .await?;
 

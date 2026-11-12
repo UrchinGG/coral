@@ -1,4 +1,3 @@
-pub mod accounts;
 pub mod api;
 pub mod commands;
 pub mod events;

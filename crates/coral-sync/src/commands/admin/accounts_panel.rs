@@ -1,13 +1,12 @@
-use std::collections::HashSet;
-
 use anyhow::{Result, anyhow};
 use serenity::all::*;
 
-use database::{AccountRepository, CacheRepository, MemberRepository};
+use database::MemberRepository;
 
+use crate::api::{ApiError, LinkProof, LinkRefusal, LinkedAccount, Links};
 use crate::framework::{AccessRank, AccessRankExt, Data};
 use crate::interact;
-use crate::utils::{resolve_username, separator, text};
+use crate::utils::{separator, text};
 
 pub async fn fetch_context(
     data: &Data,
@@ -51,65 +50,24 @@ fn extract_select_value(component: &ComponentInteraction) -> Option<&str> {
     }
 }
 
-async fn resolve_discord_name(ctx: &Context, invoker: &User, target_id: u64) -> String {
-    if target_id == invoker.id.get() {
-        return invoker.name.to_string();
-    }
-    UserId::new(target_id)
-        .to_user(&ctx.http)
-        .await
-        .map(|u| u.name.to_string())
-        .unwrap_or_default()
-}
-
-async fn linked_uuids(data: &Data, target_id: u64) -> HashSet<String> {
-    let members = MemberRepository::new(data.db.pool());
-    let accounts = AccountRepository::new(data.db.pool());
-    let Some(member) = members
-        .get_by_discord_id(target_id as i64)
-        .await
-        .ok()
-        .flatten()
-    else {
-        return HashSet::new();
-    };
-    let mut set = HashSet::new();
-    if let Some(uuid) = &member.uuid {
-        set.insert(uuid.clone());
-    }
-    if let Ok(alts) = accounts.list(member.id).await {
-        set.extend(alts.into_iter().map(|a| a.uuid));
-    }
-    set
+fn account_name(account: &LinkedAccount) -> &str {
+    account.username.as_deref().unwrap_or(&account.uuid)
 }
 
 async fn build_accounts_view(
     data: &Data,
     can_modify: bool,
     target_id: u64,
-    discord_name: &str,
     prefix: &str,
 ) -> Result<Vec<CreateComponent<'static>>> {
-    let member = MemberRepository::new(data.db.pool())
-        .get_by_discord_id(target_id as i64)
-        .await?
-        .ok_or_else(|| anyhow!("Member not found"))?;
-
-    let alts = AccountRepository::new(data.db.pool())
-        .list(member.id)
-        .await
-        .unwrap_or_default();
-
-    if member.uuid.is_none() && alts.is_empty() {
-        return Ok(build_link_new_view(data, discord_name, prefix, target_id).await);
+    let links = data.api.links(target_id).await?;
+    if links.primary.is_none() && links.alts.is_empty() {
+        return Ok(build_link_new_view(data, prefix, target_id).await);
     }
 
     let mut parts: Vec<CreateContainerComponent> = vec![text("### Linked Accounts")];
-    build_primary_section(
-        &mut parts, &member, &alts, data, can_modify, prefix, target_id,
-    )
-    .await;
-    build_alt_sections(&mut parts, &alts, can_modify, prefix, target_id, data).await;
+    build_primary_section(&mut parts, &links, can_modify, prefix, target_id);
+    build_alt_sections(&mut parts, &links.alts, can_modify, prefix, target_id);
     build_accounts_actions(&mut parts, can_modify, prefix, target_id);
 
     Ok(vec![CreateComponent::Container(CreateContainer::new(
@@ -117,28 +75,24 @@ async fn build_accounts_view(
     ))])
 }
 
-async fn build_primary_section(
+fn build_primary_section(
     parts: &mut Vec<CreateContainerComponent<'static>>,
-    member: &database::Member,
-    alts: &[database::MinecraftAccount],
-    data: &Data,
+    links: &Links,
     can_modify: bool,
     prefix: &str,
     target_id: u64,
 ) {
-    let Some(uuid) = &member.uuid else {
+    let Some(primary) = &links.primary else {
         parts.push(separator());
         parts.push(text("No account linked."));
         return;
     };
-
-    let username = resolve_username(uuid, data).await;
-    let name = username.as_deref().unwrap_or(uuid);
+    let (uuid, name) = (&primary.uuid, account_name(primary));
 
     parts.push(separator());
     parts.push(text("**Primary**"));
 
-    if alts.is_empty() {
+    if links.alts.is_empty() {
         parts.push(text(format!("**`{name}`**")));
         parts.push(text(format!("-# UUID: {uuid}")));
         parts.push(CreateContainerComponent::ActionRow(
@@ -155,10 +109,9 @@ async fn build_primary_section(
     let mut options = vec![
         CreateSelectMenuOption::new(name.to_string(), uuid.to_string()).default_selection(true),
     ];
-    for alt in alts.iter().filter(|a| a.uuid != *uuid) {
-        let alt_name = resolve_username(&alt.uuid, data).await;
+    for alt in links.alts.iter().filter(|a| a.uuid != *uuid) {
         options.push(CreateSelectMenuOption::new(
-            alt_name.unwrap_or_else(|| alt.uuid.clone()),
+            account_name(alt).to_string(),
             alt.uuid.clone(),
         ));
     }
@@ -177,21 +130,19 @@ async fn build_primary_section(
     parts.push(text(format!("-# UUID: {uuid}")));
 }
 
-async fn build_alt_sections(
+fn build_alt_sections(
     parts: &mut Vec<CreateContainerComponent<'static>>,
-    alts: &[database::MinecraftAccount],
+    alts: &[LinkedAccount],
     can_modify: bool,
     prefix: &str,
     target_id: u64,
-    data: &Data,
 ) {
     for alt in alts {
-        let alt_name = resolve_username(&alt.uuid, data).await;
-        let name = alt_name.as_deref().unwrap_or("Unknown");
         parts.push(separator());
         parts.push(CreateContainerComponent::Section(CreateSection::new(
             vec![interact::section_text(&format!(
-                "**`{name}`**\n-# UUID: {}",
+                "**`{}`**\n-# UUID: {}",
+                account_name(alt),
                 alt.uuid
             ))],
             CreateSectionAccessory::Button(
@@ -231,22 +182,25 @@ fn build_accounts_actions(
 
 async fn build_link_new_view(
     data: &Data,
-    discord_name: &str,
     prefix: &str,
     target_id: u64,
 ) -> Vec<CreateComponent<'static>> {
-    let linked = linked_uuids(data, target_id).await;
-    let matches: Vec<_> = CacheRepository::new(data.db.pool())
-        .find_by_discord_username(discord_name)
+    let suggested: Vec<(String, String)> = data
+        .api
+        .link_methods(target_id)
         .await
+        .map(|methods| methods.suggested)
         .unwrap_or_default()
         .into_iter()
-        .filter(|(uuid, _)| !linked.contains(uuid.as_str()))
+        .map(|account| {
+            let name = account_name(&account).to_string();
+            (account.uuid, name)
+        })
         .collect();
 
     let mut parts = vec![text("### Link New Account")];
     parts.extend(crate::commands::user::link::build_link_parts(
-        &matches, prefix, target_id,
+        &suggested, prefix, target_id,
     ));
     parts.push(separator());
     parts.push(CreateContainerComponent::ActionRow(
@@ -271,7 +225,7 @@ async fn refresh_view(
     interact::update_message(
         ctx,
         component,
-        build_accounts_view(data, can_modify, target_id, "", prefix).await?,
+        build_accounts_view(data, can_modify, target_id, prefix).await?,
     )
     .await
 }
@@ -287,7 +241,7 @@ async fn refresh_view_from_modal(
     interact::update_modal(
         ctx,
         modal,
-        build_accounts_view(data, can_modify, target_id, "", prefix).await?,
+        build_accounts_view(data, can_modify, target_id, prefix).await?,
     )
     .await
 }
@@ -295,9 +249,8 @@ async fn refresh_view_from_modal(
 pub async fn build_accounts_for_self(
     data: &Data,
     discord_id: u64,
-    discord_name: &str,
 ) -> Result<Vec<CreateComponent<'static>>> {
-    build_accounts_view(data, true, discord_id, discord_name, "link").await
+    build_accounts_view(data, true, discord_id, "link").await
 }
 
 pub async fn handle_accounts_button(
@@ -321,7 +274,7 @@ pub async fn handle_accounts_button(
     interact::update_message(
         ctx,
         component,
-        build_accounts_view(data, can_modify, target_id, "", prefix).await?,
+        build_accounts_view(data, can_modify, target_id, prefix).await?,
     )
     .await
 }
@@ -332,8 +285,7 @@ pub async fn handle_accounts_back_generic(
     data: &Data,
 ) -> Result<()> {
     let target_id = component.user.id.get();
-    let components =
-        build_accounts_view(data, true, target_id, &component.user.name, "link").await?;
+    let components = build_accounts_view(data, true, target_id, "link").await?;
     interact::update_message(ctx, component, components).await
 }
 
@@ -354,8 +306,7 @@ pub async fn handle_link_new(
     }
 
     let prefix = context_prefix(&component.data.custom_id);
-    let discord_name = resolve_discord_name(ctx, &component.user, target_id).await;
-    let components = build_link_new_view(data, &discord_name, prefix, target_id).await;
+    let components = build_link_new_view(data, prefix, target_id).await;
     interact::update_message(ctx, component, components).await
 }
 
@@ -370,36 +321,26 @@ pub async fn handle_link_pick(
         return Ok(());
     };
 
-    let invoker_id = component.user.id.get();
-    let (_, target, _) = fetch_context(data, invoker_id, target_id).await?;
-    let Some(member) = &target else {
-        return interact::send_component_error(ctx, component, "Error", "User is not registered")
-            .await;
+    let error = match data
+        .api
+        .link_account(target_id, LinkProof::Social(uuid), false)
+        .await
+    {
+        Ok(_) => return refresh_view(ctx, component, data, true, target_id).await,
+        Err(error) => error,
     };
-
-    let discord_name = resolve_discord_name(ctx, &component.user, target_id).await;
-    let (uuid, username) = match crate::accounts::check_link(data, uuid, &discord_name).await {
-        crate::accounts::LinkCheck::Verified { uuid, username } => (uuid, username),
-        _ => {
-            return interact::send_component_error(
+    match error.link_refusal() {
+        Some(LinkRefusal::AlreadyLinked) => send_already_linked_component(ctx, component).await,
+        Some(_) => {
+            interact::send_component_error(
                 ctx,
                 component,
                 "Verification Failed",
                 "That account's Discord link no longer matches.",
             )
-            .await;
+            .await
         }
-    };
-    match crate::accounts::link_alt(ctx, data, target_id, member.id, &uuid).await? {
-        crate::accounts::LinkOutcome::AlreadyLinked => {
-            send_already_linked_component(ctx, component).await
-        }
-        crate::accounts::LinkOutcome::Added => {
-            let _ = CacheRepository::new(data.db.pool())
-                .cache_username(&uuid, &username)
-                .await;
-            refresh_view(ctx, component, data, true, target_id).await
-        }
+        None => Err(error.into()),
     }
 }
 
@@ -511,45 +452,43 @@ pub async fn handle_add_code_modal(
     let code = interact::extract_modal_value(&modal.data.components, "code");
 
     let invoker_id = modal.user.id.get();
-    let (invoker_rank, target, target_rank) = fetch_context(data, invoker_id, target_id).await?;
+    let (invoker_rank, _, target_rank) = fetch_context(data, invoker_id, target_id).await?;
     let is_self = invoker_id == target_id;
 
     if !is_self && (invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank) {
         return interact::send_modal_error(ctx, modal, "Error", "Insufficient permissions").await;
     }
 
-    let Some(member) = &target else {
-        return interact::send_modal_error(ctx, modal, "Error", "User is not registered").await;
-    };
-
-    let player = match data.api.redeem_verify_code(&code).await {
-        Ok(p) => p,
-        Err(_) => {
-            return interact::send_modal_error(
-                ctx, modal, "Invalid Code",
-                "That code is invalid or has expired.\n\nJoin the verification server to get a new code.",
-            )
-            .await;
+    let error = match data
+        .api
+        .link_account(target_id, LinkProof::Code(&code), false)
+        .await
+    {
+        Ok(_) => {
+            let can_modify = resolve_can_modify(prefix, invoker_rank, target_rank, is_self);
+            return refresh_view_from_modal(ctx, modal, data, can_modify, target_id).await;
         }
+        Err(error) => error,
     };
-
-    let uuid = player.uuid.clone();
-    let _ = data.api.get_player_stats(&uuid).await;
-    match crate::accounts::link_alt(ctx, data, target_id, member.id, &uuid).await? {
-        crate::accounts::LinkOutcome::AlreadyLinked => send_already_linked_modal(ctx, modal).await,
-        crate::accounts::LinkOutcome::Added => {
-            let _ = CacheRepository::new(data.db.pool())
-                .cache_username(&uuid, &player.username)
-                .await;
-            refresh_view_from_modal(
+    match error.link_refusal() {
+        Some(LinkRefusal::AlreadyLinked) => send_already_linked_modal(ctx, modal).await,
+        Some(LinkRefusal::TooManyAttempts) => {
+            interact::send_modal_error(
                 ctx,
                 modal,
-                data,
-                resolve_can_modify(prefix, invoker_rank, target_rank, is_self),
-                target_id,
+                "Too Many Attempts",
+                "Wait a few minutes, then enter a new code.",
             )
             .await
         }
+        Some(_) => {
+            interact::send_modal_error(
+                ctx, modal, "Invalid Code",
+                "That code is invalid or has expired.\n\nJoin the verification server to get a new code.",
+            )
+            .await
+        }
+        None => Err(error.into()),
     }
 }
 
@@ -564,96 +503,71 @@ pub async fn handle_add_account_modal(
     let username = interact::extract_modal_value(&modal.data.components, "username");
 
     let invoker_id = modal.user.id.get();
-    let (invoker_rank, target, target_rank) = fetch_context(data, invoker_id, target_id).await?;
+    let (invoker_rank, _, target_rank) = fetch_context(data, invoker_id, target_id).await?;
     let is_self = invoker_id == target_id;
 
     if !is_self && (invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank) {
         return interact::send_modal_error(ctx, modal, "Error", "Insufficient permissions").await;
     }
 
-    let Some(member) = &target else {
-        return interact::send_modal_error(ctx, modal, "Error", "User is not registered").await;
-    };
-
-    let stats = match data.api.get_player_stats_or_cached(&username).await {
-        Ok(s) => s,
-        Err(_) => {
-            return interact::send_modal_error(
-                ctx,
-                modal,
-                "Error",
-                &format!("Could not find player: {username}"),
-            )
-            .await;
+    let error = match data
+        .api
+        .link_account(target_id, LinkProof::Social(&username), false)
+        .await
+    {
+        Ok(_) => {
+            let can_modify = resolve_can_modify(prefix, invoker_rank, target_rank, is_self);
+            return refresh_view_from_modal(ctx, modal, data, can_modify, target_id).await;
         }
+        Err(error) => error,
     };
-
-    let uuid = stats.uuid.replace('-', "");
-    let discord_name = resolve_discord_name_from_modal(ctx, modal, target_id).await;
-    let verified = stats
-        .hypixel
-        .as_ref()
-        .map(|h| crate::accounts::is_discord_linked(h, &discord_name))
-        .unwrap_or(false);
-
-    if verified {
-        return match crate::accounts::link_alt(ctx, data, target_id, member.id, &uuid).await? {
-            crate::accounts::LinkOutcome::AlreadyLinked => {
-                send_already_linked_modal(ctx, modal).await
-            }
-            crate::accounts::LinkOutcome::Added => {
-                let _ = CacheRepository::new(data.db.pool())
-                    .cache_username(&uuid, &stats.username)
-                    .await;
-                refresh_view_from_modal(
-                    ctx,
-                    modal,
-                    data,
-                    resolve_can_modify(prefix, invoker_rank, target_rank, is_self),
-                    target_id,
-                )
-                .await
-            }
-        };
-    }
+    let refusal = match error.link_refusal() {
+        Some(LinkRefusal::AlreadyLinked) => return send_already_linked_modal(ctx, modal).await,
+        Some(refusal) => refusal,
+        None => return Err(error.into()),
+    };
 
     if is_self && invoker_rank < AccessRank::Moderator {
         return interact::send_modal_error(
             ctx,
             modal,
             "Error",
-            &format!(
-                "Your Discord must be linked in Hypixel social settings for this account{}",
-                stale_cache_notice(stats.stale)
-            ),
+            &unverified_message(refusal, &username),
         )
         .await;
     }
 
-    show_force_link_prompt(ctx, modal, data, &stats.username, prefix, target_id, &uuid).await
-}
-
-fn stale_cache_notice(stale: bool) -> &'static str {
-    if stale {
-        "\n\n-# *Hypixel was unreachable — using cached data. If you just updated your link, try again shortly.*"
-    } else {
-        ""
+    match data.api.resolve(&username).await {
+        Ok(player) => {
+            show_force_link_prompt(
+                ctx,
+                modal,
+                data,
+                &player.username,
+                prefix,
+                target_id,
+                &player.uuid,
+            )
+            .await
+        }
+        Err(_) => {
+            interact::send_modal_error(
+                ctx,
+                modal,
+                "Error",
+                &format!("Could not find player: {username}"),
+            )
+            .await
+        }
     }
 }
 
-async fn resolve_discord_name_from_modal(
-    ctx: &Context,
-    modal: &ModalInteraction,
-    target_id: u64,
-) -> String {
-    if target_id == modal.user.id.get() {
-        return modal.user.name.to_string();
+fn unverified_message(refusal: LinkRefusal, username: &str) -> String {
+    match refusal {
+        LinkRefusal::NotFound => format!("Could not find player: {username}"),
+        LinkRefusal::Unconfirmed => "Your Discord must be linked in Hypixel social settings for this account\n\n-# *Hypixel was unreachable — using cached data. If you just updated your link, try again shortly.*".into(),
+        _ => "Your Discord must be linked in Hypixel social settings for this account".into(),
     }
-    UserId::new(target_id)
-        .to_user(&ctx.http)
-        .await
-        .map(|u| u.name.to_string())
-        .unwrap_or_default()
 }
 
 async fn show_force_link_prompt(
@@ -665,7 +579,7 @@ async fn show_force_link_prompt(
     target_id: u64,
     uuid: &str,
 ) -> Result<()> {
-    let mut components = build_accounts_view(data, true, target_id, "", prefix).await?;
+    let mut components = build_accounts_view(data, true, target_id, prefix).await?;
     components.push(CreateComponent::Container(
         CreateContainer::new(vec![
             text(format!(
@@ -693,25 +607,23 @@ pub async fn handle_force_add(
         .ok_or_else(|| anyhow!("Invalid button ID"))?;
     let invoker_id = component.user.id.get();
     let is_self = invoker_id == target_id;
-    let (invoker_rank, target, target_rank) = fetch_context(data, invoker_id, target_id).await?;
+    let (invoker_rank, _, target_rank) = fetch_context(data, invoker_id, target_id).await?;
 
     if !is_self && (invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank) {
         return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
             .await;
     }
 
-    let Some(member) = &target else {
-        return interact::send_component_error(ctx, component, "Error", "User is not registered")
-            .await;
-    };
-
-    match crate::accounts::link_alt(ctx, data, target_id, member.id, &uuid).await? {
-        crate::accounts::LinkOutcome::AlreadyLinked => {
+    match data
+        .api
+        .link_account(target_id, LinkProof::Force(&uuid), false)
+        .await
+    {
+        Ok(_) => refresh_view(ctx, component, data, true, target_id).await,
+        Err(error) if error.link_refusal() == Some(LinkRefusal::AlreadyLinked) => {
             send_already_linked_component(ctx, component).await
         }
-        crate::accounts::LinkOutcome::Added => {
-            refresh_view(ctx, component, data, true, target_id).await
-        }
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -724,31 +636,16 @@ pub async fn handle_remove_account(
         .ok_or_else(|| anyhow!("Invalid button ID"))?;
     let invoker_id = component.user.id.get();
     let is_self = invoker_id == target_id;
-    let (invoker_rank, target, target_rank) = fetch_context(data, invoker_id, target_id).await?;
+    let (invoker_rank, _, target_rank) = fetch_context(data, invoker_id, target_id).await?;
 
     if !is_self && (invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank) {
         return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
             .await;
     }
 
-    let Some(member) = &target else {
-        return interact::send_component_error(ctx, component, "Error", "User is not registered")
-            .await;
-    };
-
-    if member.uuid.as_deref() == Some(&uuid) {
-        MemberRepository::new(data.db.pool())
-            .clear_uuid(target_id as i64)
-            .await?;
-        tokio::spawn(crate::sync::sync_user(
-            ctx.clone(),
-            data.clone(),
-            UserId::new(target_id),
-        ));
-    } else {
-        AccountRepository::new(data.db.pool())
-            .remove(member.id, &uuid)
-            .await?;
+    match data.api.unlink_account(target_id, &uuid).await {
+        Ok(_) | Err(ApiError::NotFound) => {}
+        Err(error) => return Err(error.into()),
     }
 
     let prefix = context_prefix(&component.data.custom_id);
@@ -769,32 +666,16 @@ pub async fn handle_swap_primary(
 
     let invoker_id = component.user.id.get();
     let is_self = invoker_id == target_id;
-    let (invoker_rank, target, target_rank) = fetch_context(data, invoker_id, target_id).await?;
+    let (invoker_rank, _, target_rank) = fetch_context(data, invoker_id, target_id).await?;
 
     if !is_self && (invoker_rank < AccessRank::Moderator || invoker_rank <= target_rank) {
         return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
             .await;
     }
 
-    let Some(member) = &target else {
-        return interact::send_component_error(ctx, component, "Error", "User is not registered")
-            .await;
-    };
-
-    let old_primary = member.uuid.as_deref().unwrap_or("");
-    if new_uuid != old_primary {
-        let accounts = AccountRepository::new(data.db.pool());
-        let repo = MemberRepository::new(data.db.pool());
-        if !old_primary.is_empty() {
-            accounts.add(member.id, old_primary).await?;
-        }
-        accounts.remove(member.id, new_uuid).await?;
-        repo.set_uuid(target_id as i64, new_uuid).await?;
-        tokio::spawn(crate::sync::sync_user(
-            ctx.clone(),
-            data.clone(),
-            UserId::new(target_id),
-        ));
+    match data.api.set_primary(target_id, new_uuid).await {
+        Ok(_) | Err(ApiError::NotFound) => {}
+        Err(error) => return Err(error.into()),
     }
 
     let prefix = context_prefix(&component.data.custom_id);
