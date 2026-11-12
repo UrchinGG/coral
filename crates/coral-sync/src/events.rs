@@ -18,7 +18,7 @@ pub fn spawn_sync_subscriber(ctx: Context, data: Data) {
                 async move {
                     match event {
                         SyncEvent::SyncUser { discord_id } => {
-                            crate::sync::sync_user(ctx, data, UserId::new(discord_id)).await;
+                            crate::service::sync_user(ctx, data, UserId::new(discord_id)).await;
                         }
                         SyncEvent::GuildJobQueued { job_id } => {
                             crate::jobs::spawn_job(ctx, data, job_id);

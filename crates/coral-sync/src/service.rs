@@ -4,22 +4,19 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use chrono::Utc;
 use serde_json::Value;
 use serenity::all::*;
 use serenity::nonmax::NonMaxU16;
 use tokio::sync::Semaphore;
 
-use database::{
-    BlacklistRepository, CacheRepository, GuildConfig, GuildConfigRepository, GuildRoleRule,
-    MemberRepository,
-};
+use database::{GuildConfigRepository, MemberRepository};
 
+use crate::engine::{self, Changes, Current, Settings};
 use crate::framework::Data;
+use crate::sources::{self, HYPIXEL_MAX_AGE, HypixelRead};
 
-pub const NICKNAME_MAX_LEN: usize = 32;
 const BULK_CONCURRENCY: usize = 5;
-const REFRESH_THRESHOLD: Duration = Duration::from_secs(4 * 3600);
+const NICKNAME_BYPASS_ROLE_ENV: &str = "NICKNAME_BYPASS_ROLE_ID";
 const MEMBERS_PER_PAGE: u16 = 1000;
 
 pub type CancelToken = Arc<AtomicBool>;
@@ -84,77 +81,6 @@ pub(crate) fn is_home_guild(data: &Data, guild_id: GuildId) -> bool {
     data.home_guild_id == Some(guild_id)
 }
 
-fn extract_custom_nickname(
-    template: &str,
-    template_ctx: &mut Value,
-    current_nick: Option<&str>,
-) -> String {
-    let current = match current_nick {
-        Some(nick) if !nick.is_empty() => nick,
-        _ => return String::new(),
-    };
-
-    template_ctx["discord"]["nickname"] = Value::String(String::new());
-    let base = expr::render_template(template, template_ctx).to_truncated(NICKNAME_MAX_LEN);
-
-    current
-        .strip_prefix(base.trim_end())
-        .map(|rest| rest.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_default()
-}
-
-pub(crate) fn build_template_context(
-    hypixel_data: &Value,
-    member: &Member,
-    active_tags: &[String],
-    coral_access: i16,
-    tag_granted: bool,
-) -> Value {
-    let mut ctx = hypixel_data.clone();
-
-    if ctx.pointer("/achievements/bedwars_level").is_none() {
-        ctx["achievements"]["bedwars_level"] = serde_json::json!(0);
-    }
-    let active_bracket = ctx
-        .pointer("/stats/Bedwars/active_prestige_bracket")
-        .and_then(|v| v.as_str());
-    let (bracket_open, bracket_close) = hypixel::nickname_bracket_glyphs(active_bracket);
-    ctx["bedwars"] = serde_json::json!({
-        "bracket_open": bracket_open,
-        "bracket_close": bracket_close,
-    });
-
-    ctx["discord"] = serde_json::json!({
-        "name": member.user.global_name.as_deref().unwrap_or(&member.user.name),
-    });
-    ctx["coral"] = serde_json::json!({ "access": coral_access });
-    ctx["standing"] = serde_json::json!({ "trusted": tag_granted });
-
-    let highest = active_tags
-        .iter()
-        .filter_map(|t| blacklist::lookup(t).map(|def| (def.priority, t.as_str())))
-        .min_by_key(|(p, _)| *p)
-        .map(|(_, name)| name);
-
-    let mut bl = serde_json::json!({ "tag": highest });
-    for def in blacklist::all() {
-        bl[def.name] = Value::Bool(active_tags.iter().any(|t| t == def.name));
-    }
-    ctx["blacklist"] = bl;
-    ctx
-}
-
-pub(crate) async fn active_tags(data: &Data, uuid: &str) -> Vec<String> {
-    BlacklistRepository::new(data.db.pool())
-        .get_active_tags(uuid)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|row| row.tag_type)
-        .collect()
-}
-
 pub async fn handle_member_update(ctx: &Context, data: &Data, member: &Member) {
     if member.user.bot() {
         return;
@@ -163,48 +89,21 @@ pub async fn handle_member_update(ctx: &Context, data: &Data, member: &Member) {
     if !is_home_guild(data, guild_id) {
         return;
     }
-    let discord_id = member.user.id.get() as i64;
-
-    let config_repo = GuildConfigRepository::new(data.db.pool());
-    let config = match config_repo.get(guild_id.get() as i64).await {
-        Ok(Some(c)) => c,
-        _ => return,
+    let Ok(Some(settings)) = load_settings(data, guild_id).await else {
+        return;
     };
-
-    let rules = config_repo
-        .get_role_rules(guild_id.get() as i64)
-        .await
-        .unwrap_or_default();
-    if config.nickname_template.is_none() && rules.is_empty() {
+    if !settings.syncs_anything() {
         return;
     }
-
-    let uuid = match MemberRepository::new(data.db.pool())
-        .get_by_discord_id(discord_id)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|m| m.uuid)
-    {
-        Some(uuid) => uuid,
-        None => return,
+    let Some(uuid) = linked_uuid(data, member.user.id).await else {
+        return;
     };
-
-    let hypixel_data = match resolve_hypixel_data(data, &uuid).await {
-        Some(d) => d,
-        None => return,
+    let Some(hypixel) = sources::hypixel(data, &uuid, HypixelRead::Fresh).await else {
+        return;
     };
 
     if let Err(e) = sync_member(
-        ctx,
-        data,
-        guild_id,
-        member,
-        &uuid,
-        &config,
-        &rules,
-        &hypixel_data,
-        true,
+        ctx, data, guild_id, member, &uuid, &settings, &hypixel, true,
     )
     .await
     {
@@ -244,48 +143,24 @@ pub async fn sync_user(ctx: Context, data: Data, user_id: UserId) {
         tracing::debug!("User sync skipped: HOME_GUILD_ID not configured");
         return;
     };
-
-    let config_repo = GuildConfigRepository::new(data.db.pool());
-    let config = match config_repo.get(guild_id.get() as i64).await {
-        Ok(Some(c)) => c,
-        _ => return,
+    let Ok(Some(settings)) = load_settings(&data, guild_id).await else {
+        return;
     };
-    let rules = config_repo
-        .get_role_rules(guild_id.get() as i64)
-        .await
-        .unwrap_or_default();
-
-    let member = match guild_id.member(&ctx.http, user_id).await {
-        Ok(m) => m,
-        Err(_) => return,
+    let Ok(member) = guild_id.member(&ctx.http, user_id).await else {
+        return;
     };
 
-    let uuid = MemberRepository::new(data.db.pool())
-        .get_by_discord_id(user_id.get() as i64)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|m| m.uuid);
-
-    let result = match uuid {
+    let result = match linked_uuid(&data, user_id).await {
         Some(uuid) => {
-            let Some(hypixel_data) = resolve_hypixel_data(&data, &uuid).await else {
+            let Some(hypixel) = sources::hypixel(&data, &uuid, HypixelRead::Fresh).await else {
                 return;
             };
             sync_member(
-                &ctx,
-                &data,
-                guild_id,
-                &member,
-                &uuid,
-                &config,
-                &rules,
-                &hypixel_data,
-                false,
+                &ctx, &data, guild_id, &member, &uuid, &settings, &hypixel, false,
             )
             .await
         }
-        None => sync_unlinked_member(&ctx, &data, guild_id, &member, &config, &rules).await,
+        None => sync_unlinked_member(&ctx, &data, guild_id, &member, &settings).await,
     };
 
     if let Err(e) = result {
@@ -311,41 +186,22 @@ async fn try_sync_from_message(
 ) -> Result<()> {
     set_cooldown(data, user_id);
 
-    let config_repo = GuildConfigRepository::new(data.db.pool());
-    let config = match config_repo.get(guild_id.get() as i64).await? {
-        Some(config) => config,
-        None => return Ok(()),
+    let Some(settings) = load_settings(data, guild_id).await? else {
+        return Ok(());
     };
-    let rules = config_repo.get_role_rules(guild_id.get() as i64).await?;
-    if config.nickname_template.is_none() && rules.is_empty() {
+    if !settings.syncs_anything() {
         return Ok(());
     }
-
-    let uuid = match MemberRepository::new(data.db.pool())
-        .get_by_discord_id(user_id.get() as i64)
-        .await?
-        .and_then(|m| m.uuid)
-    {
-        Some(uuid) => uuid,
-        None => return Ok(()),
+    let Some(uuid) = linked_uuid(data, user_id).await else {
+        return Ok(());
     };
-
-    let hypixel_data = match resolve_hypixel_data(data, &uuid).await {
-        Some(hd) => hd,
-        None => return Ok(()),
+    let Some(hypixel) = sources::hypixel(data, &uuid, HypixelRead::Fresh).await else {
+        return Ok(());
     };
 
     let member = guild_id.member(&ctx.http, user_id).await?;
     sync_member(
-        ctx,
-        data,
-        guild_id,
-        &member,
-        &uuid,
-        &config,
-        &rules,
-        &hypixel_data,
-        true,
+        ctx, data, guild_id, &member, &uuid, &settings, &hypixel, true,
     )
     .await?;
     Ok(())
@@ -358,12 +214,10 @@ async fn try_sync_guild(
     cancel: &CancelToken,
     progress: &Progress,
 ) -> Result<()> {
-    let config_repo = GuildConfigRepository::new(data.db.pool());
-    let config = match config_repo.get(guild_id.get() as i64).await? {
-        Some(config) => config,
-        None => return Ok(()),
+    let Some(settings) = load_settings(data, guild_id).await? else {
+        return Ok(());
     };
-    let rules = config_repo.get_role_rules(guild_id.get() as i64).await?;
+    let settings = Arc::new(settings);
 
     let non_bots: Vec<_> = fetch_all_members(ctx, guild_id)
         .await?
@@ -378,10 +232,8 @@ async fn try_sync_guild(
         if is_cancelled(cancel) {
             break;
         }
-        let (_, page_updates) = sync_member_batch(
-            ctx, data, guild_id, chunk, &config, &rules, cancel, progress,
-        )
-        .await;
+        let (_, page_updates) =
+            sync_member_batch(ctx, data, guild_id, chunk, &settings, cancel, progress).await;
         updates += page_updates;
     }
 
@@ -396,14 +248,12 @@ async fn try_sync_guild(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn sync_member_batch(
     ctx: &Context,
     data: &Data,
     guild_id: GuildId,
     members: &[Member],
-    config: &GuildConfig,
-    rules: &[GuildRoleRule],
+    settings: &Arc<Settings>,
     cancel: &CancelToken,
     progress: &Progress,
 ) -> (usize, usize) {
@@ -429,30 +279,25 @@ async fn sync_member_batch(
         let ctx = ctx.clone();
         let data = data.clone();
         let member = member.clone();
-        let config = config.clone();
-        let rules = rules.to_vec();
+        let settings = settings.clone();
         let uuid = uuid_map.get(&(member.user.id.get() as i64)).cloned();
 
         tasks.spawn(async move {
             let _permit = permit;
 
-            let snapshot = match &uuid {
-                Some(uuid) => CacheRepository::new(data.db.pool())
-                    .get_latest_snapshot(uuid)
-                    .await
-                    .ok()
-                    .flatten(),
+            let hypixel = match &uuid {
+                Some(uuid) => sources::hypixel(&data, uuid, HypixelRead::Stored).await,
                 None => None,
             };
 
-            let result = match (uuid, snapshot) {
-                (Some(uuid), Some(hd)) => {
+            let result = match (uuid, hypixel) {
+                (Some(uuid), Some(hypixel)) => {
                     sync_member(
-                        &ctx, &data, guild_id, &member, &uuid, &config, &rules, &hd, false,
+                        &ctx, &data, guild_id, &member, &uuid, &settings, &hypixel, false,
                     )
                     .await
                 }
-                _ => sync_unlinked_member(&ctx, &data, guild_id, &member, &config, &rules).await,
+                _ => sync_unlinked_member(&ctx, &data, guild_id, &member, &settings).await,
             };
 
             match result {
@@ -478,97 +323,33 @@ async fn sync_member_batch(
     (total, updates)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn sync_member(
     ctx: &Context,
     data: &Data,
     guild_id: GuildId,
     member: &Member,
     uuid: &str,
-    config: &GuildConfig,
-    rules: &[GuildRoleRule],
-    hypixel_data: &Value,
+    settings: &Settings,
+    hypixel: &Value,
     preserve_custom: bool,
 ) -> Result<bool> {
-    let tags = active_tags(data, uuid).await;
-    let member_db = MemberRepository::new(data.db.pool())
-        .get_by_discord_id(member.user.id.get() as i64)
-        .await
-        .ok()
-        .flatten();
-    let access = member_db.as_ref().map(|m| m.access_level).unwrap_or(0);
-    let tag_granted = member_db.as_ref().is_some_and(|m| m.tag_granted);
-    let template_ctx = build_template_context(hypixel_data, member, &tags, access, tag_granted);
-
-    let mut roles: Vec<RoleId> = member.roles.iter().copied().collect();
-    let original_roles = roles.clone();
-
-    if let Some(id) = config.link_role_id {
-        let role = RoleId::new(id as u64);
-        if !roles.contains(&role) {
-            roles.push(role)
-        }
-    }
-    if let Some(id) = config.unlinked_role_id {
-        roles.retain(|r| *r != RoleId::new(id as u64));
-    }
-
-    for rule in rules {
-        let role = RoleId::new(rule.role_id as u64);
-        let matches = expr::eval_condition(&rule.condition, &template_ctx).unwrap_or(false);
-        if matches && !roles.contains(&role) {
-            roles.push(role);
-        } else if !matches {
-            roles.retain(|r| *r != role);
-        }
-    }
-
-    let roles_changed = roles != original_roles;
-
-    let pause_name_updates = member_db
-        .as_ref()
-        .and_then(|m| m.config.get("pause_name_updates"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    let bypass_role = std::env::var("NICKNAME_BYPASS_ROLE_ID")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .map(RoleId::new);
-    let nickname_bypassed = bypass_role.is_some_and(|r| member.roles.contains(&r));
-
-    let nickname = if nickname_bypassed || pause_name_updates {
-        None
-    } else {
-        config.nickname_template.as_ref().and_then(|template| {
-            let nick = if preserve_custom && template.contains("discord.nickname") {
-                let mut ctx = template_ctx.clone();
-                let custom = extract_custom_nickname(template, &mut ctx, member.nick.as_deref());
-                ctx["discord"]["nickname"] = Value::String(custom);
-                expr::render_template(template, &ctx).to_truncated(NICKNAME_MAX_LEN)
-            } else {
-                expr::render_template(template, &template_ctx).to_truncated(NICKNAME_MAX_LEN)
-            };
-            (!nick.is_empty() && member.nick.as_deref() != Some(&nick)).then_some(nick)
-        })
+    let coral = sources::coral(data, member.user.id.get(), uuid).await;
+    let context = sources::context(hypixel, member, &coral);
+    let roles: Vec<RoleId> = member.roles.iter().copied().collect();
+    let current = Current {
+        roles: &roles,
+        nick: member.nick.as_deref(),
     };
-
-    if !roles_changed && nickname.is_none() {
-        return Ok(false);
-    }
-
-    yield_to_interactions(data).await;
-
-    let mut edit = EditMember::new();
-    if roles_changed {
-        edit = edit.roles(&roles)
-    }
-    if let Some(ref nick) = nickname {
-        edit = edit.nickname(nick)
-    }
-    guild_id
-        .edit_member(&ctx.http, member.user.id, edit)
-        .await?;
-    Ok(true)
+    let nickname_frozen = coral.nickname_paused || holds_bypass_role(member);
+    let changes = engine::linked_changes(
+        settings,
+        &context,
+        &current,
+        nickname_frozen,
+        preserve_custom,
+    );
+    apply(ctx, data, guild_id, member.user.id, changes).await
 }
 
 async fn sync_unlinked_member(
@@ -576,34 +357,66 @@ async fn sync_unlinked_member(
     data: &Data,
     guild_id: GuildId,
     member: &Member,
-    config: &GuildConfig,
-    rules: &[GuildRoleRule],
+    settings: &Settings,
 ) -> Result<bool> {
-    let mut roles: Vec<RoleId> = member.roles.iter().copied().collect();
-    let original_roles = roles.clone();
+    let roles: Vec<RoleId> = member.roles.iter().copied().collect();
+    let current = Current {
+        roles: &roles,
+        nick: member.nick.as_deref(),
+    };
+    let changes = engine::unlinked_changes(settings, &current);
+    apply(ctx, data, guild_id, member.user.id, changes).await
+}
 
-    if let Some(id) = config.unlinked_role_id {
-        let role = RoleId::new(id as u64);
-        if !roles.contains(&role) {
-            roles.push(role)
-        }
-    }
-    if let Some(id) = config.link_role_id {
-        roles.retain(|r| *r != RoleId::new(id as u64));
-    }
-    for rule in rules {
-        roles.retain(|r| *r != RoleId::new(rule.role_id as u64));
-    }
-
-    if roles == original_roles {
+async fn apply(
+    ctx: &Context,
+    data: &Data,
+    guild_id: GuildId,
+    user_id: UserId,
+    changes: Changes,
+) -> Result<bool> {
+    if changes.is_empty() {
         return Ok(false);
     }
-
     yield_to_interactions(data).await;
-    guild_id
-        .edit_member(&ctx.http, member.user.id, EditMember::new().roles(&roles))
-        .await?;
+
+    let mut edit = EditMember::new();
+    if let Some(roles) = &changes.roles {
+        edit = edit.roles(roles)
+    }
+    if let Some(nick) = &changes.nickname {
+        edit = edit.nickname(nick)
+    }
+    guild_id.edit_member(&ctx.http, user_id, edit).await?;
     Ok(true)
+}
+
+fn holds_bypass_role(member: &Member) -> bool {
+    std::env::var(NICKNAME_BYPASS_ROLE_ENV)
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .is_some_and(|role| member.roles.contains(&RoleId::new(role)))
+}
+
+pub(crate) async fn load_settings(data: &Data, guild_id: GuildId) -> Result<Option<Settings>> {
+    let repo = GuildConfigRepository::new(data.db.pool());
+    let Some(config) = repo.get(guild_id.get() as i64).await? else {
+        return Ok(None);
+    };
+    let rules = repo
+        .get_role_rules(guild_id.get() as i64)
+        .await
+        .unwrap_or_default();
+    Ok(Some(Settings::new(&config, &rules)))
+}
+
+async fn linked_uuid(data: &Data, user_id: UserId) -> Option<String> {
+    MemberRepository::new(data.db.pool())
+        .get_by_discord_id(user_id.get() as i64)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|m| m.uuid)
 }
 
 pub async fn clear_nicknames(
@@ -729,42 +542,17 @@ pub async fn swap_role(
     Ok(())
 }
 
-async fn resolve_hypixel_data(data: &Data, uuid: &str) -> Option<Value> {
-    let cache = CacheRepository::new(data.db.pool());
-
-    if is_snapshot_stale(&cache, uuid).await {
-        match data.api.get_player_stats(uuid).await {
-            Ok(response) => return response.hypixel,
-            Err(e) => tracing::debug!("Hypixel refresh failed for {uuid}, using cache: {e}"),
-        }
-    }
-
-    cache.get_latest_snapshot(uuid).await.ok().flatten()
-}
-
-async fn is_snapshot_stale(cache: &CacheRepository<'_>, uuid: &str) -> bool {
-    match cache
-        .get_latest_non_migration_timestamp(uuid)
-        .await
-        .ok()
-        .flatten()
-    {
-        Some(ts) => (Utc::now() - ts).num_seconds() > REFRESH_THRESHOLD.as_secs() as i64,
-        None => true,
-    }
-}
-
 fn is_on_cooldown(data: &Data, user_id: UserId) -> bool {
     data.sync_cooldowns
         .lock()
         .unwrap()
         .get(&user_id)
-        .is_some_and(|last| last.elapsed() < REFRESH_THRESHOLD)
+        .is_some_and(|last| last.elapsed() < HYPIXEL_MAX_AGE)
 }
 
 fn set_cooldown(data: &Data, user_id: UserId) {
     let mut cooldowns = data.sync_cooldowns.lock().unwrap();
-    cooldowns.retain(|_, last| last.elapsed() < REFRESH_THRESHOLD);
+    cooldowns.retain(|_, last| last.elapsed() < HYPIXEL_MAX_AGE);
     cooldowns.insert(user_id, Instant::now());
 }
 
@@ -774,9 +562,9 @@ pub async fn startup_sync(ctx: Context, data: Data) {
         return;
     };
 
-    let config_repo = GuildConfigRepository::new(data.db.pool());
-    let config = match config_repo.get(guild_id.get() as i64).await {
-        Ok(Some(c)) => c,
+    match load_settings(&data, guild_id).await {
+        Ok(Some(settings)) if settings.syncs_anything() => {}
+        Ok(Some(_)) => return,
         Ok(None) => {
             tracing::info!("Startup sync skipped: home guild has no sync config");
             return;
@@ -785,13 +573,6 @@ pub async fn startup_sync(ctx: Context, data: Data) {
             tracing::error!("Startup sync failed to load config: {e}");
             return;
         }
-    };
-    let rules = config_repo
-        .get_role_rules(guild_id.get() as i64)
-        .await
-        .unwrap_or_default();
-    if config.nickname_template.is_none() && rules.is_empty() {
-        return;
     }
 
     tracing::info!("Startup sync starting for guild {guild_id}");
