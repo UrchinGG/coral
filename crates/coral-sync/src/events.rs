@@ -1,8 +1,15 @@
 use serenity::all::*;
 
-use coral_redis::{SyncEvent, SyncEventSubscriber};
+use coral_redis::{SyncEvent, SyncEventPublisher, SyncEventSubscriber};
 
 use crate::framework::Data;
+
+pub async fn publish(data: &Data, event: SyncEvent) {
+    match &data.redis {
+        Some(redis) => SyncEventPublisher::new(redis.clone()).publish(&event).await,
+        None => tracing::warn!("Redis is unavailable; a sync event was not published"),
+    }
+}
 
 pub fn spawn_sync_subscriber(ctx: Context, data: Data) {
     let redis_url = data.redis_url.clone();

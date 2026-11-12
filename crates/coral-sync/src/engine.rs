@@ -276,4 +276,20 @@ mod tests {
         assert_eq!(changes.roles, Some(vec![OTHER, UNLINKED]));
         assert_eq!(changes.nickname, None);
     }
+
+    #[test]
+    fn a_missing_field_reads_as_nothing_so_less_than_matches() {
+        let context = json!({"displayname": "Nelly"});
+        let eval = |condition| expr::eval_condition(condition, &context).unwrap();
+        assert!(!eval("rbw.elo >= 1000"));
+        assert!(
+            eval("rbw.elo < 1000"),
+            "a member the source does not know is below any bar"
+        );
+        assert!(!eval("rbw.ranked"));
+        assert_eq!(
+            expr::render_template("[{rbw.elo}] {displayname}", &context).to_truncated(32),
+            "[] Nelly"
+        );
+    }
 }

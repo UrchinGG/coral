@@ -23,12 +23,14 @@ use serenity::all::{
 };
 use tokio::net::TcpListener;
 
-use coral_redis::{SyncEvent, SyncEventPublisher};
+use coral_redis::SyncEvent;
 use database::{
     DiscordUsernameCacheRepository, GuildConfig, GuildConfigRepository, GuildSyncJob,
-    GuildSyncJobRepository, MemberRepository, SqlxError,
+    GuildSyncJobRepository, MemberRepository, NewSyncSource, SqlxError, SyncSource,
+    SyncSourceRepository,
 };
 
+use crate::events::publish;
 use crate::framework::Data;
 use crate::sources::{self, HypixelRead};
 
@@ -36,6 +38,7 @@ const API_KEY_HEADER: &str = "X-API-Key";
 const ACTOR_HEADER: &str = "X-Coral-Actor";
 const FINISHED_JOBS_SHOWN: i64 = 5;
 const RULE_PRIORITY: i32 = 0;
+const DEFAULT_SOURCE_MAX_AGE_SECS: i32 = 3600;
 const LINK_PROMPT: &str = "## Account Linking\n\n\
      Link your Minecraft account to get roles and a nickname in this server.\n\n\
      Use the `/link` command or the button below to get started.";
@@ -66,6 +69,7 @@ struct ServerConfig {
     guild_id: String,
     config: ConfigView,
     rules: Vec<RuleView>,
+    source_ids: Vec<String>,
     preview_context: Option<Value>,
 }
 
@@ -110,6 +114,35 @@ struct SyncJobs {
 struct Change {
     job: Option<SyncJob>,
     audit: Value,
+}
+
+/// A source as staff see it. The key is never sent back.
+#[derive(Serialize)]
+struct SourceView {
+    id: String,
+    name: String,
+    base_url: String,
+    has_feed: bool,
+    max_age_secs: i32,
+    last_seq: Option<i64>,
+    connected: bool,
+    error: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NewSourceBody {
+    name: String,
+    base_url: String,
+    api_key: Option<String>,
+    has_feed: bool,
+    max_age_secs: Option<i32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GuildSourcesBody {
+    source_ids: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -281,7 +314,10 @@ fn router(state: ApiState) -> Router {
             put(update_rule).delete(remove_rule),
         )
         .route("/guilds/{guild_id}/roles/{role_id}/strip", post(strip_role))
+        .route("/guilds/{guild_id}/sources", put(set_guild_sources))
         .route("/guilds/{guild_id}/jobs", get(list_jobs))
+        .route("/sources", get(list_sources).post(add_source))
+        .route("/sources/{source_id}", axum::routing::delete(remove_source))
         .route(
             "/guilds/{guild_id}/jobs/{job_id}",
             get(get_job).delete(cancel_job),
@@ -309,6 +345,9 @@ async fn config(
     let repo = GuildConfigRepository::new(state.data.db.pool());
     let config = repo.get(guild_id as i64).await?;
     let rules = repo.get_role_rules(guild_id as i64).await?;
+    let sources = SyncSourceRepository::new(state.data.db.pool())
+        .for_guild(guild_id as i64)
+        .await?;
     let preview_context = match query.preview_for {
         Some(discord_id) => preview_context(&state.data, discord_id).await?,
         None => None,
@@ -324,6 +363,7 @@ async fn config(
                 condition: rule.condition,
             })
             .collect(),
+        source_ids: sources.iter().map(|source| source.id.to_string()).collect(),
         preview_context,
     }))
 }
@@ -512,6 +552,131 @@ async fn strip_role(
     }))
 }
 
+async fn set_guild_sources(
+    State(state): State<ApiState>,
+    Actor(actor): Actor,
+    Path(guild_id): Path<u64>,
+    Json(body): Json<GuildSourcesBody>,
+) -> Result<Json<Change>, SettingsError> {
+    let ids = body
+        .source_ids
+        .iter()
+        .map(|id| {
+            parse_id(Some(id))?.ok_or_else(|| SettingsError::BadRequest("empty source id".into()))
+        })
+        .collect::<Result<Vec<i64>, _>>()?;
+    let repo = SyncSourceRepository::new(state.data.db.pool());
+    let known: Vec<i64> = repo.list().await?.iter().map(|source| source.id).collect();
+    if let Some(unknown) = ids.iter().find(|id| !known.contains(id)) {
+        return Err(SettingsError::NotFound(format!("no source {unknown}")));
+    }
+    GuildConfigRepository::new(state.data.db.pool())
+        .upsert(guild_id as i64, actor)
+        .await?;
+    repo.set_for_guild(guild_id as i64, &ids).await?;
+    let payload = json!({ "label": "Applying data sources" });
+    let job = enqueue(&state.data, guild_id, "resync", payload, actor).await?;
+    Ok(Json(Change {
+        job: Some(job),
+        audit: json!({ "source_ids": ids }),
+    }))
+}
+
+async fn list_sources(
+    State(state): State<ApiState>,
+) -> Result<Json<Vec<SourceView>>, SettingsError> {
+    let sources = SyncSourceRepository::new(state.data.db.pool())
+        .list()
+        .await?;
+    Ok(Json(
+        sources
+            .iter()
+            .map(|source| source_view(&state.data, source))
+            .collect(),
+    ))
+}
+
+async fn add_source(
+    State(state): State<ApiState>,
+    Actor(actor): Actor,
+    Json(body): Json<NewSourceBody>,
+) -> Result<Json<Change>, SettingsError> {
+    if !crate::sources::valid_source_name(&body.name) {
+        return Err(SettingsError::BadRequest(
+            "A source name is lowercase letters, digits and underscores, starts with a letter, \
+             and is not one Coral uses itself."
+                .into(),
+        ));
+    }
+    let base_url = body.base_url.trim().trim_end_matches('/');
+    if !(base_url.starts_with("https://") || base_url.starts_with("http://")) {
+        return Err(SettingsError::BadRequest(
+            "the base URL must be http or https".into(),
+        ));
+    }
+    let max_age_secs = body.max_age_secs.unwrap_or(DEFAULT_SOURCE_MAX_AGE_SECS);
+    if max_age_secs <= 0 {
+        return Err(SettingsError::BadRequest(
+            "the maximum age must be positive".into(),
+        ));
+    }
+    let added = SyncSourceRepository::new(state.data.db.pool())
+        .add(&NewSyncSource {
+            name: &body.name,
+            base_url,
+            api_key: body.api_key.as_deref().filter(|key| !key.is_empty()),
+            has_feed: body.has_feed,
+            max_age_secs,
+            created_by: actor,
+        })
+        .await?
+        .ok_or_else(|| SettingsError::Rejected(format!("A source named {} exists.", body.name)))?;
+    if added.has_feed {
+        state.data.feeds.start(&state.data, added.id);
+    }
+    Ok(Json(Change {
+        job: None,
+        audit: json!({
+            "source_id": added.id,
+            "name": added.name,
+            "base_url": added.base_url,
+            "has_feed": added.has_feed,
+            "max_age_secs": added.max_age_secs,
+        }),
+    }))
+}
+
+async fn remove_source(
+    State(state): State<ApiState>,
+    Path(source_id): Path<i64>,
+) -> Result<Json<Change>, SettingsError> {
+    let repo = SyncSourceRepository::new(state.data.db.pool());
+    let source = repo
+        .get(source_id)
+        .await?
+        .ok_or_else(|| SettingsError::NotFound(format!("no source {source_id}")))?;
+    state.data.feeds.stop(source_id);
+    repo.remove(source_id).await?;
+    Ok(Json(Change {
+        job: None,
+        audit: json!({ "source_id": source_id, "name": source.name }),
+    }))
+}
+
+fn source_view(data: &Data, source: &SyncSource) -> SourceView {
+    let status = data.feeds.status(source.id);
+    SourceView {
+        id: source.id.to_string(),
+        name: source.name.clone(),
+        base_url: source.base_url.clone(),
+        has_feed: source.has_feed,
+        max_age_secs: source.max_age_secs,
+        last_seq: source.last_seq,
+        connected: status.as_ref().is_some_and(|status| status.connected),
+        error: status.and_then(|status| status.error),
+    }
+}
+
 async fn list_jobs(
     State(state): State<ApiState>,
     Path(guild_id): Path<u64>,
@@ -615,13 +780,6 @@ async fn enqueue(
         .await?;
     publish(data, SyncEvent::GuildJobQueued { job_id: job.id }).await;
     Ok(job_view(&job))
-}
-
-async fn publish(data: &Data, event: SyncEvent) {
-    match &data.redis {
-        Some(redis) => SyncEventPublisher::new(redis.clone()).publish(&event).await,
-        None => tracing::warn!("Redis is unavailable; a sync event was not published"),
-    }
 }
 
 async fn guild_job(
@@ -795,37 +953,17 @@ mod tests {
 
 #[cfg(test)]
 mod api_tests {
-    use std::sync::Mutex;
-    use std::sync::atomic::AtomicUsize;
-
     use axum::body::Body;
     use axum::http::{Method, Request};
-    use database::Database;
     use tower::ServiceExt;
 
     use super::*;
-    use crate::api::CoralApiClient;
 
     const KEY: &str = "settings-test-key";
     const ACTOR: i64 = 42;
 
     async fn api() -> Option<Router> {
-        dotenvy::dotenv().ok();
-        let db = Database::connect(&std::env::var("DATABASE_URL").ok()?)
-            .await
-            .ok()?;
-        let redis_url = std::env::var("REDIS_URL").ok()?;
-        let data = Data {
-            db: Arc::new(db),
-            api: Arc::new(CoralApiClient::new("http://unused".into(), KEY.into())),
-            owner_ids: Vec::new(),
-            home_guild_id: None,
-            redis: crate::jobs::connect_redis(&redis_url).await,
-            redis_url,
-            sync_cooldowns: Arc::new(Mutex::new(HashMap::new())),
-            job_cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
-            active_interactions: Arc::new(AtomicUsize::new(0)),
-        };
+        let data = crate::testing::test_data().await?;
         Some(router(ApiState {
             data,
             http: Arc::new(Http::new("never.used.token".parse().unwrap())),

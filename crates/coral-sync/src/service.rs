@@ -9,17 +9,30 @@ use serenity::all::*;
 use serenity::nonmax::NonMaxU16;
 use tokio::sync::Semaphore;
 
-use database::{GuildConfigRepository, MemberRepository};
+use database::{GuildConfigRepository, MemberRepository, SyncSourceRepository};
 
 use crate::engine::{self, Changes, Current, Settings};
 use crate::framework::Data;
-use crate::sources::{self, HYPIXEL_MAX_AGE, HypixelRead};
+use crate::sources::{self, HYPIXEL_MAX_AGE, HypixelRead, Unavailable};
+use database::SyncSource;
 
 const BULK_CONCURRENCY: usize = 5;
 const NICKNAME_BYPASS_ROLE_ENV: &str = "NICKNAME_BYPASS_ROLE_ID";
 const MEMBERS_PER_PAGE: u16 = 1000;
 
 pub type CancelToken = Arc<AtomicBool>;
+
+/// A server's settings plus the external sources it chose.
+pub(crate) struct ServerSync {
+    pub settings: Settings,
+    pub sources: Vec<SyncSource>,
+}
+
+impl ServerSync {
+    pub fn syncs_anything(&self) -> bool {
+        self.settings.syncs_anything()
+    }
+}
 
 pub fn cancel_token() -> CancelToken {
     Arc::new(AtomicBool::new(false))
@@ -253,7 +266,7 @@ async fn sync_member_batch(
     data: &Data,
     guild_id: GuildId,
     members: &[Member],
-    settings: &Arc<Settings>,
+    settings: &Arc<ServerSync>,
     cancel: &CancelToken,
     progress: &Progress,
 ) -> (usize, usize) {
@@ -330,7 +343,7 @@ pub(crate) async fn sync_member(
     guild_id: GuildId,
     member: &Member,
     uuid: &str,
-    settings: &Settings,
+    server: &ServerSync,
     hypixel: &Value,
     preserve_custom: bool,
 ) -> Result<bool> {
@@ -340,7 +353,21 @@ pub(crate) async fn sync_member(
         .global_name
         .as_deref()
         .unwrap_or(&member.user.name);
-    let context = sources::context(hypixel, Some(discord_name), &coral);
+    let mut context = sources::context(hypixel, Some(discord_name), &coral);
+    for source in &server.sources {
+        match sources::external(data, source, member.user.id.get()).await {
+            Ok(Some(value)) => sources::add_external(&mut context, &source.name, value),
+            Ok(None) => {}
+            Err(Unavailable) => {
+                tracing::debug!(
+                    "Skipped {} in {guild_id}: {} has never answered for them",
+                    member.user.id,
+                    source.name
+                );
+                return Ok(false);
+            }
+        }
+    }
     let roles: Vec<RoleId> = member.roles.iter().copied().collect();
     let current = Current {
         roles: &roles,
@@ -348,7 +375,7 @@ pub(crate) async fn sync_member(
     };
     let nickname_frozen = coral.nickname_paused || holds_bypass_role(member);
     let changes = engine::linked_changes(
-        settings,
+        &server.settings,
         &context,
         &current,
         nickname_frozen,
@@ -362,14 +389,14 @@ async fn sync_unlinked_member(
     data: &Data,
     guild_id: GuildId,
     member: &Member,
-    settings: &Settings,
+    server: &ServerSync,
 ) -> Result<bool> {
     let roles: Vec<RoleId> = member.roles.iter().copied().collect();
     let current = Current {
         roles: &roles,
         nick: member.nick.as_deref(),
     };
-    let changes = engine::unlinked_changes(settings, &current);
+    let changes = engine::unlinked_changes(&server.settings, &current);
     apply(ctx, data, guild_id, member.user.id, changes).await
 }
 
@@ -403,7 +430,7 @@ fn holds_bypass_role(member: &Member) -> bool {
         .is_some_and(|role| member.roles.contains(&RoleId::new(role)))
 }
 
-pub(crate) async fn load_settings(data: &Data, guild_id: GuildId) -> Result<Option<Settings>> {
+pub(crate) async fn load_settings(data: &Data, guild_id: GuildId) -> Result<Option<ServerSync>> {
     let repo = GuildConfigRepository::new(data.db.pool());
     let Some(config) = repo.get(guild_id.get() as i64).await? else {
         return Ok(None);
@@ -412,7 +439,13 @@ pub(crate) async fn load_settings(data: &Data, guild_id: GuildId) -> Result<Opti
         .get_role_rules(guild_id.get() as i64)
         .await
         .unwrap_or_default();
-    Ok(Some(Settings::new(&config, &rules)))
+    let sources = SyncSourceRepository::new(data.db.pool())
+        .for_guild(guild_id.get() as i64)
+        .await?;
+    Ok(Some(ServerSync {
+        settings: Settings::new(&config, &rules),
+        sources,
+    }))
 }
 
 async fn linked_uuid(data: &Data, user_id: UserId) -> Option<String> {

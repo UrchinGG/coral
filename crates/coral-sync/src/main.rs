@@ -12,6 +12,7 @@ use tracing_subscriber::EnvFilter;
 use database::Database;
 
 use coral_sync::api::CoralApiClient;
+use coral_sync::feeds::{self, Feeds};
 use coral_sync::framework::{Data, Handler};
 
 const DEFAULT_SETTINGS_PORT: u16 = 8090;
@@ -20,6 +21,7 @@ const DEFAULT_SETTINGS_PORT: u16 = 8090;
 async fn main() -> Result<()> {
     init_logging();
     let data = init_data().await?;
+    feeds::start_all(&data).await;
     let mut client = build_client(data.clone()).await?;
     tokio::spawn(coral_sync::settings::serve(
         data,
@@ -64,6 +66,7 @@ async fn init_data() -> Result<Data> {
         sync_cooldowns: Arc::new(Mutex::new(HashMap::new())),
         job_cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
         active_interactions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        feeds: Feeds::default(),
     })
 }
 

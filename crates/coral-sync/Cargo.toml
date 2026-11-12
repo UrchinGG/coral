@@ -29,6 +29,8 @@ anyhow.workspace = true
 thiserror.workspace = true
 reqwest.workspace = true
 chrono.workspace = true
+futures-util = "0.3"
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 uuid.workspace = true
 
 [dev-dependencies]

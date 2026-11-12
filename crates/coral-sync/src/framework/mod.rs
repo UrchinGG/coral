@@ -33,6 +33,7 @@ pub struct Data {
     pub sync_cooldowns: Arc<Mutex<HashMap<UserId, Instant>>>,
     pub job_cancel_tokens: Arc<Mutex<HashMap<i64, crate::service::CancelToken>>>,
     pub active_interactions: Arc<std::sync::atomic::AtomicUsize>,
+    pub feeds: crate::feeds::Feeds,
 }
 
 impl Data {
