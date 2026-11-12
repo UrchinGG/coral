@@ -315,6 +315,7 @@ fn router(state: ApiState) -> Router {
         )
         .route("/guilds/{guild_id}/roles/{role_id}/strip", post(strip_role))
         .route("/guilds/{guild_id}/sources", put(set_guild_sources))
+        .route("/guilds/{guild_id}/shadow", get(shadow))
         .route("/guilds/{guild_id}/jobs", get(list_jobs))
         .route("/sources", get(list_sources).post(add_source))
         .route("/sources/{source_id}", axum::routing::delete(remove_source))
@@ -675,6 +676,18 @@ fn source_view(data: &Data, source: &SyncSource) -> SourceView {
         connected: status.as_ref().is_some_and(|status| status.connected),
         error: status.and_then(|status| status.error),
     }
+}
+
+/// Read-only: what a resync would change now. Writes nothing to Discord.
+async fn shadow(
+    State(state): State<ApiState>,
+    Path(guild_id): Path<u64>,
+) -> Result<Json<crate::service::Shadow>, SettingsError> {
+    crate::service::shadow_guild(&state.http, &state.data, GuildId::new(guild_id))
+        .await
+        .map_err(|e| SettingsError::Upstream(format!("shadow run: {e}")))?
+        .map(Json)
+        .ok_or_else(|| SettingsError::NotFound(format!("server {guild_id} has no sync config")))
 }
 
 async fn list_jobs(

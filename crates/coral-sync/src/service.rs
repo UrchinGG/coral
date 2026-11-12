@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use serde::Serialize;
 use serde_json::Value;
 use serenity::all::*;
 use serenity::nonmax::NonMaxU16;
@@ -19,6 +20,7 @@ use database::SyncSource;
 const BULK_CONCURRENCY: usize = 5;
 const NICKNAME_BYPASS_ROLE_ENV: &str = "NICKNAME_BYPASS_ROLE_ID";
 const MEMBERS_PER_PAGE: u16 = 1000;
+const SHADOW_SAMPLES: usize = 25;
 
 pub type CancelToken = Arc<AtomicBool>;
 
@@ -210,6 +212,118 @@ async fn sync_in(
     Ok(())
 }
 
+/// What a resync would change right now, computed without touching Discord: the
+/// shadow run that has to agree with today's sync before writes are switched on.
+#[derive(Default, Serialize)]
+pub struct Shadow {
+    members: usize,
+    unchanged: usize,
+    role_changes: usize,
+    nickname_changes: usize,
+    skipped: usize,
+    samples: Vec<ShadowSample>,
+}
+
+#[derive(Serialize)]
+struct ShadowSample {
+    discord_id: String,
+    nick: Option<String>,
+    new_nick: Option<String>,
+    roles_added: Vec<String>,
+    roles_removed: Vec<String>,
+}
+
+pub async fn shadow_guild(http: &Http, data: &Data, guild_id: GuildId) -> Result<Option<Shadow>> {
+    let Some(server) = load_settings(data, guild_id).await? else {
+        return Ok(None);
+    };
+    let members: Vec<Member> = fetch_all_members(http, guild_id)
+        .await?
+        .into_iter()
+        .filter(|member| !member.user.bot())
+        .collect();
+    let discord_ids: Vec<i64> = members.iter().map(|m| m.user.id.get() as i64).collect();
+    let uuids: Arc<StdHashMap<i64, String>> = Arc::new(
+        MemberRepository::new(data.db.pool())
+            .get_linked_by_discord_ids(&discord_ids)
+            .await?
+            .into_iter()
+            .filter_map(|m| m.uuid.map(|uuid| (m.discord_id, uuid)))
+            .collect(),
+    );
+
+    let (server, semaphore) = (Arc::new(server), Arc::new(Semaphore::new(BULK_CONCURRENCY)));
+    let mut tasks = tokio::task::JoinSet::new();
+    let mut shadow = Shadow {
+        members: members.len(),
+        ..Shadow::default()
+    };
+    for member in members {
+        let permit = semaphore.clone().acquire_owned().await?;
+        let (data, server, uuids) = (data.clone(), server.clone(), uuids.clone());
+        tasks.spawn(async move {
+            let _permit = permit;
+            let plan = plan_resync(&data, &server, &uuids, &member).await;
+            (member, plan)
+        });
+    }
+    while let Some(joined) = tasks.join_next().await {
+        let (member, plan) = joined?;
+        let Some(changes) = plan else {
+            shadow.skipped += 1;
+            continue;
+        };
+        if changes.is_empty() {
+            shadow.unchanged += 1;
+            continue;
+        }
+        shadow.role_changes += usize::from(changes.roles.is_some());
+        shadow.nickname_changes += usize::from(changes.nickname.is_some());
+        if shadow.samples.len() < SHADOW_SAMPLES {
+            shadow.samples.push(sample(&member, changes));
+        }
+    }
+    Ok(Some(shadow))
+}
+
+/// The plan a resync job would act on: stored snapshots only, no custom suffixes.
+async fn plan_resync(
+    data: &Data,
+    server: &ServerSync,
+    uuids: &StdHashMap<i64, String>,
+    member: &Member,
+) -> Option<Changes> {
+    let uuid = uuids.get(&(member.user.id.get() as i64));
+    let hypixel = match uuid {
+        Some(uuid) => sources::hypixel(data, uuid, HypixelRead::Stored).await,
+        None => None,
+    };
+    match (uuid, hypixel) {
+        (Some(uuid), Some(hypixel)) => plan_linked(data, member, uuid, server, &hypixel, false)
+            .await
+            .ok(),
+        _ => Some(plan_unlinked(member, server)),
+    }
+}
+
+fn sample(member: &Member, changes: Changes) -> ShadowSample {
+    let ids = |roles: Vec<&RoleId>| roles.into_iter().map(|r| r.get().to_string()).collect();
+    let (added, removed) = match &changes.roles {
+        Some(roles) => (
+            ids(roles.iter().filter(|r| !member.roles.contains(r)).collect()),
+            ids(member.roles.iter().filter(|r| !roles.contains(r)).collect()),
+        ),
+        None => (Vec::new(), Vec::new()),
+    };
+    ShadowSample {
+        discord_id: member.user.id.to_string(),
+        nick: member.nick.as_deref().map(String::from),
+        new_nick: changes.nickname,
+        roles_added: added,
+        roles_removed: removed,
+    }
+}
+
 pub async fn sync_guild_cached(
     ctx: &Context,
     data: &Data,
@@ -232,7 +346,7 @@ async fn try_sync_guild(
     };
     let settings = Arc::new(settings);
 
-    let non_bots: Vec<_> = fetch_all_members(ctx, guild_id)
+    let non_bots: Vec<_> = fetch_all_members(&ctx.http, guild_id)
         .await?
         .into_iter()
         .filter(|m| !m.user.bot())
@@ -347,6 +461,28 @@ pub(crate) async fn sync_member(
     hypixel: &Value,
     preserve_custom: bool,
 ) -> Result<bool> {
+    match plan_linked(data, member, uuid, server, hypixel, preserve_custom).await {
+        Ok(changes) => apply(ctx, data, guild_id, member.user.id, changes).await,
+        Err(Unavailable) => {
+            tracing::debug!(
+                "Skipped {} in {guild_id}: a source has never answered for them",
+                member.user.id
+            );
+            Ok(false)
+        }
+    }
+}
+
+/// What a linked member should change, or `Unavailable` when a source the server uses
+/// has never answered for them.
+async fn plan_linked(
+    data: &Data,
+    member: &Member,
+    uuid: &str,
+    server: &ServerSync,
+    hypixel: &Value,
+    preserve_custom: bool,
+) -> Result<Changes, Unavailable> {
     let coral = sources::coral(data, member.user.id.get(), uuid).await;
     let discord_name = member
         .user
@@ -355,17 +491,8 @@ pub(crate) async fn sync_member(
         .unwrap_or(&member.user.name);
     let mut context = sources::context(hypixel, Some(discord_name), &coral);
     for source in &server.sources {
-        match sources::external(data, source, member.user.id.get()).await {
-            Ok(Some(value)) => sources::add_external(&mut context, &source.name, value),
-            Ok(None) => {}
-            Err(Unavailable) => {
-                tracing::debug!(
-                    "Skipped {} in {guild_id}: {} has never answered for them",
-                    member.user.id,
-                    source.name
-                );
-                return Ok(false);
-            }
+        if let Some(value) = sources::external(data, source, member.user.id.get()).await? {
+            sources::add_external(&mut context, &source.name, value);
         }
     }
     let roles: Vec<RoleId> = member.roles.iter().copied().collect();
@@ -374,14 +501,13 @@ pub(crate) async fn sync_member(
         nick: member.nick.as_deref(),
     };
     let nickname_frozen = coral.nickname_paused || holds_bypass_role(member);
-    let changes = engine::linked_changes(
+    Ok(engine::linked_changes(
         &server.settings,
         &context,
         &current,
         nickname_frozen,
         preserve_custom,
-    );
-    apply(ctx, data, guild_id, member.user.id, changes).await
+    ))
 }
 
 async fn sync_unlinked_member(
@@ -391,13 +517,17 @@ async fn sync_unlinked_member(
     member: &Member,
     server: &ServerSync,
 ) -> Result<bool> {
+    let changes = plan_unlinked(member, server);
+    apply(ctx, data, guild_id, member.user.id, changes).await
+}
+
+fn plan_unlinked(member: &Member, server: &ServerSync) -> Changes {
     let roles: Vec<RoleId> = member.roles.iter().copied().collect();
     let current = Current {
         roles: &roles,
         nick: member.nick.as_deref(),
     };
-    let changes = engine::unlinked_changes(&server.settings, &current);
-    apply(ctx, data, guild_id, member.user.id, changes).await
+    engine::unlinked_changes(&server.settings, &current)
 }
 
 async fn apply(
@@ -621,16 +751,12 @@ pub async fn startup_sync(ctx: Context, data: Data) {
     tracing::info!("Startup sync complete");
 }
 
-async fn fetch_all_members(ctx: &Context, guild_id: GuildId) -> Result<Vec<Member>> {
+async fn fetch_all_members(http: &Http, guild_id: GuildId) -> Result<Vec<Member>> {
     let mut all = Vec::new();
     let mut after = None;
     loop {
         let chunk = guild_id
-            .members(
-                &ctx.http,
-                Some(NonMaxU16::new(MEMBERS_PER_PAGE).unwrap()),
-                after,
-            )
+            .members(http, Some(NonMaxU16::new(MEMBERS_PER_PAGE).unwrap()), after)
             .await?;
         if chunk.is_empty() {
             break;
