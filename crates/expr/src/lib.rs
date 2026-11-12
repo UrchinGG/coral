@@ -516,6 +516,12 @@ fn eval(expr: &Expr, ctx: &Value) -> EvalResult {
                     let d = r.as_number();
                     EvalResult::Number(if d == 0.0 { 0.0 } else { l.as_number() % d })
                 }
+                // Nothing is not a number: it is neither above nor below anything.
+                BinOp::Gt | BinOp::Lt | BinOp::Ge | BinOp::Le
+                    if matches!(l, EvalResult::Null) || matches!(r, EvalResult::Null) =>
+                {
+                    EvalResult::Bool(false)
+                }
                 BinOp::Gt => EvalResult::Bool(l.as_number() > r.as_number()),
                 BinOp::Lt => EvalResult::Bool(l.as_number() < r.as_number()),
                 BinOp::Ge => EvalResult::Bool(l.as_number() >= r.as_number()),
@@ -705,5 +711,29 @@ fn split_format_spec(inner: &str) -> (&str, Option<String>) {
             }
         }
         None => (inner, None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn a_missing_field_is_neither_above_nor_below_anything() {
+        let ctx = json!({"rbw": {"elo": 800}});
+        for condition in [
+            "rbw.wins < 10",
+            "rbw.wins > 10",
+            "rbw.wins <= 0",
+            "rbw.wins >= 0",
+            "0 < rbw.wins",
+        ] {
+            assert!(!eval_condition(condition, &ctx).unwrap(), "{condition}");
+        }
+        assert!(eval_condition("rbw.elo < 1000", &ctx).unwrap());
+        assert!(!eval_condition("rbw.wins == 0", &ctx).unwrap());
+        assert!(eval_condition("rbw.wins != 0", &ctx).unwrap());
     }
 }

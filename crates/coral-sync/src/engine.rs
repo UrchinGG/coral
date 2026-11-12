@@ -278,13 +278,13 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_field_reads_as_nothing_so_less_than_matches() {
+    fn a_missing_field_matches_no_comparison_and_renders_empty() {
         let context = json!({"displayname": "Nelly"});
         let eval = |condition| expr::eval_condition(condition, &context).unwrap();
         assert!(!eval("rbw.elo >= 1000"));
         assert!(
-            eval("rbw.elo < 1000"),
-            "a member the source does not know is below any bar"
+            !eval("rbw.elo < 1000"),
+            "a member the source does not know has no elo"
         );
         assert!(!eval("rbw.ranked"));
         assert_eq!(
