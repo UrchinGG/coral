@@ -151,7 +151,13 @@ pub async fn require_moderator(
     next: Next,
 ) -> Result<Response, StatusCode> {
     let api_key = extract_api_key(&request).ok_or(StatusCode::UNAUTHORIZED)?;
-    let member = authenticate_personal_key(&state, &api_key).await?;
+    let member = match authenticate_key(&state, &api_key).await? {
+        AuthResult::Personal(member) => member,
+        AuthResult::Developer(member, permissions) => {
+            require_tag_permission(permissions)?;
+            member
+        }
+    };
     if AccessRank::from_level(member.access_level) < AccessRank::Moderator {
         return Err(StatusCode::FORBIDDEN);
     }
@@ -195,11 +201,21 @@ async fn authorize_with_key(
             request.extensions_mut().insert(AuthenticatedMember(member));
         }
         AuthResult::Developer(member, permissions) => {
+            if is_tag_write(request.method(), request.uri().path()) {
+                require_tag_permission(permissions)?;
+            }
             request.extensions_mut().insert(AuthenticatedMember(member));
             request
                 .extensions_mut()
                 .insert(DeveloperKeyAuth { permissions });
         }
+    }
+    Ok(())
+}
+
+fn require_tag_permission(permissions: i64) -> Result<(), StatusCode> {
+    if permissions & database::permissions::TAGS == 0 {
+        return Err(StatusCode::FORBIDDEN);
     }
     Ok(())
 }
@@ -543,25 +559,6 @@ async fn authenticate_key(state: &AppState, api_key: &str) -> Result<AuthResult,
 
     record_caller(Caller::anonymous(KeyKind::Invalid));
     Err(StatusCode::UNAUTHORIZED)
-}
-
-async fn authenticate_personal_key(state: &AppState, api_key: &str) -> Result<Member, StatusCode> {
-    let Some(member) = MemberRepository::new(state.db.pool())
-        .get_by_api_key(api_key)
-        .await
-        .map_err(|e| internal_failure("member key lookup failed", e))?
-    else {
-        record_caller(Caller::anonymous(KeyKind::Invalid));
-        return Err(StatusCode::UNAUTHORIZED);
-    };
-    record_caller(Caller::member(KeyKind::Personal, member.id));
-
-    if member.key_locked {
-        return Err(StatusCode::FORBIDDEN);
-    }
-    refuse_wasteful_key(state, member.id).await?;
-    check_rate_limit(state, api_key, PERSONAL_RATE_LIMIT).await?;
-    Ok(member)
 }
 
 async fn refuse_wasteful_key(state: &AppState, member: i64) -> Result<(), StatusCode> {

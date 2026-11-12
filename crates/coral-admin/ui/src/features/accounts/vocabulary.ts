@@ -23,6 +23,7 @@ export const DEV_KEY_PERMISSIONS = [
   { bit: 2, label: "Hypixel" },
   { bit: 4, label: "All sessions" },
   { bit: 8, label: "Link accounts" },
+  { bit: 16, label: "Tags" },
 ] as const;
 
 export const LIMITER_LABEL: Record<Limiter, { label: string; unit: string }> = {

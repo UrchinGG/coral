@@ -8,6 +8,7 @@ pub mod permissions {
     pub const HYPIXEL: i64 = 1 << 1;
     pub const ALL_SESSIONS: i64 = 1 << 2;
     pub const LINK_ACCOUNTS: i64 = 1 << 3;
+    pub const TAGS: i64 = 1 << 4;
 
     pub fn label(perm: i64) -> &'static str {
         match perm {
@@ -15,11 +16,12 @@ pub mod permissions {
             HYPIXEL => "Hypixel",
             ALL_SESSIONS => "All Sessions",
             LINK_ACCOUNTS => "Link Accounts",
+            TAGS => "Tags",
             _ => "Unknown",
         }
     }
 
-    pub const ALL: &[i64] = &[PLAYER_DATA, HYPIXEL, ALL_SESSIONS, LINK_ACCOUNTS];
+    pub const ALL: &[i64] = &[PLAYER_DATA, HYPIXEL, ALL_SESSIONS, LINK_ACCOUNTS, TAGS];
 }
 
 #[derive(Debug, Clone, FromRow)]
