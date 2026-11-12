@@ -7,5 +7,6 @@ pub mod interact;
 pub mod jobs;
 pub mod review_media;
 pub mod service;
+pub mod settings;
 pub mod sources;
 pub mod utils;

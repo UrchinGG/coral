@@ -6,7 +6,6 @@ use std::time::Duration;
 
 use chrono::Utc;
 use serde_json::{Value, json};
-use serenity::all::Member;
 
 use database::{BlacklistRepository, CacheRepository, MemberRepository};
 
@@ -67,7 +66,7 @@ pub async fn coral(data: &Data, discord_id: u64, uuid: &str) -> CoralFacts {
     }
 }
 
-pub fn context(hypixel: &Value, member: &Member, coral: &CoralFacts) -> Value {
+pub fn context(hypixel: &Value, discord_name: Option<&str>, coral: &CoralFacts) -> Value {
     let mut ctx = hypixel.clone();
 
     if ctx.pointer("/achievements/bedwars_level").is_none() {
@@ -82,9 +81,7 @@ pub fn context(hypixel: &Value, member: &Member, coral: &CoralFacts) -> Value {
         "bracket_close": bracket_close,
     });
 
-    ctx["discord"] = json!({
-        "name": member.user.global_name.as_deref().unwrap_or(&member.user.name),
-    });
+    ctx["discord"] = json!({ "name": discord_name });
     ctx["coral"] = json!({ "access": coral.access, "linked": true });
     ctx["standing"] = json!({ "trusted": coral.trusted });
     ctx["blacklist"] = blacklist(&coral.tags);

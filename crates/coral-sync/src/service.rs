@@ -335,7 +335,12 @@ pub(crate) async fn sync_member(
     preserve_custom: bool,
 ) -> Result<bool> {
     let coral = sources::coral(data, member.user.id.get(), uuid).await;
-    let context = sources::context(hypixel, member, &coral);
+    let discord_name = member
+        .user
+        .global_name
+        .as_deref()
+        .unwrap_or(&member.user.name);
+    let context = sources::context(hypixel, Some(discord_name), &coral);
     let roles: Vec<RoleId> = member.roles.iter().copied().collect();
     let current = Current {
         roles: &roles,
