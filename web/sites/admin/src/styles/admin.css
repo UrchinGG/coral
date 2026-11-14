@@ -877,3 +877,130 @@ button.table-row.request[aria-expanded="true"] {
   color: var(--color-text-secondary);
   font-size: var(--text-sm);
 }
+
+.seg {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-inset);
+
+  & button {
+    height: 26px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 4px;
+    background: none;
+    color: var(--color-text-secondary);
+    font: inherit;
+    font-size: var(--text-xs);
+    cursor: pointer;
+
+    &.on {
+      background: var(--color-border);
+      color: var(--color-text-strong);
+    }
+  }
+}
+
+.panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+
+  & span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+
+  &.dashed {
+    height: 0;
+    border-width: 2px 0 0;
+    border-style: dashed;
+    border-radius: 0;
+  }
+}
+
+.stack-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 140px;
+
+  & .column {
+    display: flex;
+    flex: 1;
+    flex-direction: column-reverse;
+    min-height: 1px;
+    overflow: hidden;
+    border-radius: 2px 2px 0 0;
+
+    & i {
+      flex-basis: 0;
+      min-height: 1px;
+    }
+  }
+}
+
+.area-chart {
+  display: block;
+  width: 100%;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.table-row.route-row,
+.table-row.caller {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--color-divider);
+  background: none;
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+
+  &.head {
+    border-top: 0;
+    font-size: var(--text-2xs);
+    cursor: default;
+  }
+
+  &[aria-pressed="true"] {
+    background: var(--color-surface-raised);
+    box-shadow: inset 2px 0 0 var(--color-text-strong);
+  }
+}
+
+button.table-row:hover:not(.head) {
+  background: var(--color-surface-hover);
+}
+
+.table-row.route-row {
+  grid-template-columns: minmax(240px, 2fr) repeat(4, minmax(70px, 1fr));
+  min-width: 640px;
+}
+
+.table-row.caller {
+  grid-template-columns: minmax(160px, 1.6fr) 100px repeat(3, minmax(70px, 1fr));
+  min-width: 560px;
+}
