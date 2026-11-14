@@ -6,7 +6,7 @@ use crate::state::AppState;
 
 mod guilds;
 mod moderation;
-mod page;
+pub(crate) mod page;
 mod plugins;
 mod review;
 mod server;
