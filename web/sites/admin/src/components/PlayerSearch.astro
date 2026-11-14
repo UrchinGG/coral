@@ -1,0 +1,127 @@
+<section id="player-search" class="list">
+  <form class="toolbar" role="search">
+    <input
+      class="field grow"
+      type="search"
+      name="q"
+      placeholder="Search by name, former name or UUID"
+      aria-label="Search players"
+    />
+  </form>
+  <div data-results></div>
+  <div class="panels" data-lists></div>
+</section>
+
+<script>
+  import { load } from "@/lib/api";
+  import { el, panel, row } from "@/lib/dom";
+  import { FORMATS } from "@/lib/format";
+  import type { Labels } from "@/lib/members";
+  import { refLink, type Ref } from "@/lib/refs";
+  import { search, searchMojang } from "@/lib/search";
+  import { setQuery } from "@/lib/tabbar";
+  import { ago } from "@/lib/time";
+
+  const SEARCH_DELAY_MS = 300;
+  const MINECRAFT_NAME = /^[a-z0-9_]{3,16}$/i;
+  const root = document.getElementById("player-search")!;
+  const input = root.querySelector("input")!;
+  const results = root.querySelector<HTMLElement>("[data-results]")!;
+  const lists = root.querySelector<HTMLElement>("[data-lists]")!;
+  let generation = 0;
+
+  async function run(q: string) {
+    const mine = ++generation;
+    setQuery("q", q || null);
+    lists.hidden = Boolean(q);
+    if (!q) return results.replaceChildren();
+    results.replaceChildren(
+      el("p", { className: "muted", textContent: "Searching…" }),
+    );
+    try {
+      const response = await search(q);
+      let hits = response.hits.filter((hit) => hit.ref.kind === "player");
+      if (!hits.length && MINECRAFT_NAME.test(q))
+        hits = (await searchMojang(q)).filter(
+          (hit) => hit.ref.kind === "player",
+        );
+      if (mine !== generation) return;
+      const rows = hits.map((hit) =>
+        row(hit.reason, refLink(hit.ref, response.labels)),
+      );
+      results.replaceChildren(
+        rows.length
+          ? panel(`Players · ${rows.length}`, ...rows)
+          : el("p", {
+              className: "muted",
+              textContent: `No player matches "${q}".`,
+            }),
+      );
+    } catch (error) {
+      if (mine === generation)
+        results.replaceChildren(
+          el("p", {
+            className: "muted",
+            textContent: (error as Error).message,
+          }),
+        );
+    }
+  }
+
+  interface Top {
+    players: { player: string; requests: number; last_seen: string }[];
+    labels: Labels;
+  }
+
+  interface Tagged {
+    items: {
+      player: Ref;
+      display_name: string;
+      author: Ref | null;
+      at: string;
+    }[];
+    labels: Labels;
+  }
+
+  Promise.all([
+    load<Top>("/players/top?window=24h"),
+    load<Tagged>("/players/recently-tagged"),
+  ]).then(([top, tagged]) => {
+    lists.replaceChildren(
+      panel(
+        "Top Looked Up · 24 h",
+        ...top.players.map((entry) =>
+          row(
+            FORMATS.number(entry.requests),
+            refLink({ kind: "player", uuid: entry.player }, top.labels),
+          ),
+        ),
+      ),
+      panel(
+        "Recently Tagged",
+        ...tagged.items.map((item) =>
+          row(
+            item.display_name,
+            refLink(item.player, tagged.labels),
+            el("span", { className: "dim", textContent: ` · ${ago(item.at)}` }),
+          ),
+        ),
+      ),
+    );
+  });
+
+  let typing: ReturnType<typeof setTimeout>;
+  input.addEventListener("input", () => {
+    clearTimeout(typing);
+    typing = setTimeout(() => run(input.value.trim()), SEARCH_DELAY_MS);
+  });
+  root.querySelector("form")!.addEventListener("submit", (event) => {
+    event.preventDefault();
+    run(input.value.trim());
+  });
+  const initial = new URLSearchParams(location.search).get("q");
+  if (initial) {
+    input.value = initial;
+    run(initial);
+  }
+</script>

@@ -830,3 +830,17 @@ button.table-row.request[aria-expanded="true"] {
     margin: 10px 14px;
   }
 }
+
+.bars.tall {
+  height: 96px;
+}
+
+.table-row.requesters {
+  grid-template-columns: minmax(140px, 1.4fr) 90px 80px 60px 60px 110px 100px;
+  min-width: 700px;
+}
+
+.check {
+  flex-direction: row !important;
+  align-items: center;
+}
