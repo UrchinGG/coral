@@ -73,6 +73,7 @@ const section = sectionOf(path);
 </html>
 
 <script>
+  import { omnibox } from "@/lib/omnibox";
   import { session } from "@/lib/session";
 
   const menu = document.querySelector<HTMLButtonElement>(".menu")!;
@@ -94,6 +95,19 @@ const section = sectionOf(path);
     (event) => event.key === "Escape" && setOpen(false),
   );
 
+  omnibox(document.querySelector<HTMLInputElement>(".search")!);
+
   const me = await session();
-  if (me) document.getElementById("who")!.textContent = me.discord_id;
+  if (me) {
+    const who = document.getElementById("who")!;
+    who.textContent = me.discord_id;
+    const response = await fetch("/api/labels", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ discord: [me.discord_id], minecraft: [] }),
+    });
+    if (response.ok)
+      who.textContent =
+        (await response.json()).discord[me.discord_id] ?? me.discord_id;
+  }
 </script>
