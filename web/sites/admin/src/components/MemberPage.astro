@@ -75,8 +75,8 @@
     id: number;
     reason: string;
     struck_by: Ref;
-    issued_at: number;
-    expires_at: number | null;
+    issued_at: string;
+    expires_at: string | null;
     status: string;
   }
 
@@ -87,8 +87,8 @@
       access_level: number;
       key_locked: boolean;
       tagging_disabled: boolean;
-      join_date: number;
-      last_request_at: number | null;
+      join_date: string;
+      last_request_at: string | null;
       request_count: number;
     } | null;
     keys: {
@@ -99,7 +99,7 @@
         locked: boolean;
       } | null;
     };
-    minecraft: { player: Ref; relation: string; linked_at: number | null }[];
+    minecraft: { player: Ref; relation: string; linked_at: string | null }[];
     former_minecraft: number;
     standing: {
       can_vote: boolean;
