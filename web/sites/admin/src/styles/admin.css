@@ -1146,3 +1146,36 @@ button.table-row:hover:not(.head) {
 .pill {
   font-size: var(--text-xs);
 }
+
+.table-row.job {
+  grid-template-columns:
+    minmax(220px, 2fr) 100px 100px minmax(140px, 1.4fr)
+    70px;
+  min-width: 720px;
+
+  & > span {
+    white-space: normal;
+  }
+}
+
+.block {
+  display: block;
+  margin-top: 2px;
+}
+
+.table-row.audit {
+  grid-template-columns: 130px minmax(110px, 1fr) minmax(140px, 1.2fr) minmax(
+      140px,
+      1.4fr
+    );
+  min-width: 600px;
+}
+
+.button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.stack > .button {
+  align-self: flex-start;
+}

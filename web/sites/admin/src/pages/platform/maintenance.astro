@@ -3,5 +3,287 @@ import Admin from "@/layouts/Admin.astro";
 ---
 
 <Admin title="Maintenance & Audit">
-  <p class="placeholder">Background jobs and the staff action log go here.</p>
+  <div id="maintenance" class="stack">
+    <h2 class="group-title">Jobs</h2>
+    <p class="muted" data-status></p>
+    <div class="table" data-jobs></div>
+    <div class="panels">
+      <section class="panel">
+        <h2 class="panel-title">Recompute Rollups</h2>
+        <p class="muted">
+          Reruns the traffic and caller rollups over a time range, replacing
+          what is stored there.
+        </p>
+        <form class="inline-form" data-recompute>
+          <label class="ffield">
+            <span class="label">From</span>
+            <input class="field" type="datetime-local" name="from" required />
+          </label>
+          <label class="ffield">
+            <span class="label">To</span>
+            <input class="field" type="datetime-local" name="to" required />
+          </label>
+          <button class="button">Recompute</button>
+        </form>
+      </section>
+      <section class="panel" data-pending>
+        <h2 class="panel-title">Pending</h2>
+      </section>
+    </div>
+    <h2 class="group-title">Audit Log</h2>
+    <input
+      class="field"
+      type="search"
+      placeholder="Filter by staff, action or target"
+      aria-label="Filter the audit log"
+      data-filter
+    />
+    <div class="table" data-actions></div>
+    <button type="button" class="button" data-older hidden>
+      Load older
+    </button>
+  </div>
 </Admin>
+
+<script>
+  import { load, send } from "@/lib/api";
+  import { el, row } from "@/lib/dom";
+  import { FORMATS, titleCase } from "@/lib/format";
+  import type { Labels } from "@/lib/members";
+  import { refLink, refName, type Ref } from "@/lib/refs";
+  import { ago, moment } from "@/lib/time";
+
+  interface JobStatus {
+    state: string;
+    started_at: string;
+    finished_at: string | null;
+    progress: unknown;
+    error: string | null;
+  }
+
+  interface Maintenance {
+    jobs: { name: string; status: JobStatus | null }[];
+    pending: {
+      subjects: { spans: unknown[] };
+      discord_names: number;
+      indexes: string[];
+    };
+    window_open: boolean;
+  }
+
+  interface AdminAction {
+    id: number;
+    at: string;
+    actor: Ref;
+    action: string;
+    target: Ref | null;
+    target_text: string;
+  }
+
+  const STARTABLE = ["subjects", "discord-names", "index-catchup"];
+  const ACTIVE = ["running", "waiting"];
+  const POLL_MS = 5_000;
+  const PAGE = 50;
+  const DESCRIPTIONS: Record<string, string> = {
+    rollups:
+      "Rolls traffic, callers, network and top players out of the request log. Runs by itself.",
+    recompute: "Reruns the rollups over a chosen time range.",
+    subjects:
+      "Extracts the players each request named for days before subject logging began, oldest first.",
+    "discord-names": "Fetches the Discord names of members with none cached.",
+    "index-catchup": "Builds any index a request log partition is missing.",
+  };
+  const root = document.getElementById("maintenance")!;
+  const part = <T extends HTMLElement = HTMLElement>(name: string) =>
+    root.querySelector<T>(`[data-${name}]`)!;
+  let poll: ReturnType<typeof setTimeout>;
+
+  const stateClass = (state: string) =>
+    state === "failed" ? "bad" : ACTIVE.includes(state) ? "ok" : "dim";
+
+  function job(entry: Maintenance["jobs"][number]) {
+    const status = entry.status;
+    const start = el("button", {
+      type: "button",
+      className: "button small",
+      textContent: "Start",
+      disabled: !!status && ACTIVE.includes(status.state),
+    });
+    start.addEventListener("click", async () => {
+      part("status").textContent = (await send(
+        `/maintenance/${entry.name}`,
+        "POST",
+        {},
+      ))
+        ? `${titleCase(entry.name)} started.`
+        : "That job didn't start.";
+      refreshJobs();
+    });
+    const progress = status?.progress ? JSON.stringify(status.progress) : "";
+    const line = el(
+      "div",
+      { className: "table-row job" },
+      el(
+        "span",
+        {},
+        el("b", {
+          className: "strong",
+          textContent: titleCase(entry.name.replace(/-/g, "_")),
+        }),
+        el("span", {
+          className: "muted block",
+          textContent: DESCRIPTIONS[entry.name] ?? "",
+        }),
+      ),
+      el("span", {
+        className: stateClass(status?.state ?? "idle"),
+        textContent: status ? titleCase(status.state) : "Never run",
+      }),
+      el("span", {
+        className: "dim",
+        textContent: status ? ago(status.finished_at ?? status.started_at) : "",
+      }),
+      el("span", {
+        className: status?.error ? "bad" : "mono dim",
+        textContent: status?.error ?? progress,
+      }),
+      STARTABLE.includes(entry.name) ? start : el("span"),
+    );
+    return line;
+  }
+
+  async function refreshJobs() {
+    clearTimeout(poll);
+    const data = await load<Maintenance>("/maintenance");
+    const head = el(
+      "div",
+      { className: "table-row job head" },
+      ...["Job", "State", "Last Run", "Progress", ""].map((label) =>
+        el("span", { textContent: label }),
+      ),
+    );
+    part("jobs").replaceChildren(head, ...data.jobs.map(job));
+    part("pending").replaceChildren(
+      el("h2", { className: "panel-title", textContent: "Pending" }),
+      row("Discord names to fetch", FORMATS.number(data.pending.discord_names)),
+      row(
+        "Indexes to build",
+        data.pending.indexes.length ? data.pending.indexes.join(", ") : "None",
+      ),
+      row(
+        "Subject spans to backfill",
+        FORMATS.number(data.pending.subjects.spans.length),
+      ),
+      row("Maintenance window", data.window_open ? "Open" : "Closed"),
+    );
+    if (
+      data.jobs.some(
+        (entry) => entry.status && ACTIVE.includes(entry.status.state),
+      )
+    )
+      poll = setTimeout(refreshJobs, POLL_MS);
+  }
+
+  part<HTMLFormElement>("recompute").addEventListener(
+    "submit",
+    async (event) => {
+      event.preventDefault();
+      const values = new FormData(event.target as HTMLFormElement);
+      const range = {
+        from: new Date(String(values.get("from"))).toISOString(),
+        to: new Date(String(values.get("to"))).toISOString(),
+      };
+      part("status").textContent = (await send(
+        "/maintenance/recompute",
+        "POST",
+        range,
+      ))
+        ? "Recompute started."
+        : "Recompute didn't start.";
+      refreshJobs();
+    },
+  );
+
+  const actions: { item: AdminAction; line: HTMLElement; text: string }[] = [];
+  let before: string | null = null;
+  let labels: Labels = { discord: {}, minecraft: {} };
+
+  async function labelsFor(items: AdminAction[]) {
+    const discord = items.flatMap((item) =>
+      [item.actor, item.target].flatMap((ref) =>
+        ref?.kind === "account" ? [ref.discord_id] : [],
+      ),
+    );
+    const response = await fetch("/api/labels", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ discord, minecraft: [] }),
+    });
+    if (response.ok) {
+      const fresh: Labels = await response.json();
+      labels = {
+        discord: { ...labels.discord, ...fresh.discord },
+        minecraft: { ...labels.minecraft, ...fresh.minecraft },
+      };
+    }
+  }
+
+  function applyFilter() {
+    const text = part<HTMLInputElement>("filter").value.trim().toLowerCase();
+    for (const entry of actions)
+      entry.line.hidden = Boolean(text) && !entry.text.includes(text);
+  }
+
+  async function older() {
+    const params = new URLSearchParams({ limit: String(PAGE) });
+    if (before) params.set("before", before);
+    const page = await load<{
+      items: AdminAction[];
+      next_before: string | null;
+    }>(`/actions?${params}`);
+    await labelsFor(page.items);
+    for (const item of page.items) {
+      const line = el(
+        "div",
+        { className: "table-row audit" },
+        el("span", { className: "dim", textContent: moment(item.at) }),
+        el("span", {}, refLink(item.actor, labels)),
+        el("span", { textContent: titleCase(item.action) }),
+        el(
+          "span",
+          {},
+          item.target ? refLink(item.target, labels) : item.target_text,
+        ),
+      );
+      actions.push({
+        item,
+        line,
+        text: [
+          refName(item.actor, labels),
+          item.action,
+          item.target ? refName(item.target, labels) : item.target_text,
+        ]
+          .join(" ")
+          .toLowerCase(),
+      });
+      part("actions").append(line);
+    }
+    before = page.next_before;
+    part("older").hidden = before === null;
+    applyFilter();
+  }
+
+  part("actions").append(
+    el(
+      "div",
+      { className: "table-row audit head" },
+      ...["When", "Staff", "Action", "Target"].map((label) =>
+        el("span", { textContent: label }),
+      ),
+    ),
+  );
+  part("older").addEventListener("click", older);
+  part("filter").addEventListener("input", applyFilter);
+  refreshJobs();
+  older();
+</script>
