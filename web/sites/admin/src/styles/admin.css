@@ -844,3 +844,16 @@ button.table-row.request[aria-expanded="true"] {
   flex-direction: row !important;
   align-items: center;
 }
+
+.table-row.guild {
+  grid-template-columns: minmax(160px, 1.6fr) 80px 70px 90px 100px minmax(
+      90px,
+      1fr
+    );
+  min-width: 640px;
+}
+
+.table-row.guild-member {
+  grid-template-columns: minmax(160px, 1.4fr) minmax(100px, 1fr) 120px;
+  min-width: 420px;
+}
