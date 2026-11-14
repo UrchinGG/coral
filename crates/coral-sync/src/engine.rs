@@ -26,10 +26,17 @@ pub struct Current<'a> {
     pub nick: Option<&'a str>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NicknameMode {
+    Synced,
+    Paused,
+}
+
 #[derive(Debug, Default, PartialEq)]
 pub struct Changes {
     pub roles: Option<Vec<RoleId>>,
     pub nickname: Option<String>,
+    pub badge_reset: bool,
 }
 
 impl Settings {
@@ -59,14 +66,13 @@ impl Changes {
     }
 }
 
-/// `nickname_frozen` covers a paused member or one holding the bypass role.
 /// `preserve_custom` keeps what a member typed after the template's own text,
 /// for templates that place `discord.nickname`.
 pub fn linked_changes(
     settings: &Settings,
     context: &Value,
     current: &Current,
-    nickname_frozen: bool,
+    mode: NicknameMode,
     preserve_custom: bool,
 ) -> Changes {
     let mut roles = current.roles.to_vec();
@@ -84,15 +90,26 @@ pub fn linked_changes(
         }
     }
 
-    let nickname = match &settings.nickname_template {
-        Some(template) if !nickname_frozen => {
-            render_nickname(template, context, current.nick, preserve_custom)
+    let (nickname, badge_reset) = match (&settings.nickname_template, mode) {
+        (Some(template), NicknameMode::Synced) => (
+            render_nickname(template, context, current.nick, preserve_custom),
+            false,
+        ),
+        (Some(template), NicknameMode::Paused)
+            if current
+                .nick
+                .is_some_and(|nick| claims_badge_for_another_name(nick, context)) =>
+        {
+            let nickname = render_nickname(template, context, current.nick, false);
+            let reset = nickname.is_some();
+            (nickname, reset)
         }
-        _ => None,
+        _ => (None, false),
     };
     Changes {
         roles: (roles != current.roles).then_some(roles),
         nickname,
+        badge_reset,
     }
 }
 
@@ -110,6 +127,7 @@ pub fn unlinked_changes(settings: &Settings, current: &Current) -> Changes {
     Changes {
         roles: (roles != current.roles).then_some(roles),
         nickname: None,
+        badge_reset: false,
     }
 }
 
@@ -142,6 +160,33 @@ fn custom_suffix(template: &str, context: &mut Value, current: Option<&str>) -> 
         .map(|rest| rest.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_default()
+}
+
+fn claims_badge_for_another_name(nick: &str, context: &Value) -> bool {
+    let own_name = context
+        .pointer("/hypixel/displayname")
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty());
+    has_star_badge(nick) && !own_name.is_some_and(|name| names(nick, name))
+}
+
+fn has_star_badge(nick: &str) -> bool {
+    let chars: Vec<char> = nick.chars().filter(|c| !c.is_whitespace()).collect();
+    chars.windows(2).any(|pair| match pair {
+        [a, b] => {
+            (a.is_numeric() && is_badge_symbol(*b)) || (is_badge_symbol(*a) && b.is_numeric())
+        }
+        _ => false,
+    })
+}
+
+fn is_badge_symbol(c: char) -> bool {
+    !c.is_ascii() && !c.is_alphanumeric()
+}
+
+fn names(nick: &str, name: &str) -> bool {
+    nick.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .any(|word| word.eq_ignore_ascii_case(name))
 }
 
 fn add(roles: &mut Vec<RoleId>, role: RoleId) {
@@ -191,7 +236,7 @@ mod tests {
             &settings(None),
             &context(150),
             &current(&[OTHER, UNLINKED], None),
-            false,
+            NicknameMode::Synced,
             false,
         );
         assert_eq!(changes.roles, Some(vec![OTHER, LINKED, PRESTIGE]));
@@ -204,7 +249,7 @@ mod tests {
             &settings(None),
             &context(50),
             &current(&[LINKED, PRESTIGE], None),
-            false,
+            NicknameMode::Synced,
             false,
         );
         assert_eq!(changes.roles, Some(vec![LINKED]));
@@ -216,7 +261,7 @@ mod tests {
             &settings(Some("{displayname}")),
             &context(150),
             &current(&[LINKED, PRESTIGE], Some("Nelly")),
-            false,
+            NicknameMode::Synced,
             false,
         );
         assert!(changes.is_empty());
@@ -230,7 +275,7 @@ mod tests {
             &template,
             &context(150),
             &current(&roles, None),
-            false,
+            NicknameMode::Synced,
             false,
         );
         assert_eq!(fresh.nickname.as_deref(), Some("Nelly"));
@@ -238,7 +283,7 @@ mod tests {
             &template,
             &context(150),
             &current(&roles, None),
-            true,
+            NicknameMode::Paused,
             false,
         );
         assert_eq!(frozen.nickname, None);
@@ -252,7 +297,7 @@ mod tests {
             &template,
             &context(150),
             &current(&roles, Some("Nelly gg")),
-            false,
+            NicknameMode::Synced,
             true,
         );
         assert_eq!(kept.nickname, None, "already right");
@@ -260,7 +305,7 @@ mod tests {
             &template,
             &context(150),
             &current(&roles, Some("Nelly gg")),
-            false,
+            NicknameMode::Synced,
             false,
         );
         assert_eq!(
@@ -268,6 +313,51 @@ mod tests {
             Some("Nelly "),
             "an empty custom part leaves the separator"
         );
+    }
+
+    const BADGE: &str = "[{hypixel.achievements.bedwars_level}✫] {hypixel.displayname}";
+
+    fn paused(nick: &str) -> Changes {
+        let context = json!({
+            "hypixel": {"displayname": "Nelly", "achievements": {"bedwars_level": 120}},
+        });
+        linked_changes(
+            &settings(Some(BADGE)),
+            &context,
+            &current(&[LINKED], Some(nick)),
+            NicknameMode::Paused,
+            true,
+        )
+    }
+
+    #[test]
+    fn a_paused_member_keeps_a_nickname_of_their_own() {
+        for nick in ["cool guy", "Nelly 2", "team 7", "cool ♥ guy"] {
+            assert!(paused(nick).is_empty(), "{nick}");
+        }
+    }
+
+    #[test]
+    fn a_paused_member_keeps_a_badge_beside_their_own_name() {
+        for nick in ["[120✫] Nelly", "[90✫] nelly", "Nelly ★300 | gg"] {
+            assert!(paused(nick).is_empty(), "{nick}");
+        }
+    }
+
+    #[test]
+    fn a_paused_member_cannot_claim_a_badge_for_another_name() {
+        for nick in [
+            "[673✫] Imposter",
+            "[673 ✫] Imposter",
+            "673★ Imposter",
+            "Imposter ⭐673",
+            "【６７３✫】 Imposter",
+            "[673✫] Nellyy",
+        ] {
+            let changes = paused(nick);
+            assert_eq!(changes.nickname.as_deref(), Some("[120✫] Nelly"), "{nick}");
+            assert!(changes.badge_reset, "{nick}");
+        }
     }
 
     #[test]
