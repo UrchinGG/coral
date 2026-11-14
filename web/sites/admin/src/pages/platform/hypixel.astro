@@ -3,5 +3,96 @@ import Admin from "@/layouts/Admin.astro";
 ---
 
 <Admin title="Hypixel">
-  <p class="placeholder">Hypixel capacity goes here.</p>
+  <div id="hypixel" class="stack">
+    <section class="panel keyhero">
+      <div class="ring" data-ring role="img" aria-label="Hypixel capacity used">
+        <div class="ring-hole">
+          <b data-percent>—</b>
+        </div>
+      </div>
+      <div class="ring-text">
+        <span class="label">Hypixel capacity used</span>
+        <span data-used>Reading Hypixel's limit…</span>
+      </div>
+      <div class="herofacts">
+        <div>
+          <span class="label">Calls, last hour</span>
+          <b data-calls>—</b>
+        </div>
+        <div>
+          <span class="label">Errors, last hour</span>
+          <b data-errors>—</b>
+        </div>
+      </div>
+    </section>
+    <p class="muted" data-status></p>
+    <div class="stack" data-extensions></div>
+  </div>
 </Admin>
+
+<script>
+  import { load } from "@/lib/api";
+  import { el } from "@/lib/dom";
+  import { renderView, type ExtensionView } from "@/lib/extension";
+  import { FORMATS } from "@/lib/format";
+
+  interface Upstream {
+    series: { requests: number; errors: number }[];
+    capacity: { used: number; limit: number } | null;
+  }
+
+  const WARN_SHARE = 0.9;
+  const root = document.getElementById("hypixel")!;
+  const part = (name: string) =>
+    root.querySelector<HTMLElement>(`[data-${name}]`)!;
+
+  load<Upstream>("/traffic/upstream?window=1h").then(({ series, capacity }) => {
+    part("calls").textContent = FORMATS.number(
+      series.reduce((sum, point) => sum + point.requests, 0),
+    );
+    part("errors").textContent = FORMATS.number(
+      series.reduce((sum, point) => sum + point.errors, 0),
+    );
+    if (!capacity)
+      return (part("used").textContent = "Hypixel hasn't reported a limit yet");
+    const share = Math.round((capacity.used / capacity.limit) * 100);
+    part("percent").textContent = `${share}%`;
+    part("used").textContent =
+      `${FORMATS.number(capacity.used)} of ${FORMATS.number(capacity.limit)} requests this window`;
+    const tone = share / 100 > WARN_SHARE ? "var(--color-warning)" : "#3a9a5b";
+    part("ring").style.background =
+      `conic-gradient(${tone} 0 ${share}%, var(--color-border) ${share}% 100%)`;
+  });
+
+  async function show(id: string, holder: HTMLElement) {
+    const run = async (action: string, input: Record<string, unknown>) => {
+      const response = await fetch(
+        `/api/extensions/${encodeURIComponent(id)}/${encodeURIComponent(action)}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(input),
+        },
+      );
+      const answer = await response.json().catch(() => null);
+      part("status").textContent = response.ok
+        ? answer.message
+        : (answer?.error?.message ?? `That didn't work (${response.status}).`);
+      if (response.ok) draw(answer.view);
+    };
+    const draw = (view: ExtensionView) =>
+      holder.replaceChildren(
+        el("h2", { className: "group-title", textContent: view.title }),
+        renderView(view, run),
+      );
+    draw(await load<ExtensionView>(`/extensions/${encodeURIComponent(id)}`));
+  }
+
+  load<{ id: string; title: string }[]>("/extensions").then((extensions) => {
+    for (const extension of extensions) {
+      const holder = el("section", { className: "stack" });
+      part("extensions").append(holder);
+      show(extension.id, holder);
+    }
+  });
+</script>
