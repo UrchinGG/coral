@@ -55,6 +55,7 @@ mod tests {
     const BODY_LIMIT: usize = 1 << 20;
     const LOGIN_PAGE_LIMIT: usize = 2048;
     const BUILD: &str = "test-build";
+    const HOME_PAGE: &str = "/urchin";
     const CLEARED_SESSION: &str = "__Secure-urchin_session=; Domain=urchin.gg; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0";
     const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
@@ -155,13 +156,6 @@ mod tests {
             .find(|(key, _)| key == name)
             .map(|(_, value)| value.into_owned())
             .unwrap()
-    }
-
-    async fn first_asset_path(harness: &Harness) -> String {
-        let index = body_text(harness.send_as_owner(Request::get("/")).await).await;
-        let start = index.find("/assets/").unwrap();
-        let end = start + index[start..].find('"').unwrap();
-        index[start..end].to_string()
     }
 
     #[tokio::test]
@@ -279,21 +273,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn owner_gets_index_html_without_caching_for_spa_paths() {
+    async fn owner_gets_each_page_without_caching() {
         let harness = Harness::new();
-        for path in ["/", "/members/12", "/starfish/plugins/x?tab=y"] {
+        for path in [
+            HOME_PAGE,
+            "/urchin/members?id=12",
+            "/starfish/plugins?slug=x",
+        ] {
             let response = harness.send_as_owner(Request::get(path)).await;
             assert_eq!(response.status(), StatusCode::OK, "{path}");
             assert!(header_value(&response, header::CONTENT_TYPE).starts_with("text/html"));
             assert_eq!(header_value(&response, header::CACHE_CONTROL), "no-store");
-            assert!(body_text(response).await.contains("<div id=\"root\">"));
+            assert!(body_text(response).await.contains("<main id=\"content\">"));
         }
+    }
+
+    #[tokio::test]
+    async fn owner_root_redirects_home_and_unknown_pages_are_missing() {
+        let harness = Harness::new();
+        let root = harness.send_as_owner(Request::get("/")).await;
+        assert_eq!(root.status(), StatusCode::SEE_OTHER);
+        assert_eq!(location(&root), HOME_PAGE);
+        let missing = harness.send_as_owner(Request::get("/members/12")).await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
     async fn owner_index_carries_the_boot_payload_for_the_signed_in_owner() {
         let harness = Harness::new();
-        let index = body_text(harness.send_as_owner(Request::get("/players/x")).await).await;
+        let index = body_text(
+            harness
+                .send_as_owner(Request::get("/urchin/players?q=x"))
+                .await,
+        )
+        .await;
         let open = "<script id=\"boot\" type=\"application/json\">";
         let start = index.find(open).unwrap() + open.len();
         let end = start + index[start..].find("</script>").unwrap();
@@ -321,7 +334,7 @@ mod tests {
     #[tokio::test]
     async fn owner_gets_embedded_assets_with_private_immutable_caching() {
         let harness = Harness::new();
-        let index = body_text(harness.send_as_owner(Request::get("/")).await).await;
+        let index = body_text(harness.send_as_owner(Request::get(HOME_PAGE)).await).await;
         let start = index.find("/assets/").unwrap();
         let end = start + index[start..].find('"').unwrap();
         let response = harness
@@ -340,31 +353,6 @@ mod tests {
         let response = harness.send_as_owner(Request::get("/assets/nope.js")).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         assert_eq!(body_text(response).await, "");
-    }
-
-    #[tokio::test]
-    async fn brotli_clients_get_the_asset_precompressed_at_build_time() {
-        let harness = Harness::new();
-        let path = first_asset_path(&harness).await;
-        let plain = harness.send_as_owner(Request::get(&path)).await;
-        let brotli = harness
-            .send_as_owner(Request::get(&path).header(header::ACCEPT_ENCODING, "gzip, br"))
-            .await;
-        assert_eq!(header_value(&brotli, header::CONTENT_ENCODING), "br");
-        assert!(plain.headers().get(header::CONTENT_ENCODING).is_none());
-        for response in [&plain, &brotli] {
-            assert_eq!(header_value(response, header::VARY), "accept-encoding");
-        }
-        assert_eq!(
-            header_value(&brotli, header::CONTENT_TYPE),
-            header_value(&plain, header::CONTENT_TYPE)
-        );
-        let plain_len = to_bytes(plain.into_body(), BODY_LIMIT).await.unwrap().len();
-        let brotli_len = to_bytes(brotli.into_body(), BODY_LIMIT)
-            .await
-            .unwrap()
-            .len();
-        assert!(brotli_len < plain_len);
     }
 
     #[tokio::test]
@@ -531,7 +519,7 @@ mod tests {
             harness.send(Request::get("/members")).await,
             harness.send(Request::get("/assets/x.js")).await,
             harness.send(Request::get("/api/ping")).await,
-            harness.send_as_owner(Request::get("/")).await,
+            harness.send_as_owner(Request::get(HOME_PAGE)).await,
             harness
                 .send_as_owner(Request::get("/api/doesnotexist"))
                 .await,

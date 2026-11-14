@@ -49,6 +49,5 @@ moka = { version = "0.12", features = ["future"] }
 
 [dev-dependencies]
 rust-embed = { version = "8", features = ["debug-embed"] }
-brotli-decompressor = "6"
 tower = { workspace = true, features = ["util"] }
 tokio = { workspace = true, features = ["test-util"] }

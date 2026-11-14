@@ -38,7 +38,6 @@ jobs:
       rust: ${{ steps.affected.outputs.rust }}
       packages: ${{ steps.affected.outputs.packages }}
       services: ${{ steps.affected.outputs.services }}
-      admin_panel: ${{ steps.affected.outputs.admin_panel }}
       coral_web: ${{ steps.affected.outputs.coral_web }}
       web: ${{ steps.affected.outputs.web }}
       deploy: ${{ steps.affected.outputs.deploy }}
@@ -88,7 +87,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - run: mkdir -p crates/coral-admin/ui/dist
+      - run: mkdir -p web/sites/admin/dist
       - run: cargo clippy --all-targets $(printf -- '-p %s ' $PACKAGES)
 
   test:
@@ -105,29 +104,12 @@ jobs:
         if: contains(env.PACKAGES, 'coral-admin')
         with:
           node-version: 22
-      - name: Build the admin panel that coral-admin's tests serve
+      - name: Build the admin site that coral-admin's tests serve
         if: contains(env.PACKAGES, 'coral-admin')
-        working-directory: crates/coral-admin/ui
-        run: npm ci && npm run build
-      - run: mkdir -p crates/coral-admin/ui/dist
+        working-directory: web
+        run: npm ci && npm run build:admin
+      - run: mkdir -p web/sites/admin/dist
       - run: cargo test $(printf -- '-p %s ' $PACKAGES)
-
-  admin-panel:
-    needs: changes
-    if: needs.changes.outputs.admin_panel == 'true'
-    runs-on: [self-hosted, linux, coral]
-    defaults:
-      run:
-        working-directory: crates/coral-admin/ui
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: npm ci
-      - run: npm run build
-      - run: npm run lint
-      - run: npm test
 
   coral-web:
     needs: changes
@@ -227,7 +209,7 @@ jobs:
           done
 
   deploy:
-    needs: [changes, fmt, clippy, test, admin-panel, coral-web, images]
+    needs: [changes, fmt, clippy, test, web, coral-web, images]
     if: >-
       !cancelled() && !contains(needs.*.result, 'failure')
       && github.event_name != 'pull_request' && github.ref == 'refs/heads/master'

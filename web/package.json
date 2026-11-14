@@ -8,14 +8,16 @@
   "scripts": {
     "dev": "astro dev --root sites/urchin",
     "dev:starfish": "astro dev --root sites/starfish",
-    "build": "npm run build:urchin && npm run build:starfish",
+    "build": "npm run build:urchin && npm run build:starfish && npm run build:admin",
     "build:urchin": "astro check --root sites/urchin && astro build --root sites/urchin",
     "build:starfish": "astro check --root sites/starfish && astro build --root sites/starfish",
     "build:viewer": "wasm-pack build ../../urchin-replay/crates/replay-viewer --target web --release --no-pack --out-dir ../../../coral/web/sites/urchin/src/viewer/pkg",
     "preview": "astro preview --root sites/urchin",
     "preview:starfish": "astro preview --root sites/starfish",
-    "check": "astro check --root sites/urchin && astro check --root sites/starfish && prettier --check .",
-    "format": "prettier --write ."
+    "check": "astro check --root sites/urchin && astro check --root sites/starfish && astro check --root sites/admin && prettier --check .",
+    "format": "prettier --write .",
+    "dev:admin": "astro dev --root sites/admin",
+    "build:admin": "astro check --root sites/admin && astro build --root sites/admin"
   },
   "dependencies": {
     "astro": "^7.4.2"
