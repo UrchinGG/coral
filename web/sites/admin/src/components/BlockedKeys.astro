@@ -1,0 +1,51 @@
+<section class="stat-group" id="blocked" hidden>
+  <h2 class="group-title">
+    Blocked Keys <span class="note" data-count></span>
+  </h2>
+  <ul class="rows" data-list></ul>
+</section>
+
+<script>
+  import { load, send } from "@/lib/api";
+
+  interface Flag {
+    key: string;
+    kind: string;
+    summary: string;
+    refs: { type?: string; discord_id?: string }[];
+  }
+
+  const root = document.getElementById("blocked")!;
+  const list = root.querySelector("[data-list]")!;
+
+  const row = (flag: Flag) => {
+    const item = document.createElement("li");
+    const account = flag.refs.find((ref) => ref.discord_id)?.discord_id;
+    const text = document.createElement("span");
+    text.textContent = flag.summary;
+    item.append(text);
+    if (account) {
+      const link = document.createElement("a");
+      link.href = `/urchin/members?id=${account}`;
+      link.textContent = "Open member";
+      item.append(link);
+    }
+    const dismiss = document.createElement("button");
+    dismiss.type = "button";
+    dismiss.className = "button";
+    dismiss.textContent = "Dismiss";
+    dismiss.addEventListener("click", async () => {
+      if (await send(`/flags/${encodeURIComponent(flag.key)}/dismiss`, "POST"))
+        item.remove();
+    });
+    item.append(dismiss);
+    return item;
+  };
+
+  load<{ flags: Flag[] }>("/flags").then(({ flags }) => {
+    const blocked = flags.filter((flag) => flag.kind === "waste");
+    root.hidden = blocked.length === 0;
+    root.querySelector("[data-count]")!.textContent = String(blocked.length);
+    list.replaceChildren(...blocked.map(row));
+  });
+</script>

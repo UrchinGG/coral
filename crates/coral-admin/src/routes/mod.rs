@@ -21,6 +21,7 @@ mod keys;
 mod labels;
 mod maintenance;
 mod moderation_recent;
+mod overview;
 mod platform;
 mod players;
 mod ref_labels;
@@ -49,6 +50,7 @@ pub fn api_router(state: AppState) -> Router {
         .route("/maintenance/recompute", post(maintenance::recompute))
         .route("/maintenance/{job}", post(maintenance::start))
         .route("/players/top", get(top_players::top_players))
+        .route("/overview", get(overview::overview))
         .nest("/requests", request_log::router())
         .nest("/players", players::router())
         .nest("/extensions", extensions::router())

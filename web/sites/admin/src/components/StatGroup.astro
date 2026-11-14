@@ -1,0 +1,33 @@
+---
+import type { Format } from "@/lib/format";
+
+interface Props {
+  title?: string;
+  note?: { value: string; format: Format };
+  stats: { label: string; value: string; format?: Format }[];
+}
+
+const { title, note, stats } = Astro.props;
+---
+
+<section class="stat-group">
+  {title && (
+    <h2 class="group-title">
+      {title}
+      {note && (
+        <span class="note" data-value={note.value} data-format={note.format} />
+      )}
+    </h2>
+  )}
+  <div class="stats">
+    {stats.map((stat) => (
+      <div class="stat">
+        <span class="label">{stat.label}</span>
+        <b data-value={stat.value} data-format={stat.format ?? "number"}>
+          —
+        </b>
+      </div>
+    ))}
+    <slot />
+  </div>
+</section>

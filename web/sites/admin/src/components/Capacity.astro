@@ -1,0 +1,70 @@
+<section class="panel capacity" id="capacity">
+  <h2 class="panel-title">Hypixel Capacity</h2>
+  <div class="capacity-body">
+    <div class="capacity-reading">
+      <b class="big" data-percent>
+        —
+      </b>
+      <span class="meter">
+        <span data-meter></span>
+      </span>
+      <span class="muted" data-used>
+        Reading Hypixel's limit…
+      </span>
+    </div>
+    <div class="capacity-chart">
+      <span class="muted">Hypixel calls per minute, last hour</span>
+      <div
+        class="bars"
+        data-bars
+        role="img"
+        aria-label="Hypixel calls per minute over the last hour"
+      ></div>
+      <div class="axis">
+        <span>60 min ago</span>
+        <span>30 min</span>
+        <span>Now</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  import { load } from "@/lib/api";
+  import { FORMATS } from "@/lib/format";
+
+  interface Upstream {
+    series: { requests: number }[];
+    capacity: { used: number; limit: number } | null;
+  }
+
+  const WARN_SHARE = 0.9;
+  const root = document.getElementById("capacity")!;
+  const part = (name: string) =>
+    root.querySelector<HTMLElement>(`[data-${name}]`)!;
+
+  load<Upstream>("/traffic/upstream?window=1h").then(
+    ({ series, capacity }) => {
+      if (capacity) {
+        const share = capacity.used / capacity.limit;
+        part("percent").textContent = `${Math.round(share * 100)}%`;
+        part("meter").style.width = `${Math.min(share, 1) * 100}%`;
+        root.classList.toggle("warn", share > WARN_SHARE);
+        part("used").textContent =
+          `${FORMATS.number(capacity.used)} of ${FORMATS.number(capacity.limit)} used this window`;
+      } else {
+        part("used").textContent = "Hypixel hasn't reported a limit yet";
+      }
+      const peak = Math.max(1, ...series.map((point) => point.requests));
+      part("bars").replaceChildren(
+        ...series.map((point) => {
+          const bar = document.createElement("span");
+          bar.style.height = `${(point.requests / peak) * 100}%`;
+          bar.title = `${FORMATS.number(point.requests)} calls`;
+          return bar;
+        }),
+      );
+    },
+    (error: Error) => (part("used").textContent = error.message),
+  );
+</script>
