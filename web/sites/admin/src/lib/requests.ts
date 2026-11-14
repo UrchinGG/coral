@@ -1,0 +1,162 @@
+import { load } from "@/lib/api";
+import { el } from "@/lib/dom";
+import type { Labels } from "@/lib/members";
+import { refLink, refName, type Ref } from "@/lib/refs";
+import { time, day } from "@/lib/time";
+
+export interface Subject {
+  player: string | null;
+  name: string | null;
+  raw: string;
+}
+
+export interface RequestRow {
+  request_id: string;
+  ts: string;
+  method: string;
+  route: string | null;
+  path: string;
+  status: number;
+  cause: string;
+  error: string | null;
+  latency_ms: number;
+  key_kind: string;
+  key_prefix: string | null;
+  requester: Ref;
+  ip: Ref | null;
+  country: string | null;
+  user_agent: string | null;
+  subjects: Subject[];
+}
+
+interface RequestFull {
+  url: string;
+  headers: Record<string, string> | null;
+  body: string | null;
+  detail_state: string;
+  server_error: string | null;
+}
+
+const statusClass = (status: number) =>
+  status >= 500
+    ? "bad"
+    : status === 429
+      ? "warn"
+      : status >= 400
+        ? "warn"
+        : "ok";
+
+export function methodBadge(method: string) {
+  return el("span", {
+    className: `method m-${method.toLowerCase()}`,
+    textContent: method,
+  });
+}
+
+function subjectText(subjects: Subject[], labels: Labels) {
+  if (!subjects.length) return "";
+  const first = subjects[0];
+  const name = first.player
+    ? (labels.minecraft[first.player] ?? first.name ?? first.raw)
+    : (first.name ?? first.raw);
+  return subjects.length > 1 ? `${name} +${subjects.length - 1}` : name;
+}
+
+async function detail(row: RequestRow, box: HTMLElement) {
+  box.textContent = "Loading…";
+  try {
+    const full = await load<RequestFull>(
+      `/requests/${row.request_id}?t=${encodeURIComponent(row.ts)}`,
+    );
+    const fact = (label: string, value: string, className = "") =>
+      el(
+        "div",
+        { className: "fact" },
+        el("span", { className: "label", textContent: label }),
+        el("span", { className, textContent: value }),
+      );
+    const facts = [
+      fact("URL", full.url, "mono"),
+      fact("Latency", `${row.latency_ms} ms`),
+      fact(
+        "Key",
+        row.key_prefix ? `${row.key_prefix}… (${row.key_kind})` : row.key_kind,
+      ),
+      fact("Country", row.country ?? "Unknown"),
+      fact("User agent", row.user_agent ?? "None", "mono"),
+      fact("Cause", row.cause),
+      ...(row.error ? [fact("Error", row.error, "bad")] : []),
+      ...(full.server_error
+        ? [fact("Server error", full.server_error, "bad")]
+        : []),
+    ];
+    const headers = full.headers
+      ? el("pre", {
+          className: "code",
+          textContent: Object.entries(full.headers)
+            .map(([name, value]) => `${name}: ${value}`)
+            .join("\n"),
+        })
+      : el("p", {
+          className: "muted",
+          textContent: `Headers ${full.detail_state.replace("_", " ")}.`,
+        });
+    const body = full.body
+      ? el("pre", { className: "code", textContent: full.body })
+      : "";
+    box.replaceChildren(
+      el("div", { className: "facts" }, ...facts),
+      headers,
+      body,
+    );
+  } catch (error) {
+    box.textContent = (error as Error).message;
+  }
+}
+
+export function requestRow(row: RequestRow, labels: Labels) {
+  const box = el("div", { className: "row-detail", hidden: true });
+  const line = el(
+    "button",
+    { type: "button", className: "table-row request", title: day(row.ts) },
+    el("span", { className: "dim", textContent: time(row.ts) }),
+    el(
+      "span",
+      { className: "route" },
+      methodBadge(row.method),
+      row.route ?? row.path,
+    ),
+    el("span", { textContent: refName(row.requester, labels) }),
+    el("span", {
+      className: "player",
+      textContent: subjectText(row.subjects, labels),
+    }),
+    el("span", {
+      className: `mono ${statusClass(row.status)}`,
+      textContent: String(row.status),
+    }),
+    el("span", {
+      className: "mono dim",
+      textContent: row.ip ? refName(row.ip, labels) : "",
+    }),
+    el("span", { className: "num dim", textContent: `${row.latency_ms} ms` }),
+  );
+  line.addEventListener("click", () => {
+    box.hidden = !box.hidden;
+    line.setAttribute("aria-expanded", String(!box.hidden));
+    if (!box.hidden && !box.childElementCount) detail(row, box);
+  });
+  return el("div", { className: "request-item" }, line, box);
+}
+
+export function requestHead() {
+  return el(
+    "div",
+    { className: "table-row request head" },
+    ...["Time", "Route", "Requester", "Player", "Status", "IP", "Latency"].map(
+      (label) => el("span", { textContent: label }),
+    ),
+  );
+}
+
+export { refLink };
