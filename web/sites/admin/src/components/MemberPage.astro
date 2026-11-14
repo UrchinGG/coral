@@ -1,0 +1,362 @@
+<section id="member-page" class="member" hidden>
+  <nav class="crumbs-nav" aria-label="Breadcrumb">
+    <a href="/urchin/members">Members</a>
+    <span aria-hidden="true">/</span>
+    <span data-crumb></span>
+  </nav>
+  <header class="member-head">
+    <div class="member-title">
+      <h1 data-name>Loading…</h1>
+      <div class="meta" data-meta></div>
+      <div class="issues" data-issues></div>
+    </div>
+    <div class="actions" data-actions></div>
+  </header>
+  <p class="muted" data-status></p>
+  <div class="panels" data-overview></div>
+
+  <dialog data-dialog="strike">
+    <form method="dialog" class="dialog-form">
+      <h2>Strike</h2>
+      <label>
+        Reason <input class="field" name="reason" maxlength="100" required />
+      </label>
+      <label>
+        Length
+        <select class="field" name="duration_days">
+          <option value="14">14 days</option>
+          <option value="30">30 days</option>
+        </select>
+      </label>
+      <div class="actions">
+        <button class="button" value="cancel" formnovalidate>
+          Cancel
+        </button>
+        <button class="button primary" value="confirm">
+          Strike
+        </button>
+      </div>
+    </form>
+  </dialog>
+  <dialog data-dialog="access">
+    <form method="dialog" class="dialog-form">
+      <h2>Access Level</h2>
+      <select class="field" name="level">
+        <option value="0">Default</option>
+        <option value="2">Helper</option>
+        <option value="3">Moderator</option>
+        <option value="4">Admin</option>
+      </select>
+      <div class="actions">
+        <button class="button" value="cancel" formnovalidate>
+          Cancel
+        </button>
+        <button class="button primary" value="confirm">
+          Save
+        </button>
+      </div>
+    </form>
+  </dialog>
+</section>
+
+<script>
+  import { load, send } from "@/lib/api";
+  import { el, panel, row, widePanel } from "@/lib/dom";
+  import { FORMATS } from "@/lib/format";
+  import { accessLabel, memberUrl, type Labels } from "@/lib/members";
+  import { ago, day } from "@/lib/time";
+
+  interface Ref {
+    discord_id?: string;
+    uuid?: string;
+  }
+
+  interface Strike {
+    id: number;
+    reason: string;
+    struck_by: Ref;
+    issued_at: number;
+    expires_at: number | null;
+    status: string;
+  }
+
+  interface Core {
+    account: Ref;
+    member: {
+      id: number;
+      access_level: number;
+      key_locked: boolean;
+      tagging_disabled: boolean;
+      join_date: number;
+      last_request_at: number | null;
+      request_count: number;
+    } | null;
+    keys: {
+      personal: string | null;
+      developer: {
+        label: string;
+        request_count: number;
+        locked: boolean;
+      } | null;
+    };
+    minecraft: { player: Ref; relation: string; linked_at: number | null }[];
+    former_minecraft: number;
+    standing: {
+      can_vote: boolean;
+      vote_reason: string;
+      can_tag: boolean;
+      tag_reason: string;
+      accepted_tags: number;
+      rejected_tags: number;
+      accurate_verdicts: number;
+      incorrect_verdicts: number;
+    } | null;
+    strikes: { active: number; items: Strike[] };
+    activity: { h24: { requests: number }; d14: { requests: number } };
+    labels: Labels;
+  }
+
+  const id = new URLSearchParams(location.search).get("id");
+  const root = document.getElementById("member-page")!;
+  const part = <T extends HTMLElement>(name: string) =>
+    root.querySelector<T>(`[data-${name}]`)!;
+  const dialog = (name: string) =>
+    root.querySelector<HTMLDialogElement>(`[data-dialog="${name}"]`)!;
+
+  const nameOf = (ref: Ref, labels: Labels) =>
+    ref.discord_id
+      ? (labels.discord[ref.discord_id] ?? ref.discord_id)
+      : (labels.minecraft[ref.uuid!] ?? ref.uuid!);
+
+  const masked = (secret: string) => {
+    const value = el("span", { className: "mono" }, "••••••••••••••••");
+    const eye = el("button", {
+      type: "button",
+      className: "button small",
+      textContent: "Show",
+    });
+    eye.addEventListener("click", () => {
+      const hidden = eye.textContent === "Show";
+      value.textContent = hidden ? secret : "••••••••••••••••";
+      eye.textContent = hidden ? "Hide" : "Show";
+    });
+    return el("span", { className: "inline" }, value, eye);
+  };
+
+  async function act(path: string, body?: unknown) {
+    const ok = await send(`/accounts/${id}${path}`, "POST", body ?? {});
+    part("status").textContent = ok
+      ? ""
+      : "That didn't work; the change was not saved.";
+    if (ok) show();
+  }
+
+  function ask(name: string, then: (form: FormData) => void) {
+    const box = dialog(name);
+    box.showModal();
+    box.addEventListener(
+      "close",
+      () =>
+        box.returnValue === "confirm" &&
+        then(new FormData(box.querySelector("form")!)),
+      { once: true },
+    );
+  }
+
+  function header(core: Core) {
+    const name = nameOf(core.account, core.labels);
+    const member = core.member;
+    document.title = `${name} | Urchin Admin`;
+    part("crumb").textContent = name;
+    part("name").textContent = name;
+    part("meta").replaceChildren(
+      ...[
+        member && accessLabel(member.access_level),
+        member && `#${member.id}`,
+        member && `Joined ${day(member.join_date)}`,
+        member && `Active ${ago(member.last_request_at)}`,
+        core.account.discord_id!,
+      ]
+        .filter(Boolean)
+        .map((text) => el("span", {}, text as string)),
+    );
+    const issues = [
+      member?.key_locked && "Key locked",
+      core.strikes.active &&
+        `${core.strikes.active} active ${core.strikes.active === 1 ? "strike" : "strikes"}`,
+      member?.tagging_disabled && "Tagging disabled",
+    ].filter(Boolean) as string[];
+    part("issues").replaceChildren(
+      ...issues.map((text) => el("span", { className: "issue" }, text)),
+    );
+    part("actions").replaceChildren(...(member ? actions(member) : []));
+  }
+
+  function actions(member: NonNullable<Core["member"]>) {
+    const button = (label: string, run: () => void, className = "button") => {
+      const element = el("button", {
+        type: "button",
+        className,
+        textContent: label,
+      });
+      element.addEventListener("click", run);
+      return element;
+    };
+    const keyMenu = el("select", { className: "field", ariaLabel: "API key" });
+    keyMenu.append(
+      el("option", { value: "", textContent: "API Key…" }),
+      el("option", {
+        value: member.key_locked ? "unlock" : "lock",
+        textContent: member.key_locked ? "Unlock Key" : "Lock Key",
+      }),
+      el("option", {
+        value: "api-key/regenerate",
+        textContent: "Regenerate Key",
+      }),
+      el("option", { value: "limits/reset", textContent: "Reset Limits" }),
+    );
+    keyMenu.addEventListener("change", () => {
+      const path = keyMenu.value;
+      keyMenu.value = "";
+      if (
+        path &&
+        confirm(
+          `${keyMenu.querySelector(`option[value="${path}"]`)?.textContent ?? path}?`,
+        )
+      )
+        act(`/${path}`);
+    });
+    return [
+      button(
+        "Strike",
+        () =>
+          ask("strike", (form) =>
+            act("/strikes", {
+              reason: form.get("reason"),
+              duration_days: Number(form.get("duration_days")),
+            }),
+          ),
+        "button danger",
+      ),
+      button(
+        member.tagging_disabled ? "Enable Tagging" : "Disable Tagging",
+        () => act("/tagging", { disabled: !member.tagging_disabled }),
+      ),
+      button("Access Level", () => {
+        (dialog("access").querySelector("select") as HTMLSelectElement).value =
+          String(member.access_level);
+        ask("access", (form) =>
+          act("/access-level", { level: Number(form.get("level")) }),
+        );
+      }),
+      keyMenu,
+    ];
+  }
+
+  function overview(core: Core) {
+    const accounts = core.minecraft.map((link) =>
+      row(
+        link.relation === "primary" ? "Primary" : "Alt",
+        nameOf(link.player, core.labels),
+        el(
+          "span",
+          { className: "dim" },
+          link.linked_at ? ` · ${day(link.linked_at)}` : "",
+        ),
+      ),
+    );
+    const member = core.member;
+    const standing = core.standing;
+    const strikes = core.strikes.items.map((strike) => {
+      const revoke = el("button", {
+        type: "button",
+        className: "button small",
+        textContent: "Revoke",
+      });
+      revoke.addEventListener("click", async () => {
+        if (
+          confirm(`Revoke the strike for "${strike.reason}"?`) &&
+          (await send(`/accounts/${id}/strikes/${strike.id}`, "DELETE"))
+        )
+          show();
+      });
+      return row(
+        strike.reason,
+        `${nameOf(strike.struck_by, core.labels)} · ${day(strike.issued_at)}${strike.expires_at ? ` to ${day(strike.expires_at)}` : ""}`,
+        strike.status === "active"
+          ? revoke
+          : el("span", { className: "dim" }, ` · ${strike.status}`),
+      );
+    });
+    return [
+      panel(
+        "Minecraft Accounts",
+        ...(accounts.length ? accounts : [row("None", "No linked accounts")]),
+        ...(core.former_minecraft
+          ? [row("Former", `${core.former_minecraft} unlinked`)]
+          : []),
+      ),
+      panel(
+        "Usage",
+        row("Requests, 24 h", FORMATS.number(core.activity.h24.requests)),
+        row("Requests, 14 d", FORMATS.number(core.activity.d14.requests)),
+        row("Requests, total", FORMATS.number(member?.request_count ?? 0)),
+        row(
+          "API key",
+          core.keys.personal ? masked(core.keys.personal) : "None",
+        ),
+        row(
+          "Developer key",
+          core.keys.developer
+            ? `${core.keys.developer.label}${core.keys.developer.locked ? " · locked" : ""}`
+            : "None",
+        ),
+      ),
+      ...(standing
+        ? [
+            panel(
+              "Standing",
+              row(
+                "Voting",
+                standing.can_vote ? "Allowed" : standing.vote_reason,
+              ),
+              row(
+                "Tagging",
+                standing.can_tag ? "Allowed" : standing.tag_reason,
+              ),
+              row(
+                "Submissions",
+                `${standing.accepted_tags} accepted, ${standing.rejected_tags} rejected`,
+              ),
+              row(
+                "Verdicts",
+                `${standing.accurate_verdicts} accurate, ${standing.incorrect_verdicts} incorrect`,
+              ),
+            ),
+          ]
+        : []),
+      panel(
+        "Strikes",
+        ...(strikes.length ? strikes : [row("None", "No strikes on record")]),
+      ),
+    ];
+  }
+
+  async function show() {
+    try {
+      const core = await load<Core>(`/accounts/${id}`);
+      header(core);
+      part("overview").replaceChildren(...overview(core));
+    } catch (error) {
+      part("status").textContent = (error as Error).message;
+    }
+  }
+
+  if (id) {
+    root.hidden = false;
+    document.getElementById("member-list")!.hidden = true;
+    document.querySelector("main > .crumbs")!.setAttribute("hidden", "");
+    history.replaceState(null, "", memberUrl(id));
+    show();
+  }
+</script>
