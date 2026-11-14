@@ -53,6 +53,8 @@ fn limiter_label(limiter: Limiter) -> &'static str {
         Limiter::Developer => "developer key limit",
         Limiter::Session => "Starfish session limit",
         Limiter::SessionUuids => "Starfish batch player budget",
+        Limiter::Minecraft => "Minecraft session limit",
+        Limiter::MinecraftUuids => "Minecraft batch player budget",
         Limiter::KeyUuids => "distinct player budget",
         Limiter::Tagging => "tagging limit",
     }
@@ -72,6 +74,7 @@ mod tests {
             },
             limits: vec![LimitUsage {
                 limiter: Limiter::KeyUuids,
+                player: None,
                 used,
                 limit,
             }],

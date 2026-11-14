@@ -33,6 +33,7 @@ pub struct LogRow {
     pub member_discord_id: Option<i64>,
     pub actor_id: Option<i64>,
     pub actor_member_id: Option<i64>,
+    pub actor_uuid: Option<Uuid>,
     pub ip: Option<String>,
     pub country: Option<String>,
     pub user_agent: Option<String>,
@@ -91,6 +92,7 @@ impl LogRow {
             member_discord_id: self.member_discord_id,
             actor_id: self.actor_id,
             actor_member_id: self.actor_member_id,
+            actor_uuid: self.actor_uuid,
             key_prefix: self.key_prefix.clone(),
         }
     }
@@ -144,6 +146,7 @@ pub mod tests {
             member_discord_id: Some(354_598_337_325_826_048),
             actor_id: None,
             actor_member_id: None,
+            actor_uuid: None,
             ip: None,
             country: None,
             user_agent: None,
@@ -221,6 +224,32 @@ pub mod tests {
             }
         );
         assert_eq!(session.actor(), None);
+    }
+
+    #[test]
+    fn minecraft_callers_are_their_account_unless_a_member_owns_it() {
+        let uuid = Uuid::from_u128(0x2c1f_6a0e_7d4b_4f3a_9e1d_5b8c_0a6f_3e21);
+        let linked = LogRow {
+            key_kind: Some("minecraft".into()),
+            key_prefix: None,
+            actor_uuid: Some(uuid),
+            ..row()
+        };
+        assert_eq!(
+            linked.requester(),
+            EntityRef::Account {
+                discord_id: 354_598_337_325_826_048,
+                member_id: Some(23025)
+            }
+        );
+        assert_eq!(linked.actor(), Some(EntityRef::Player { uuid }));
+        let unlinked = LogRow {
+            member_id: None,
+            member_discord_id: None,
+            ..linked
+        };
+        assert_eq!(unlinked.requester(), EntityRef::Player { uuid });
+        assert_eq!(unlinked.actor(), None);
     }
 
     #[test]

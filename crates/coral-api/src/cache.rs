@@ -1,4 +1,5 @@
 use chrono::{DateTime, Duration, Utc};
+use clients::{ClientError, HypixelClient};
 use coral_redis::minute_history::{CHANGED_SNAPSHOTS, FIRST_SNAPSHOTS, SNAPSHOT_HISTORY};
 use database::{CacheRepository, GuildCacheRepository, GuildCurrentRepository, SnapshotResult};
 use redis::aio::ConnectionManager;
@@ -6,13 +7,12 @@ use serde_json::Value;
 
 use crate::error::ApiError;
 use crate::state::AppState;
+use crate::waste::{calling_personal_key, charge_wasted_call};
 
 const SNAPSHOT_SOURCE: &str = "api";
 
 const GUILD_REFRESH_AGE_MINUTES: i64 = 5;
 const BACKGROUND_FRESH_MINUTES: i64 = 10;
-pub const DEFAULT_BACKGROUND_REFRESH_BUDGET: i64 = 90;
-const BACKGROUND_BUDGET_NAME: &str = "hypixel:background";
 
 pub fn parse_cache_age(raw: &str) -> Result<Duration, ApiError> {
     let invalid = || {
@@ -41,7 +41,7 @@ pub fn parse_cache_age(raw: &str) -> Result<Duration, ApiError> {
 }
 
 pub fn spawn_guild_refresh(state: &AppState, uuid: &str) {
-    let Some(hypixel) = state.hypixel.clone() else {
+    let Some(hypixel) = background_hypixel(state) else {
         return;
     };
     let state = state.clone();
@@ -55,11 +55,10 @@ pub fn spawn_guild_refresh(state: &AppState, uuid: &str) {
             return;
         };
         for guild_id in guild_ids {
-            if !take_background_budget(&state).await {
-                return;
-            }
-            if let Ok(Some(raw)) = hypixel.get_guild_by_id(&guild_id).await {
-                cache_guild(&state, &raw).await;
+            match hypixel.get_guild_by_id(&guild_id).await {
+                Ok(Some(raw)) => cache_guild(&state, &raw).await,
+                Err(ClientError::RateLimited) => return,
+                _ => {}
             }
         }
     });
@@ -78,7 +77,7 @@ pub async fn cache_guild(state: &AppState, raw: &Value) {
 }
 
 async fn discover_members(state: &AppState, raw: &Value) {
-    let Some(hypixel) = state.hypixel.as_deref() else {
+    let Some(hypixel) = background_hypixel(state) else {
         return;
     };
     let uuids: Vec<String> = raw["members"]
@@ -92,22 +91,50 @@ async fn discover_members(state: &AppState, raw: &Value) {
         return;
     };
     for uuid in undiscovered {
-        if !take_background_budget(state).await {
-            return;
-        }
-        if let Ok(Some(player)) = hypixel.get_player(&uuid).await {
-            store_player_snapshot(state, &uuid, &player, None).await;
+        match hypixel.get_player(&uuid).await {
+            Ok(Some(player)) => {
+                store_player_snapshot(state, &uuid, &player, None).await;
+            }
+            Err(ClientError::RateLimited) => return,
+            _ => {}
         }
     }
 }
 
 pub fn spawn_background_refresh(state: &AppState, uuid: &str) {
+    let Some(hypixel) = background_hypixel(state) else {
+        return;
+    };
+    let personal_key = calling_personal_key();
     let (state, uuid) = (state.clone(), uuid.to_string());
     tokio::spawn(async move {
-        if is_fresh(&state, &uuid).await || !take_background_budget(&state).await {
+        if is_fresh(&state, &uuid).await {
             return;
         }
-        refresh_player_cache(&state, &uuid, None).await;
+        let Ok(player) = hypixel.get_player(&uuid).await else {
+            return;
+        };
+        let wasted = match player {
+            Some(data) => {
+                let stored = store_player_snapshot(&state, &uuid, &data, None).await;
+                wasted_on_offline_player(&data, stored)
+            }
+            None => true,
+        };
+        if wasted {
+            charge_wasted_call(&state, personal_key).await;
+        }
+    });
+}
+
+pub fn spawn_snapshot_store(state: &AppState, uuid: &str, data: &Value, username: Option<String>) {
+    let personal_key = calling_personal_key();
+    let (state, uuid, data) = (state.clone(), uuid.to_string(), data.clone());
+    tokio::spawn(async move {
+        let stored = store_player_snapshot(&state, &uuid, &data, username.as_deref()).await;
+        if wasted_on_offline_player(&data, stored) {
+            charge_wasted_call(&state, personal_key).await;
+        }
     });
 }
 
@@ -116,8 +143,7 @@ pub async fn refresh_player_cache(
     uuid: &str,
     username: Option<&str>,
 ) -> Option<Value> {
-    let hypixel = state.hypixel.as_deref()?;
-    let data = hypixel.get_player(uuid).await.ok()??;
+    let data = state.hypixel.as_deref()?.get_player(uuid).await.ok()??;
     store_player_snapshot(state, uuid, &data, username).await;
     Some(data)
 }
@@ -127,30 +153,45 @@ pub async fn store_player_snapshot(
     uuid: &str,
     data: &Value,
     username: Option<&str>,
-) {
+) -> Option<SnapshotResult> {
+    if belongs_to_another_player(uuid, data) {
+        tracing::error!("not storing a snapshot of {uuid}: the payload is for another player");
+        return None;
+    }
     let stored = CacheRepository::new(state.db.pool())
         .store_snapshot(uuid, data, None, Some(SNAPSHOT_SOURCE), username)
-        .await;
-    let stored = match stored {
-        Ok(stored) => stored,
-        Err(e) => {
-            tracing::warn!("failed to store a snapshot of {uuid}: {e}");
-            return;
-        }
-    };
+        .await
+        .inspect_err(|e| tracing::warn!("failed to store a snapshot of {uuid}: {e}"))
+        .ok()?;
     let mut redis = state.redis.connection();
     if let Err(e) = count_snapshot(&mut redis, &stored, Utc::now()).await {
         tracing::warn!("failed to count a stored snapshot of {uuid}: {e}");
     }
+    Some(stored)
+}
+
+fn wasted_on_offline_player(player: &Value, stored: Option<SnapshotResult>) -> bool {
+    matches!(stored, Some(SnapshotResult::NoChange)) && is_offline(player)
+}
+
+fn is_offline(player: &Value) -> bool {
+    let at = |field| player.get(field).and_then(Value::as_i64);
+    matches!((at("lastLogin"), at("lastLogout")), (Some(login), Some(logout)) if logout >= login)
+}
+
+fn belongs_to_another_player(uuid: &str, data: &Value) -> bool {
+    data.get("uuid")
+        .and_then(Value::as_str)
+        .is_some_and(|payload| !payload.replace('-', "").eq_ignore_ascii_case(uuid))
 }
 
 async fn is_fresh(state: &AppState, uuid: &str) -> bool {
     let cutoff = Utc::now() - Duration::minutes(BACKGROUND_FRESH_MINUTES);
     matches!(
         CacheRepository::new(state.db.pool())
-            .get_latest_timestamp(uuid)
+            .last_checked(uuid)
             .await,
-        Ok(Some(ts)) if ts > cutoff
+        Ok(Some(checked)) if checked > cutoff
     )
 }
 
@@ -173,18 +214,8 @@ fn snapshot_counter(stored: &SnapshotResult) -> Option<&'static str> {
     }
 }
 
-async fn take_background_budget(state: &AppState) -> bool {
-    match state
-        .rate_limiter
-        .try_acquire(BACKGROUND_BUDGET_NAME, state.background_refresh_budget)
-        .await
-    {
-        Ok(granted) => granted,
-        Err(e) => {
-            tracing::warn!("Background Hypixel budget unavailable: {e}");
-            false
-        }
-    }
+fn background_hypixel(state: &AppState) -> Option<HypixelClient> {
+    state.hypixel.as_deref().map(HypixelClient::in_background)
 }
 
 #[cfg(test)]
@@ -220,6 +251,29 @@ mod tests {
                 .await
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn only_an_unchanged_offline_player_is_wasted() {
+        let offline = json!({"lastLogin": 1, "lastLogout": 2});
+        let online = json!({"lastLogin": 2, "lastLogout": 1});
+        let hidden = json!({"kills": 1});
+        let unchanged = || Some(SnapshotResult::NoChange);
+        assert!(wasted_on_offline_player(&offline, unchanged()));
+        assert!(!wasted_on_offline_player(&online, unchanged()));
+        assert!(!wasted_on_offline_player(&hidden, unchanged()));
+        assert!(!wasted_on_offline_player(&offline, None));
+    }
+
+    #[test]
+    fn a_payload_for_another_uuid_is_rejected() {
+        let uuid = "8142bd741f604dab9bd9fff68da88c6e";
+        let other = json!({"uuid": "8a3224705e894270a2b7cbc197c242ba"});
+        let dashed = json!({"uuid": "8142BD74-1F60-4DAB-9BD9-FFF68DA88C6E"});
+        assert!(belongs_to_another_player(uuid, &other));
+        assert!(!belongs_to_another_player(uuid, &json!({"uuid": uuid})));
+        assert!(!belongs_to_another_player(uuid, &json!({"kills": 1})));
+        assert!(!belongs_to_another_player(uuid, &dashed));
     }
 
     #[tokio::test]

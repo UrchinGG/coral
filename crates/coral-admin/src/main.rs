@@ -39,8 +39,10 @@ mod serde_id;
 mod serde_ts;
 mod session;
 mod state;
+mod sync_settings;
 mod traffic;
 mod views;
+mod waste;
 
 const REDIS_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const WEB_SCHEMES: [&str; 2] = ["http", "https"];

@@ -3,6 +3,7 @@ use std::net::IpAddr;
 use chrono::{DateTime, Utc};
 use reqlog::{Cause, KEY_PREFIX_CHARS, KeyKind, ROUTE_TEMPLATES};
 use serde::Deserialize;
+use uuid::Uuid;
 
 use super::cursor::Cursor;
 use super::players::PlayerInput;
@@ -82,6 +83,7 @@ pub enum Condition {
     Cause(Cause),
     KeyKind(KeyKind),
     Actor(i64),
+    ActorPlayer(Uuid),
     Ip(String),
     KeyPrefix(String),
     Country(String),
@@ -234,12 +236,17 @@ fn member(id: i64) -> Result<i64, AdminError> {
 }
 
 fn actor(raw: &str) -> Result<Condition, AdminError> {
-    raw.trim()
-        .parse::<i64>()
+    let raw = raw.trim();
+    raw.parse::<i64>()
         .ok()
         .filter(|id| *id > 0)
         .map(Condition::Actor)
-        .ok_or_else(|| bad(format!("{raw:?} is not a Discord id")))
+        .or_else(|| Uuid::parse_str(raw).ok().map(Condition::ActorPlayer))
+        .ok_or_else(|| {
+            bad(format!(
+                "{raw:?} is neither a Discord id nor a Minecraft UUID"
+            ))
+        })
 }
 
 fn ip(raw: &str) -> Result<Condition, AdminError> {
@@ -359,6 +366,17 @@ mod tests {
             ]
         );
         assert_eq!(selection.member, Some(23025));
+    }
+
+    #[test]
+    fn actors_are_discord_users_or_minecraft_accounts() {
+        let player = parse(json!({ "actor": "2c1f6a0e7d4b4f3a9e1d5b8c0a6f3e21" })).unwrap();
+        assert_eq!(
+            player.conditions,
+            vec![Condition::ActorPlayer(Uuid::from_u128(
+                0x2c1f_6a0e_7d4b_4f3a_9e1d_5b8c_0a6f_3e21
+            ))]
+        );
     }
 
     #[test]

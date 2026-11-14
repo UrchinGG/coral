@@ -8,7 +8,7 @@ use coral_redis::{RedisPool, SyncEvent, SyncEventPublisher};
 use database::{GuildSyncJob, GuildSyncJobRepository};
 
 use crate::framework::Data;
-use crate::sync::{CancelToken, Progress, RoleConfigField, cancel_token};
+use crate::service::{CancelToken, Progress, RoleConfigField, cancel_token};
 
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -126,14 +126,14 @@ async fn execute(
 ) -> Result<()> {
     let guild_id = GuildId::new(job.guild_id as u64);
     match job.kind.as_str() {
-        "resync" => crate::sync::sync_guild_cached(ctx, data, guild_id, cancel, progress).await,
+        "resync" => crate::service::sync_guild_cached(ctx, data, guild_id, cancel, progress).await,
         "clear_nicknames" => {
-            crate::sync::clear_nicknames(ctx, data, guild_id, cancel, progress).await
+            crate::service::clear_nicknames(ctx, data, guild_id, cancel, progress).await
         }
         "strip_role" => {
             let role_id = payload_role(&job.payload, "role_id")?
                 .ok_or_else(|| anyhow!("strip_role job missing role_id"))?;
-            crate::sync::clear_role(ctx, data, guild_id, role_id, cancel, progress).await
+            crate::service::clear_role(ctx, data, guild_id, role_id, cancel, progress).await
         }
         "swap_role" => {
             let old_role = payload_role(&job.payload, "old_role_id")?;
@@ -144,11 +144,11 @@ async fn execute(
                 .and_then(|v| v.as_str())
                 .and_then(RoleConfigField::parse)
                 .ok_or_else(|| anyhow!("swap_role job missing field"))?;
-            crate::sync::swap_role(
+            crate::service::swap_role(
                 ctx, data, guild_id, old_role, new_role, field, cancel, progress,
             )
             .await?;
-            crate::sync::sync_guild_cached(ctx, data, guild_id, cancel, progress).await
+            crate::service::sync_guild_cached(ctx, data, guild_id, cancel, progress).await
         }
         other => Err(anyhow!("unknown job kind {other}")),
     }

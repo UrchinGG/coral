@@ -101,9 +101,9 @@ pub async fn insert_log(
     entries: &[PreparedEntry],
 ) -> Result<(), sqlx::Error> {
     let mut query: QueryBuilder<Postgres> = QueryBuilder::new(
-        "INSERT INTO api_request_log (request_id, ts, ip, country, member_id, actor_id, key_prefix, \
-         key_kind, method, path, route, query, user_agent, status, outcome_status, cause, \
-         latency_ms, error, subjects) ",
+        "INSERT INTO api_request_log (request_id, ts, ip, country, member_id, actor_id, actor_uuid, \
+         key_prefix, key_kind, method, path, route, query, user_agent, status, outcome_status, \
+         cause, latency_ms, error, subjects) ",
     );
     query.push_values(entries, |mut row, prepared| {
         let entry = &prepared.entry;
@@ -113,6 +113,7 @@ pub async fn insert_log(
             .push_bind(entry.client.country.as_deref())
             .push_bind(entry.caller.member_id)
             .push_bind(entry.caller.actor_id)
+            .push_bind(entry.caller.actor_uuid)
             .push_bind(entry.client.key_prefix.as_deref())
             .push_bind(entry.caller.key_kind.label())
             .push_bind(entry.method.as_str())

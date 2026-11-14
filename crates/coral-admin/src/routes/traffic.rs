@@ -20,6 +20,7 @@ use crate::traffic::series::{SeriesFilter, series};
 use crate::traffic::summary::summary;
 use crate::traffic::upstream::{Upstream, upstream};
 use crate::views::{CachedView, View};
+use crate::waste::{self, WasteOverview};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Deserialize)]
 pub enum Toggle {
@@ -91,6 +92,7 @@ pub fn router() -> Router<AppState> {
         .route("/callers", get(traffic_callers))
         .route("/pressure", get(limit_pressure))
         .route("/upstream", get(upstream_traffic))
+        .route("/waste", get(waste_allowances))
 }
 
 async fn traffic_summary(
@@ -204,6 +206,14 @@ async fn traffic_callers(
 async fn limit_pressure(State(state): State<AppState>) -> Result<Json<Pressure>, AdminError> {
     Ok(Json(
         pressure(state.db.pool(), &state.redis, Utc::now()).await?,
+    ))
+}
+
+async fn waste_allowances(
+    State(state): State<AppState>,
+) -> Result<Json<WasteOverview>, AdminError> {
+    Ok(Json(
+        waste::overview(state.db.pool(), &state.redis, Utc::now()).await?,
     ))
 }
 

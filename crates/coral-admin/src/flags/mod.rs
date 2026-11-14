@@ -11,14 +11,13 @@ use crate::refs::EntityRef;
 use crate::serde_ts;
 use crate::state::AppState;
 
+mod always_on;
 mod extension;
 mod pressure;
 mod probe;
-mod spike;
 mod upstream;
+mod waste;
 mod writer;
-
-pub use spike::SpikeBaselines;
 
 pub const DISMISS_FOR: TimeDelta = TimeDelta::hours(24);
 pub const MAX_FLAG_KEY_CHARS: usize = 200;
@@ -31,7 +30,8 @@ pub enum FlagKind {
     Writer,
     Pressure,
     Probe,
-    Spike,
+    Waste,
+    AlwaysOn,
     Extension,
 }
 
@@ -86,8 +86,9 @@ impl Flag {
 pub async fn collect(state: &AppState, now: DateTime<Utc>) -> Result<Flags, AdminError> {
     let pool = state.db.pool();
     let coverage = state.coverage.current();
-    let (spike, probe, pressure, upstream, extension, dismissed) = tokio::join!(
-        spike::flags(pool, &state.spikes, &coverage, now),
+    let (waste, always_on, probe, pressure, upstream, extension, dismissed) = tokio::join!(
+        waste::flags(pool, &state.redis),
+        always_on::flags(pool, now),
         probe::flags(pool, &coverage, now),
         pressure::flags(pool, &state.redis, now),
         upstream::flags(pool, &state.redis, &state.upstream_history, now),
@@ -98,7 +99,8 @@ pub async fn collect(state: &AppState, now: DateTime<Utc>) -> Result<Flags, Admi
     let mut flags = Vec::new();
     let mut failures = Vec::new();
     let checks = [
-        (FlagKind::Spike, spike),
+        (FlagKind::Waste, waste),
+        (FlagKind::AlwaysOn, always_on),
         (FlagKind::Probe, probe),
         (FlagKind::Pressure, pressure),
         (FlagKind::Upstream, upstream),
@@ -253,13 +255,13 @@ mod tests {
     #[test]
     fn flags_serialize_kind_and_level_by_name() {
         let flag = Flag::new(
-            FlagKind::Spike,
+            FlagKind::AlwaysOn,
             FlagLevel::Warning,
-            "spike:1:2026-10-15".into(),
+            "always_on:personal:1".into(),
             "summary".into(),
         );
         let value = serde_json::to_value(flag).unwrap();
-        assert_eq!(value["kind"], "spike");
+        assert_eq!(value["kind"], "always_on");
         assert_eq!(value["level"], "warning");
         assert_eq!(value["extension"], serde_json::Value::Null);
     }

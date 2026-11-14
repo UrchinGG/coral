@@ -61,6 +61,8 @@ pub struct ReleaseInfoDto {
     pub yanked: bool,
     pub yanked_reason: Option<String>,
     pub created_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_starfish_version: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

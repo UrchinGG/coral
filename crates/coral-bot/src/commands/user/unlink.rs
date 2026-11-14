@@ -1,9 +1,6 @@
 use anyhow::Result;
 use serenity::all::*;
 
-use coral_redis::SyncEvent;
-use database::MemberRepository;
-
 use crate::framework::Data;
 use crate::utils::{separator, text};
 
@@ -13,12 +10,7 @@ pub fn register() -> CreateCommand<'static> {
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
     let discord_id = command.user.id.get();
-    let repo = MemberRepository::new(data.db.pool());
-
-    let member = repo.get_by_discord_id(discord_id as i64).await?;
-    let has_account = member.as_ref().and_then(|m| m.uuid.as_ref()).is_some();
-
-    if !has_account {
+    let Some(primary) = data.api.links(discord_id).await?.primary else {
         let container = CreateComponent::Container(CreateContainer::new(vec![text(
             "You don't have a linked Minecraft account.",
         )]));
@@ -33,12 +25,9 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
             )
             .await?;
         return Ok(());
-    }
+    };
 
-    repo.clear_uuid(discord_id as i64).await?;
-    data.sync_event_publisher
-        .publish(&SyncEvent::SyncUser { discord_id })
-        .await;
+    data.api.unlink_account(discord_id, &primary.uuid).await?;
 
     if let Some(guild_id) = command.guild_id {
         let _ = guild_id

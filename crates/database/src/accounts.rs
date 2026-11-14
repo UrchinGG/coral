@@ -108,6 +108,60 @@ impl<'a> AccountRepository<'a> {
         Ok(removed)
     }
 
+    /// Removes the account whether it is the member's primary or an alt. A removed
+    /// primary is not replaced by an alt.
+    pub async fn unlink(&self, member_id: i64, uuid: &str) -> Result<bool, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        let primary = sqlx::query("UPDATE members SET uuid = NULL WHERE id = $1 AND uuid = $2")
+            .bind(member_id)
+            .bind(uuid)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        let alt = sqlx::query("DELETE FROM minecraft_accounts WHERE member_id = $1 AND uuid = $2")
+            .bind(member_id)
+            .bind(uuid)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        History::Links.sync(&mut tx, member_id).await?;
+        tx.commit().await?;
+        Ok(primary + alt > 0)
+    }
+
+    /// Makes one of the member's alts their primary; the old primary becomes an alt.
+    /// Returns false when the account is not one of their alts.
+    pub async fn swap_primary(&self, member_id: i64, uuid: &str) -> Result<bool, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        let was_alt =
+            sqlx::query("DELETE FROM minecraft_accounts WHERE member_id = $1 AND uuid = $2")
+                .bind(member_id)
+                .bind(uuid)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected()
+                > 0;
+        if !was_alt {
+            return Ok(false);
+        }
+        sqlx::query(
+            "INSERT INTO minecraft_accounts (member_id, uuid)
+             SELECT id, uuid FROM members WHERE id = $1 AND uuid IS NOT NULL
+             ON CONFLICT (member_id, uuid) DO NOTHING",
+        )
+        .bind(member_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("UPDATE members SET uuid = $2 WHERE id = $1")
+            .bind(member_id)
+            .bind(uuid)
+            .execute(&mut *tx)
+            .await?;
+        History::Links.sync(&mut tx, member_id).await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
     pub async fn list(&self, member_id: i64) -> Result<Vec<MinecraftAccount>, sqlx::Error> {
         sqlx::query_as(
             "SELECT id, member_id, uuid, added_at
@@ -298,5 +352,32 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn swapping_the_primary_keeps_the_old_one_as_an_alt() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let accounts = AccountRepository::new(&pool);
+        let (main, alt, stranger) = (uuid("ccc"), uuid("ddd"), uuid("eee"));
+        let (owner, _) = member(&pool, 940_000_000_000_000_000).await;
+        accounts
+            .claim(owner, &main, LinkRole::Primary)
+            .await
+            .unwrap();
+        accounts.claim(owner, &alt, LinkRole::Alt).await.unwrap();
+
+        assert!(!accounts.swap_primary(owner, &stranger).await.unwrap());
+        assert!(!accounts.swap_primary(owner, &main).await.unwrap());
+        assert!(accounts.swap_primary(owner, &alt).await.unwrap());
+        assert_eq!(primary(&pool, owner).await, Some(alt.clone()));
+        assert_eq!(alts(&pool, owner).await, vec![main.clone()]);
+
+        assert!(accounts.unlink(owner, &alt).await.unwrap());
+        assert_eq!(primary(&pool, owner).await, None);
+        assert!(accounts.unlink(owner, &main).await.unwrap());
+        assert!(alts(&pool, owner).await.is_empty());
+        assert!(!accounts.unlink(owner, &main).await.unwrap());
     }
 }

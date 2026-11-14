@@ -181,6 +181,7 @@ impl GroupRow {
             member_discord_id: self.member_discord_id,
             actor_id: self.actor_id,
             actor_member_id: self.actor_member_id,
+            actor_uuid: None,
             key_prefix: self.key_prefix.clone(),
         };
         RequesterGroup {
@@ -311,7 +312,10 @@ fn push_condition(condition: &Condition, sql: &mut Sql) -> Result<(), AdminError
         Condition::KeyKind(kind) => sql.push("c.key_kind = ").push_bind(kind.code()),
         Condition::Actor(actor) => sql.push("c.actor_id = ").push_bind(*actor),
         Condition::KeyPrefix(prefix) => sql.push("c.key_prefix = ").push_bind(prefix.clone()),
-        Condition::Ip(_) | Condition::Country(_) | Condition::Text(_) => {
+        Condition::ActorPlayer(_)
+        | Condition::Ip(_)
+        | Condition::Country(_)
+        | Condition::Text(_) => {
             return Err(AdminError::BadRequest(
                 "requester groups filter only by rollup dimensions".into(),
             ));

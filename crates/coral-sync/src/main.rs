@@ -12,13 +12,24 @@ use tracing_subscriber::EnvFilter;
 use database::Database;
 
 use coral_sync::api::CoralApiClient;
+use coral_sync::feeds::{self, Feeds};
 use coral_sync::framework::{Data, Handler};
+
+const DEFAULT_SETTINGS_PORT: u16 = 8090;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     init_logging();
     let data = init_data().await?;
-    let mut client = build_client(data).await?;
+    coral_sync::layout::upgrade(&data).await?;
+    feeds::start_all(&data).await;
+    let mut client = build_client(data.clone()).await?;
+    tokio::spawn(coral_sync::settings::serve(
+        data,
+        client.http.clone(),
+        std::env::var("INTERNAL_API_KEY").expect("INTERNAL_API_KEY required"),
+        settings_port(),
+    ));
     tracing::info!("Starting Coral Sync");
     client.start().await?;
     Ok(())
@@ -56,7 +67,15 @@ async fn init_data() -> Result<Data> {
         sync_cooldowns: Arc::new(Mutex::new(HashMap::new())),
         job_cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
         active_interactions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        feeds: Feeds::default(),
     })
+}
+
+fn settings_port() -> u16 {
+    std::env::var("SETTINGS_PORT")
+        .ok()
+        .map(|port| port.parse().expect("SETTINGS_PORT must be a number"))
+        .unwrap_or(DEFAULT_SETTINGS_PORT)
 }
 
 fn parse_owner_ids() -> Vec<u64> {

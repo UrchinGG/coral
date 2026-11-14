@@ -25,10 +25,13 @@ mod cache;
 mod discord;
 mod error;
 mod openapi;
+mod player_uuid;
+mod rate_limit_headers;
 mod reqlog;
 mod responses;
 mod routes;
 mod state;
+mod waste;
 
 use state::{AppState, StarfishConfig};
 
@@ -97,11 +100,6 @@ async fn init_state() -> Result<AppState> {
     };
     let starfish = parse_starfish_config();
     let home_guild_id = env::var("HOME_GUILD_ID").ok().and_then(|v| v.parse().ok());
-    let background_refresh_budget = env::var("BACKGROUND_REFRESH_BUDGET")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(crate::cache::DEFAULT_BACKGROUND_REFRESH_BUDGET);
-
     Ok(AppState::new(
         db,
         hypixel,
@@ -112,7 +110,6 @@ async fn init_state() -> Result<AppState> {
         env::var("DISCORD_TOKEN").ok(),
         starfish,
         home_guild_id,
-        background_refresh_budget,
     ))
 }
 
@@ -180,6 +177,7 @@ fn build_router(state: AppState, request_log: reqlog::RequestLog) -> Router {
             request_log,
             reqlog::log_requests,
         ))
+        .layer(axum::middleware::from_fn(rate_limit_headers::add_headers))
         .with_state(state)
 }
 

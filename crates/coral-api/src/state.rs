@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use clients::{HypixelClient, MojangClient, SkinProvider};
-use coral_redis::{EventPublisher, RateLimiter, RedisPool};
+use coral_redis::{EventPublisher, RateLimiter, RedisPool, SyncEventPublisher};
 use database::Database;
 
 use crate::discord::DiscordResolver;
@@ -25,11 +25,11 @@ pub struct AppState {
     pub internal_api_key: Option<String>,
     pub redis: RedisPool,
     pub event_publisher: EventPublisher,
+    pub sync_events: SyncEventPublisher,
     pub rate_limiter: RateLimiter,
     pub discord: Arc<DiscordResolver>,
     pub starfish: Option<Arc<StarfishConfig>>,
     pub home_guild_id: Option<u64>,
-    pub background_refresh_budget: i64,
 }
 
 impl AppState {
@@ -43,10 +43,10 @@ impl AppState {
         discord_token: Option<String>,
         starfish: Option<StarfishConfig>,
         home_guild_id: Option<u64>,
-        background_refresh_budget: i64,
     ) -> Self {
         Self {
             event_publisher: EventPublisher::new(redis.clone()),
+            sync_events: SyncEventPublisher::new(redis.clone()),
             rate_limiter: RateLimiter::new(redis.clone()),
             discord: Arc::new(DiscordResolver::new(
                 discord_token.unwrap_or_default(),
@@ -60,7 +60,6 @@ impl AppState {
             redis,
             starfish: starfish.map(Arc::new),
             home_guild_id,
-            background_refresh_budget,
         }
     }
 

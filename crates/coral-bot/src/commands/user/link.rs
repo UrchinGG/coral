@@ -1,8 +1,6 @@
 use anyhow::Result;
 use serenity::all::*;
 
-use database::MemberRepository;
-
 use crate::commands::admin::accounts_panel;
 use crate::framework::Data;
 use crate::utils::{separator, text};
@@ -12,15 +10,7 @@ pub fn register() -> CreateCommand<'static> {
 }
 
 pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Result<()> {
-    let discord_id = command.user.id.get();
-    let repo = MemberRepository::new(data.db.pool());
-
-    if repo.get_by_discord_id(discord_id as i64).await?.is_none() {
-        repo.create(discord_id as i64).await?;
-    }
-
-    let components =
-        accounts_panel::build_accounts_for_self(data, discord_id, &command.user.name).await?;
+    let components = accounts_panel::build_accounts_for_self(data, command.user.id.get()).await?;
 
     command
         .create_response(

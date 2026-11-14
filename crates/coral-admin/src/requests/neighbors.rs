@@ -22,6 +22,7 @@ pub struct Neighbors {
 pub enum RequesterScope {
     Member(i64),
     Actor(i64),
+    Player(Uuid),
     KeyPrefix(String),
     Ip(String),
 }
@@ -46,6 +47,9 @@ impl RequesterScope {
         if let Some(actor_id) = row.actor_id {
             return Some(Self::Actor(actor_id));
         }
+        if let Some(uuid) = row.actor_uuid {
+            return Some(Self::Player(uuid));
+        }
         if let Some(prefix) = &row.key_prefix {
             return Some(Self::KeyPrefix(prefix.clone()));
         }
@@ -56,6 +60,7 @@ impl RequesterScope {
         match self {
             Self::Member(id) => sql.push("l.member_id = ").push_bind(*id),
             Self::Actor(id) => sql.push("l.actor_id = ").push_bind(*id),
+            Self::Player(uuid) => sql.push("l.actor_uuid = ").push_bind(*uuid),
             Self::KeyPrefix(prefix) => sql
                 .push("l.member_id IS NULL AND l.key_prefix = ")
                 .push_bind(prefix.clone()),

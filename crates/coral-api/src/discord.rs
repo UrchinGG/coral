@@ -52,13 +52,23 @@ impl DiscordResolver {
             .map(|profile| profile.username)
     }
 
+    /// Skips the cache: a link proof must match the name the user holds now, not
+    /// one they gave up minutes ago.
+    pub async fn current_username(&self, user_id: u64) -> Option<String> {
+        self.fetch_profile(user_id)
+            .await
+            .map(|profile| profile.username)
+    }
+
     pub async fn resolve_profile(&self, user_id: u64) -> Option<DiscordProfile> {
-        let cache_key = format!("cache:discord:profile:{user_id}");
-
-        if let Some(cached) = self.cached_profile(&cache_key).await {
-            return Some(cached);
+        match self.cached_profile(&profile_cache_key(user_id)).await {
+            Some(cached) => Some(cached),
+            None => self.fetch_profile(user_id).await,
         }
+    }
 
+    async fn fetch_profile(&self, user_id: u64) -> Option<DiscordProfile> {
+        let cache_key = profile_cache_key(user_id);
         let profile = self
             .http
             .get(format!("https://discord.com/api/v10/users/{user_id}"))
@@ -85,6 +95,10 @@ impl DiscordResolver {
         let json = self.redis.clone().get::<_, String>(cache_key).await.ok()?;
         serde_json::from_str(&json).ok()
     }
+}
+
+fn profile_cache_key(user_id: u64) -> String {
+    format!("cache:discord:profile:{user_id}")
 }
 
 #[cfg(test)]

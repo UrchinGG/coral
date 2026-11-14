@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
     let data = init_data().await?;
     let mut client = build_client(data).await?;
     tracing::info!("Starting Coral Bot");
-    client.start().await?;
+    client.start_autosharded().await?;
     Ok(())
 }
 

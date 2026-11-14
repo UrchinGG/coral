@@ -293,7 +293,10 @@ impl Plan {
 
     fn is_indexed(&self, condition: &Condition) -> bool {
         match condition {
-            Condition::Actor(_) | Condition::Ip(_) | Condition::KeyPrefix(_) => true,
+            Condition::Actor(_)
+            | Condition::ActorPlayer(_)
+            | Condition::Ip(_)
+            | Condition::KeyPrefix(_) => true,
             Condition::Route(template) => {
                 reqlog::is_static_template(template)
                     || self.eras.iter().all(|range| range.era == Era::Attributed)

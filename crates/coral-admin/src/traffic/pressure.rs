@@ -5,10 +5,11 @@ use coral_redis::{
 };
 use serde::Serialize;
 use sqlx::{FromRow, PgPool};
+use uuid::Uuid;
 
 use crate::error::{AdminError, Context};
 use crate::refs::EntityRef;
-use crate::serde_ts;
+use crate::{serde_id, serde_ts};
 
 pub const PRESSURE_THRESHOLD: f64 = 0.8;
 pub const CANDIDATE_WINDOW: TimeDelta = TimeDelta::seconds(LIMIT_WINDOW_SECS);
@@ -20,6 +21,8 @@ pub enum Limiter {
     Developer,
     Session,
     SessionUuids,
+    Minecraft,
+    MinecraftUuids,
     KeyUuids,
     Tagging,
 }
@@ -45,6 +48,8 @@ pub struct PressuredAccount {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct LimitUsage {
     pub limiter: Limiter,
+    #[serde(serialize_with = "serde_id::uuid_undashed_opt")]
+    pub player: Option<Uuid>,
     pub used: i64,
     pub limit: i64,
 }
@@ -57,6 +62,7 @@ struct Candidate {
     access_level: Option<i16>,
     developer_key: Option<String>,
     developer_limit: Option<i32>,
+    minecraft: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +70,7 @@ struct KnownLimit {
     limiter: Limiter,
     name: String,
     limit: i64,
+    player: Option<Uuid>,
 }
 
 impl LimitUsage {
@@ -122,7 +129,17 @@ impl Candidate {
                 KEY_DISTINCT_UUID_BUDGET,
             ),
         ];
-        keyed.into_iter().flatten().chain(by_account).collect()
+        let minecraft = self
+            .minecraft
+            .iter()
+            .filter_map(|uuid| Uuid::try_parse(uuid).ok())
+            .flat_map(minecraft_limits);
+        keyed
+            .into_iter()
+            .flatten()
+            .chain(by_account)
+            .chain(minecraft)
+            .collect()
     }
 }
 
@@ -162,7 +179,9 @@ async fn candidates(pool: &PgPool, since: DateTime<Utc>) -> Result<Vec<Candidate
              SELECT actor_id FROM recent WHERE actor_id IS NOT NULL
          )
          SELECT callers.discord_id, m.id AS member_id, m.api_key, m.access_level,
-                d.api_key AS developer_key, d.rate_limit AS developer_limit
+                d.api_key AS developer_key, d.rate_limit AS developer_limit,
+                ARRAY(SELECT m.uuid WHERE m.uuid IS NOT NULL
+                      UNION SELECT a.uuid FROM minecraft_accounts a WHERE a.member_id = m.id) AS minecraft
          FROM callers
          LEFT JOIN members m ON m.discord_id = callers.discord_id
          LEFT JOIN developer_keys d ON d.member_id = m.id",
@@ -188,6 +207,7 @@ fn pressed(
                 .zip(counts.by_ref())
                 .map(|(known, used)| LimitUsage {
                     limiter: known.limiter,
+                    player: known.player,
                     used,
                     limit: known.limit,
                 })
@@ -212,11 +232,30 @@ fn worst_ratio(account: &PressuredAccount) -> f64 {
     account.worst().map_or(0.0, LimitUsage::ratio)
 }
 
+fn minecraft_limits(player: Uuid) -> [KnownLimit; 2] {
+    let uuid = player.simple();
+    [
+        KnownLimit {
+            player: Some(player),
+            ..known(Limiter::Minecraft, format!("mc:{uuid}"), SESSION_RATE_LIMIT)
+        },
+        KnownLimit {
+            player: Some(player),
+            ..known(
+                Limiter::MinecraftUuids,
+                format!("mcuuids:{uuid}"),
+                SESSION_UUID_BUDGET,
+            )
+        },
+    ]
+}
+
 fn known(limiter: Limiter, name: String, limit: i64) -> KnownLimit {
     KnownLimit {
         limiter,
         name,
         limit,
+        player: None,
     }
 }
 
@@ -234,6 +273,7 @@ mod tests {
             access_level: Some(0),
             developer_key: Some("developer-key".into()),
             developer_limit: Some(1200),
+            minecraft: vec!["2c1f6a0e7d4b4f3a9e1d5b8c0a6f3e21".into()],
         }
     }
 
@@ -245,6 +285,7 @@ mod tests {
             access_level: None,
             developer_key: None,
             developer_limit: None,
+            minecraft: Vec::new(),
         }
     }
 
@@ -284,6 +325,16 @@ mod tests {
                     format!("keyuuids:{DISCORD}"),
                     KEY_DISTINCT_UUID_BUDGET
                 ),
+                (
+                    Limiter::Minecraft,
+                    "mc:2c1f6a0e7d4b4f3a9e1d5b8c0a6f3e21".into(),
+                    SESSION_RATE_LIMIT
+                ),
+                (
+                    Limiter::MinecraftUuids,
+                    "mcuuids:2c1f6a0e7d4b4f3a9e1d5b8c0a6f3e21".into(),
+                    SESSION_UUID_BUDGET
+                ),
             ]
         );
     }
@@ -306,7 +357,7 @@ mod tests {
         let candidates = vec![visitor(), member()];
         let limits: Vec<Vec<KnownLimit>> = candidates.iter().map(Candidate::limits).collect();
         let quiet = [239, 0, 0];
-        let busy = [598, 0, 0, 0, 0, 900];
+        let busy = [598, 0, 0, 0, 0, 900, 0, 0];
         let used: Vec<i64> = quiet.into_iter().chain(busy).collect();
         let accounts = pressed(&candidates, &limits, &used);
         assert_eq!(accounts.len(), 1);
@@ -314,6 +365,6 @@ mod tests {
         assert_eq!(worst.limiter, Limiter::Personal);
         assert_eq!(worst.used, 598);
         assert_eq!(accounts[0].limits[1].limiter, Limiter::KeyUuids);
-        assert!(!pressed(&candidates, &limits, &[240, 0, 0, 0, 0, 0, 0, 0, 0]).is_empty());
+        assert!(!pressed(&candidates, &limits, &[240, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_empty());
     }
 }

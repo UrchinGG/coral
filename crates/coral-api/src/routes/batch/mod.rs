@@ -6,19 +6,19 @@ use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use clients::{is_uuid, normalize_uuid};
-use coral_redis::RateLimitResult;
 use database::BlacklistRepository;
 use reqlog::MAX_BATCH_UUIDS;
 
 use crate::{
     auth::{
-        AuthenticatedMember, DeveloperKeyAuth, KEY_DISTINCT_UUID_BUDGET, SESSION_UUID_BUDGET,
-        SessionAuth,
+        AuthenticatedMember, DeveloperKeyAuth, KEY_DISTINCT_UUID_BUDGET, MinecraftAuth,
+        SESSION_UUID_BUDGET, SessionAuth,
     },
     cache::spawn_background_refresh,
     error::ApiError,
+    player_uuid::player_uuids,
     responses::{TagResponse, tag_responses},
+    routes::player::cached_display_name,
     state::AppState,
 };
 
@@ -30,28 +30,21 @@ pub(crate) struct BatchRequest {
 #[derive(Serialize, ToSchema)]
 pub(crate) struct BatchResponse {
     pub players: HashMap<String, Vec<TagResponse>>,
+    pub displaynames: HashMap<String, String>,
 }
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/players", post(batch_lookup))
 }
 
-async fn enforce_uuid_budget(
-    state: &AppState,
-    discord_id: i64,
-    count: usize,
-) -> Result<(), ApiError> {
+async fn enforce_uuid_budget(state: &AppState, budget: &str, count: usize) -> Result<(), ApiError> {
     match state
         .rate_limiter
-        .check_and_record_weighted(
-            &format!("sfuuids:{discord_id}"),
-            SESSION_UUID_BUDGET,
-            count as i64,
-        )
+        .check_and_record_weighted(budget, SESSION_UUID_BUDGET, count as i64)
         .await
     {
-        Ok(RateLimitResult::Allowed { .. }) => Ok(()),
-        Ok(RateLimitResult::Exceeded) => Err(ApiError::RateLimited),
+        Ok(result) if crate::rate_limit_headers::admit(result) => Ok(()),
+        Ok(_) => Err(ApiError::RateLimited),
         Err(_) => Ok(()),
     }
 }
@@ -70,8 +63,8 @@ async fn enforce_distinct_uuid_budget(
         )
         .await
     {
-        Ok(RateLimitResult::Allowed { .. }) => Ok(()),
-        Ok(RateLimitResult::Exceeded) => Err(ApiError::RateLimited),
+        Ok(result) if crate::rate_limit_headers::admit(result) => Ok(()),
+        Ok(_) => Err(ApiError::RateLimited),
         Err(e) => Err(ApiError::Internal(format!("uuid budget check failed: {e}"))),
     }
 }
@@ -79,7 +72,7 @@ async fn enforce_distinct_uuid_budget(
 #[utoipa::path(
     post,
     path = "/v3/players",
-    description = "Looks up blacklist tags for up to 100 players in a single request. Only UUIDs are accepted; usernames are not resolved, and malformed entries are skipped. Personal API keys may query up to 1000 distinct players per 5 minutes; repeat lookups of the same players do not count again. Queried players may also be refreshed in the background. Tags with `hide_username` set omit both `added_by` and `added_by_username`.",
+    description = "Looks up blacklist tags for up to 100 players in a single request. Only player UUIDs are accepted; usernames are not resolved, and a batch containing anything else (a malformed entry, or an NPC or nicked player's version 1 or 2 UUID) is rejected with a 400 naming those entries. Personal API keys may query up to 1000 distinct players per 5 minutes; repeat lookups of the same players do not count again. Tagged players' formatted Hypixel display names are listed under `displaynames` when coral has a stored profile for them. Queried players may also be refreshed in the background. Tags with `hide_username` set omit both `added_by` and `added_by_username`.",
     request_body = BatchRequest,
     responses(
         (status = 200, description = "Batch lookup completed", body = BatchResponse),
@@ -91,6 +84,7 @@ async fn enforce_distinct_uuid_budget(
 pub async fn batch_lookup(
     State(state): State<AppState>,
     session: Option<Extension<SessionAuth>>,
+    minecraft: Option<Extension<MinecraftAuth>>,
     member: Option<Extension<AuthenticatedMember>>,
     developer: Option<Extension<DeveloperKeyAuth>>,
     Json(req): Json<BatchRequest>,
@@ -104,21 +98,32 @@ pub async fn batch_lookup(
         )));
     }
 
-    let uuids: Vec<String> = req
-        .uuids
-        .iter()
-        .filter(|u| is_uuid(u))
-        .map(|u| normalize_uuid(u))
-        .collect();
+    let uuids = player_uuids(&req.uuids)?;
 
-    if let Some(Extension(session)) = &session {
-        enforce_uuid_budget(&state, session.discord_id, uuids.len()).await?;
-    } else {
-        if let (Some(Extension(member)), None) = (&member, &developer) {
-            enforce_distinct_uuid_budget(&state, member.0.discord_id, &uuids).await?;
+    match (&session, &minecraft) {
+        (Some(Extension(session)), _) => {
+            enforce_uuid_budget(
+                &state,
+                &format!("sfuuids:{}", session.discord_id),
+                uuids.len(),
+            )
+            .await?
         }
-        for uuid in &uuids {
-            spawn_background_refresh(&state, uuid);
+        (_, Some(Extension(minecraft))) => {
+            enforce_uuid_budget(
+                &state,
+                &format!("mcuuids:{}", minecraft.uuid.simple()),
+                uuids.len(),
+            )
+            .await?
+        }
+        _ => {
+            if let (Some(Extension(member)), None) = (&member, &developer) {
+                enforce_distinct_uuid_budget(&state, member.0.discord_id, &uuids).await?;
+            }
+            for uuid in &uuids {
+                spawn_background_refresh(&state, uuid);
+            }
         }
     }
 
@@ -129,12 +134,21 @@ pub async fn batch_lookup(
 
     let mut names = HashMap::new();
     let mut players = HashMap::new();
+    let mut displaynames = HashMap::new();
     for (uuid, tags) in batch {
+        if !tags.is_empty()
+            && let Some(displayname) = cached_display_name(&state, &uuid).await
+        {
+            displaynames.insert(uuid.clone(), displayname);
+        }
         players.insert(
             uuid,
             tag_responses(&tags, &state.discord, &mut names, false).await,
         );
     }
 
-    Ok(Json(BatchResponse { players }))
+    Ok(Json(BatchResponse {
+        players,
+        displaynames,
+    }))
 }

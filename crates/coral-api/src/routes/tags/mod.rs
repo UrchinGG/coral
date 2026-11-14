@@ -6,7 +6,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::Deserialize;
 use utoipa::ToSchema;
 
-use coral_redis::{BlacklistEvent, RateLimitResult};
+use coral_redis::BlacklistEvent;
 use database::{ReviewRulesRepository, TagOp, TagOpError};
 
 use crate::{
@@ -56,8 +56,8 @@ pub(crate) struct RemoveTagBody {
     pub silent: bool,
 }
 
-/// Overwrites an existing tag. `tag_type` identifies the existing tag (must currently be active).
-/// `new_type` may equal `tag_type` to replace just the reason; otherwise it switches the tag type.
+/// Overwrites an existing tag. `type` identifies the existing tag (must currently be active).
+/// `new_type` may equal `type` to replace just the reason; otherwise it switches the tag type.
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct UpdateTagBody {
     #[serde(rename = "type")]
@@ -188,8 +188,8 @@ async fn enforce_tag_limit(state: &AppState, member: &database::Member) -> Resul
         .check_tag_limit(member.discord_id, effective_level(state, member).await?)
         .await
     {
-        Ok(RateLimitResult::Allowed { .. }) => Ok(()),
-        Ok(RateLimitResult::Exceeded) => Err(ApiError::RateLimited),
+        Ok(result) if crate::rate_limit_headers::admit(result) => Ok(()),
+        Ok(_) => Err(ApiError::RateLimited),
         Err(_) => Err(ApiError::Internal("rate limit check failed".into())),
     }
 }
@@ -376,7 +376,7 @@ pub async fn update_tag(
 
 #[utoipa::path(
     post, path = "/v3/player/lock",
-    description = "Locks a player so that no tag can be added or modified until the lock is lifted. Requires the Moderator rank.",
+    description = "Locks a player so that no tag can be added or modified until the lock is lifted. Requires the Moderator rank, and the `Tags` permission when called with a developer key.",
     params(("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID")),
     request_body = LockRequest,
     responses(
@@ -420,7 +420,7 @@ pub async fn lock_player(
 
 #[utoipa::path(
     delete, path = "/v3/player/lock",
-    description = "Lifts a player lock. Requires the Moderator rank.",
+    description = "Lifts a player lock. Requires the Moderator rank, and the `Tags` permission when called with a developer key.",
     params(("player" = String, Query, description = "Player identifier: username, dashed UUID, or undashed UUID")),
     responses(
         (status = 204, description = "Player unlocked"),

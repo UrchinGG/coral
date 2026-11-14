@@ -4,23 +4,31 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
 
-use coral_redis::RateLimitResult;
+use coral_redis::minecraft_session;
 use database::{
-    AccessRank, DeveloperKeyRepository, Member, MemberRepository, PluginRegistryRepository,
-    StarfishRepository,
+    AccessRank, DeveloperKeyRepository, Member, MemberRepository, MinecraftBlockRepository,
+    PluginRegistryRepository, StarfishRepository,
 };
-use reqlog::{Caller, Cause, KeyKind, record_caller, record_cause};
+use reqlog::{Caller, Cause, KeyKind, Outcome, record_caller, record_cause, record_outcome};
+use uuid::Uuid;
 
 use crate::error::{ApiError, report_server_error};
 use crate::routes::starfish::auth::validate_hwid;
 use crate::routes::starfish::session_auth::resolve_verified_session;
 use crate::routes::starfish::{is_owner, require_starfish};
 use crate::state::AppState;
+use crate::waste::is_blocked;
 
 const ELEVATED_CANONICAL_PATH: &str = "/v3/hypixel/player";
 const ELEVATED_STRIPPED_PATH: &str = "/hypixel/player";
 const ATTEST_MAX_SKEW_SECS: i64 = 120;
 const ACTOR_HEADER: &str = "X-Coral-Actor";
+const BEARER_PREFIX: &str = "Bearer ";
+const WASTING_HYPIXEL_CALLS: Outcome = Outcome {
+    status: StatusCode::FORBIDDEN.as_u16(),
+    cause: Cause::Auth,
+    reason: "wasting_hypixel_calls",
+};
 
 #[derive(Clone)]
 pub struct AuthenticatedMember(pub Member);
@@ -28,6 +36,11 @@ pub struct AuthenticatedMember(pub Member);
 #[derive(Clone)]
 pub struct SessionAuth {
     pub discord_id: i64,
+}
+
+#[derive(Clone)]
+pub struct MinecraftAuth {
+    pub uuid: Uuid,
 }
 
 #[derive(Clone)]
@@ -138,7 +151,13 @@ pub async fn require_moderator(
     next: Next,
 ) -> Result<Response, StatusCode> {
     let api_key = extract_api_key(&request).ok_or(StatusCode::UNAUTHORIZED)?;
-    let member = authenticate_personal_key(&state, &api_key).await?;
+    let member = match authenticate_key(&state, &api_key).await? {
+        AuthResult::Personal(member) => member,
+        AuthResult::Developer(member, permissions) => {
+            require_tag_permission(permissions)?;
+            member
+        }
+    };
     if AccessRank::from_level(member.access_level) < AccessRank::Moderator {
         return Err(StatusCode::FORBIDDEN);
     }
@@ -153,6 +172,10 @@ pub async fn allow_key_or_starfish_session(
 ) -> Result<Response, Response> {
     if let Some(api_key) = extract_api_key(&request) {
         authorize_with_key(&state, &api_key, &mut request)
+            .await
+            .map_err(IntoResponse::into_response)?;
+    } else if let Some(token) = bearer_token(&request) {
+        authorize_with_minecraft(&state, &token, &mut request)
             .await
             .map_err(IntoResponse::into_response)?;
     } else {
@@ -178,11 +201,21 @@ async fn authorize_with_key(
             request.extensions_mut().insert(AuthenticatedMember(member));
         }
         AuthResult::Developer(member, permissions) => {
+            if is_tag_write(request.method(), request.uri().path()) {
+                require_tag_permission(permissions)?;
+            }
             request.extensions_mut().insert(AuthenticatedMember(member));
             request
                 .extensions_mut()
                 .insert(DeveloperKeyAuth { permissions });
         }
+    }
+    Ok(())
+}
+
+fn require_tag_permission(permissions: i64) -> Result<(), StatusCode> {
+    if permissions & database::permissions::TAGS == 0 {
+        return Err(StatusCode::FORBIDDEN);
     }
     Ok(())
 }
@@ -206,6 +239,66 @@ async fn authorize_with_session(state: &AppState, request: &mut Request) -> Resu
 
     request.extensions_mut().insert(AuthenticatedMember(member));
     request.extensions_mut().insert(SessionAuth { discord_id });
+    Ok(())
+}
+
+async fn authorize_with_minecraft(
+    state: &AppState,
+    token: &str,
+    request: &mut Request,
+) -> Result<(), ApiError> {
+    let user = minecraft_session::user(&state.redis, token)
+        .await
+        .ok_or_else(|| ApiError::Unauthorized("invalid_session".into()))?;
+
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
+    if !minecraft_endpoint_allowed(&method, &path) {
+        return Err(ApiError::Unauthorized(
+            "endpoint not available for minecraft auth".into(),
+        ));
+    }
+
+    let (member, block) = tokio::try_join!(
+        async {
+            MemberRepository::new(state.db.pool())
+                .get_sole_owner(&user.uuid.simple().to_string())
+                .await
+        },
+        async {
+            MinecraftBlockRepository::new(state.db.pool())
+                .get(user.uuid)
+                .await
+        },
+    )?;
+    record_caller(Caller::minecraft(member.as_ref().map(|m| m.id), user.uuid));
+    caller_rate_limit(
+        state,
+        &format!("mc:{}", user.uuid.simple()),
+        SESSION_RATE_LIMIT,
+    )
+    .await?;
+
+    if block.is_some() {
+        return Err(ApiError::Forbidden("minecraft account blocked".into()));
+    }
+
+    if member.as_ref().is_some_and(|m| m.key_locked) {
+        return Err(ApiError::Forbidden("account locked".into()));
+    }
+    if is_tag_write(&method, &path) {
+        let member = member.as_ref().ok_or_else(|| {
+            ApiError::Forbidden("link your Minecraft account to Urchin to tag".into())
+        })?;
+        require_home_guild_membership(state, member.discord_id).await?;
+    }
+
+    if let Some(member) = member {
+        request.extensions_mut().insert(AuthenticatedMember(member));
+    }
+    request
+        .extensions_mut()
+        .insert(MinecraftAuth { uuid: user.uuid });
     Ok(())
 }
 
@@ -246,7 +339,7 @@ async fn resolve_session_member(
         existing.as_ref().map(|member| member.id),
         discord_id,
     ));
-    session_rate_limit(state, discord_id).await?;
+    caller_rate_limit(state, &format!("sf:{discord_id}"), SESSION_RATE_LIMIT).await?;
 
     let member = match existing {
         Some(member) => member,
@@ -353,14 +446,14 @@ impl PluginAttestation {
     }
 }
 
-async fn session_rate_limit(state: &AppState, discord_id: i64) -> Result<(), ApiError> {
-    match state
-        .rate_limiter
-        .check_and_record(&format!("sf:{discord_id}"), SESSION_RATE_LIMIT)
-        .await
-    {
-        Ok(RateLimitResult::Allowed { .. }) => Ok(()),
-        Ok(RateLimitResult::Exceeded) => Err(ApiError::RateLimited),
+pub(crate) async fn caller_rate_limit(
+    state: &AppState,
+    key: &str,
+    limit: i64,
+) -> Result<(), ApiError> {
+    match state.rate_limiter.check_and_record(key, limit).await {
+        Ok(result) if crate::rate_limit_headers::admit(result) => Ok(()),
+        Ok(_) => Err(ApiError::RateLimited),
         Err(_) => Ok(()),
     }
 }
@@ -373,6 +466,13 @@ fn session_endpoint_allowed(method: &Method, path: &str) -> bool {
             | ("GET", "/player/sessions/monthly")
             | ("GET", "/player/sessions/custom")
             | ("GET", "/player/winstreaks")
+    ) || is_tag_write(method, path)
+}
+
+fn minecraft_endpoint_allowed(method: &Method, path: &str) -> bool {
+    matches!(
+        (method.as_str(), path),
+        ("GET", "/player/tags") | ("POST", "/players")
     ) || is_tag_write(method, path)
 }
 
@@ -396,6 +496,16 @@ impl SessionTriad {
     }
 }
 
+fn bearer_token(request: &Request) -> Option<String> {
+    request
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .strip_prefix(BEARER_PREFIX)
+        .map(String::from)
+}
+
 fn session_header(request: &Request, name: &str) -> Option<String> {
     request.headers().get(name)?.to_str().ok().map(String::from)
 }
@@ -410,6 +520,7 @@ async fn authenticate_key(state: &AppState, api_key: &str) -> Result<AuthResult,
         if member.key_locked {
             return Err(StatusCode::FORBIDDEN);
         }
+        refuse_wasteful_key(state, member.id).await?;
         check_rate_limit(state, api_key, PERSONAL_RATE_LIMIT).await?;
         if let Err(e) = MemberRepository::new(state.db.pool())
             .increment_request_count(api_key)
@@ -450,28 +561,18 @@ async fn authenticate_key(state: &AppState, api_key: &str) -> Result<AuthResult,
     Err(StatusCode::UNAUTHORIZED)
 }
 
-async fn authenticate_personal_key(state: &AppState, api_key: &str) -> Result<Member, StatusCode> {
-    let Some(member) = MemberRepository::new(state.db.pool())
-        .get_by_api_key(api_key)
-        .await
-        .map_err(|e| internal_failure("member key lookup failed", e))?
-    else {
-        record_caller(Caller::anonymous(KeyKind::Invalid));
-        return Err(StatusCode::UNAUTHORIZED);
-    };
-    record_caller(Caller::member(KeyKind::Personal, member.id));
-
-    if member.key_locked {
-        return Err(StatusCode::FORBIDDEN);
+async fn refuse_wasteful_key(state: &AppState, member: i64) -> Result<(), StatusCode> {
+    if !is_blocked(state, member).await {
+        return Ok(());
     }
-    check_rate_limit(state, api_key, PERSONAL_RATE_LIMIT).await?;
-    Ok(member)
+    record_outcome(WASTING_HYPIXEL_CALLS);
+    Err(StatusCode::FORBIDDEN)
 }
 
 async fn check_rate_limit(state: &AppState, api_key: &str, limit: i64) -> Result<(), StatusCode> {
     match state.rate_limiter.check_and_record(api_key, limit).await {
-        Ok(RateLimitResult::Allowed { .. }) => Ok(()),
-        Ok(RateLimitResult::Exceeded) => {
+        Ok(result) if crate::rate_limit_headers::admit(result) => Ok(()),
+        Ok(_) => {
             record_cause(Cause::CallerLimit);
             Err(StatusCode::TOO_MANY_REQUESTS)
         }
@@ -554,6 +655,39 @@ mod tests {
         assert!(!session_endpoint_allowed(&Method::GET, "/hypixel/player"));
         assert!(!session_endpoint_allowed(&Method::GET, "/tags"));
         assert!(!session_endpoint_allowed(&Method::POST, "/player/lock"));
+    }
+
+    #[test]
+    fn minecraft_auth_reaches_only_tag_routes() {
+        assert!(minecraft_endpoint_allowed(&Method::GET, "/player/tags"));
+        assert!(minecraft_endpoint_allowed(&Method::POST, "/players"));
+        assert!(minecraft_endpoint_allowed(&Method::POST, "/tags"));
+        assert!(minecraft_endpoint_allowed(&Method::PATCH, "/tags"));
+        assert!(minecraft_endpoint_allowed(&Method::DELETE, "/tags"));
+
+        assert!(!minecraft_endpoint_allowed(
+            &Method::GET,
+            "/player/sessions/monthly"
+        ));
+        assert!(!minecraft_endpoint_allowed(
+            &Method::GET,
+            "/player/winstreaks"
+        ));
+        assert!(!minecraft_endpoint_allowed(&Method::GET, "/hypixel/player"));
+        assert!(!minecraft_endpoint_allowed(&Method::GET, "/tags"));
+    }
+
+    #[test]
+    fn bearer_token_requires_the_bearer_scheme() {
+        let request = |value: &str| {
+            Request::builder()
+                .header(axum::http::header::AUTHORIZATION, value)
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+        assert_eq!(bearer_token(&request("Bearer abc")).as_deref(), Some("abc"));
+        assert_eq!(bearer_token(&request("Basic abc")), None);
+        assert_eq!(bearer_token(&Request::new(axum::body::Body::empty())), None);
     }
 
     #[test]

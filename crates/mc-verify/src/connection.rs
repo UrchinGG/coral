@@ -7,9 +7,9 @@ use tracing::debug;
 
 use mc_proto::crypto::{Encryptor, ServerKey, server_hash};
 
+use crate::FormatFn;
 use crate::codes::CodeStore;
 use crate::protocol::*;
-use crate::{FormatFn, auth};
 
 const STATUS_NEXT_STATE: i32 = 1;
 const LOGIN_NEXT_STATE: i32 = 2;
@@ -52,12 +52,11 @@ async fn run_login_flow(
     let mut cipher = Encryptor::new(&shared_secret);
 
     let hash = server_hash(b"", &shared_secret, &state.key.der_public_key);
-    let player = auth::verify_session(&state.http, &username, &hash).await?;
+    let player = clients::has_joined(&state.http, &username, &hash)
+        .await?
+        .ok_or(ConnectionError::SessionRejected)?;
 
-    let code = state
-        .codes
-        .insert(player.uuid, player.username.clone())
-        .await?;
+    let code = state.codes.insert(&player.uuid, &player.username).await?;
     send_encrypted_disconnect(&mut stream, &mut cipher, &(state.format_disconnect)(&code)).await
 }
 
@@ -192,8 +191,10 @@ fn build_raw_packet(packet_id: i32, payload: &[u8]) -> Vec<u8> {
 pub enum ConnectionError {
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
-    #[error("auth: {0}")]
-    Auth(#[from] auth::AuthError),
+    #[error("mojang: {0}")]
+    Mojang(#[from] clients::ClientError),
+    #[error("mojang rejected the session")]
+    SessionRejected,
     #[error("unexpected packet id: {0}")]
     UnexpectedPacket(i32),
     #[error("invalid next state: {0}")]

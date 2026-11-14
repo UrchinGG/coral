@@ -14,8 +14,8 @@ mod text;
 mod writer;
 
 pub use context::{
-    Recorded, RequestContext, record_caller, record_cause, record_outcome, record_server_error,
-    scope,
+    Recorded, RequestContext, current_caller, record_caller, record_cause, record_outcome,
+    record_server_error, scope,
 };
 pub use entry::{
     Caller, Cause, Client, Detail, KeyKind, LogEntry, Outcome, Service, now, request_id_for,

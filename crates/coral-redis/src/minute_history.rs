@@ -8,6 +8,7 @@ use redis::aio::ConnectionManager;
 pub const HYPIXEL_HISTORY: MinuteHistory = MinuteHistory { prefix: "hp:hist:" };
 pub const HYPIXEL_REQUESTS: &str = "t";
 pub const HYPIXEL_ERRORS: &str = "e";
+pub const HYPIXEL_BACKGROUND: &str = "b";
 
 pub const SNAPSHOT_HISTORY: MinuteHistory = MinuteHistory {
     prefix: "snap:hist:",

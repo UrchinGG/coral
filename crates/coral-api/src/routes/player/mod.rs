@@ -17,8 +17,11 @@ use hypixel::extract_rank_prefix;
 
 use crate::{
     auth::{AuthenticatedMember, DeveloperKeyAuth},
-    cache::{parse_cache_age, refresh_player_cache, store_player_snapshot},
+    cache::{
+        parse_cache_age, refresh_player_cache, spawn_background_refresh, spawn_snapshot_store,
+    },
     error::{ApiError, ErrorResponse},
+    player_uuid::player_uuid,
     responses::{PlayerStatsResponse, PlayerTagsResponse, tag_responses},
     state::AppState,
 };
@@ -41,8 +44,8 @@ pub(crate) async fn resolve_player_data(
     let cache = CacheRepository::new(state.db.pool());
 
     if let Some(max_age) = max_cache_age {
-        if let Some(ts) = cache.get_latest_timestamp(uuid).await? {
-            if Utc::now() - ts <= max_age {
+        if let Some(checked) = cache.last_checked(uuid).await? {
+            if Utc::now() - checked <= max_age {
                 if let Some(snapshot) = cache.get_latest_snapshot(uuid).await? {
                     return Ok((Some(snapshot), true));
                 }
@@ -103,7 +106,7 @@ pub async fn resolve_identifier(
     identifier: &str,
 ) -> Result<(String, Option<String>), ApiError> {
     if is_uuid(identifier) {
-        Ok((normalize_uuid(identifier), None))
+        Ok((player_uuid(identifier)?, None))
     } else {
         let id = state.mojang.resolve(identifier).await?;
         Ok((normalize_uuid(&id.uuid), Some(id.username)))
@@ -152,6 +155,16 @@ pub(crate) async fn player_display_name(state: &AppState, uuid: &str) -> Option<
         .and_then(format_display_name)
 }
 
+async fn stored_display_name(state: &AppState, uuid: &str) -> Option<String> {
+    match cached_display_name(state, uuid).await {
+        Some(name) => {
+            spawn_background_refresh(state, uuid);
+            Some(name)
+        }
+        None => player_display_name(state, uuid).await,
+    }
+}
+
 pub(crate) async fn cached_display_name(state: &AppState, uuid: &str) -> Option<String> {
     CacheRepository::new(state.db.pool())
         .get_latest_snapshot(uuid)
@@ -170,13 +183,6 @@ fn resolve_username(hint: Option<String>, player_data: &Option<Value>, uuid: &st
             .map(String::from)
             .unwrap_or_else(|| uuid.to_string())
     })
-}
-
-fn spawn_cache_update(state: &AppState, uuid: &str, data: &Value, username: Option<String>) {
-    let (state, uuid, data) = (state.clone(), uuid.to_string(), data.clone());
-    tokio::spawn(async move {
-        store_player_snapshot(&state, &uuid, &data, username.as_deref()).await;
-    });
 }
 
 #[utoipa::path(
@@ -234,7 +240,7 @@ pub async fn player_tags(
         query.reveal_hidden,
     )
     .await;
-    let displayname = player_display_name(&state, &uuid).await;
+    let displayname = stored_display_name(&state, &uuid).await;
     Ok(Json(PlayerTagsResponse {
         uuid,
         displayname,
@@ -294,7 +300,7 @@ pub async fn player_stats(
 
     if !stale {
         if let Some(ref data) = player_data {
-            spawn_cache_update(&state, &uuid, data, mojang_name);
+            spawn_snapshot_store(&state, &uuid, data, mojang_name);
         }
     }
 

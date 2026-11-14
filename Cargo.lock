@@ -894,20 +894,25 @@ name = "coral-sync"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "blacklist",
  "chrono",
  "coral-redis",
  "database",
  "dotenvy",
  "expr",
+ "futures-util",
  "hypixel",
  "reqwest",
  "serde",
  "serde_json",
  "serenity",
+ "sqlx",
  "thiserror 2.0.17",
  "tikv-jemallocator",
  "tokio",
+ "tokio-tungstenite",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -2690,6 +2695,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
+ "clients",
  "dotenvy",
  "mc-proto",
  "rand 0.8.5",
@@ -2700,7 +2706,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]

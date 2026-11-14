@@ -79,16 +79,9 @@ pub async fn handle_link_button(
     component: &ComponentInteraction,
     data: &Data,
 ) -> Result<()> {
-    let discord_id = component.user.id.get();
-    let repo = MemberRepository::new(data.db.pool());
-    if repo.get_by_discord_id(discord_id as i64).await?.is_none() {
-        repo.create(discord_id as i64).await?;
-    }
-
     let components = crate::commands::admin::accounts_panel::build_accounts_for_self(
         data,
-        discord_id,
-        &component.user.name,
+        component.user.id.get(),
     )
     .await?;
 
@@ -106,7 +99,7 @@ pub async fn handle_link_button(
 }
 
 pub async fn handle_guild_join(ctx: &Context, new_member: &Member, data: &Data) -> Result<()> {
-    if new_member.user.bot() || !crate::sync::is_home_guild(data, new_member.guild_id) {
+    if new_member.user.bot() {
         return Ok(());
     }
     let discord_id = new_member.user.id.get() as i64;
@@ -133,24 +126,17 @@ pub async fn handle_guild_join(ctx: &Context, new_member: &Member, data: &Data) 
         return Ok(());
     };
 
-    let config_repo = GuildConfigRepository::new(data.db.pool());
-    let config = match config_repo.get(new_member.guild_id.get() as i64).await {
-        Ok(Some(c)) => c,
-        _ => return Ok(()),
+    let Ok(Some(settings)) = crate::service::load_settings(data, new_member.guild_id).await else {
+        return Ok(());
     };
-    let rules = config_repo
-        .get_role_rules(new_member.guild_id.get() as i64)
-        .await
-        .unwrap_or_default();
 
-    if let Err(e) = crate::sync::sync_member(
+    if let Err(e) = crate::service::sync_member(
         ctx,
         data,
         new_member.guild_id,
         new_member,
         &uuid,
-        &config,
-        &rules,
+        &settings,
         &hypixel_data,
         true,
     )

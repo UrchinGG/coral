@@ -1,10 +1,11 @@
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::{delete, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::auth::InternalAuth;
 use crate::state::AppState;
 
 #[derive(Deserialize, ToSchema)]
@@ -33,6 +34,7 @@ pub fn router() -> Router<AppState> {
     responses(
         (status = 201, description = "Code stored"),
         (status = 400, description = "Invalid request"),
+        (status = 403, description = "Requires the internal key"),
         (status = 409, description = "Code already exists"),
         (status = 500, description = "Internal error"),
     ),
@@ -41,8 +43,12 @@ pub fn router() -> Router<AppState> {
 )]
 pub async fn store_code(
     State(state): State<AppState>,
+    internal: Option<Extension<InternalAuth>>,
     Json(body): Json<StoreCodeRequest>,
 ) -> StatusCode {
+    if internal.is_none() {
+        return StatusCode::FORBIDDEN;
+    }
     let uuid = match uuid::Uuid::parse_str(&body.uuid) {
         Ok(u) => u,
         Err(_) => return StatusCode::BAD_REQUEST,
@@ -69,6 +75,7 @@ pub async fn store_code(
     ),
     responses(
         (status = 200, description = "Code redeemed", body = RedeemCodeResponse),
+        (status = 403, description = "Requires the internal key"),
         (status = 404, description = "Code not found"),
         (status = 500, description = "Internal error"),
     ),
@@ -76,8 +83,12 @@ pub async fn store_code(
 )]
 pub async fn redeem_code(
     State(state): State<AppState>,
+    internal: Option<Extension<InternalAuth>>,
     Path(code): Path<String>,
 ) -> Result<Json<RedeemCodeResponse>, StatusCode> {
+    if internal.is_none() {
+        return Err(StatusCode::FORBIDDEN);
+    }
     let player = coral_redis::verify::redeem_code(&mut state.redis.connection(), &code)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;

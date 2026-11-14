@@ -49,9 +49,17 @@ static ADMIT_DISTINCT: LazyLock<redis::Script> = LazyLock::new(|| {
     )
 });
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RateLimitResult {
-    Allowed { remaining: i64 },
-    Exceeded,
+    Allowed {
+        limit: i64,
+        remaining: i64,
+        reset_after: i64,
+    },
+    Exceeded {
+        limit: i64,
+        retry_after: i64,
+    },
 }
 
 #[derive(Clone)]
@@ -96,20 +104,38 @@ impl RateLimiter {
                 .arg(format!("{now}:{}", uuid::Uuid::new_v4()))
                 .ignore();
         }
-        pipe.cmd("EXPIRE")
+        let (count, oldest): (i64, Vec<(String, f64)>) = pipe
+            .cmd("EXPIRE")
             .arg(&key)
             .arg(LIMIT_WINDOW_SECS + 10)
             .ignore()
-            .query_async::<()>(&mut conn)
+            .zcard(&key)
+            .zrange_withscores(&key, 0, 0)
+            .query_async(&mut conn)
             .await?;
 
-        let count: i64 = conn.zcard(&key).await?;
-        match count > limit {
-            true => Ok(RateLimitResult::Exceeded),
-            false => Ok(RateLimitResult::Allowed {
+        if count <= limit {
+            return Ok(RateLimitResult::Allowed {
+                limit,
                 remaining: limit - count,
-            }),
+                reset_after: oldest.first().map_or(LIMIT_WINDOW_SECS, |(_, score)| {
+                    seconds_until_expiry(*score, now)
+                }),
+            });
         }
+
+        let retry_after = match retry_rank(count, limit, weight.max(1)) {
+            Some(rank) => {
+                let entry: Vec<(String, f64)> = conn
+                    .zrange_withscores(&key, rank as isize, rank as isize)
+                    .await?;
+                entry.first().map_or(LIMIT_WINDOW_SECS, |(_, score)| {
+                    seconds_until_expiry(*score, now)
+                })
+            }
+            None => LIMIT_WINDOW_SECS,
+        };
+        Ok(RateLimitResult::Exceeded { limit, retry_after })
     }
 
     pub async fn try_acquire(&self, name: &str, limit: i64) -> Result<bool, redis::RedisError> {
@@ -141,8 +167,15 @@ impl RateLimiter {
             .invoke_async(&mut self.pool.connection())
             .await?;
         Ok(match remaining {
-            ..0 => RateLimitResult::Exceeded,
-            remaining => RateLimitResult::Allowed { remaining },
+            ..0 => RateLimitResult::Exceeded {
+                limit,
+                retry_after: LIMIT_WINDOW_SECS,
+            },
+            remaining => RateLimitResult::Allowed {
+                limit,
+                remaining,
+                reset_after: LIMIT_WINDOW_SECS,
+            },
         })
     }
 
@@ -154,7 +187,9 @@ impl RateLimiter {
         let limit = tag_limit_for_access(access_level);
         if limit == 0 {
             return Ok(RateLimitResult::Allowed {
+                limit: 0,
                 remaining: i64::MAX,
+                reset_after: 0,
             });
         }
         self.check_and_record(&format!("tag:{discord_id}"), limit)
@@ -181,6 +216,18 @@ impl RateLimiter {
 
 pub fn key(name: &str) -> String {
     format!("{KEY_PREFIX}{name}")
+}
+
+fn seconds_until_expiry(score: f64, now: i64) -> i64 {
+    (score as i64 + LIMIT_WINDOW_SECS - now).clamp(1, LIMIT_WINDOW_SECS)
+}
+
+fn retry_rank(count: i64, limit: i64, weight: i64) -> Option<i64> {
+    if weight > limit {
+        return None;
+    }
+    let rank = count + weight - limit - 1;
+    (0..count).contains(&rank).then_some(rank)
 }
 
 pub fn tag_limit_for_access(access_level: i16) -> i64 {
@@ -214,9 +261,50 @@ mod tests {
         assert_eq!(tag_limit_for_access(10), 0);
     }
 
+    #[test]
+    fn expiry_counts_down_from_the_window() {
+        assert_eq!(seconds_until_expiry(1_000.0, 1_000), LIMIT_WINDOW_SECS);
+        assert_eq!(
+            seconds_until_expiry(1_000.0, 1_120),
+            LIMIT_WINDOW_SECS - 120
+        );
+        assert_eq!(seconds_until_expiry(1_000.0, 1_000 + LIMIT_WINDOW_SECS), 1);
+    }
+
+    #[test]
+    fn retry_waits_for_enough_entries_to_expire() {
+        assert_eq!(retry_rank(31, 30, 1), Some(1));
+        assert_eq!(retry_rank(40, 30, 1), Some(10));
+        assert_eq!(retry_rank(35, 30, 5), Some(9));
+        assert_eq!(retry_rank(40, 30, 31), None);
+    }
+
     async fn test_limiter() -> Option<RateLimiter> {
         let url = std::env::var("REDIS_URL").ok()?;
         Some(RateLimiter::new(RedisPool::connect(&url).await.ok()?))
+    }
+
+    #[tokio::test]
+    async fn exceeding_the_limit_reports_when_to_retry() {
+        let Some(limiter) = test_limiter().await else {
+            return;
+        };
+        let name = format!("retry-test:{}", uuid::Uuid::new_v4());
+
+        let first = limiter.check_and_record(&name, 2).await.unwrap();
+        assert!(matches!(
+            first,
+            RateLimitResult::Allowed { limit: 2, remaining: 1, reset_after }
+                if (1..=LIMIT_WINDOW_SECS).contains(&reset_after)
+        ));
+        limiter.check_and_record(&name, 2).await.unwrap();
+        let refused = limiter.check_and_record(&name, 2).await.unwrap();
+        assert!(matches!(
+            refused,
+            RateLimitResult::Exceeded { limit: 2, retry_after }
+                if (1..=LIMIT_WINDOW_SECS).contains(&retry_after)
+        ));
+        limiter.reset(&name).await.unwrap();
     }
 
     #[tokio::test]

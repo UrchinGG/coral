@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, Once, RwLock};
 use std::time::Instant;
 
 use serenity::all::*;
@@ -115,11 +115,38 @@ fn subcommand_of(option: &CommandDataOption) -> Option<(&str, &[CommandDataOptio
 
 pub struct Handler {
     data: Data,
+    background_started: Once,
 }
 
 impl Handler {
     pub fn new(data: Data) -> Self {
-        Self { data }
+        Self {
+            data,
+            background_started: Once::new(),
+        }
+    }
+
+    fn start_background_tasks(&self, ctx: &Context) {
+        crate::events::spawn_subscriber(ctx.clone(), self.data.clone());
+        crate::events::spawn_sync_subscriber(ctx.clone(), self.data.clone());
+        commands::blacklist::review::guide::spawn_guide_watcher(ctx.clone(), self.data.clone());
+        tokio::spawn(commands::blacklist::review::deadline::hydrate(
+            ctx.clone(),
+            self.data.clone(),
+        ));
+        let data = self.data.clone();
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+            commands::blacklist::evidence_post::index::reconcile(&ctx, &data).await;
+        });
+        let data = self.data.clone();
+        tokio::spawn(async move {
+            crate::events::hydrate_expiring_tags(data).await;
+        });
+        let data = self.data.clone();
+        tokio::spawn(async move {
+            crate::strikes::hydrate_strikes(data).await;
+        });
     }
 
     fn commands() -> Vec<CreateCommand<'static>> {
@@ -769,29 +796,9 @@ impl EventHandler for Handler {
                 {
                     tracing::error!("Failed to register evidence context menu: {}", e);
                 }
-                crate::events::spawn_subscriber(ctx.clone(), self.data.clone());
-                crate::events::spawn_sync_subscriber(ctx.clone(), self.data.clone());
-                commands::blacklist::review::guide::spawn_guide_watcher(
-                    ctx.clone(),
-                    self.data.clone(),
-                );
-                tokio::spawn(commands::blacklist::review::deadline::hydrate(
-                    ctx.clone(),
-                    self.data.clone(),
-                ));
-                let data = self.data.clone();
-                let ctx = ctx.clone();
-                tokio::spawn(async move {
-                    commands::blacklist::evidence_post::index::reconcile(&ctx, &data).await;
-                });
-                let data = self.data.clone();
-                tokio::spawn(async move {
-                    crate::events::hydrate_expiring_tags(data).await;
-                });
-                let data = self.data.clone();
-                tokio::spawn(async move {
-                    crate::strikes::hydrate_strikes(data).await;
-                });
+                // Ready fires again after every session invalidation; the tasks must not stack.
+                self.background_started
+                    .call_once(|| self.start_background_tasks(ctx));
             }
             FullEvent::ThreadCreate { thread, .. } => {
                 commands::blacklist::evidence_post::index::on_thread_create(
