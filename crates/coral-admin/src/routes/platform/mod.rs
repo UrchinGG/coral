@@ -60,7 +60,9 @@ fn server_router() -> Router<AppState> {
 }
 
 fn starfish_router() -> Router<AppState> {
-    Router::new().route("/users", get(starfish::users))
+    Router::new()
+        .route("/overview", get(starfish::overview))
+        .route("/users", get(starfish::users))
 }
 
 fn plugins_router() -> Router<AppState> {

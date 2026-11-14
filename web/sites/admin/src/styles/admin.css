@@ -857,3 +857,23 @@ button.table-row.request[aria-expanded="true"] {
   grid-template-columns: minmax(160px, 1.4fr) minmax(100px, 1fr) 120px;
   min-width: 420px;
 }
+
+.table-row.starfish {
+  grid-template-columns:
+    minmax(140px, 1.4fr) 90px 90px 80px 70px minmax(90px, 1fr)
+    100px;
+  min-width: 720px;
+}
+
+.table-row.plugin {
+  grid-template-columns:
+    minmax(160px, 1.6fr) minmax(100px, 1fr)
+    70px 80px 70px 80px 90px;
+  min-width: 720px;
+}
+
+.description {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}

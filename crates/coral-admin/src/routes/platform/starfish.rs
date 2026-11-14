@@ -18,6 +18,11 @@ const USER_COLUMNS: &str = "u.id, u.discord_id, u.license_status, u.github_usern
     (SELECT count(*) FROM plugin_installs pi WHERE pi.user_id = u.id) AS plugins_installed,
     (SELECT count(*) FROM plugins p WHERE p.owner_user_id = u.id) AS plugins_owned";
 const INACTIVE_LICENSE: &str = "inactive";
+const OVERVIEW_SQL: &str = "SELECT
+    count(*) FILTER (WHERE license_status = 'active') AS licensed,
+    count(*) FILTER (WHERE license_status = 'suspended') AS suspended,
+    (SELECT count(DISTINCT user_id) FROM starfish_sessions WHERE expires_at > now()) AS signed_in
+  FROM starfish_users";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -25,6 +30,13 @@ pub struct UsersQuery {
     q: Option<String>,
     cursor: Option<RowCursor>,
     limit: Option<i64>,
+}
+
+#[derive(Debug, Serialize, FromRow)]
+pub struct StarfishOverview {
+    licensed: i64,
+    suspended: i64,
+    signed_in: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -55,6 +67,14 @@ struct UserRecord {
     last_heartbeat_at: Option<DateTime<Utc>>,
     plugins_installed: i64,
     plugins_owned: i64,
+}
+
+pub async fn overview(State(state): State<AppState>) -> Result<Json<StarfishOverview>, AdminError> {
+    sqlx::query_as(OVERVIEW_SQL)
+        .fetch_one(state.db.pool())
+        .await
+        .map(Json)
+        .context("count Starfish users")
 }
 
 pub async fn users(

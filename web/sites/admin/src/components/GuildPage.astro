@@ -83,7 +83,10 @@
         { className: "stats" },
         ...[
           ["Level", String(guild.summary?.level ?? "")],
-          ["Members", FORMATS.number(guild.summary?.member_count ?? members.length)],
+          [
+            "Members",
+            FORMATS.number(guild.summary?.member_count ?? members.length),
+          ],
           ["Experience", FORMATS.short(guild.summary?.experience ?? 0)],
           [
             "Refreshed",
