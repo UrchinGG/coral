@@ -5,6 +5,7 @@ import type { Labels } from "@/lib/members";
 import { pager } from "@/lib/pager";
 import { refLink, refName, type Ref } from "@/lib/refs";
 import { requestHead, requestRow, type RequestRow } from "@/lib/requests";
+import type { Budget } from "@/lib/tabs/keys";
 import { ago, day, moment } from "@/lib/time";
 
 interface TimelineEvent {
@@ -335,13 +336,6 @@ interface KeyRecord {
   key: string;
   created_at: string | null;
   retired_at: string | null;
-}
-
-interface Budget {
-  limiter: string;
-  used: number;
-  limit: number | null;
-  window_s: number;
 }
 
 function gridRow(
