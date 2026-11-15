@@ -4,7 +4,6 @@ import { FORMATS, titleCase } from "@/lib/format";
 import type { Labels } from "@/lib/members";
 import { pager } from "@/lib/pager";
 import { refLink, refName, type Ref } from "@/lib/refs";
-import { requestHead, requestRow, type RequestRow } from "@/lib/requests";
 import type { Budget } from "@/lib/tabs/keys";
 import { ago, day, moment } from "@/lib/time";
 
@@ -19,6 +18,8 @@ interface TimelineEvent {
   action: string | null;
   detail: string | null;
 }
+
+const ALL_EVENTS = "All";
 
 const KIND_GROUPS: Record<string, string> = {
   tag_authored: "Tags",
@@ -38,61 +39,7 @@ const KIND_GROUPS: Record<string, string> = {
 
 export function timelineTab(id: string) {
   const filters = el("div", { className: "chips" });
-  let shown = "All";
-  const items: HTMLElement[] = [];
-  const apply = () =>
-    items.forEach(
-      (item) => (item.hidden = shown !== "All" && item.dataset.group !== shown),
-    );
-  ["All", ...new Set(Object.values(KIND_GROUPS))].forEach((group) => {
-    const chip = el("button", {
-      type: "button",
-      className: "chip",
-      textContent: group,
-    });
-    chip.setAttribute("aria-pressed", String(group === shown));
-    chip.addEventListener("click", () => {
-      shown = group;
-      filters
-        .querySelectorAll("button")
-        .forEach((other) =>
-          other.setAttribute("aria-pressed", String(other === chip)),
-        );
-      apply();
-    });
-    filters.append(chip);
-  });
-  const render = (event: TimelineEvent, labels: Labels) => {
-    const what = [
-      titleCase(event.action ?? event.kind),
-      event.target_text ?? "",
-    ]
-      .filter(Boolean)
-      .join(": ");
-    const item = el(
-      "div",
-      { className: "table-row timeline" },
-      el("span", { className: "dim", textContent: moment(event.at) }),
-      el("span", {
-        textContent: KIND_GROUPS[event.kind] ?? titleCase(event.kind),
-      }),
-      el(
-        "span",
-        {},
-        what,
-        event.player ? " · " : "",
-        event.player ? refLink(event.player, labels) : "",
-        event.detail
-          ? el("span", { className: "dim", textContent: ` · ${event.detail}` })
-          : "",
-      ),
-      el("span", {}, event.actor ? refLink(event.actor, labels) : ""),
-    );
-    item.dataset.group = KIND_GROUPS[event.kind] ?? "Other";
-    items.push(item);
-    item.hidden = shown !== "All" && item.dataset.group !== shown;
-    return item;
-  };
+  const table = el("div", { className: "table" });
   const head = el(
     "div",
     { className: "table-row timeline head" },
@@ -100,20 +47,65 @@ export function timelineTab(id: string) {
       el("span", { textContent: label }),
     ),
   );
-  return el(
-    "div",
-    { className: "list" },
-    filters,
-    el(
-      "div",
-      { className: "table" },
+  const show = (group: string) => {
+    const kinds = Object.keys(KIND_GROUPS).filter(
+      (kind) => KIND_GROUPS[kind] === group,
+    );
+    const query = group === ALL_EVENTS ? "" : `?kinds=${kinds.join(",")}`;
+    table.replaceChildren(
       head,
       pager(
-        `/accounts/${id}/timeline`,
-        render,
-        "Nothing has happened on this account.",
+        `/accounts/${id}/timeline${query}`,
+        timelineRow,
+        group === ALL_EVENTS
+          ? "Nothing has happened on this account."
+          : `No ${group.toLowerCase()} events on this account.`,
       ),
+    );
+  };
+  [ALL_EVENTS, ...new Set(Object.values(KIND_GROUPS))].forEach((group) => {
+    const chip = el("button", {
+      type: "button",
+      className: "chip",
+      textContent: group,
+    });
+    chip.setAttribute("aria-pressed", String(group === ALL_EVENTS));
+    chip.addEventListener("click", () => {
+      filters
+        .querySelectorAll("button")
+        .forEach((other) =>
+          other.setAttribute("aria-pressed", String(other === chip)),
+        );
+      show(group);
+    });
+    filters.append(chip);
+  });
+  show(ALL_EVENTS);
+  return el("div", { className: "list" }, filters, table);
+}
+
+function timelineRow(event: TimelineEvent, labels: Labels) {
+  const what = [titleCase(event.action ?? event.kind), event.target_text ?? ""]
+    .filter(Boolean)
+    .join(": ");
+  return el(
+    "div",
+    { className: "table-row timeline" },
+    el("span", { className: "dim", textContent: moment(event.at) }),
+    el("span", {
+      textContent: KIND_GROUPS[event.kind] ?? titleCase(event.kind),
+    }),
+    el(
+      "span",
+      {},
+      what,
+      event.player ? " · " : "",
+      event.player ? refLink(event.player, labels) : "",
+      event.detail
+        ? el("span", { className: "dim", textContent: ` · ${event.detail}` })
+        : "",
     ),
+    el("span", {}, event.actor ? refLink(event.actor, labels) : ""),
   );
 }
 
@@ -294,19 +286,6 @@ export async function starfishTab(id: string, refresh: () => void) {
             ),
           )
         : [row("None", "No plugins published")]),
-    ),
-  );
-}
-
-export function requestsTab(id: string) {
-  return el(
-    "div",
-    { className: "table" },
-    requestHead(),
-    pager<RequestRow>(
-      `/accounts/${id}/requests`,
-      requestRow,
-      "No requests recorded.",
     ),
   );
 }

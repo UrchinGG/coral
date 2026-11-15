@@ -21,6 +21,7 @@ const ERROR_STATUSES: (i16, i16) = (CLIENT_ERROR_STATUSES.0, SERVER_ERROR_STATUS
 const RATE_LIMITED_STATUSES: (i16, i16) = (429, 429);
 const LIKE_ESCAPED: [char; 3] = ['\\', '%', '_'];
 const COUNTRY_CODE_CHARS: usize = 2;
+const ROUTE_SEPARATOR: char = ',';
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -78,6 +79,7 @@ pub struct Bounds {
 pub enum Condition {
     Method(String),
     Route(&'static str),
+    Routes(Vec<&'static str>),
     Status(i16),
     Class(StatusClass),
     Cause(Cause),
@@ -213,11 +215,24 @@ fn method(raw: &str) -> Result<Condition, AdminError> {
     Ok(Condition::Method(method))
 }
 
-fn route(raw: &str) -> Result<Condition, AdminError> {
+/// One route template, or several separated by commas, matching any of them.
+pub fn route(raw: &str) -> Result<Condition, AdminError> {
+    let mut templates = raw
+        .split(ROUTE_SEPARATOR)
+        .map(known_template)
+        .collect::<Result<Vec<_>, _>>()?;
+    templates.dedup();
+    Ok(match templates.as_slice() {
+        [template] => Condition::Route(template),
+        _ => Condition::Routes(templates),
+    })
+}
+
+fn known_template(raw: &str) -> Result<&'static str, AdminError> {
     ROUTE_TEMPLATES
         .iter()
         .find(|template| **template == raw)
-        .map(|template| Condition::Route(template))
+        .copied()
         .ok_or_else(|| bad(format!("{raw:?} is not a known route template")))
 }
 
@@ -312,6 +327,16 @@ fn bad(message: impl Into<String>) -> AdminError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn several_routes_match_any_of_them_and_one_stays_a_single_route() {
+        assert_eq!(route("/v3/tags").unwrap(), Condition::Route("/v3/tags"));
+        assert_eq!(
+            route("/v3/tags,/v3/players").unwrap(),
+            Condition::Routes(vec!["/v3/tags", "/v3/players"])
+        );
+        assert!(route("/v3/tags,/nope").is_err());
+    }
+
     use chrono::TimeZone;
     use serde_json::json;
 

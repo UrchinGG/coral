@@ -61,6 +61,7 @@
 </section>
 
 <script>
+  import { memberRequestsTab } from "@/lib/tabs/requests";
   import { load, send } from "@/lib/api";
   import { el, panel, row, widePanel } from "@/lib/dom";
   import { FORMATS } from "@/lib/format";
@@ -68,7 +69,6 @@
   import {
     networkTab,
     rawTab,
-    requestsTab,
     starfishTab,
     timelineTab,
   } from "@/lib/tabs/member";
@@ -364,7 +364,7 @@
       case "starfish":
         return starfishTab(id!, show);
       case "requests":
-        return requestsTab(id!);
+        return memberRequestsTab(id!);
       case "network":
         return networkTab(id!);
       case "raw":
@@ -438,6 +438,28 @@
     } catch (error) {
       part("status").textContent = (error as Error).message;
     }
+  }
+
+  const ALIASES: [string, string][] = [
+    ["member", "by-member"],
+    ["starfish", "by-starfish"],
+  ];
+  const alias = ALIASES.find(([param]) =>
+    new URLSearchParams(location.search).has(param),
+  );
+  if (!id && alias) {
+    const [param, route] = alias;
+    const number = new URLSearchParams(location.search).get(param)!;
+    load<{ discord_id: string }>(
+      `/accounts/${route}/${encodeURIComponent(number)}`,
+    )
+      .then(({ discord_id }) =>
+        location.replace(`/urchin/members?id=${discord_id}`),
+      )
+      .catch((error: Error) => {
+        root.hidden = false;
+        part("status").textContent = error.message;
+      });
   }
 
   if (id) {

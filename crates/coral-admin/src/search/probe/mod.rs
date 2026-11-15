@@ -65,6 +65,10 @@ pub enum Found {
         account: Account,
         by_number: bool,
     },
+    StarfishUser {
+        account: Account,
+        number: i64,
+    },
     DiscordUser {
         discord_id: i64,
         source: DiscordSource,
@@ -174,6 +178,7 @@ pub async fn probe(lookup: &Lookup, context: &ProbeContext<'_>) -> Result<Vec<Fo
         Lookup::Account(id) => accounts::account(context.db, *id).await,
         Lookup::BotLookups(id) => accounts::bot_lookups(context, *id).await,
         Lookup::MemberNumber(number) => accounts::member_number(context.db, *number).await,
+        Lookup::StarfishNumber(number) => accounts::starfish_number(context.db, *number).await,
         Lookup::Player { uuid, dashed } => players::player(context.db, *uuid, *dashed).await,
         Lookup::PlayerRequests(uuid) => players::player_requests(context, *uuid).await,
         Lookup::Request(id) => traffic::request(context.db, *id).await,

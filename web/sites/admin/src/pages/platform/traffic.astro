@@ -65,7 +65,6 @@ import Admin from "@/layouts/Admin.astro";
       <div class="chips" data-chips></div>
       <div data-requests></div>
     </section>
-    <div data-upstream></div>
   </div>
 </Admin>
 
@@ -80,7 +79,8 @@ import Admin from "@/layouts/Admin.astro";
     routes,
     series,
     summary,
-    upstream,
+    UNMATCHED,
+    pickedRoutes,
     type Filters,
   } from "@/lib/traffic";
 
@@ -100,7 +100,6 @@ import Admin from "@/layouts/Admin.astro";
     q: url.get("q") ?? "",
     ip: url.get("ip") ?? "",
   };
-  let upstreamMode = "calls";
 
   function saveUrl() {
     const params = new URLSearchParams();
@@ -135,7 +134,9 @@ import Admin from "@/layouts/Admin.astro";
       ...[
         filters.route
           ? chip(
-              `Route: ${filters.method ?? ""} ${filters.route}`,
+              pickedRoutes(filters).length > 1
+                ? `Routes: ${pickedRoutes(filters).join(", ")}`
+                : `Route: ${filters.method ?? ""} ${filters.route}`,
               () => ((filters.route = null), (filters.method = null)),
             )
           : null,
@@ -151,9 +152,10 @@ import Admin from "@/layouts/Admin.astro";
           : null,
       ].filter((node): node is HTMLButtonElement => node !== null),
     );
-    part<HTMLSelectElement>("route-pick").value = filters.route
-      ? `${filters.method ?? ""} ${filters.route}`
-      : "";
+    part<HTMLSelectElement>("route-pick").value =
+      pickedRoutes(filters).length === 1
+        ? `${filters.method ?? ""} ${filters.route}`
+        : "";
   }
 
   function windows() {
@@ -174,10 +176,13 @@ import Admin from "@/layouts/Admin.astro";
   }
 
   const pickRoute = (route: { route: string | null; method: string }) => {
-    const same =
-      filters.route === route.route && filters.method === route.method;
-    filters.route = same ? null : route.route;
-    filters.method = same ? null : route.method;
+    const key = route.route ?? UNMATCHED;
+    const picked = pickedRoutes(filters);
+    const next = picked.includes(key)
+      ? picked.filter((other) => other !== key)
+      : [...picked, key];
+    filters.route = next.length ? next.join(",") : null;
+    filters.method = next.length === 1 ? route.method : null;
     refresh(true);
   };
 
@@ -206,16 +211,7 @@ import Admin from "@/layouts/Admin.astro";
       }),
     );
     part("requests").replaceChildren(requests(filters));
-    if (!filtersOnly) drawUpstream();
   }
-
-  const drawUpstream = () =>
-    fillTab(part("upstream"), () =>
-      upstream(filters, upstreamMode, (mode) => {
-        upstreamMode = mode;
-        drawUpstream();
-      }),
-    );
 
   load<{ route: string; method: string | null; requests_24h: number }[]>(
     "/requests/routes",

@@ -18,12 +18,29 @@ use crate::state::AppState;
 const TIMELINE_PAGE: usize = 50;
 const MAX_TIMELINE_PAGE: usize = 200;
 const CURSOR_SEPARATOR: char = '_';
+const KIND_SEPARATOR: char = ',';
+const EVENT_KINDS: &[&str] = &[
+    "admin_action",
+    "strike_received",
+    "strike_revoked",
+    "strike_issued",
+    "player_event",
+    "tag_authored",
+    "tag_reviewed",
+    "review_submitted",
+    "vote",
+    "key_created",
+    "key_retired",
+    "linked",
+    "unlinked",
+];
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TimelineQuery {
     cursor: Option<String>,
     limit: Option<usize>,
+    kinds: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -116,7 +133,7 @@ const TIMELINE_SQL: &str = "WITH own_players AS (
          FROM member_mc_links l WHERE l.member_id = $1 AND l.unlinked_at IS NOT NULL)
      )
      SELECT key, at, kind, actor, target, player, action, detail, data FROM events
-     WHERE (at, key) < ($4, $5)
+     WHERE (at, key) < ($4, $5) AND ($8::text[] IS NULL OR kind = ANY($8))
      ORDER BY at DESC, key DESC
      LIMIT $7";
 
@@ -127,6 +144,7 @@ pub async fn timeline(
 ) -> Result<Json<CursorPage<TimelineEvent>>, AdminError> {
     let Query(query) = query?;
     let limit = page_limit(query.limit)?;
+    let kinds = query.kinds.as_deref().map(parse_kinds).transpose()?;
     let cursor = query
         .cursor
         .as_deref()
@@ -134,7 +152,8 @@ pub async fn timeline(
         .transpose()?;
     let target = AccountTarget::resolve(&state, &raw).await?;
     let start = cursor.unwrap_or_else(TimelineCursor::newest);
-    let mut rows = read_events(state.db.pool(), target, &start, limit + 1).await?;
+    let mut rows =
+        read_events(state.db.pool(), target, &start, kinds.as_deref(), limit + 1).await?;
     let full = rows.len() > limit;
     rows.truncate(limit);
     let next_cursor = full
@@ -165,6 +184,7 @@ async fn read_events(
     pool: &PgPool,
     target: AccountTarget,
     start: &TimelineCursor,
+    kinds: Option<&[String]>,
     fetch: usize,
 ) -> Result<Vec<EventRow>, AdminError> {
     sqlx::query_as(TIMELINE_SQL)
@@ -175,9 +195,24 @@ async fn read_events(
         .bind(&start.key)
         .bind(reqlog::KEY_PREFIX_CHARS as i32)
         .bind(fetch as i64)
+        .bind(kinds)
         .fetch_all(pool)
         .await
         .context("read the account's timeline")
+}
+
+/// Reads a comma-separated list of event kinds, rejecting any the timeline doesn't have.
+fn parse_kinds(raw: &str) -> Result<Vec<String>, AdminError> {
+    raw.split(KIND_SEPARATOR)
+        .map(|kind| {
+            EVENT_KINDS
+                .contains(&kind)
+                .then(|| kind.to_string())
+                .ok_or_else(|| {
+                    AdminError::BadRequest(format!("{kind:?} is not a timeline event kind"))
+                })
+        })
+        .collect()
 }
 
 impl TimelineCursor {
@@ -244,6 +279,12 @@ mod tests {
 
     use super::super::test_db::{at, member, pool, unique_key};
     use super::*;
+
+    #[test]
+    fn kind_filters_accept_known_kinds_and_reject_others() {
+        assert_eq!(parse_kinds("linked,vote").unwrap(), vec!["linked", "vote"]);
+        assert!(parse_kinds("linked,nonsense").is_err());
+    }
 
     #[test]
     fn timeline_cursors_round_trip_and_reject_garbage() {
@@ -330,7 +371,7 @@ mod tests {
         let mut seen = Vec::new();
         let mut cursor = TimelineCursor::newest();
         loop {
-            let page = read_events(&pool, target, &cursor, 2).await.unwrap();
+            let page = read_events(&pool, target, &cursor, None, 2).await.unwrap();
             let Some(last) = page.last() else {
                 break;
             };

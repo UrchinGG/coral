@@ -77,6 +77,10 @@ interface Upstream {
 }
 
 const HYPIXEL_WINDOW_S = 300;
+export const UNMATCHED = "unmatched";
+
+export const pickedRoutes = (filters: Filters) =>
+  filters.route ? filters.route.split(",") : [];
 
 const CLASSES: [keyof SeriesPoint, string, string][] = [
   ["c2xx", "Answered", "#3a9a5b"],
@@ -155,7 +159,7 @@ export async function series(filters: Filters) {
     el("h2", {
       className: "panel-title",
       textContent: filters.route
-        ? `Requests to ${filters.route}`
+        ? `Requests to ${pickedRoutes(filters).join(", ")}`
         : "Requests by status class",
     }),
     legend(CLASSES.map(([, label, color]) => ({ label, color }))),
@@ -219,7 +223,8 @@ export async function routes(
       line.setAttribute(
         "aria-pressed",
         String(
-          route.route === filters.route && route.method === filters.method,
+          pickedRoutes(filters).includes(route.route ?? UNMATCHED) &&
+            (filters.method === null || route.method === filters.method),
         ),
       );
       line.addEventListener("click", () => pick(route));
@@ -311,13 +316,11 @@ const UPSTREAM_MODES: [string, string][] = [
 ];
 
 export async function upstream(
-  filters: Filters,
+  window: string,
   mode: string,
   pickMode: (mode: string) => void,
 ) {
-  const data = await load<Upstream>(
-    `/traffic/upstream?${query(filters, ["window"])}`,
-  );
+  const data = await load<Upstream>(`/traffic/upstream?window=${window}`);
   const limit = data.capacity
     ? (data.capacity.limit * data.step_s) / HYPIXEL_WINDOW_S
     : null;
@@ -402,6 +405,10 @@ export async function upstream(
           first.reduce((sum, value) => sum + value, 0) +
             changed.reduce((sum, value) => sum + value, 0),
         ),
+      ),
+      stat(
+        "No New Snapshot",
+        FORMATS.short(unchanged.reduce((sum, value) => sum + value, 0)),
       ),
       stat(
         "Capacity Now",

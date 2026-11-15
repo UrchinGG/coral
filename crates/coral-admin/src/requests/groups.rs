@@ -300,6 +300,10 @@ fn push_condition(condition: &Condition, sql: &mut Sql) -> Result<(), AdminError
     match condition {
         Condition::Method(method) => sql.push("c.method = ").push_bind(method.clone()),
         Condition::Route(template) => sql.push("c.route = ").push_bind(*template),
+        Condition::Routes(templates) => sql
+            .push("c.route = ANY(")
+            .push_bind(templates.clone())
+            .push(")"),
         Condition::Status(status) => sql.push("c.status = ").push_bind(*status),
         Condition::Class(class) => {
             let (low, high) = class.range();

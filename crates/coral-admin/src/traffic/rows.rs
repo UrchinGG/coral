@@ -82,6 +82,16 @@ impl TrafficFilter {
             Some(RouteFilter::Unmatched) => {
                 query.push(" AND route IS NULL");
             }
+            Some(RouteFilter::Any(set)) => {
+                query
+                    .push(" AND (route = ANY(")
+                    .push_bind(set.templates())
+                    .push(")");
+                if set.unmatched() {
+                    query.push(" OR route IS NULL");
+                }
+                query.push(")");
+            }
             None => {}
         }
         if let Some(method) = self.method {

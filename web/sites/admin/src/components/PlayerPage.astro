@@ -62,8 +62,7 @@
   import { fillTab, setQuery, tabBar } from "@/lib/tabbar";
   import {
     overviewTab,
-    requestersTab,
-    requestsTab,
+    lookupsTab,
     snapshotsTab,
     tagsTab,
     type PlayerCore,
@@ -74,8 +73,7 @@
     ["overview", "Overview"],
     ["tags", "Tag History"],
     ["snapshots", "Snapshots"],
-    ["requests", "Requests"],
-    ["requesters", "Requesters"],
+    ["lookups", "Lookups"],
   ];
 
   const uuid = new URLSearchParams(location.search).get("uuid");
@@ -186,10 +184,8 @@
         return tagsTab(uuid!);
       case "snapshots":
         return snapshotsTab(uuid!);
-      case "requests":
-        return requestsTab(uuid!);
-      case "requesters":
-        return requestersTab(uuid!);
+      case "lookups":
+        return lookupsTab(uuid!);
       default:
         return overviewTab(core, removeTag);
     }

@@ -25,6 +25,8 @@ import Admin from "@/layouts/Admin.astro";
         </div>
       </div>
     </section>
+    <div class="seg" data-windows></div>
+    <div data-upstream></div>
     <p class="muted" data-status></p>
     <div class="stack" data-extensions></div>
   </div>
@@ -35,6 +37,8 @@ import Admin from "@/layouts/Admin.astro";
   import { el } from "@/lib/dom";
   import { renderView, type ExtensionView } from "@/lib/extension";
   import { FORMATS } from "@/lib/format";
+  import { fillTab } from "@/lib/tabbar";
+  import { WINDOWS, upstream } from "@/lib/traffic";
 
   interface Upstream {
     series: { requests: number; errors: number }[];
@@ -63,6 +67,34 @@ import Admin from "@/layouts/Admin.astro";
     part("ring").style.background =
       `conic-gradient(${tone} 0 ${share}%, var(--color-border) ${share}% 100%)`;
   });
+
+  let range = "24h";
+  let mode = "outcome";
+
+  function drawUpstream() {
+    part("windows").replaceChildren(
+      ...WINDOWS.map(([key, label]) => {
+        const button = el("button", {
+          type: "button",
+          textContent: label,
+          className: key === range ? "on" : "",
+        });
+        button.addEventListener("click", () => {
+          range = key;
+          drawUpstream();
+        });
+        return button;
+      }),
+    );
+    fillTab(part("upstream"), () =>
+      upstream(range, mode, (picked) => {
+        mode = picked;
+        drawUpstream();
+      }),
+    );
+  }
+
+  drawUpstream();
 
   async function show(id: string, holder: HTMLElement) {
     const run = async (action: string, input: Record<string, unknown>) => {

@@ -1,4 +1,5 @@
 import { load } from "@/lib/api";
+import { legend, stackedBars } from "@/lib/chart";
 import { el, panel, row, widePanel } from "@/lib/dom";
 import { FORMATS, titleCase } from "@/lib/format";
 import type { Labels } from "@/lib/members";
@@ -254,15 +255,94 @@ export async function snapshotsTab(uuid: string) {
   );
 }
 
-export function requestsTab(uuid: string) {
+const LOOKUP_WINDOW = "24h";
+const REQUESTER_WINDOW = "14d";
+
+interface LookupSeries {
+  step_s: number;
+  clamped_from: string | null;
+  series: {
+    t: string;
+    lookups: number;
+    rate_limited: number;
+    errors: number;
+  }[];
+}
+
+export async function lookupsTab(uuid: string) {
+  const [lookups, requesters] = await Promise.all([
+    load<LookupSeries>(`/players/${uuid}/lookups?window=${LOOKUP_WINDOW}`),
+    requestersTable(uuid),
+  ]);
   return el(
     "div",
-    { className: "table" },
-    requestHead(),
-    pager<RequestRow>(
-      `/players/${uuid}/requests?window=14d`,
-      requestRow,
-      "Nobody looked this player up in 14 days.",
+    { className: "stack" },
+    lookupChart(lookups, requesters.count),
+    el("h2", { className: "group-title" }, `Requesters · ${REQUESTER_WINDOW}`),
+    requesters.table,
+    el("h2", { className: "group-title" }, `Requests · ${REQUESTER_WINDOW}`),
+    el(
+      "div",
+      { className: "table" },
+      requestHead(),
+      pager<RequestRow>(
+        `/players/${uuid}/requests?window=${REQUESTER_WINDOW}`,
+        requestRow,
+        `Nobody looked this player up in ${REQUESTER_WINDOW}.`,
+      ),
+    ),
+  );
+}
+
+function lookupChart(data: LookupSeries, requesterCount: number) {
+  const limited = data.series.map((point) => point.rate_limited);
+  const errors = data.series.map((point) => point.errors);
+  const series = [
+    {
+      label: "Answered",
+      color: "#3a9a5b",
+      values: data.series.map((point, index) =>
+        Math.max(0, point.lookups - limited[index] - errors[index]),
+      ),
+    },
+    { label: "Rate limited", color: "#e5c74a", values: limited },
+    { label: "Errors", color: "#e66767", values: errors },
+  ];
+  const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
+  return el(
+    "section",
+    { className: "panel" },
+    el("h2", { className: "panel-title" }, "Lookups, last 24 hours"),
+    legend(series),
+    stackedBars(
+      series,
+      data.series.map((point) => moment(point.t)),
+    ),
+    ...(data.clamped_from
+      ? [
+          el(
+            "p",
+            { className: "muted" },
+            `Lookups before ${moment(data.clamped_from)} weren't recorded by player.`,
+          ),
+        ]
+      : []),
+    el(
+      "div",
+      { className: "stats" },
+      ...[
+        ["Lookups", sum(data.series.map((point) => point.lookups))],
+        ["Rate Limited", sum(limited)],
+        ["Errors", sum(errors)],
+        [`Requesters · ${REQUESTER_WINDOW}`, requesterCount],
+      ].map(([name, value]) =>
+        el(
+          "div",
+          { className: "stat" },
+          el("span", { className: "label" }, String(name)),
+          el("b", {}, FORMATS.number(Number(value))),
+        ),
+      ),
     ),
   );
 }
@@ -281,15 +361,17 @@ interface Requesters {
   labels: Labels;
 }
 
-export async function requestersTab(uuid: string) {
-  const data = await load<Requesters>(`/players/${uuid}/requesters?window=14d`);
+async function requestersTable(uuid: string) {
+  const data = await load<Requesters>(
+    `/players/${uuid}/requesters?window=${REQUESTER_WINDOW}`,
+  );
   const line = (cells: (string | Node)[], head = false) =>
     el(
       "div",
       { className: `table-row requesters${head ? " head" : ""}` },
       ...cells.map((cell) => el("span", {}, cell)),
     );
-  return el(
+  const table = el(
     "div",
     { className: "table" },
     line(
@@ -308,4 +390,5 @@ export async function requestersTab(uuid: string) {
       ]),
     ),
   );
+  return { table, count: data.groups.length };
 }
