@@ -1,4 +1,3 @@
-import { send } from "@/lib/api";
 import { el, panel, row } from "@/lib/dom";
 import { FORMATS, titleCase } from "@/lib/format";
 import { day } from "@/lib/time";

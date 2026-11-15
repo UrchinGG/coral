@@ -16,6 +16,7 @@ export const SECTIONS: Section[] = [
       { title: "Members", path: "/urchin/members" },
       { title: "Players", path: "/urchin/players" },
       { title: "Guilds", path: "/urchin/guilds" },
+      { title: "Server", path: "/urchin/server" },
     ],
   },
   {

@@ -1,0 +1,128 @@
+---
+import Admin from "@/layouts/Admin.astro";
+import StatGroup from "@/components/StatGroup.astro";
+---
+
+<Admin title="Server">
+  <div id="server" class="stack">
+    <div class="page-actions">
+      <span class="muted" data-guild></span>
+      <button type="button" class="button" data-reread>
+        Read from Discord
+      </button>
+    </div>
+    <StatGroup
+      stats={[
+        { label: "Members", value: "population.member_count" },
+        { label: "Linked", value: "population.linked_members" },
+        { label: "Rules", value: "rules" },
+      ]}
+    />
+    <p class="muted" data-status></p>
+    <div class="stack" data-running></div>
+    <div
+      class="tabs"
+      role="tablist"
+      aria-label="Server sections"
+      data-tabs
+    ></div>
+    <div data-tab></div>
+  </div>
+</Admin>
+
+<script>
+  import { load } from "@/lib/api";
+  import { fill } from "@/lib/fill";
+  import { autorolesTab } from "@/lib/server/autoroles";
+  import type {
+    Directory,
+    Population,
+    Server,
+    ServerConfig,
+  } from "@/lib/server/common";
+  import { watchJobs } from "@/lib/server/jobs";
+  import { linkingTab } from "@/lib/server/linking";
+  import { nicknamesTab } from "@/lib/server/nicknames";
+  import { sourcesTab } from "@/lib/server/sources";
+  import { fillTab, setQuery, tabBar } from "@/lib/tabbar";
+  import { ago } from "@/lib/time";
+
+  const TABS: [string, string][] = [
+    ["linking", "Account Linking"],
+    ["nicknames", "Display Names"],
+    ["autoroles", "Autoroles"],
+    ["sources", "Data Sources"],
+    ["jobs", "Bulk Updates"],
+  ];
+
+  const root = document.getElementById("server")!;
+  const part = <T extends HTMLElement = HTMLElement>(name: string) =>
+    root.querySelector<T>(`[data-${name}]`)!;
+  let current = new URLSearchParams(location.search).get("tab") ?? "linking";
+  if (!TABS.some(([key]) => key === current)) current = "linking";
+
+  const report = (text: string, bad = false) => {
+    part("status").textContent = text;
+    part("status").className = bad ? "bad" : "muted";
+  };
+
+  const optional = <T,>(promise: Promise<T>) =>
+    promise.catch((error: Error) => {
+      report(error.message, true);
+      return null;
+    });
+
+  async function show(refresh = false) {
+    const query = refresh ? "?refresh=true" : "";
+    const [config, directory, population] = await Promise.all([
+      load<ServerConfig>("/server"),
+      optional(load<Directory>(`/server/directory${query}`)),
+      optional(load<Population>(`/server/population${query}`)),
+    ]);
+    const server: Server = {
+      config,
+      directory,
+      population,
+      refresh: () => show(),
+      report,
+    };
+    part("guild").textContent = directory
+      ? `${directory.guild.name} · ${config.guild_id} · read from Discord ${ago(directory.as_of)}`
+      : config.guild_id;
+    fill(root, { population, rules: config.rules.length });
+    render(server);
+  }
+
+  function render(server: Server) {
+    tabBar(part("tabs"), TABS, current, (key) => {
+      current = key;
+      setQuery("tab", key === "linking" ? null : key);
+      render(server);
+    });
+    const jobs = current === "jobs";
+    watchJobs(jobs ? part("tab") : part("running"), !jobs, server.refresh);
+    if (jobs) {
+      part("running").replaceChildren();
+      return;
+    }
+    fillTab(part("tab"), () => {
+      switch (current) {
+        case "nicknames":
+          return nicknamesTab(server);
+        case "autoroles":
+          return autorolesTab(server);
+        case "sources":
+          return sourcesTab(server);
+        default:
+          return linkingTab(server);
+      }
+    });
+  }
+
+  part("reread").addEventListener("click", () => {
+    report("Reading roles, channels and members from Discord…");
+    show(true).then(() => report("Read from Discord."));
+  });
+
+  show().catch((error: Error) => report(error.message, true));
+</script>
