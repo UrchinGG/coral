@@ -13,7 +13,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-use super::{change, home_guild, sync_settings};
+use super::{Server, change, sync_settings};
 use crate::auth::AdminActor;
 use crate::error::{AdminError, Context};
 use crate::state::AppState;
@@ -31,8 +31,10 @@ enum JobEvent {
     Failed { message: String },
 }
 
-pub async fn list(State(state): State<AppState>) -> Result<Json<Value>, AdminError> {
-    let guild_id = home_guild(&state)?;
+pub async fn list(
+    State(state): State<AppState>,
+    Server(guild_id): Server,
+) -> Result<Json<Value>, AdminError> {
     let path = format!("/guilds/{guild_id}/jobs");
     Ok(Json(sync_settings(&state)?.read(&path).await?))
 }
@@ -40,12 +42,14 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Value>, AdminErr
 pub async fn cancel(
     State(state): State<AppState>,
     Extension(actor): Extension<AdminActor>,
-    Path(job_id): Path<i64>,
+    Server(guild_id): Server,
+    Path((_, job_id)): Path<(u64, i64)>,
 ) -> Result<StatusCode, AdminError> {
     let path = format!("/jobs/{job_id}");
     change(
         &state,
         &actor,
+        guild_id,
         Method::DELETE,
         &path,
         None,
@@ -57,9 +61,9 @@ pub async fn cancel(
 
 pub async fn events(
     State(state): State<AppState>,
-    Path(job_id): Path<i64>,
+    Server(guild_id): Server,
+    Path((_, job_id)): Path<(u64, i64)>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AdminError> {
-    let guild_id = home_guild(&state)?;
     let path = format!("/guilds/{guild_id}/jobs/{job_id}");
     let settings = sync_settings(&state)?;
     let job = settings.read(&path).await?;

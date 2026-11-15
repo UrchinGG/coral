@@ -19,51 +19,77 @@ let poll: ReturnType<typeof setTimeout> | undefined;
 const isActive = (job: Job) => ACTIVE.includes(job.state);
 
 export async function watchJobs(
+  base: string,
   container: HTMLElement,
   onlyActive: boolean,
   finished: () => void,
   wasActive = false,
 ) {
   clearTimeout(poll);
-  const { jobs } = await load<{ jobs: Job[] }>("/server/jobs");
-  const shown = onlyActive ? jobs.filter(isActive) : jobs;
-  const again = () => watchJobs(container, onlyActive, finished, true);
-  container.replaceChildren(...jobList(shown, onlyActive, again));
+  const { jobs } = await load<{ jobs: Job[] }>(`${base}/jobs`);
+  const again = () => watchJobs(base, container, onlyActive, finished, true);
+  const cancel = (job: Job) => cancelJob(base, job, again);
+  container.replaceChildren(
+    ...(onlyActive
+      ? jobs.filter(isActive).map((job) => runningCard(job, cancel))
+      : jobList(jobs, cancel)),
+  );
   const active = jobs.some(isActive);
   if (wasActive && !active) finished();
   if (active) poll = setTimeout(again, POLL_MS);
 }
 
-function jobList(jobs: Job[], onlyActive: boolean, reload: () => void) {
+async function cancelJob(base: string, job: Job, reload: () => void) {
+  if (!confirm(`Stop "${job.label}"?`)) return;
+  await call(`${base}/jobs/${job.id}/cancel`, "POST", {});
+  reload();
+}
+
+function runningCard(job: Job, cancel: (job: Job) => void) {
+  const bar = el("span");
+  bar.style.width = `${job.total ? (job.processed / job.total) * 100 : 0}%`;
+  const counted =
+    job.state === "queued"
+      ? "Waiting for a running job"
+      : `${FORMATS.number(job.processed)} of ${FORMATS.number(job.total)} members · started ${ago(job.started_at)}`;
+  return el(
+    "div",
+    { className: "sync-running" },
+    el(
+      "span",
+      { className: "sync-running-text" },
+      el("b", { className: "strong" }, job.label),
+      el("span", { className: "muted" }, counted),
+    ),
+    el("span", { className: "meter ok" }, bar),
+    smallButton("Cancel", () => cancel(job), "button small danger"),
+  );
+}
+
+function jobList(jobs: Job[], cancel: (job: Job) => void) {
   if (!jobs.length)
-    return onlyActive
-      ? []
-      : [
-          el(
-            "p",
-            { className: "muted" },
-            "No bulk updates have run on this server.",
-          ),
-        ];
+    return [
+      el(
+        "p",
+        { className: "muted" },
+        "No bulk updates have run on this server.",
+      ),
+    ];
   return [
     el(
       "div",
       { className: "stack" },
-      el(
-        "h2",
-        { className: "group-title" },
-        onlyActive ? "Running Now" : "Bulk Updates",
-      ),
+      el("h2", { className: "group-title" }, "Bulk Updates"),
       el(
         "div",
         { className: "table" },
-        ...jobs.map((job) => jobRow(job, reload)),
+        ...jobs.map((job) => jobRow(job, cancel)),
       ),
     ),
   ];
 }
 
-function jobRow(job: Job, reload: () => void) {
+function jobRow(job: Job, cancel: (job: Job) => void) {
   return el(
     "div",
     { className: "table-row sync-job" },
@@ -77,15 +103,7 @@ function jobRow(job: Job, reload: () => void) {
     el("span", { className: STATE_CLASS[job.state] }, titleCase(job.state)),
     progress(job),
     isActive(job)
-      ? smallButton(
-          "Cancel",
-          async () => {
-            if (!confirm(`Stop "${job.label}"?`)) return;
-            await call(`/server/jobs/${job.id}/cancel`, "POST", {});
-            reload();
-          },
-          "button small danger",
-        )
+      ? smallButton("Cancel", () => cancel(job), "button small danger")
       : el("span"),
   );
 }

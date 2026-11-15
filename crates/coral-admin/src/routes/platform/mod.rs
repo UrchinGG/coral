@@ -16,7 +16,7 @@ mod tools;
 pub fn router() -> Router<AppState> {
     Router::new()
         .nest("/moderation", moderation_router())
-        .nest("/server", server_router())
+        .nest("/sync", sync_router())
         .nest("/starfish", starfish_router())
         .nest("/plugins", plugins_router())
         .nest("/guilds", guilds_router())
@@ -33,11 +33,22 @@ fn moderation_router() -> Router<AppState> {
         .route("/guide/ping-roles", put(review::set_ping_roles))
         .route("/guide/publish", post(review::publish_guide))
         .route("/rules", get(review::rules).put(review::save_rules))
+        .route("/directory", get(server::directory::home_directory))
+        .route("/population", get(server::directory::home_population))
+}
+
+fn sync_router() -> Router<AppState> {
+    Router::new()
+        .route("/servers", get(server::list::servers))
+        .nest("/servers/{guild_id}", server_router())
+        .route("/sources", get(server::sources).post(server::add_source))
+        .route("/sources/{source_id}", delete(server::remove_source))
 }
 
 fn server_router() -> Router<AppState> {
     Router::new()
         .route("/", get(server::config))
+        .route("/enabled", put(server::set_enabled))
         .route("/directory", get(server::directory::directory))
         .route("/population", get(server::directory::population))
         .route("/link-role", put(server::set_link_role))
@@ -51,9 +62,7 @@ fn server_router() -> Router<AppState> {
             put(server::update_rule).delete(server::remove_rule),
         )
         .route("/roles/{role_id}/strip", post(server::strip_role))
-        .route("/sources", get(server::sources).post(server::add_source))
-        .route("/sources/used", put(server::set_used_sources))
-        .route("/sources/{source_id}", delete(server::remove_source))
+        .route("/sources", put(server::set_used_sources))
         .route("/jobs", get(server::jobs::list))
         .route("/jobs/{job_id}/cancel", post(server::jobs::cancel))
         .route("/jobs/{job_id}/events", get(server::jobs::events))

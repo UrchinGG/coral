@@ -2,20 +2,17 @@ use std::collections::{BTreeMap, HashMap};
 
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
-use axum::response::IntoResponse;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId, ChannelType, GuildChannel, GuildId, Http, ImageHash, Role, RoleId};
 
-use super::home_guild;
+use super::{Server, home_guild};
 use crate::discord;
 use crate::error::{AdminError, Context};
 use crate::serde_ts;
 use crate::state::AppState;
 use crate::views::{CachedView, View};
 
-const DIRECTORY_KEY: &str = "home";
-const POPULATION_KEY: &str = "home";
 const ICON_SIZE: u32 = 128;
 
 #[derive(Debug, Default, Deserialize)]
@@ -84,40 +81,68 @@ pub struct Population {
 
 pub async fn directory(
     State(state): State<AppState>,
+    Server(guild_id): Server,
     query: Result<Query<RefreshQuery>, QueryRejection>,
-) -> Result<impl IntoResponse, AdminError> {
+) -> Result<CachedView, AdminError> {
     let Query(query) = query?;
-    let guild_id = home_guild(&state)?;
-    if query.refresh {
-        state
-            .views
-            .forget(View::DiscordDirectory, DIRECTORY_KEY)
-            .await;
-    }
-    state
-        .views
-        .get_or_load(View::DiscordDirectory, DIRECTORY_KEY, || {
-            load_directory(&state, guild_id)
-        })
-        .await
+    guild_directory(&state, guild_id, query.refresh).await
 }
 
 pub async fn population(
     State(state): State<AppState>,
+    Server(guild_id): Server,
     query: Result<Query<RefreshQuery>, QueryRejection>,
 ) -> Result<CachedView, AdminError> {
     let Query(query) = query?;
-    let guild_id = home_guild(&state)?;
-    if query.refresh {
-        state
-            .views
-            .forget(View::GuildPopulation, POPULATION_KEY)
-            .await;
+    guild_population(&state, guild_id, query.refresh).await
+}
+
+pub async fn home_directory(
+    State(state): State<AppState>,
+    query: Result<Query<RefreshQuery>, QueryRejection>,
+) -> Result<CachedView, AdminError> {
+    let Query(query) = query?;
+    guild_directory(&state, home_guild(&state)?, query.refresh).await
+}
+
+pub async fn home_population(
+    State(state): State<AppState>,
+    query: Result<Query<RefreshQuery>, QueryRejection>,
+) -> Result<CachedView, AdminError> {
+    let Query(query) = query?;
+    guild_population(&state, home_guild(&state)?, query.refresh).await
+}
+
+pub async fn guild_directory(
+    state: &AppState,
+    guild_id: GuildId,
+    refresh: bool,
+) -> Result<CachedView, AdminError> {
+    let key = guild_id.to_string();
+    if refresh {
+        state.views.forget(View::DiscordDirectory, &key).await;
     }
     state
         .views
-        .get_or_load(View::GuildPopulation, POPULATION_KEY, || {
-            load_population(&state, guild_id)
+        .get_or_load(View::DiscordDirectory, &key, || {
+            load_directory(state, guild_id)
+        })
+        .await
+}
+
+pub async fn guild_population(
+    state: &AppState,
+    guild_id: GuildId,
+    refresh: bool,
+) -> Result<CachedView, AdminError> {
+    let key = guild_id.to_string();
+    if refresh {
+        state.views.forget(View::GuildPopulation, &key).await;
+    }
+    state
+        .views
+        .get_or_load(View::GuildPopulation, &key, || {
+            load_population(state, guild_id)
         })
         .await
 }
@@ -216,7 +241,7 @@ async fn review_bot_roles(
     own_roles(http, guild_id).await.map(Some)
 }
 
-fn sync_http(state: &AppState) -> Result<&Http, AdminError> {
+pub(super) fn sync_http(state: &AppState) -> Result<&Http, AdminError> {
     state
         .discord
         .sync()
@@ -288,7 +313,7 @@ fn channel_kind(kind: ChannelType) -> Option<ChannelKind> {
     }
 }
 
-fn icon_url(guild_id: GuildId, icon: Option<ImageHash>) -> Option<String> {
+pub(super) fn icon_url(guild_id: GuildId, icon: Option<ImageHash>) -> Option<String> {
     icon.map(|hash| {
         format!("https://cdn.discordapp.com/icons/{guild_id}/{hash}.png?size={ICON_SIZE}")
     })

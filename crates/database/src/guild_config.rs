@@ -11,6 +11,7 @@ pub struct GuildConfig {
     pub link_channel_id: Option<i64>,
     pub link_message_id: Option<i64>,
     pub configured_by: i64,
+    pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -37,7 +38,7 @@ impl<'a> GuildConfigRepository<'a> {
     pub async fn get(&self, guild_id: i64) -> Result<Option<GuildConfig>, sqlx::Error> {
         sqlx::query_as(
             "SELECT id, guild_id, link_role_id, unlinked_role_id, nickname_template,
-                    link_channel_id, link_message_id, configured_by, created_at, updated_at
+                    link_channel_id, link_message_id, configured_by, enabled, created_at, updated_at
              FROM guild_config WHERE guild_id = $1",
         )
         .bind(guild_id)
@@ -45,11 +46,12 @@ impl<'a> GuildConfigRepository<'a> {
         .await
     }
 
+    /// Every server with sync turned on.
     pub async fn get_all(&self) -> Result<Vec<GuildConfig>, sqlx::Error> {
         sqlx::query_as(
             "SELECT id, guild_id, link_role_id, unlinked_role_id, nickname_template,
-                    link_channel_id, link_message_id, configured_by, created_at, updated_at
-             FROM guild_config",
+                    link_channel_id, link_message_id, configured_by, enabled, created_at, updated_at
+             FROM guild_config WHERE enabled",
         )
         .fetch_all(self.pool)
         .await
@@ -64,7 +66,7 @@ impl<'a> GuildConfigRepository<'a> {
             "INSERT INTO guild_config (guild_id, configured_by) VALUES ($1, $2)
              ON CONFLICT (guild_id) DO UPDATE SET updated_at = NOW()
              RETURNING id, guild_id, link_role_id, unlinked_role_id, nickname_template,
-                       link_channel_id, link_message_id, configured_by, created_at, updated_at",
+                       link_channel_id, link_message_id, configured_by, enabled, created_at, updated_at",
         )
         .bind(guild_id)
         .bind(configured_by)
@@ -128,6 +130,25 @@ impl<'a> GuildConfigRepository<'a> {
         .bind(guild_id)
         .bind(channel_id)
         .bind(message_id)
+        .execute(self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Turns sync on or off for a server, keeping its settings either way.
+    pub async fn set_enabled(
+        &self,
+        guild_id: i64,
+        configured_by: i64,
+        enabled: bool,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO guild_config (guild_id, configured_by, enabled) VALUES ($1, $2, $3)
+             ON CONFLICT (guild_id) DO UPDATE SET enabled = $3, updated_at = NOW()",
+        )
+        .bind(guild_id)
+        .bind(configured_by)
+        .bind(enabled)
         .execute(self.pool)
         .await?;
         Ok(())
@@ -229,5 +250,47 @@ impl<'a> GuildConfigRepository<'a> {
             .execute(self.pool)
             .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn test_pool() -> Option<PgPool> {
+        dotenvy::dotenv().ok();
+        let url = std::env::var("DATABASE_URL").ok()?;
+        sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&url)
+            .await
+            .ok()
+    }
+
+    #[tokio::test]
+    async fn a_server_turned_off_keeps_its_settings_but_leaves_the_sync() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let repo = GuildConfigRepository::new(&pool);
+        let guild = Utc::now().timestamp_nanos_opt().unwrap();
+        repo.upsert(guild, 1).await.unwrap();
+        repo.set_nickname_template(guild, Some("{hypixel.displayname}"))
+            .await
+            .unwrap();
+        let synced = |configs: Vec<GuildConfig>| configs.iter().any(|c| c.guild_id == guild);
+
+        repo.set_enabled(guild, 1, false).await.unwrap();
+        let off = repo.get(guild).await.unwrap().unwrap();
+        assert!(!off.enabled);
+        assert_eq!(
+            off.nickname_template.as_deref(),
+            Some("{hypixel.displayname}")
+        );
+        assert!(!synced(repo.get_all().await.unwrap()));
+
+        repo.set_enabled(guild, 1, true).await.unwrap();
+        assert!(synced(repo.get_all().await.unwrap()));
+        repo.delete(guild).await.unwrap();
     }
 }

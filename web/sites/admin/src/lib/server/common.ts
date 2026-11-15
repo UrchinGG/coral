@@ -41,6 +41,7 @@ export interface Rule {
 
 export interface ServerConfig {
   guild_id: string;
+  enabled: boolean;
   config: {
     link_role_id: string | null;
     unlinked_role_id: string | null;
@@ -65,6 +66,7 @@ export interface Job {
 }
 
 export interface Server {
+  base: string;
   config: ServerConfig;
   directory: Directory | null;
   population: Population | null;
@@ -87,7 +89,7 @@ export async function apply(
 ) {
   try {
     const answer = await call<{ job: Job | null } | null>(
-      `/server${path}`,
+      `${server.base}${path}`,
       method,
       body,
     );

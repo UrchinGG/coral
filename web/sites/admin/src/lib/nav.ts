@@ -16,7 +16,7 @@ export const SECTIONS: Section[] = [
       { title: "Members", path: "/urchin/members" },
       { title: "Players", path: "/urchin/players" },
       { title: "Guilds", path: "/urchin/guilds" },
-      { title: "Server", path: "/urchin/server" },
+      { title: "Tag Reviews", path: "/urchin/reviews" },
     ],
   },
   {
@@ -25,6 +25,10 @@ export const SECTIONS: Section[] = [
       { title: "Home", path: "/starfish" },
       { title: "Plugins", path: "/starfish/plugins" },
     ],
+  },
+  {
+    name: "Sync",
+    pages: [{ title: "Servers", path: "/sync/servers" }],
   },
   {
     name: "API",

@@ -7,6 +7,8 @@ import {
   type Server,
 } from "@/lib/server/common";
 
+const SOURCES = "/sync/sources";
+
 interface Source {
   id: string;
   name: string;
@@ -18,7 +20,7 @@ interface Source {
 }
 
 export async function sourcesTab(server: Server) {
-  const sources = await load<Source[]>("/server/sources");
+  const sources = await load<Source[]>(SOURCES);
   const used = new Set(server.config.source_ids);
   const chosen = new Set(used);
   const save = smallButton(
@@ -26,7 +28,7 @@ export async function sourcesTab(server: Server) {
     () =>
       apply(
         server,
-        "/sources/used",
+        "/sources",
         "PUT",
         { source_ids: [...chosen] },
         "Data sources saved",
@@ -66,15 +68,8 @@ export async function sourcesTab(server: Server) {
         "Remove",
         () =>
           confirm(
-            `Remove ${source.name}? Formats and rules that read it stop matching.`,
-          ) &&
-          apply(
-            server,
-            `/sources/${source.id}`,
-            "DELETE",
-            undefined,
-            `Removed ${source.name}`,
-          ),
+            `Remove ${source.name} from every server? Formats and rules that read it stop matching.`,
+          ) && removeSource(server, source),
         "button small danger",
       ),
     );
@@ -91,18 +86,33 @@ export async function sourcesTab(server: Server) {
         `Data Sources · ${sources.length}`,
         save,
       ),
+      el(
+        "p",
+        { className: "muted" },
+        "Sources are shared by all your servers. Ticked ones feed this server's display names and autoroles, read as name.field.",
+      ),
       ...(rows.length
         ? rows
         : [
             el(
               "p",
               { className: "muted" },
-              "No data sources yet. Formats and autoroles read a source's fields as name.field.",
+              "No data sources yet. Sources are shared by all your servers; formats and autoroles read a source's fields as name.field.",
             ),
           ]),
     ),
     addSource(server),
   );
+}
+
+async function removeSource(server: Server, source: Source) {
+  try {
+    await call(`${SOURCES}/${source.id}`, "DELETE");
+    server.report(`Removed ${source.name}.`);
+    server.refresh();
+  } catch (error) {
+    server.report((error as Error).message, true);
+  }
 }
 
 function addSource(server: Server) {
@@ -134,7 +144,7 @@ function addSource(server: Server) {
     const values = new FormData(form);
     const name = String(values.get("name")).trim();
     try {
-      await call("/server/sources", "POST", {
+      await call(SOURCES, "POST", {
         name,
         base_url: String(values.get("base_url")).trim(),
         api_key: String(values.get("api_key")) || null,
