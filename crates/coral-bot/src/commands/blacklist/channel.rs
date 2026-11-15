@@ -390,11 +390,7 @@ pub async fn post_new_tag(
     silent: bool,
     review_url: Option<&str>,
 ) -> Option<MessageId> {
-    let notice = if silent {
-        None
-    } else {
-        Some(appeal::notify_tagged_player(ctx, data, uuid, name, tag).await)
-    };
+    let notice = appeal::notify_tagged_player(ctx, data, uuid, name, tag).await;
     let ign = ign_line(data, uuid, name).await;
     post_tag_to_log(
         ctx,
@@ -405,7 +401,7 @@ pub async fn post_new_tag(
         "New Tag",
         EMOTE_ADDTAG,
         review_url,
-        notice.as_ref(),
+        &notice,
     )
     .await;
     if silent {
@@ -437,11 +433,7 @@ pub async fn post_overwritten_tag(
     silent: bool,
     review_url: Option<&str>,
 ) -> Option<MessageId> {
-    let notice = if silent {
-        None
-    } else {
-        Some(appeal::notify_tagged_player(ctx, data, uuid, name, tag).await)
-    };
+    let notice = appeal::notify_tagged_player(ctx, data, uuid, name, tag).await;
     let ign = ign_line(data, uuid, name).await;
     post_tag_to_log(
         ctx,
@@ -452,7 +444,7 @@ pub async fn post_overwritten_tag(
         "Tag Overwritten",
         EMOTE_EDITTAG,
         review_url,
-        notice.as_ref(),
+        &notice,
     )
     .await;
     if silent {
@@ -869,7 +861,7 @@ async fn post_tag_to_log(
     title: &str,
     emote: &str,
     review_url: Option<&str>,
-    notice: Option<&appeal::NoticeDelivery>,
+    notice: &appeal::NoticeDelivery,
 ) {
     let dashed_uuid = format_uuid_dashed(uuid);
     let added_line = format_mod_added_line(ctx, tag).await;
@@ -891,10 +883,7 @@ async fn post_tag_to_log(
         face_section(vec![
             format!("## {emote} {title}\n{ign}\n"),
             block,
-            match notice {
-                Some(notice) => format!("{footer}\n{}", notice.log_line()),
-                None => footer,
-            },
+            format!("{footer}\n{}", notice.log_line()),
         ]),
         CreateContainerComponent::Separator(CreateSeparator::new(true)),
     ]);
