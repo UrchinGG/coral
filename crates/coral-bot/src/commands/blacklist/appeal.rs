@@ -77,11 +77,26 @@ fn reason_text(tag: &PlayerEvent) -> String {
     }
 }
 
-fn appeal_body(user_id: UserId, username: &str, uuid: &str, detail: &str) -> String {
+fn appeal_body(
+    user_id: UserId,
+    username: &str,
+    uuid: &str,
+    detail: &str,
+    previous: Option<&str>,
+) -> String {
+    let opening = match previous {
+        None => format!(
+            "This message is to inform you that your account `{username}` (`{uuid}`) has been \
+             placed on the Urchin Blacklist Network for `{detail}`."
+        ),
+        Some(previous) => format!(
+            "This message is to inform you that the tag on your account `{username}` (`{uuid}`) \
+             on the Urchin Blacklist Network has been changed from `{previous}` to `{detail}`."
+        ),
+    };
     format!(
         "Dear <@{user}>,\n\
-         This message is to inform you that your account `{username}` (`{uuid}`) has been placed \
-         on the Urchin Blacklist Network for `{detail}`.\n\n\
+         {opening}\n\n\
          If you believe this tag is false, please file an appeal immediately.\n\n\
          **How to File an Appeal**:\n\
          1. Access our official ticket system via Discord at {TICKET_URL}.\n\
@@ -100,6 +115,7 @@ pub async fn notify_tagged_player(
     uuid: &str,
     username: &str,
     tag: &PlayerEvent,
+    previous: Option<&PlayerEvent>,
 ) -> NoticeDelivery {
     let Some(tag_type) = tag.tag_type.as_deref() else {
         return NoticeDelivery::not_notifiable();
@@ -121,6 +137,11 @@ pub async fn notify_tagged_player(
     let dashed_uuid = format_uuid_dashed(uuid);
     let reason = reason_text(tag);
     let detail = format!("{} - {}", tag_label(tag_type), reason);
+    let previous_detail = previous.and_then(|prev| {
+        prev.tag_type
+            .as_deref()
+            .map(|t| format!("{} - {}", tag_label(t), reason_text(prev)))
+    });
 
     let mut delivery = NoticeDelivery::default();
     for owner in owners {
@@ -129,7 +150,13 @@ pub async fn notify_tagged_player(
         if send_dm(
             ctx,
             user_id,
-            &appeal_body(user_id, username, &dashed_uuid, &detail),
+            &appeal_body(
+                user_id,
+                username,
+                &dashed_uuid,
+                &detail,
+                previous_detail.as_deref(),
+            ),
         )
         .await
         {
@@ -229,4 +256,34 @@ fn notice_view(notices: &[PendingTagNotice]) -> Vec<CreateComponent<'static>> {
     vec![CreateComponent::Container(CreateContainer::new(vec![
         crate::utils::text(lines.join("\n")),
     ]))]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const UUID: &str = "069a79f4-44e9-4726-a5be-fca90e38aaf5";
+
+    #[test]
+    fn new_tag_body_says_placed() {
+        let body = appeal_body(UserId::new(1), "Notch", UUID, "Sniper - closet", None);
+        assert!(
+            body.contains("has been placed on the Urchin Blacklist Network for `Sniper - closet`")
+        );
+        assert!(!body.contains("changed from"));
+    }
+
+    #[test]
+    fn overwritten_tag_body_names_both_tags() {
+        let body = appeal_body(
+            UserId::new(1),
+            "Notch",
+            UUID,
+            "Blatant Cheater - fly",
+            Some("Sniper - closet"),
+        );
+        assert!(body.contains("changed from `Sniper - closet` to `Blatant Cheater - fly`"));
+        assert!(!body.contains("has been placed"));
+        assert!(body.contains(TICKET_URL));
+    }
 }
