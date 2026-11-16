@@ -19,7 +19,6 @@ pub struct SyncServer {
 
 /// Every server the sync bot is in, and whether sync is on there.
 pub async fn servers(State(state): State<AppState>) -> Result<Json<Vec<SyncServer>>, AdminError> {
-    // shortcut: reads one page of the bot's servers (200); page through them past that.
     let guilds = sync_http(&state)?
         .get_guilds(None, None)
         .await

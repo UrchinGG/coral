@@ -629,7 +629,6 @@ function evalExpr(expr: Expr, ctx: JsonValue): EvalValue {
   }
 }
 
-// Nothing is not a number: it is neither above nor below anything.
 function compareOrdered(
   op: "gt" | "lt" | "ge" | "le",
   l: EvalValue,
