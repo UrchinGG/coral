@@ -64,7 +64,7 @@ const download = (platform: string) =>
   import { account } from "@shared/account";
   import { el } from "@/lib/dom";
   import { FORMATS } from "@/lib/format";
-  import { displayName, head } from "@/lib/minecraft";
+  import { displayName, head, UNKNOWN_PLAYER } from "@/lib/minecraft";
   import { day } from "@/lib/time";
 
   interface Linked {
@@ -151,8 +151,8 @@ const download = (platform: string) =>
         }),
         el(
           "div",
-          {},
-          displayName(linked.prefix, linked.name ?? linked.uuid),
+          { className: "tile-text" },
+          displayName(linked.prefix, linked.name ?? UNKNOWN_PLAYER),
           ...(linked.primary ? [el("small", { textContent: "Primary" })] : []),
         ),
       ),
@@ -375,7 +375,7 @@ const download = (platform: string) =>
 
   .tiles {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
     gap: 8px;
   }
 
@@ -397,6 +397,24 @@ const download = (platform: string) =>
       color: var(--color-text-muted);
       font-size: var(--text-xs);
     }
+  }
+
+  .tiles :global(.tile-text) {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .tiles :global(.mc-name) {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tiles :global(.mc-name .outlined) {
+    text-shadow:
+      0 0 1px #ffffff,
+      0 0 1px #ffffff;
   }
 
   .tiles :global(.tile.hint) {

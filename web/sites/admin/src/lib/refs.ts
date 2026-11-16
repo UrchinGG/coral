@@ -1,5 +1,6 @@
 import { el } from "@/lib/dom";
 import type { Labels } from "@/lib/members";
+import { markPending } from "@/lib/names";
 import { page } from "@/lib/paths";
 
 export type Ref =
@@ -63,11 +64,28 @@ export function refUrl(ref: Ref | null): string | null {
 export function refLink(ref: Ref | null, labels: Labels) {
   const url = refUrl(ref);
   const text = refName(ref, labels);
-  return url
+  const node = url
     ? el("a", {
         href: url,
         className: `ref ref-${ref!.kind}`,
         textContent: text,
       })
     : el("span", { textContent: text });
+  return awaitName(node, ref, labels);
+}
+
+export function refText(ref: Ref | null, labels: Labels) {
+  return awaitName(
+    el("span", { textContent: refName(ref, labels) }),
+    ref,
+    labels,
+  );
+}
+
+function awaitName(node: HTMLElement, ref: Ref | null, labels: Labels) {
+  if (ref?.kind === "account" && !labels.discord[ref.discord_id])
+    markPending(node, "discord", ref.discord_id);
+  if (ref?.kind === "player" && !labels.minecraft[ref.uuid])
+    markPending(node, "minecraft", ref.uuid);
+  return node;
 }

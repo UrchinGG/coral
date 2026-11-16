@@ -7,8 +7,9 @@ use serde::Serialize;
 use crate::auth::AdminActor;
 use crate::error::AdminError;
 use crate::players::{
-    self, NewLock, NewTag, PlayerCore, PlayerRequestRow, PlayerTags, RecentlyTagged, Requesters,
-    RequestersParams, SnapshotAt, SnapshotAtQuery, SnapshotPage, SnapshotQuery, StreamParams,
+    self, BriefsQuery, NewLock, NewTag, PlayerBriefs, PlayerCore, PlayerRequestRow, PlayerTags,
+    RecentlyTagged, Requesters, RequestersParams, SnapshotAt, SnapshotAtQuery, SnapshotPage,
+    SnapshotQuery, StreamParams,
 };
 use crate::refs::Page;
 use crate::state::AppState;
@@ -23,6 +24,7 @@ const DONE: Done = Done { ok: true };
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/recently-tagged", get(recently_tagged))
+        .route("/briefs", get(briefs))
         .route("/{uuid}", get(core))
         .route("/{uuid}/requests", get(requests))
         .route("/{uuid}/requesters", get(requesters))
@@ -41,6 +43,14 @@ async fn recently_tagged(
     State(state): State<AppState>,
 ) -> Result<Json<RecentlyTagged>, AdminError> {
     Ok(Json(players::read_recently_tagged(&state).await?))
+}
+
+async fn briefs(
+    State(state): State<AppState>,
+    query: Result<Query<BriefsQuery>, QueryRejection>,
+) -> Result<Json<PlayerBriefs>, AdminError> {
+    let Query(query) = query?;
+    Ok(Json(players::read_briefs(&state, query).await?))
 }
 
 async fn core(

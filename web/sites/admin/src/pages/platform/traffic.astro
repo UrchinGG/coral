@@ -4,27 +4,13 @@ import Admin from "@/layouts/Admin.astro";
 
 <Admin title="Traffic">
   <div id="traffic" class="stack">
-    <div
-      class="seg window"
-      role="group"
-      aria-label="Time range"
-      data-windows
-    ></div>
     <div data-summary></div>
-    <div data-series></div>
+    <div data-chart></div>
     <section class="list">
       <h2 class="group-title">
-        Routes <span class="note">Click one to pick it</span>
+        Routes <span class="note">Click to pick routes</span>
       </h2>
-      <div class="toolbar">
-        <input
-          class="field grow"
-          type="search"
-          placeholder="Search routes, like /v3/player or starfish"
-          aria-label="Search routes"
-          data-route-search
-        />
-      </div>
+      <div data-route-search></div>
       <div data-routes></div>
     </section>
     <section class="list">
@@ -35,81 +21,197 @@ import Admin from "@/layouts/Admin.astro";
     </section>
     <section class="list">
       <h2 class="group-title">Requests</h2>
-      <div class="toolbar">
-        <select class="field" aria-label="Route" data-route-pick>
-          <option value="">All routes</option>
-        </select>
-        <select class="field" aria-label="Status" data-class>
-          <option value="">Any status</option>
-          <option value="2xx">2xx</option>
-          <option value="4xx">4xx</option>
-          <option value="rate_limited">Rate limited</option>
-          <option value="5xx">5xx</option>
-          <option value="error">Any error</option>
-        </select>
-        <input
-          class="field"
-          type="search"
-          placeholder="IP address"
-          aria-label="IP address"
-          data-ip
-        />
-        <input
-          class="field grow"
-          type="search"
-          placeholder="Search paths, players, errors"
-          aria-label="Search requests"
-          data-q
-        />
-      </div>
-      <div class="chips" data-chips></div>
+      <div data-picker></div>
+      <div data-request-search></div>
       <div data-requests></div>
     </section>
   </div>
 </Admin>
 
+<style is:global>
+  #traffic {
+    & .brush-area {
+      position: relative;
+      cursor: crosshair;
+      user-select: none;
+    }
+
+    & .brush-sel {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      border-inline: 1px solid var(--color-text-secondary);
+      background: rgb(244 245 247 / 8%);
+      pointer-events: none;
+    }
+
+    & .brush-note {
+      margin: 6px 0 0;
+      font-size: var(--text-2xs);
+    }
+
+    & .figures {
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    }
+
+    & .table-row.caller {
+      grid-template-columns:
+        minmax(160px, 1.6fr) 90px repeat(3, minmax(70px, 1fr))
+        90px;
+      min-width: 640px;
+    }
+
+    & .table-empty {
+      padding: 12px 14px;
+    }
+
+    & .picker {
+      position: relative;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+    }
+
+    & .pick-menu {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      z-index: 30;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 300px;
+      max-width: calc(100vw - 32px);
+      max-height: 360px;
+      overflow: auto;
+      padding: 8px;
+      border: 1px solid var(--color-border-hover);
+      border-radius: var(--radius-sm);
+      background: var(--color-surface-raised);
+      box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+    }
+
+    & .pick-group,
+    & .pick-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border: 0;
+      border-radius: 4px;
+      background: none;
+      color: var(--color-text);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    & .pick-group {
+      padding: 6px 4px 4px;
+      color: var(--color-text-secondary);
+      font-size: var(--text-2xs);
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    & .pick-item {
+      padding: 4px 4px 4px 22px;
+      font-size: var(--text-sm);
+
+      &:hover {
+        background: var(--color-surface-hover);
+      }
+    }
+
+    & .box {
+      flex: none;
+      width: 14px;
+      height: 14px;
+      border: 1px solid var(--color-border-hover);
+      border-radius: 3px;
+      background: var(--color-inset);
+    }
+
+    & .on > .box {
+      border-color: #5b8def;
+      background: #5b8def;
+      box-shadow: inset 0 0 0 3px var(--color-inset);
+    }
+  }
+</style>
+
 <script>
-  import { load } from "@/lib/api";
-  import { el } from "@/lib/dom";
   import { fillTab } from "@/lib/tabbar";
+  import { filterBar, type Pick, type Picks } from "@/lib/filterbar";
+  import { VIA_KINDS, viaLabel } from "@/lib/requests";
   import {
-    WINDOWS,
-    callers,
+    API_NAMES,
+    DEFAULT_WINDOW,
+    callerTable,
+    chart,
+    clockRange,
+    loadCallers,
+    loadRoutes,
+    requesterPick,
     requests,
-    routes,
-    series,
+    routePicker,
+    routeTable,
     summary,
-    UNMATCHED,
-    pickedRoutes,
-    type Filters,
+    type Caller,
+    type RouteTraffic,
+    type TrafficState,
   } from "@/lib/traffic";
 
-  const SEARCH_DELAY_MS = 300;
+  const STATUS_CLASSES: Pick[] = [
+    { value: "2xx", label: "2xx" },
+    { value: "4xx", label: "4xx" },
+    { value: "rate_limited", label: "Rate limited" },
+    { value: "5xx", label: "5xx" },
+    { value: "error", label: "Any error" },
+  ];
+  const COMMON_STATUSES = [200, 400, 401, 403, 404, 429, 500, 502, 503];
+  const STATUS_CODE = /^[1-5]\d\d$/;
+  const IP_ADDRESS = /^[0-9a-f.:]+$/i;
+  const LABEL_SUFFIX = "_label";
+  const REQUEST_KEYS = ["requester", "class", "status", "ip", "via", "time"];
+
   const root = document.getElementById("traffic")!;
-  const part = <T extends HTMLElement = HTMLElement>(name: string) =>
-    root.querySelector<T>(`[data-${name}]`)!;
+  const part = (name: string) =>
+    root.querySelector<HTMLElement>(`[data-${name}]`)!;
   const url = new URLSearchParams(location.search);
-  const filters: Filters = {
-    window: url.get("window") ?? "24h",
-    route: url.get("route"),
-    method: url.get("method"),
-    class: url.get("class"),
-    member: url.get("member") ? Number(url.get("member")) : null,
-    key_prefix: url.get("key_prefix"),
-    requester: url.get("requester"),
-    q: url.get("q") ?? "",
-    ip: url.get("ip") ?? "",
+  const state: TrafficState = {
+    window: url.get("window") ?? DEFAULT_WINDOW,
+    routes: url.get("routes")?.split(",").filter(Boolean) ?? [],
+    routeSearch: { q: "", picks: {}, range: null },
+    requestSearch: {
+      q: url.get("q") ?? "",
+      picks: picksFromUrl(),
+      range: null,
+    },
   };
+  let routeData: RouteTraffic[] = [];
+  let pickerOpen = false;
+
+  function picksFromUrl() {
+    const picks: Picks = {};
+    for (const key of REQUEST_KEYS) {
+      const value = url.get(key);
+      if (value)
+        picks[key] = { value, label: url.get(key + LABEL_SUFFIX) ?? value };
+    }
+    return picks;
+  }
 
   function saveUrl() {
     const params = new URLSearchParams();
-    for (const [key, value] of Object.entries(filters))
-      if (
-        value !== null &&
-        value !== "" &&
-        !(key === "window" && value === "24h")
-      )
-        params.set(key, String(value));
+    if (state.window !== DEFAULT_WINDOW) params.set("window", state.window);
+    if (state.routes.length) params.set("routes", state.routes.join(","));
+    if (state.requestSearch.q) params.set("q", state.requestSearch.q);
+    for (const [key, pick] of Object.entries(state.requestSearch.picks)) {
+      params.set(key, pick.value);
+      if (pick.label !== pick.value) params.set(key + LABEL_SUFFIX, pick.label);
+    }
     history.replaceState(
       null,
       "",
@@ -117,156 +219,151 @@ import Admin from "@/layouts/Admin.astro";
     );
   }
 
-  function chips() {
-    const chip = (text: string, clear: () => void) => {
-      const button = el("button", {
-        type: "button",
-        className: "chip",
-        textContent: `${text} ×`,
-      });
-      button.addEventListener("click", () => {
-        clear();
-        refresh(true);
-      });
-      return button;
-    };
-    part("chips").replaceChildren(
-      ...[
-        filters.route
-          ? chip(
-              pickedRoutes(filters).length > 1
-                ? `Routes: ${pickedRoutes(filters).join(", ")}`
-                : `Route: ${filters.method ?? ""} ${filters.route}`,
-              () => ((filters.route = null), (filters.method = null)),
-            )
-          : null,
-        filters.requester
-          ? chip(
-              `Caller: ${filters.requester}`,
-              () => (
-                (filters.requester = null),
-                (filters.member = null),
-                (filters.key_prefix = null)
-              ),
-            )
-          : null,
-      ].filter((node): node is HTMLButtonElement => node !== null),
-    );
-    part<HTMLSelectElement>("route-pick").value =
-      pickedRoutes(filters).length === 1
-        ? `${filters.method ?? ""} ${filters.route}`
-        : "";
+  const simple = (values: string[]) =>
+    values.map((value) => ({ value, label: value }));
+
+  const routeBar = filterBar({
+    placeholder: "Search routes, like /v3/player or starfish",
+    hint: "Search every route, or one part with route:/v3/",
+    state: state.routeSearch,
+    fields: [
+      { key: "route", label: "Route" },
+      {
+        key: "method",
+        label: "Method",
+        values: () =>
+          simple([...new Set(routeData.map((route) => route.method))]),
+      },
+      { key: "api", label: "API", values: () => simple(API_NAMES) },
+    ],
+    onChange: drawRoutes,
+  });
+
+  const requestBar = filterBar({
+    placeholder: "Search paths, players and errors",
+    hint: "Search the log, or filter with status:429, ip:203.0.113.9 or via:key. Pick a period with time:13:00-16:30 or by dragging on the chart",
+    state: state.requestSearch,
+    fields: [
+      { key: "requester", label: "Requester", values: requesterValues },
+      { key: "class", label: "Status Class", values: () => STATUS_CLASSES },
+      {
+        key: "status",
+        label: "Status",
+        values: () => simple(COMMON_STATUSES.map(String)),
+        parse: (raw) =>
+          STATUS_CODE.test(raw) ? { value: raw, label: raw } : null,
+      },
+      {
+        key: "ip",
+        label: "IP",
+        parse: (raw) =>
+          IP_ADDRESS.test(raw) ? { value: raw, label: raw } : null,
+      },
+      {
+        key: "via",
+        label: "Via",
+        values: () => VIA_KINDS.map((kind) => viaPick(kind)),
+        parse: (raw) => {
+          const kind = VIA_KINDS.find(
+            (key) =>
+              key === raw.toLowerCase() ||
+              viaLabel(key).toLowerCase() === raw.toLowerCase(),
+          );
+          return kind ? viaPick(kind) : null;
+        },
+      },
+      { key: "time", label: "Time", parse: clockRange },
+    ],
+    onChange: refreshRequests,
+  });
+
+  function viaPick(kind: string): Pick {
+    return { value: kind, label: viaLabel(kind) };
   }
 
-  function windows() {
-    part("windows").replaceChildren(
-      ...WINDOWS.map(([key, label]) => {
-        const button = el("button", {
-          type: "button",
-          textContent: label,
-          className: key === filters.window ? "on" : "",
-        });
-        button.addEventListener("click", () => {
-          filters.window = key;
-          refresh(false);
-        });
-        return button;
+  function requesterValues() {
+    return [
+      ...part("callers").querySelectorAll<HTMLElement>("[data-requester]"),
+    ].map((name) => ({
+      value: name.dataset.requester!,
+      label: name.textContent ?? "",
+    }));
+  }
+
+  function pickCaller(caller: Caller, name: HTMLElement) {
+    const pick = requesterPick(caller, name.textContent ?? "");
+    const same = state.requestSearch.picks.requester?.value === pick.value;
+    requestBar.set("requester", same ? null : pick);
+  }
+
+  function setRoutes(routes: string[]) {
+    state.routes = routes;
+    drawRoutes();
+    refreshRequests();
+  }
+
+  function toggleRoute(key: string) {
+    setRoutes(
+      state.routes.includes(key)
+        ? state.routes.filter((other) => other !== key)
+        : [...state.routes, key],
+    );
+  }
+
+  function drawRoutes() {
+    part("routes").replaceChildren(routeTable(routeData, state, toggleRoute));
+    drawPicker();
+  }
+
+  function drawPicker() {
+    part("picker").replaceChildren(
+      routePicker(routeData, state.routes, setRoutes, pickerOpen, (open) => {
+        pickerOpen = open;
+        drawPicker();
       }),
     );
   }
 
-  const pickRoute = (route: { route: string | null; method: string }) => {
-    const key = route.route ?? UNMATCHED;
-    const picked = pickedRoutes(filters);
-    const next = picked.includes(key)
-      ? picked.filter((other) => other !== key)
-      : [...picked, key];
-    filters.route = next.length ? next.join(",") : null;
-    filters.method = next.length === 1 ? route.method : null;
-    refresh(true);
-  };
+  function pickWindow(window: string) {
+    state.window = window;
+    refreshAll();
+  }
 
-  function refresh(filtersOnly: boolean) {
+  function refreshRequests() {
     saveUrl();
-    windows();
-    chips();
-    if (!filtersOnly) fillTab(part("summary"), () => summary(filters));
-    fillTab(part("series"), () => series(filters));
-    fillTab(part("routes"), () =>
-      routes(filters, part<HTMLInputElement>("route-search").value, pickRoute),
-    );
-    fillTab(part("callers"), () =>
-      callers(filters, (caller, name) => {
-        const same = filters.requester === name;
-        filters.requester = same ? null : name;
-        filters.member =
-          !same && caller.requester.kind === "account"
-            ? caller.requester.member_id
-            : null;
-        filters.key_prefix =
-          !same && caller.requester.kind !== "account"
-            ? caller.key_prefix
-            : null;
-        refresh(true);
+    fillTab(part("chart"), () =>
+      chart(state, pickWindow, {
+        pick: (pick) => requestBar.set("time", pick),
       }),
     );
-    part("requests").replaceChildren(requests(filters));
-  }
-
-  load<{ route: string; method: string | null; requests_24h: number }[]>(
-    "/requests/routes",
-  ).then((known) => {
-    part("route-pick").append(
-      ...known.map((entry) =>
-        el("option", {
-          value: `${entry.method ?? ""} ${entry.route}`,
-          textContent: `${entry.method ?? "Any"} ${entry.route}`,
-        }),
+    fillTab(part("callers"), async () =>
+      callerTable(
+        await loadCallers(state),
+        state.requestSearch.picks.requester?.value,
+        pickCaller,
       ),
     );
-    chips();
-  });
-
-  part<HTMLSelectElement>("route-pick").addEventListener("change", (event) => {
-    const value = (event.target as HTMLSelectElement).value;
-    const [method, route] = value
-      ? [value.split(" ")[0] || null, value.split(" ").slice(1).join(" ")]
-      : [null, null];
-    filters.route = route;
-    filters.method = method;
-    refresh(true);
-  });
-  part<HTMLSelectElement>("class").value = filters.class ?? "";
-  part<HTMLSelectElement>("class").addEventListener("change", (event) => {
-    filters.class = (event.target as HTMLSelectElement).value || null;
-    refresh(true);
-  });
-  let typing: ReturnType<typeof setTimeout>;
-  for (const name of ["q", "ip"] as const) {
-    const input = part<HTMLInputElement>(name);
-    input.value = filters[name];
-    input.addEventListener("input", () => {
-      clearTimeout(typing);
-      typing = setTimeout(() => {
-        filters[name] = input.value.trim();
-        saveUrl();
-        part("requests").replaceChildren(requests(filters));
-      }, SEARCH_DELAY_MS);
-    });
+    part("requests").replaceChildren(requests(state));
   }
-  part<HTMLInputElement>("route-search").addEventListener("input", () => {
-    clearTimeout(typing);
-    typing = setTimeout(
-      () =>
-        fillTab(part("routes"), () =>
-          routes(
-            filters,
-            part<HTMLInputElement>("route-search").value,
-            pickRoute,
-          ),
-        ),
-      SEARCH_DELAY_MS,
-    );
+
+  function refreshAll() {
+    fillTab(part("summary"), () => summary(state.window));
+    fillTab(part("routes"), async () => {
+      routeData = await loadRoutes(state.window);
+      drawPicker();
+      return routeTable(routeData, state, toggleRoute);
+    });
+    refreshRequests();
+  }
+
+  part("route-search").append(routeBar.element);
+  part("request-search").append(requestBar.element);
+  document.addEventListener("click", (event) => {
+    if (pickerOpen && !event.composedPath().includes(part("picker"))) {
+      pickerOpen = false;
+      drawPicker();
+    }
   });
-  refresh(false);
+  drawPicker();
+  refreshAll();
 </script>

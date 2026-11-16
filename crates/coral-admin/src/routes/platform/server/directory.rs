@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, HashMap};
 
+use axum::Json;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
+use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId, ChannelType, GuildChannel, GuildId, Http, ImageHash, Role, RoleId};
@@ -20,6 +22,15 @@ const ICON_SIZE: u32 = 128;
 pub struct RefreshQuery {
     #[serde(default)]
     refresh: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PopulationQuery {
+    #[serde(default)]
+    refresh: bool,
+    #[serde(default)]
+    cached: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -88,13 +99,26 @@ pub async fn directory(
     guild_directory(&state, guild_id, query.refresh).await
 }
 
+/// The server's member counts; with `cached`, only a count already cached, or null.
 pub async fn population(
     State(state): State<AppState>,
     Server(guild_id): Server,
-    query: Result<Query<RefreshQuery>, QueryRejection>,
-) -> Result<CachedView, AdminError> {
+    query: Result<Query<PopulationQuery>, QueryRejection>,
+) -> Result<Response, AdminError> {
     let Query(query) = query?;
-    guild_population(&state, guild_id, query.refresh).await
+    if !query.cached {
+        return Ok(guild_population(&state, guild_id, query.refresh)
+            .await?
+            .into_response());
+    }
+    let cached = state
+        .views
+        .cached(View::GuildPopulation, guild_id.to_string())
+        .await;
+    Ok(match cached {
+        Some(population) => population.into_response(),
+        None => Json(serde_json::Value::Null).into_response(),
+    })
 }
 
 pub async fn home_directory(

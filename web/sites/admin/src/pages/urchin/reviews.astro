@@ -46,13 +46,16 @@ import Admin from "@/layouts/Admin.astro";
       return null;
     });
 
+  let population: Promise<Population | null> | undefined;
+  const loadPopulation = () =>
+    (population ??= optional(load<Population>("/moderation/population")));
+
   async function show() {
-    const [guide, directory, population] = await Promise.all([
+    const [guide, directory] = await Promise.all([
       load<Guide>("/moderation/guide"),
       optional(load<Directory>("/moderation/directory")),
-      optional(load<Population>("/moderation/population")),
     ]);
-    render({ guide, directory, population, refresh: show, report });
+    render({ guide, directory, population: null, refresh: show, report });
   }
 
   function render(reviews: Reviews) {
@@ -64,7 +67,9 @@ import Admin from "@/layouts/Admin.astro";
     fillTab(part("tab"), () => {
       switch (current) {
         case "pings":
-          return pingsTab(reviews);
+          return loadPopulation().then((population) =>
+            pingsTab({ ...reviews, population }),
+          );
         case "rules":
           return rulesTab(reviews);
         default:

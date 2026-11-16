@@ -43,6 +43,7 @@ const ROUTES: &[(Option<Method>, &str, Permission)] = &[
     (POST, "/search/remote", Permission::Staff),
     (POST, "/labels", Permission::Staff),
     (GET, "/overview", Permission::Staff),
+    (GET, "/traffic/upstream", Permission::Staff),
     (GET, "/moderation/recent", Permission::Staff),
     (GET, "/players/recently-tagged", Permission::PlayersRead),
     (GET, "/players/top", Permission::Traffic),
@@ -215,6 +216,7 @@ mod tests {
     #[test]
     fn routes_map_to_the_tier_the_bot_uses() {
         assert_eq!(needs(Method::GET, "/players/abc"), AccessRank::Helper);
+        assert_eq!(needs(Method::GET, "/traffic/upstream"), AccessRank::Helper);
         assert_eq!(needs(Method::POST, "/players/abc/tags"), AccessRank::Helper);
         assert_eq!(
             needs(Method::POST, "/accounts/1/strikes"),

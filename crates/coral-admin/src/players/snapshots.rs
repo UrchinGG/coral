@@ -1,6 +1,6 @@
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
+use chrono::{DateTime, Months, NaiveDate, NaiveTime, Utc};
 use database::{CacheRepository, Database};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
@@ -14,6 +14,7 @@ pub const SNAPSHOT_PAGE_ROWS: i64 = 200;
 
 const CURSOR_BYTES: usize = 16;
 const MICROS_BYTES: usize = 8;
+const MONTH_FORMAT: &str = "%Y-%m-%d";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SnapshotCursor {
@@ -21,10 +22,14 @@ pub struct SnapshotCursor {
     id: i64,
 }
 
+/// A UTC calendar month, written `YYYY-MM`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SnapshotMonth(NaiveDate);
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotQuery {
-    day: Option<NaiveDate>,
+    month: Option<SnapshotMonth>,
     cursor: Option<SnapshotCursor>,
 }
 
@@ -36,15 +41,8 @@ pub struct SnapshotAtQuery {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SnapshotPage {
-    pub days: Vec<SnapshotDay>,
     pub rows: Vec<SnapshotRow>,
     pub next_cursor: Option<SnapshotCursor>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, FromRow)]
-pub struct SnapshotDay {
-    pub day: NaiveDate,
-    pub count: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, FromRow)]
@@ -63,6 +61,7 @@ pub struct SnapshotAt {
     #[serde(serialize_with = "serde_ts::micros")]
     pub ts: DateTime<Utc>,
     pub data: Value,
+    pub delta: Option<Value>,
 }
 
 impl SnapshotCursor {
@@ -88,6 +87,26 @@ impl SnapshotCursor {
     }
 }
 
+impl SnapshotMonth {
+    fn parse(raw: &str) -> Result<Self, AdminError> {
+        NaiveDate::parse_from_str(&format!("{raw}-01"), MONTH_FORMAT)
+            .map(Self)
+            .map_err(|_| AdminError::BadRequest(format!("{raw:?} is not a month like 2026-10")))
+    }
+
+    fn bounds(self) -> (DateTime<Utc>, DateTime<Utc>) {
+        let start = self.0.and_time(NaiveTime::MIN).and_utc();
+        (start, start + Months::new(1))
+    }
+}
+
+impl<'de> Deserialize<'de> for SnapshotMonth {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        Self::parse(&raw).map_err(serde::de::Error::custom)
+    }
+}
+
 impl Serialize for SnapshotCursor {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.encode())
@@ -107,10 +126,7 @@ pub async fn read_snapshots(
     query: SnapshotQuery,
 ) -> Result<SnapshotPage, AdminError> {
     let uuid = player.simple().to_string();
-    let (days, mut rows) = tokio::try_join!(
-        snapshot_days(db, &uuid),
-        snapshot_rows(db, &uuid, query.day, query.cursor),
-    )?;
+    let mut rows = snapshot_rows(db, &uuid, query.month, query.cursor).await?;
     let full = rows.len() as i64 > SNAPSHOT_PAGE_ROWS;
     rows.truncate(SNAPSHOT_PAGE_ROWS as usize);
     let next_cursor = full
@@ -120,11 +136,7 @@ pub async fn read_snapshots(
             ts: row.ts,
             id: row.id,
         });
-    Ok(SnapshotPage {
-        days,
-        rows,
-        next_cursor,
-    })
+    Ok(SnapshotPage { rows, next_cursor })
 }
 
 pub async fn read_snapshot_at(
@@ -132,35 +144,50 @@ pub async fn read_snapshot_at(
     player: Uuid,
     query: SnapshotAtQuery,
 ) -> Result<SnapshotAt, AdminError> {
-    let data = CacheRepository::new(db.pool())
-        .get_snapshot_at(&player.simple().to_string(), query.ts)
-        .await
-        .context("rebuild the snapshot")?
-        .ok_or_else(|| {
-            AdminError::NotFound(format!("the player has no snapshot at {}", query.ts))
-        })?;
-    Ok(SnapshotAt { ts: query.ts, data })
+    let uuid = player.simple().to_string();
+    let (data, delta) = tokio::try_join!(
+        async {
+            CacheRepository::new(db.pool())
+                .get_snapshot_at(&uuid, query.ts)
+                .await
+                .context("rebuild the snapshot")
+        },
+        stored_delta(db, &uuid, query.ts),
+    )?;
+    let data = data.ok_or_else(|| {
+        AdminError::NotFound(format!("the player has no snapshot at {}", query.ts))
+    })?;
+    Ok(SnapshotAt {
+        ts: query.ts,
+        data,
+        delta,
+    })
 }
 
-async fn snapshot_days(db: &Database, uuid: &str) -> Result<Vec<SnapshotDay>, AdminError> {
-    sqlx::query_as(
-        "SELECT (timestamp AT TIME ZONE 'UTC')::date AS day, count(*) AS count
-         FROM player_snapshots WHERE uuid = $1
-         GROUP BY 1 ORDER BY 1 DESC",
+async fn stored_delta(
+    db: &Database,
+    uuid: &str,
+    ts: DateTime<Utc>,
+) -> Result<Option<Value>, AdminError> {
+    sqlx::query_scalar(
+        "SELECT data FROM player_snapshots
+         WHERE uuid = $1 AND timestamp = $2 AND NOT is_baseline
+         ORDER BY id DESC LIMIT 1",
     )
     .bind(uuid)
-    .fetch_all(db.pool())
+    .bind(ts)
+    .fetch_optional(db.pool())
     .await
-    .context("count the player's snapshots per day")
+    .context("read the snapshot's stored changes")
 }
 
 async fn snapshot_rows(
     db: &Database,
     uuid: &str,
-    day: Option<NaiveDate>,
+    month: Option<SnapshotMonth>,
     cursor: Option<SnapshotCursor>,
 ) -> Result<Vec<SnapshotRow>, AdminError> {
-    let (from, until) = day_bounds(day);
+    let (from, until) = month.map(SnapshotMonth::bounds).unzip();
     sqlx::query_as(
         "SELECT id, timestamp AS ts, source, is_baseline AS baseline, username
          FROM player_snapshots
@@ -182,17 +209,9 @@ async fn snapshot_rows(
     .context("list the player's snapshots")
 }
 
-fn day_bounds(day: Option<NaiveDate>) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
-    let Some(start) = day.and_then(|day| day.and_hms_opt(0, 0, 0)) else {
-        return (None, None);
-    };
-    let start = start.and_utc();
-    (Some(start), Some(start + TimeDelta::days(1)))
-}
-
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
+    use chrono::{TimeDelta, TimeZone};
 
     use super::*;
 
@@ -211,16 +230,21 @@ mod tests {
     }
 
     #[test]
-    fn a_day_spans_midnight_to_midnight_utc() {
-        let day = NaiveDate::from_ymd_opt(2026, 10, 14).unwrap();
+    fn a_month_spans_its_first_midnight_to_the_next_months_utc() {
         assert_eq!(
-            day_bounds(Some(day)),
+            SnapshotMonth::parse("2026-12").unwrap().bounds(),
             (
-                Some(Utc.with_ymd_and_hms(2026, 10, 14, 0, 0, 0).unwrap()),
-                Some(Utc.with_ymd_and_hms(2026, 10, 15, 0, 0, 0).unwrap())
+                Utc.with_ymd_and_hms(2026, 12, 1, 0, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2027, 1, 1, 0, 0, 0).unwrap()
             )
         );
-        assert_eq!(day_bounds(None), (None, None));
+        for raw in ["2026-13", "2026-10-01", "oct", ""] {
+            assert_eq!(
+                SnapshotMonth::parse(raw).unwrap_err().code(),
+                "bad_request",
+                "{raw}"
+            );
+        }
     }
 
     async fn snapshotted(db: &Database, player: Uuid) -> String {
@@ -234,13 +258,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn snapshots_page_by_day_and_rebuild_from_the_baseline() {
+    async fn snapshots_page_by_month_and_rebuild_from_the_baseline() {
         let Some(db) = crate::players::fixtures::database().await else {
             return;
         };
         let player = Uuid::parse_str("73000010000040008000000000000001").unwrap();
         let uuid = snapshotted(&db, player).await;
         let first_day = Utc.with_ymd_and_hms(2020, 2, 1, 0, 0, 0).unwrap();
+        let next_month = Utc.with_ymd_and_hms(2020, 3, 1, 0, 0, 0).unwrap();
         sqlx::query(
             "INSERT INTO player_snapshots (uuid, timestamp, source, username, is_baseline, data)
              SELECT $1, $2 + make_interval(mins => n), 'test', 'Snap', n = 0,
@@ -259,7 +284,7 @@ mod tests {
              VALUES ($1, $2, 'test', 'Snap', false, '{\"stats\":{\"wins\":999}}')",
         )
         .bind(&uuid)
-        .bind(first_day + TimeDelta::days(1))
+        .bind(next_month)
         .execute(db.pool())
         .await
         .unwrap();
@@ -268,34 +293,21 @@ mod tests {
             &db,
             player,
             SnapshotQuery {
-                day: None,
+                month: None,
                 cursor: None,
             },
         )
         .await
         .unwrap();
-        assert_eq!(
-            newest.days,
-            vec![
-                SnapshotDay {
-                    day: NaiveDate::from_ymd_opt(2020, 2, 2).unwrap(),
-                    count: 1
-                },
-                SnapshotDay {
-                    day: NaiveDate::from_ymd_opt(2020, 2, 1).unwrap(),
-                    count: SNAPSHOT_PAGE_ROWS + 5
-                },
-            ]
-        );
         assert_eq!(newest.rows.len() as i64, SNAPSHOT_PAGE_ROWS);
-        assert_eq!(newest.rows[0].ts, first_day + TimeDelta::days(1));
+        assert_eq!(newest.rows[0].ts, next_month);
 
-        let day = NaiveDate::from_ymd_opt(2020, 2, 1).unwrap();
+        let february = SnapshotMonth::parse("2020-02").unwrap();
         let page = read_snapshots(
             &db,
             player,
             SnapshotQuery {
-                day: Some(day),
+                month: Some(february),
                 cursor: None,
             },
         )
@@ -305,7 +317,7 @@ mod tests {
             &db,
             player,
             SnapshotQuery {
-                day: Some(day),
+                month: Some(february),
                 cursor: page.next_cursor,
             },
         )
@@ -326,6 +338,14 @@ mod tests {
             rebuilt.data,
             serde_json::json!({ "stats": { "wins": 3 }, "name": "Snap" })
         );
+        assert_eq!(
+            rebuilt.delta,
+            Some(serde_json::json!({ "stats": { "wins": 3 } }))
+        );
+        let baseline = read_snapshot_at(&db, player, SnapshotAtQuery { ts: first_day })
+            .await
+            .unwrap();
+        assert_eq!(baseline.delta, None);
         let missing = Uuid::parse_str("73000011000040008000000000000001").unwrap();
         assert_eq!(
             read_snapshot_at(&db, missing, SnapshotAtQuery { ts: at })

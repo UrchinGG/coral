@@ -1,10 +1,18 @@
 import { load, send } from "@/lib/api";
 import { el, panel, row, widePanel } from "@/lib/dom";
+import {
+  TIME_RANGES,
+  filterBar,
+  rangeStart,
+  type FilterState,
+  type Pick,
+} from "@/lib/filterbar";
 import { FORMATS, titleCase } from "@/lib/format";
 import type { Labels } from "@/lib/members";
-import { pager } from "@/lib/pager";
+import { pager, type CursorPage } from "@/lib/pager";
 import { refLink, refName, type Ref } from "@/lib/refs";
 import type { Budget } from "@/lib/tabs/keys";
+import { tagPill } from "@/lib/tags";
 import { ago, day, moment } from "@/lib/time";
 
 interface TimelineEvent {
@@ -17,9 +25,25 @@ interface TimelineEvent {
   player: Ref | null;
   action: string | null;
   detail: string | null;
+  data: {
+    tag_type?: string | null;
+    expires_at?: string | null;
+    ended_by?: string | null;
+  } | null;
 }
 
-const ALL_EVENTS = "All";
+interface AddedTag {
+  event: TimelineEvent;
+  tagType: string;
+  state: string;
+}
+
+const DEFAULT_RANGE = "30d";
+const TAG_PAGE = 200;
+const MAX_TAG_PAGES = 5;
+const TAG_SET = "tag_set";
+const TAG_STATES = ["Active", "Expired", "Removed", "Replaced"];
+const TAG_COLUMNS = "minmax(120px,1fr) 130px minmax(180px,2fr) 100px 80px";
 
 const KIND_GROUPS: Record<string, string> = {
   tag_authored: "Tags",
@@ -38,7 +62,7 @@ const KIND_GROUPS: Record<string, string> = {
 };
 
 export function timelineTab(id: string) {
-  const filters = el("div", { className: "chips" });
+  const state: FilterState = { q: "", picks: {}, range: DEFAULT_RANGE };
   const table = el("div", { className: "table" });
   const head = el(
     "div",
@@ -47,41 +71,197 @@ export function timelineTab(id: string) {
       el("span", { textContent: label }),
     ),
   );
-  const show = (group: string) => {
-    const kinds = Object.keys(KIND_GROUPS).filter(
-      (kind) => KIND_GROUPS[kind] === group,
-    );
-    const query = group === ALL_EVENTS ? "" : `?kinds=${kinds.join(",")}`;
+  let loaded = "";
+  const visible = (node: HTMLElement) => {
+    node.hidden = !matchesText(node, state.q);
+    return node;
+  };
+  const show = () => {
+    const key = `${state.picks.kind?.value}|${state.range}`;
+    if (key === loaded) {
+      table.querySelectorAll<HTMLElement>(".pages > *").forEach(visible);
+      return;
+    }
+    loaded = key;
     table.replaceChildren(
       head,
       pager(
-        `/accounts/${id}/timeline${query}`,
-        timelineRow,
-        group === ALL_EVENTS
-          ? "Nothing has happened on this account."
-          : `No ${group.toLowerCase()} events on this account.`,
+        `/accounts/${id}/timeline?${timelineQuery(state)}`,
+        (event: TimelineEvent, labels) => visible(timelineRow(event, labels)),
+        "Nothing happened on this account in this range.",
       ),
     );
   };
-  [ALL_EVENTS, ...new Set(Object.values(KIND_GROUPS))].forEach((group) => {
-    const chip = el("button", {
-      type: "button",
-      className: "chip",
-      textContent: group,
-    });
-    chip.setAttribute("aria-pressed", String(group === ALL_EVENTS));
-    chip.addEventListener("click", () => {
-      filters
-        .querySelectorAll("button")
-        .forEach((other) =>
-          other.setAttribute("aria-pressed", String(other === chip)),
-        );
-      show(group);
-    });
-    filters.append(chip);
+  const groups = [...new Set(Object.values(KIND_GROUPS))];
+  const bar = filterBar({
+    placeholder: "Search events, players and staff",
+    state,
+    ranges: TIME_RANGES,
+    fields: [{ key: "kind", label: "Kind", values: () => groups.map(same) }],
+    onChange: show,
   });
-  show(ALL_EVENTS);
-  return el("div", { className: "list" }, filters, table);
+  show();
+  return el("div", { className: "list" }, bar.element, table);
+}
+
+export function tagsTab(id: string) {
+  const state: FilterState = { q: "", picks: {}, range: DEFAULT_RANGE };
+  const body = el("div", { className: "stack" });
+  let loadedRange: string | null = null;
+  let tags: AddedTag[] = [];
+  let labels: Labels = { discord: {}, minecraft: {} };
+  const render = () => body.replaceChildren(...tagsView(tags, labels, state));
+  const reload = async () => {
+    loadedRange = state.range;
+    body.replaceChildren(el("p", { className: "muted" }, "Loading…"));
+    try {
+      [tags, labels] = await addedTags(id, state.range);
+      render();
+    } catch (error) {
+      body.replaceChildren(
+        el("p", { className: "bad" }, (error as Error).message),
+      );
+    }
+  };
+  const bar = filterBar({
+    placeholder: "Search players, tags and reasons",
+    state,
+    ranges: TIME_RANGES,
+    fields: [
+      {
+        key: "tag",
+        label: "Tag",
+        values: () =>
+          [...new Set(tags.map((tag) => tag.tagType))].map((type) => ({
+            value: type,
+            label: titleCase(type),
+          })),
+      },
+      { key: "state", label: "State", values: () => TAG_STATES.map(same) },
+    ],
+    onChange: () => (state.range === loadedRange ? render() : reload()),
+  });
+  reload();
+  return el("div", { className: "list" }, bar.element, body);
+}
+
+function timelineQuery(state: FilterState) {
+  const query = new URLSearchParams();
+  const group = state.picks.kind?.value;
+  const kinds = Object.keys(KIND_GROUPS).filter(
+    (kind) => KIND_GROUPS[kind] === group,
+  );
+  if (kinds.length) query.set("kinds", kinds.join(","));
+  const from = rangeStart(state.range);
+  if (from) query.set("from", from);
+  return query;
+}
+
+async function addedTags(
+  id: string,
+  range: string | null,
+): Promise<[AddedTag[], Labels]> {
+  const query = new URLSearchParams({
+    kinds: "tag_authored",
+    limit: String(TAG_PAGE),
+  });
+  const from = rangeStart(range);
+  if (from) query.set("from", from);
+  const events: TimelineEvent[] = [];
+  const labels: Labels = { discord: {}, minecraft: {} };
+  let cursor: string | null = null;
+  for (let page = 0; page < MAX_TAG_PAGES; page += 1) {
+    const cursorQuery: string = cursor
+      ? `&cursor=${encodeURIComponent(cursor)}`
+      : "";
+    const loaded: CursorPage<TimelineEvent> = await load(
+      `/accounts/${id}/timeline?${query}${cursorQuery}`,
+    );
+    events.push(...loaded.items);
+    Object.assign(labels.discord, loaded.labels.discord);
+    Object.assign(labels.minecraft, loaded.labels.minecraft);
+    cursor = loaded.next_cursor;
+    if (!cursor) break;
+  }
+  const tags = events
+    .filter((event) => event.action === TAG_SET && event.data?.tag_type)
+    .map((event) => ({
+      event,
+      tagType: event.data!.tag_type!,
+      state: tagState(event),
+    }));
+  return [tags, labels];
+}
+
+function tagState(event: TimelineEvent) {
+  if (event.data?.ended_by === "tag_clear") return "Removed";
+  if (event.data?.ended_by === TAG_SET) return "Replaced";
+  const expires = event.data?.expires_at;
+  return expires && Date.parse(expires) <= Date.now() ? "Expired" : "Active";
+}
+
+function tagsView(tags: AddedTag[], labels: Labels, state: FilterState) {
+  const { tag: tagPick, state: statePick } = state.picks;
+  const shown = tags.filter(
+    (tag) =>
+      (!tagPick || tagPick.value === tag.tagType) &&
+      (!statePick || statePick.value === tag.state),
+  );
+  const rows = shown
+    .map((tag) => [
+      refLink(tag.event.player, labels),
+      tagPill(tag.tagType, titleCase(tag.tagType)),
+      tag.event.detail ?? "",
+      day(tag.event.at),
+      el("span", { className: tag.state === "Active" ? "" : "dim" }, tag.state),
+    ])
+    .map((cells) => gridRow(TAG_COLUMNS, "table-row", cells))
+    .filter((line) => matchesText(line, state.q));
+  const counts = TAG_STATES.map(
+    (state) =>
+      [state, tags.filter((tag) => tag.state === state).length] as const,
+  );
+  return [
+    el(
+      "div",
+      { className: "stats" },
+      ...counts.map(([state, count]) =>
+        el(
+          "div",
+          { className: "stat" },
+          el("span", { className: "label" }, state),
+          el("b", {}, FORMATS.number(count)),
+        ),
+      ),
+    ),
+    el(
+      "div",
+      { className: "table" },
+      gridRow(TAG_COLUMNS, "table-row head", [
+        "Player",
+        "Tag",
+        "Reason",
+        "Added",
+        "State",
+      ]),
+      ...rows,
+    ),
+    ...(rows.length
+      ? []
+      : [
+          el(
+            "p",
+            { className: "muted" },
+            "No tags added by this member match.",
+          ),
+        ]),
+  ];
+}
+
+const same = (value: string): Pick => ({ value, label: value });
+
+function matchesText(node: Element, text: string) {
+  return (node.textContent ?? "").toLowerCase().includes(text.toLowerCase());
 }
 
 function timelineRow(event: TimelineEvent, labels: Labels) {

@@ -46,6 +46,7 @@ pub fn api_router(state: AppState) -> Router {
         .nest("/search", search::router())
         .route("/labels", post(labels::labels))
         .route("/maintenance", get(maintenance::overview))
+        .route("/maintenance/pending", get(maintenance::pending))
         .route("/maintenance/recompute", post(maintenance::recompute))
         .route("/maintenance/{job}", post(maintenance::start))
         .route("/players/top", get(top_players::top_players))

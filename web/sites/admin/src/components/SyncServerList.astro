@@ -34,13 +34,18 @@
     const members = figure("Members");
     const linked = figure("Linked");
     const preview = el("span", { className: "server-card-preview" });
-    load<Population>(`${base}/population`)
+    members.value.textContent =
+      server.members === null ? "?" : FORMATS.number(server.members);
+    load<Population | null>(`${base}/population?cached=true`)
       .then((population) => {
-        members.value.textContent = FORMATS.number(population.member_count);
-        linked.value.textContent = FORMATS.number(population.linked_members);
+        linked.value.textContent = population
+          ? FORMATS.number(population.linked_members)
+          : "—";
+        linked.value.title = population
+          ? ""
+          : "Open the server to count its linked members";
       })
       .catch(() => {
-        members.value.textContent = "?";
         linked.value.textContent = "?";
       });
     if (server.enabled)

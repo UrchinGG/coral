@@ -21,10 +21,56 @@ import { page } from "@/lib/paths";
   <div class="stack" data-body></div>
 </section>
 
+<style is:global>
+  #plugin-page {
+    & .panel {
+      max-width: 640px;
+    }
+
+    & .table-row.release {
+      grid-template-columns: minmax(100px, 1fr) 120px 90px 90px 80px;
+      width: 100%;
+      min-width: 520px;
+      border: 0;
+      border-top: 1px solid var(--color-divider);
+      background: none;
+      font: inherit;
+      font-size: var(--text-sm);
+      text-align: left;
+      cursor: pointer;
+
+      &[aria-expanded="true"] {
+        background: var(--color-surface-hover);
+      }
+
+      &.head {
+        font-size: var(--text-2xs);
+        cursor: default;
+      }
+    }
+
+    & .table-row.review {
+      grid-template-columns:
+        minmax(110px, 1fr) 90px minmax(200px, 3fr)
+        110px 80px;
+      min-width: 640px;
+
+      & > span:nth-child(3) {
+        white-space: normal;
+      }
+    }
+
+    & .stars {
+      color: var(--color-warning);
+      letter-spacing: 1px;
+    }
+  }
+</style>
+
 <script>
   import { page } from "@/lib/paths";
   import { load, send } from "@/lib/api";
-  import { el, panel, row, widePanel } from "@/lib/dom";
+  import { el, panel, row } from "@/lib/dom";
   import { FORMATS } from "@/lib/format";
   import type { Labels } from "@/lib/members";
   import { refLink, type Ref } from "@/lib/refs";
@@ -57,6 +103,7 @@ import { page } from "@/lib/paths";
       updated_at: string;
     };
     owner: Ref | null;
+    owner_github: string | null;
     installs_30d: number;
     installs_total: number;
     releases: Release[];
@@ -71,6 +118,8 @@ import { page } from "@/lib/paths";
   }
 
   const KILOBYTE = 1024;
+  const SHORT_SHA = 7;
+  const MAX_STARS = 5;
   const slug = new URLSearchParams(location.search).get("slug");
   const root = document.getElementById("plugin-page")!;
   const part = (name: string) =>
@@ -135,9 +184,58 @@ import { page } from "@/lib/paths";
   }
 
   function release(entry: Release) {
-    const controls = el(
+    const detail = el(
       "div",
-      { className: "actions" },
+      { className: "row-detail", hidden: true },
+      row("Changelog", entry.changelog ?? "None"),
+      row(
+        "Git commit",
+        el("span", { className: "mono", textContent: entry.git_sha }),
+      ),
+      row(
+        "Asset SHA-256",
+        el("span", { className: "mono", textContent: entry.asset_sha256 }),
+      ),
+      row(
+        "Asset",
+        el("a", {
+          className: "ref",
+          href: entry.asset_url,
+          textContent: entry.asset_url.split("/").pop() ?? entry.asset_url,
+        }),
+      ),
+      ...(entry.yanked_reason
+        ? [row("Yanked because", entry.yanked_reason)]
+        : []),
+      el("div", { className: "actions" }, ...releaseActions(entry)),
+    );
+    const line = el(
+      "button",
+      { type: "button", className: "table-row release" },
+      el("span", { className: "mono strong", textContent: entry.version }),
+      el("span", { className: "dim", textContent: day(entry.created_at) }),
+      el("span", {
+        className: "num",
+        textContent: `${FORMATS.number(Math.round(entry.asset_size / KILOBYTE))} KB`,
+      }),
+      el("span", {
+        className: "mono dim",
+        textContent: entry.git_sha.slice(0, SHORT_SHA),
+      }),
+      el("span", {
+        className: entry.yanked ? "warn" : "ok",
+        textContent: entry.yanked ? "Yanked" : "Active",
+      }),
+    );
+    line.addEventListener("click", () => {
+      detail.hidden = !detail.hidden;
+      line.setAttribute("aria-expanded", String(!detail.hidden));
+    });
+    return el("div", {}, line, detail);
+  }
+
+  function releaseActions(entry: Release) {
+    return [
       entry.yanked
         ? button(
             "Unyank",
@@ -162,43 +260,99 @@ import { page } from "@/lib/paths";
           act(`/releases/${entry.version}`, "DELETE"),
         "button small danger",
       ),
-    );
+    ];
+  }
+
+  function review(entry: PluginDetail["reviews"][number], labels: Labels) {
     return el(
-      "details",
-      { className: "machine" },
-      el(
-        "summary",
-        {},
-        el("span", { className: "mono strong", textContent: entry.version }),
-        el("span", {
-          className: entry.yanked ? "warn" : "ok",
-          textContent: entry.yanked
-            ? `Yanked${entry.yanked_reason ? `: ${entry.yanked_reason}` : ""}`
-            : "Active",
-        }),
-        el("span", {
-          className: "dim",
-          textContent: `${day(entry.created_at)} · ${FORMATS.number(Math.round(entry.asset_size / KILOBYTE))} KB`,
-        }),
+      "div",
+      { className: "table-row review" },
+      el("span", {}, entry.reviewer ? refLink(entry.reviewer, labels) : ""),
+      el("span", {
+        className: "stars",
+        textContent: `${"★".repeat(entry.stars)}${"☆".repeat(MAX_STARS - entry.stars)}`,
+      }),
+      el("span", {
+        className: entry.review ? "" : "dim",
+        textContent: entry.review ?? "No text",
+      }),
+      el("span", { className: "dim", textContent: day(entry.updated_at) }),
+      button(
+        "Delete",
+        () =>
+          confirm("Delete this review?") &&
+          act(`/reviews/${entry.user_id}`, "DELETE"),
+        "button small danger",
       ),
-      row("Changelog", entry.changelog ?? "None"),
+    );
+  }
+
+  function table(
+    title: string,
+    className: string,
+    columns: string[],
+    rows: Node[],
+    empty: string,
+  ) {
+    return el(
+      "section",
+      { className: "list" },
+      el("h2", { className: "group-title", textContent: title }),
+      rows.length
+        ? el(
+            "div",
+            { className: "table" },
+            el(
+              "div",
+              { className: `table-row ${className} head` },
+              ...columns.map((label) => el("span", { textContent: label })),
+            ),
+            ...rows,
+          )
+        : el("p", { className: "muted", textContent: empty }),
+    );
+  }
+
+  function stats(detail: PluginDetail) {
+    const latest = detail.releases.find((entry) => !entry.yanked);
+    const count = detail.reviews.length;
+    const mean = count
+      ? detail.reviews.reduce((sum, entry) => sum + entry.stars, 0) / count
+      : null;
+    return el(
+      "div",
+      { className: "stats" },
+      ...[
+        ["Latest", latest?.version ?? "None"],
+        ["Installs", FORMATS.number(detail.installs_total)],
+        ["Installs · 30 d", FORMATS.number(detail.installs_30d)],
+        ["Rating", mean === null ? "None" : `${mean.toFixed(1)} from ${count}`],
+        ["Releases", FORMATS.number(detail.releases.length)],
+      ].map(([label, value]) =>
+        el(
+          "div",
+          { className: "stat" },
+          el("span", { className: "label", textContent: label }),
+          el("b", { textContent: value }),
+        ),
+      ),
+    );
+  }
+
+  function about(detail: PluginDetail) {
+    const info = detail.plugin;
+    return panel(
+      "About",
       row(
-        "Commit",
-        el("span", { className: "mono", textContent: entry.git_sha }),
+        "Owner",
+        detail.owner ? refLink(detail.owner, detail.labels) : "Unknown",
       ),
+      row("GitHub", detail.owner_github ?? "Not linked"),
       row(
-        "Asset SHA-256",
-        el("span", { className: "mono", textContent: entry.asset_sha256 }),
+        "Repository",
+        el("span", { className: "mono", textContent: info.repo }),
       ),
-      row(
-        "Asset",
-        el("a", {
-          className: "ref",
-          href: entry.asset_url,
-          textContent: entry.asset_url.split("/").pop() ?? entry.asset_url,
-        }),
-      ),
-      controls,
+      row("Homepage", info.homepage ?? "None"),
     );
   }
 
@@ -236,49 +390,22 @@ import { page } from "@/lib/paths";
           ),
       );
       part("actions").replaceChildren(...actions(info));
-      const reviews = detail.reviews.map((review) =>
-        row(
-          `${"★".repeat(review.stars)}${"☆".repeat(5 - review.stars)}`,
-          review.review ?? "",
-          el(
-            "span",
-            { className: "dim" },
-            " · ",
-            review.reviewer ? refLink(review.reviewer, detail.labels) : "",
-            ` · ${day(review.updated_at)}`,
-          ),
-          button(
-            "Delete",
-            () =>
-              confirm("Delete this review?") &&
-              act(`/reviews/${review.user_id}`, "DELETE"),
-            "button small danger",
-          ),
-        ),
-      );
       part("body").replaceChildren(
-        el(
-          "div",
-          { className: "panels" },
-          panel(
-            "About",
-            row(
-              "Owner",
-              detail.owner ? refLink(detail.owner, detail.labels) : "Unknown",
-            ),
-            row("Repository", info.repo),
-            row("Homepage", info.homepage ?? "None"),
-            row("Installs", FORMATS.number(detail.installs_total)),
-            row("Installs, 30 d", FORMATS.number(detail.installs_30d)),
-          ),
-          widePanel(
-            `Releases · ${detail.releases.length}`,
-            ...detail.releases.map(release),
-          ),
-          widePanel(
-            `Reviews · ${detail.reviews.length}`,
-            ...(reviews.length ? reviews : [row("None", "No reviews yet")]),
-          ),
+        stats(detail),
+        about(detail),
+        table(
+          "Releases · click for details",
+          "release",
+          ["Version", "Released", "Size", "Commit", "State"],
+          detail.releases.map(release),
+          "No releases yet.",
+        ),
+        table(
+          `Reviews · ${detail.reviews.length}`,
+          "review",
+          ["Member", "Stars", "Review", "Updated", ""],
+          detail.reviews.map((entry) => review(entry, detail.labels)),
+          "No reviews yet.",
         ),
       );
     } catch (error) {

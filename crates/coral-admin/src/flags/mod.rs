@@ -19,6 +19,8 @@ mod upstream;
 mod waste;
 mod writer;
 
+pub use waste::{BlockedKeys, blocked_keys};
+
 pub const DISMISS_FOR: TimeDelta = TimeDelta::hours(24);
 pub const MAX_FLAG_KEY_CHARS: usize = 200;
 pub const DAY_KEY_FORMAT: &str = "%Y-%m-%d";

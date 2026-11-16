@@ -8,7 +8,7 @@ mod guilds;
 pub(crate) mod page;
 mod plugins;
 mod review;
-mod server;
+pub(crate) mod server;
 mod starfish;
 
 pub fn router() -> Router<AppState> {

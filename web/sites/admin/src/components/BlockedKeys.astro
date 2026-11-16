@@ -2,54 +2,212 @@
   <h2 class="group-title">
     Blocked Keys <span class="note" data-count></span>
   </h2>
-  <ul class="rows" data-list></ul>
+  <p class="muted" data-status hidden></p>
+  <div class="blocked-cards" data-list></div>
 </section>
+
+<style>
+  .blocked-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 12px;
+  }
+
+  .blocked-cards :global(.blocked-card) {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .blocked-cards :global(.blocked-head) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--text-sm);
+
+    & :global(.button) {
+      margin-left: auto;
+    }
+  }
+
+  .blocked-cards :global(.facts) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    font-size: var(--text-xs);
+  }
+
+  .blocked-cards :global(.fact b) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .blocked-cards :global(.bars span) {
+    background: #6a6d74;
+  }
+</style>
 
 <script>
   import { can, session } from "@/lib/session";
-  import { page } from "@/lib/paths";
   import { load, send } from "@/lib/api";
+  import { el } from "@/lib/dom";
+  import { FORMATS } from "@/lib/format";
+  import type { Labels } from "@/lib/members";
+  import { refLink, type Ref } from "@/lib/refs";
+  import { moment } from "@/lib/time";
 
-  interface Flag {
-    key: string;
-    kind: string;
-    summary: string;
-    refs: { type?: string; discord_id?: string }[];
+  interface BlockedKey {
+    flag_key: string;
+    account: Ref;
+    blocked_at: string;
+    until: string;
+    lookups: number;
+    players: number;
+    client: string | null;
+    series: number[];
   }
 
+  interface BlockedKeys {
+    items: BlockedKey[];
+    step_s: number;
+  }
+
+  const NO_LABELS: Labels = { discord: {}, minecraft: {} };
+  const HOUR_MS = 3_600_000;
+  const HOURS_PER_DAY = 24;
+  const MS_PER_SECOND = 1000;
+  const SECONDS_PER_MINUTE = 60;
   const root = document.getElementById("blocked")!;
-  const list = root.querySelector("[data-list]")!;
-
-  const row = (flag: Flag) => {
-    const item = document.createElement("li");
-    const account = flag.refs.find((ref) => ref.discord_id)?.discord_id;
-    const text = document.createElement("span");
-    text.textContent = flag.summary;
-    item.append(text);
-    if (account) {
-      const link = document.createElement("a");
-      link.href = page(`/urchin/members?id=${account}`);
-      link.textContent = "Open member";
-      item.append(link);
-    }
-    const dismiss = document.createElement("button");
-    dismiss.type = "button";
-    dismiss.className = "button";
-    dismiss.textContent = "Dismiss";
-    dismiss.addEventListener("click", async () => {
-      if (await send(`/flags/${encodeURIComponent(flag.key)}/dismiss`, "POST"))
-        item.remove();
-    });
-    item.append(dismiss);
-    return item;
-  };
-
+  const list = root.querySelector<HTMLElement>("[data-list]")!;
+  const status = root.querySelector<HTMLElement>("[data-status]")!;
   const viewer = await session();
-  if (can(viewer, "owner"))
-    load<{ flags: Flag[] }>("/flags").then(({ flags }) => {
-      const blocked = flags.filter((flag) => flag.kind === "waste");
-      root.hidden = blocked.length === 0;
-      root.querySelector("[data-count]")!.textContent = String(blocked.length);
-      list.replaceChildren(...blocked.map(row));
+
+  function remaining(until: string) {
+    const hours = Math.max(0, (Date.parse(until) - Date.now()) / HOUR_MS);
+    const days = Math.floor(hours / HOURS_PER_DAY);
+    return `${days} d ${Math.floor(hours % HOURS_PER_DAY)} h left`;
+  }
+
+  function chart(block: BlockedKey, stepS: number) {
+    const peak = Math.max(1, ...block.series);
+    const start =
+      Date.parse(block.blocked_at) -
+      block.series.length * stepS * MS_PER_SECOND;
+    return el(
+      "div",
+      { className: "capacity-chart" },
+      el(
+        "span",
+        { className: "muted" },
+        `Lookups per ${stepS / SECONDS_PER_MINUTE} min`,
+      ),
+      el(
+        "div",
+        {
+          className: "bars",
+          role: "img",
+          ariaLabel: "Lookups in the day before the block",
+        },
+        ...block.series.map((count, index) => {
+          const bar = el("span", {
+            title: `${moment(new Date(start + index * stepS * MS_PER_SECOND).toISOString())}: ${FORMATS.number(count)} lookups`,
+          });
+          bar.style.height = `${(count / peak) * 100}%`;
+          return bar;
+        }),
+      ),
+      el(
+        "div",
+        { className: "axis" },
+        ...["24 h before", "12 h", "Blocked"].map((text) =>
+          el("span", {}, text),
+        ),
+      ),
+    );
+  }
+
+  function fact(label: string, value: string, note: string, className = "") {
+    return el(
+      "div",
+      { className: "fact" },
+      el("span", { className: "label" }, label),
+      el("b", { className, title: value }, value),
+      el("span", { className: "dim" }, note),
+    );
+  }
+
+  function facts(block: BlockedKey) {
+    if (!block.lookups)
+      return el(
+        "p",
+        { className: "muted" },
+        "No lookups retained from before the block.",
+      );
+    const repeats = 1 - block.players / block.lookups;
+    return el(
+      "div",
+      { className: "facts" },
+      fact("Lookups", FORMATS.number(block.lookups), "in the day before"),
+      fact("Repeats", `${Math.round(repeats * 100)}%`, "same player again"),
+      fact("Client", block.client ?? "Unknown", "user agent", "mono"),
+    );
+  }
+
+  function dismissButton(block: BlockedKey, card: HTMLElement) {
+    const dismiss = el("button", {
+      type: "button",
+      className: "button small",
+      textContent: "Dismiss",
+      title: "Hidden for a day. A new block shows again.",
     });
+    dismiss.addEventListener("click", async () => {
+      if (
+        await send(
+          `/flags/${encodeURIComponent(block.flag_key)}/dismiss`,
+          "POST",
+        )
+      )
+        card.remove();
+    });
+    return dismiss;
+  }
+
+  function card(block: BlockedKey, blocked: BlockedKeys) {
+    const box = el("section", { className: "panel blocked-card" });
+    box.append(
+      el(
+        "div",
+        { className: "blocked-head" },
+        refLink(block.account, NO_LABELS),
+        el("span", { className: "issue" }, "Key Blocked"),
+        el(
+          "span",
+          { className: "dim", title: `Unblocks ${moment(block.until)}` },
+          remaining(block.until),
+        ),
+        ...(can(viewer, "owner") ? [dismissButton(block, box)] : []),
+      ),
+      chart(block, blocked.step_s),
+      facts(block),
+    );
+    return box;
+  }
+
+  if (can(viewer, "staff"))
+    load<BlockedKeys>("/accounts/blocked-keys").then(
+      (blocked) => {
+        root.hidden = blocked.items.length === 0;
+        root.querySelector("[data-count]")!.textContent = String(
+          blocked.items.length,
+        );
+        list.replaceChildren(
+          ...blocked.items.map((block) => card(block, blocked)),
+        );
+      },
+      (error: Error) => {
+        root.hidden = false;
+        status.hidden = false;
+        status.textContent = error.message;
+      },
+    );
 </script>

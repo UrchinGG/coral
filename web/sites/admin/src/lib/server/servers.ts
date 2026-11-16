@@ -5,6 +5,7 @@ export interface SyncServer {
   name: string;
   icon_url: string | null;
   enabled: boolean;
+  members: number | null;
 }
 
 export function serverIcon(

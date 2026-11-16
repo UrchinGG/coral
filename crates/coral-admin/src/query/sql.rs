@@ -7,6 +7,7 @@ use super::filter::{Bounds, Condition, Keyset};
 use super::players::PlayerKeys;
 use super::{MemberIdentity, MemberRole, Plan, Source};
 use crate::refs::Match;
+use crate::traffic::class::UNMATCHED_ROUTE;
 
 pub const REQUEST_KEY: &str = "coalesce(l.request_id, md5('arl:' || l.id)::uuid)";
 const LEGACY_ROW: &str = "(l.request_id IS NULL OR uuid_extract_version(l.request_id) <> 7)";
@@ -424,6 +425,12 @@ fn push_limit(limit: Option<i64>, sql: &mut Sql) {
 
 fn push_route(template: &'static str, era: Era, sql: &mut Sql) {
     match era {
+        Era::Attributed if template == UNMATCHED_ROUTE => {
+            sql.push("l.route IS NULL");
+        }
+        Era::Legacy if template == UNMATCHED_ROUTE => {
+            sql.push("FALSE");
+        }
         Era::Attributed => {
             sql.push("l.route = ").push_bind(template);
         }

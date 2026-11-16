@@ -18,6 +18,8 @@ const USER_COLUMNS: &str = "u.id, u.discord_id, u.license_status, u.github_usern
     (SELECT count(*) FROM plugin_installs pi WHERE pi.user_id = u.id) AS plugins_installed,
     (SELECT count(*) FROM plugins p WHERE p.owner_user_id = u.id) AS plugins_owned";
 const INACTIVE_LICENSE: &str = "inactive";
+const SIGNED_IN: &str =
+    "EXISTS (SELECT 1 FROM starfish_sessions s WHERE s.user_id = u.id AND s.expires_at > now())";
 const OVERVIEW_SQL: &str = "SELECT
     count(*) FILTER (WHERE license_status = 'active') AS licensed,
     count(*) FILTER (WHERE license_status = 'suspended') AS suspended,
@@ -28,8 +30,24 @@ const OVERVIEW_SQL: &str = "SELECT
 #[serde(deny_unknown_fields)]
 pub struct UsersQuery {
     q: Option<String>,
+    license: Option<LicenseFilter>,
+    session: Option<SessionFilter>,
     cursor: Option<RowCursor>,
     limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LicenseFilter {
+    Active,
+    Suspended,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionFilter {
+    SignedIn,
+    SignedOut,
 }
 
 #[derive(Debug, Serialize, FromRow)]
@@ -115,14 +133,14 @@ async fn user_records(
     ));
     sql.push_bind(INACTIVE_LICENSE);
     if let Some(text) = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
-        let contains = ContainsText::new(text);
-        sql.push(" AND (");
-        contains.push_match(&mut sql, "u.discord_id::text");
-        sql.push(" OR ");
-        contains.push_match(&mut sql, "c.username");
-        sql.push(" OR ");
-        contains.push_match(&mut sql, "u.github_username");
-        sql.push(")");
+        push_search(&mut sql, &ContainsText::new(text));
+    }
+    if let Some(license) = query.license {
+        sql.push(" AND u.license_status = ")
+            .push_bind(license.status());
+    }
+    if let Some(session) = query.session {
+        sql.push(session.condition());
     }
     if let Some(cursor) = &query.cursor {
         sql.push(" AND (u.updated_at, u.id) < (")
@@ -137,6 +155,36 @@ async fn user_records(
         .fetch_all(state.db.pool())
         .await
         .context("read Starfish users")
+}
+
+fn push_search(sql: &mut QueryBuilder<'_, Postgres>, contains: &ContainsText) {
+    sql.push(" AND (");
+    contains.push_match(sql, "u.discord_id::text");
+    sql.push(" OR ");
+    contains.push_match(sql, "c.username");
+    sql.push(" OR ");
+    contains.push_match(sql, "u.github_username");
+    sql.push(" OR EXISTS (SELECT 1 FROM starfish_hwids h WHERE h.user_id = u.id AND ");
+    contains.push_match(sql, "h.hwid_hash");
+    sql.push("))");
+}
+
+impl LicenseFilter {
+    fn status(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Suspended => "suspended",
+        }
+    }
+}
+
+impl SessionFilter {
+    fn condition(self) -> String {
+        match self {
+            Self::SignedIn => format!(" AND {SIGNED_IN}"),
+            Self::SignedOut => format!(" AND NOT {SIGNED_IN}"),
+        }
+    }
 }
 
 fn starfish_user(record: UserRecord, accounts: &Accounts) -> StarfishUser {

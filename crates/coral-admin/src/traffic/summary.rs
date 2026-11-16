@@ -21,6 +21,7 @@ pub struct Summary {
     pub totals: Totals,
     pub causes: HashMap<Cause, i64>,
     pub prev: Option<Totals>,
+    pub callers: i64,
     #[serde(serialize_with = "serde_ts::micros")]
     pub generated_at: DateTime<Utc>,
 }
@@ -96,8 +97,12 @@ pub async fn summary(
             false => Ok(None),
         }
     };
-    let (current, prev, latest) =
-        tokio::try_join!(totals(pool, range), previous, latest_minute(pool),)?;
+    let (current, prev, latest, callers) = tokio::try_join!(
+        totals(pool, range),
+        previous,
+        latest_minute(pool),
+        distinct_callers(pool, range)
+    )?;
     let mut current = current;
     current.totals.rpm_now = latest
         .filter(|latest| latest.minute >= now - RPM_FRESHNESS)
@@ -107,6 +112,7 @@ pub async fn summary(
         totals: current.totals,
         causes: current.causes,
         prev: prev.map(|prev| prev.totals),
+        callers,
         generated_at: now,
     })
 }
@@ -125,6 +131,19 @@ async fn totals(pool: &PgPool, range: TrafficRange) -> Result<Folded, AdminError
         .await
         .context("sum the traffic rollups")?;
     Ok(fold(rows))
+}
+
+async fn distinct_callers(pool: &PgPool, range: TrafficRange) -> Result<i64, AdminError> {
+    let span = range.hourly().span;
+    sqlx::query_scalar(
+        "SELECT count(DISTINCT (key_kind, member_id, actor_id, key_prefix, service))
+         FROM api_caller_hour WHERE hour >= $1 AND hour < $2",
+    )
+    .bind(span.from)
+    .bind(span.to)
+    .fetch_one(pool)
+    .await
+    .context("count the distinct callers")
 }
 
 async fn latest_minute(pool: &PgPool) -> Result<Option<LatestMinute>, AdminError> {

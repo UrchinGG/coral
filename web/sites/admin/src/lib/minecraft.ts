@@ -2,6 +2,7 @@ import { el } from "@/lib/dom";
 
 const SECTION_SIGN = "§";
 const DEFAULT_COLOR = "#aaaaaa";
+const OUTLINED_CODES = new Set(["0", "1"]);
 
 const COLORS: Record<string, string> = {
   "0": "#000000",
@@ -22,6 +23,8 @@ const COLORS: Record<string, string> = {
   f: "#ffffff",
 };
 
+export const UNKNOWN_PLAYER = "Unknown player";
+
 export const head = (uuid: string, size: number) =>
   `https://mc-heads.net/avatar/${uuid}/${size}`;
 
@@ -32,14 +35,17 @@ export function displayName(prefix: string | null, name: string) {
 
 function colored(text: string) {
   let color = DEFAULT_COLOR;
+  let outlined = false;
   return text.split(SECTION_SIGN).flatMap((chunk, index) => {
     const code = index === 0 ? undefined : chunk[0]?.toLowerCase();
     const body = index === 0 ? chunk : chunk.slice(1);
-    if (code === "r") color = DEFAULT_COLOR;
-    else if (code && COLORS[code]) color = COLORS[code];
+    if (code === "r") [color, outlined] = [DEFAULT_COLOR, false];
+    else if (code && COLORS[code])
+      [color, outlined] = [COLORS[code], OUTLINED_CODES.has(code)];
     if (!body) return [];
     const part = el("span", { textContent: body });
     part.style.color = color;
+    part.classList.toggle("outlined", outlined);
     return [part];
   });
 }

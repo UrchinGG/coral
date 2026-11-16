@@ -719,6 +719,25 @@ button.table-row.request[aria-expanded="true"] {
     border-color: #23456e;
     color: var(--color-info);
   }
+
+  &.m-post {
+    border-color: rgba(183, 167, 247, 0.32);
+    background: rgba(183, 167, 247, 0.14);
+    color: #c9bcfb;
+  }
+
+  &.m-put,
+  &.m-patch {
+    border-color: rgba(255, 170, 0, 0.3);
+    background: rgba(255, 170, 0, 0.12);
+    color: #ffaa00;
+  }
+
+  &.m-delete {
+    border-color: rgba(255, 85, 85, 0.3);
+    background: rgba(255, 85, 85, 0.13);
+    color: #ff5555;
+  }
 }
 
 .ok {

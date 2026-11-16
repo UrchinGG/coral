@@ -1,0 +1,77 @@
+<style is:global>
+  .month-chart .stats {
+    margin-top: 4px;
+  }
+
+  .month-chart {
+    --month-bar-max: 48px;
+    --month-bar-gap: 3px;
+  }
+
+  .month-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--month-bar-gap);
+    height: 64px;
+  }
+
+  .month-chart > .month-bars,
+  .month-chart > .axis {
+    max-width: calc(
+      var(--months) * (var(--month-bar-max) + var(--month-bar-gap))
+    );
+  }
+
+  .month-chart > .axis {
+    white-space: nowrap;
+  }
+
+  .month-bar {
+    display: flex;
+    flex: 1 1 0;
+    align-items: flex-end;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+
+    & span {
+      display: block;
+      width: 100%;
+      border-radius: 2px 2px 0 0;
+      background: #3d9c8b;
+    }
+
+    &.empty span {
+      height: 2px;
+      background: var(--color-border);
+    }
+
+    &:hover span,
+    &[aria-pressed="true"] span {
+      background: #6fd6c3;
+    }
+  }
+
+  .table-row.snapshot {
+    grid-template-columns: 220px minmax(0, 1fr);
+    min-width: 0;
+  }
+
+  button.table-row.snapshot {
+    width: 100%;
+    border: 0;
+    border-top: 1px solid var(--color-divider);
+    background: none;
+    font: inherit;
+    font-size: var(--text-sm);
+    text-align: left;
+    cursor: pointer;
+
+    &:hover,
+    &[aria-expanded="true"] {
+      background: var(--color-surface-hover);
+    }
+  }
+</style>

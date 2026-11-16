@@ -1,6 +1,9 @@
 ---
 import { page } from "@/lib/paths";
+import SnapshotStyles from "@/components/SnapshotStyles.astro";
 ---
+
+<SnapshotStyles />
 
 <section id="player-page" class="member" hidden>
   <nav class="crumbs-nav" aria-label="Breadcrumb">
@@ -11,6 +14,7 @@ import { page } from "@/lib/paths";
   <header class="member-head">
     <div class="member-title">
       <h1 data-name>Loading…</h1>
+      <div class="guild-line" data-guild></div>
       <div class="meta" data-meta></div>
       <div class="issues" data-issues></div>
     </div>
@@ -63,17 +67,20 @@ import { page } from "@/lib/paths";
 <script>
   import { load, send } from "@/lib/api";
   import { el } from "@/lib/dom";
+  import { FORMATS } from "@/lib/format";
+  import { refLink } from "@/lib/refs";
   import { can, session, type Permission } from "@/lib/session";
   import { fillTab, setQuery, tabBar } from "@/lib/tabbar";
   import { tagPill } from "@/lib/tags";
   import {
     overviewTab,
-    lookupsTab,
     snapshotsTab,
     tagsTab,
     type PlayerCore,
     type Tag,
   } from "@/lib/tabs/player";
+  import { lookupsTab } from "@/lib/tabs/player-lookups";
+  import { ago, day } from "@/lib/time";
 
   const viewer = await session();
   const TABS: [string, string][] = [
@@ -93,6 +100,7 @@ import { page } from "@/lib/paths";
   const dialog = (name: string) =>
     root.querySelector<HTMLDialogElement>(`[data-dialog="${name}"]`)!;
   let current = new URLSearchParams(location.search).get("tab") ?? "overview";
+  let month = new URLSearchParams(location.search).get("month");
 
   function ask(name: string, then: (form: FormData) => void) {
     const box = dialog(name);
@@ -125,10 +133,13 @@ import { page } from "@/lib/paths";
     document.title = `${name} | Urchin Admin`;
     part("crumb").textContent = name;
     part("name").textContent = name;
+    part("guild").replaceChildren(...guildLine(core));
     part("meta").replaceChildren(
-      el("span", { className: "mono", textContent: core.dashed }),
       ...core.blacklist.active.map((tag) =>
         tagPill(tag.tag_type, tag.display_name),
+      ),
+      ...meta(core).map((text, index) =>
+        el("span", { className: index < 2 ? "mono" : "", textContent: text }),
       ),
     );
     const issues = [
@@ -179,6 +190,42 @@ import { page } from "@/lib/paths";
     );
   }
 
+  function guildLine(core: PlayerCore) {
+    const label = el("span", { className: "dim", textContent: "Guild" });
+    const guild = core.guild;
+    if (!guild)
+      return [
+        label,
+        el("span", { className: "dim", textContent: "Not in a guild" }),
+      ];
+    const note = [
+      guild.rank,
+      guild.joined && `joined ${day(guild.joined)}`,
+    ].filter(Boolean);
+    return [
+      label,
+      refLink(guild.guild, core.labels),
+      el("span", {
+        className: "mono dim",
+        textContent: guild.tag ? `[${guild.tag}]` : "",
+      }),
+      el("span", { className: "dim", textContent: note.join(", ") }),
+    ];
+  }
+
+  function meta(core: PlayerCore) {
+    const since = core.names.find((name) => name.current)?.first_seen;
+    const { first, last, count } = core.snapshots;
+    return [
+      core.uuid,
+      core.dashed,
+      since && `Current name since ${day(since)}`,
+      first && `First seen ${day(first)}`,
+      last && `Last seen ${ago(last)}`,
+      `${FORMATS.number(count)} ${count === 1 ? "snapshot" : "snapshots"}`,
+    ].filter(Boolean) as string[];
+  }
+
   async function addTag() {
     const { tag_types } = await load<{
       tag_types: { name: string; display_name: string }[];
@@ -206,23 +253,30 @@ import { page } from "@/lib/paths";
       case "tags":
         return tagsTab(uuid!);
       case "snapshots":
-        return snapshotsTab(uuid!);
-      case "lookups":
-        return lookupsTab(uuid!);
-      default:
-        return overviewTab(
-          core,
-          can(viewer, "tags_write") ? removeTag : undefined,
+        return snapshotsTab(core, month, (picked) =>
+          go(core, "snapshots", picked),
         );
+      case "lookups":
+        return lookupsTab(core);
+      default:
+        return overviewTab(core, {
+          removeTag: can(viewer, "tags_write") ? removeTag : undefined,
+          lookups: can(viewer, "traffic"),
+          open: (tab, picked) => go(core, tab, picked ?? null),
+        });
     }
   }
 
+  function go(core: PlayerCore, tab: string, picked: string | null = null) {
+    current = tab;
+    month = picked;
+    setQuery("tab", tab === "overview" ? null : tab);
+    setQuery("month", picked);
+    render(core);
+  }
+
   function render(core: PlayerCore) {
-    tabBar(part("tabs"), TABS, current, (key) => {
-      current = key;
-      setQuery("tab", key === "overview" ? null : key);
-      render(core);
-    });
+    tabBar(part("tabs"), TABS, current, (key) => go(core, key));
     fillTab(part("tab"), () => content(core));
   }
 
@@ -243,3 +297,50 @@ import { page } from "@/lib/paths";
     show();
   }
 </script>
+
+<style>
+  #player-page :global(.guild-line) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 8px;
+    font-size: var(--text-sm);
+  }
+
+  #player-page :global(.table-row.requesters) {
+    grid-template-columns:
+      minmax(120px, 1.4fr) 90px 72px 48px 60px 100px 80px
+      minmax(140px, 1.4fr);
+    min-width: 820px;
+  }
+
+  #player-page :global(button.table-row.requesters) {
+    width: 100%;
+    border: 0;
+    border-top: 1px solid var(--color-divider);
+    background: none;
+    font: inherit;
+    font-size: var(--text-sm);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  #player-page :global(button.table-row.requesters:hover),
+  #player-page :global(button.table-row.requesters[aria-pressed="true"]) {
+    background: var(--color-surface-hover);
+  }
+
+  #player-page :global(.chip:disabled) {
+    cursor: default;
+  }
+
+  #player-page :global(.warn-line) {
+    margin: 0;
+    color: var(--color-warning);
+    font-size: var(--text-xs);
+  }
+
+  #player-page :global(.table .pad) {
+    margin: 10px 14px;
+  }
+</style>

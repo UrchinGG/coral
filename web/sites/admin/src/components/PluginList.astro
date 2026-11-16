@@ -1,23 +1,27 @@
 <section id="plugin-list" class="list">
-  <form class="toolbar" role="search">
-    <input
-      class="field grow"
-      type="search"
-      name="q"
-      placeholder="Search plugins, slugs, owners and repos"
-      aria-label="Search plugins"
-    />
-  </form>
+  <div data-stats></div>
+  <div data-search></div>
   <div class="table" data-table></div>
 </section>
 
+<style is:global>
+  #plugin-list .table-row.plugin {
+    grid-template-columns:
+      minmax(160px, 1.6fr) minmax(100px, 1fr)
+      70px 80px 100px 80px 90px;
+    min-width: 760px;
+  }
+</style>
+
 <script>
   import { page } from "@/lib/paths";
+  import { load } from "@/lib/api";
   import { el } from "@/lib/dom";
+  import { filterBar, type FilterState, type Pick } from "@/lib/filterbar";
   import { FORMATS } from "@/lib/format";
   import type { Labels } from "@/lib/members";
-  import { pager } from "@/lib/pager";
-  import { refName, type Ref } from "@/lib/refs";
+  import { pager, type CursorPage } from "@/lib/pager";
+  import { refText, type Ref } from "@/lib/refs";
   import { setQuery } from "@/lib/tabbar";
 
   interface PluginRow {
@@ -33,10 +37,33 @@
     rating_count: number;
   }
 
-  const SEARCH_DELAY_MS = 250;
+  interface Summary {
+    listed: number;
+    official: number;
+    unlisted: number;
+    disabled: number;
+    installs_30d: number;
+    owners: Ref[];
+  }
+
+  type Listing = CursorPage<PluginRow> & { summary: Summary | null };
+
+  const STATES: Pick[] = [
+    { value: "listed", label: "Listed" },
+    { value: "official", label: "Official" },
+    { value: "unlisted", label: "Unlisted" },
+    { value: "disabled", label: "Disabled" },
+  ];
   const root = document.getElementById("plugin-list")!;
-  const input = root.querySelector("input")!;
-  const table = root.querySelector<HTMLElement>("[data-table]")!;
+  const part = (name: string) =>
+    root.querySelector<HTMLElement>(`[data-${name}]`)!;
+  const search: FilterState = {
+    q: new URLSearchParams(location.search).get("q") ?? "",
+    picks: {},
+    range: null,
+  };
+  let owners: Pick[] = [];
+
   const state = (row: PluginRow) =>
     row.disabled
       ? ["Disabled", "bad"]
@@ -49,9 +76,15 @@
   const head = el(
     "div",
     { className: "table-row plugin head" },
-    ...["Plugin", "Owner", "Latest", "Installs", "30 d", "Rating", "State"].map(
-      (label) => el("span", { textContent: label }),
-    ),
+    ...[
+      "Plugin",
+      "Owner",
+      "Latest",
+      "Installs",
+      "Installs · 30 d",
+      "Rating",
+      "State",
+    ].map((label) => el("span", { textContent: label })),
   );
 
   const render = (row: PluginRow, labels: Labels) => {
@@ -66,7 +99,7 @@
         className: "strong",
         textContent: row.plugin.name ?? row.plugin.slug,
       }),
-      el("span", { textContent: refName(row.owner, labels) }),
+      refText(row.owner, labels),
       el("span", { className: "mono", textContent: row.latest_version ?? "" }),
       el("span", {
         className: "num",
@@ -86,27 +119,80 @@
     );
   };
 
-  function refresh() {
-    const q = input.value.trim();
-    setQuery("q", q || null);
-    table.replaceChildren(
-      head,
-      pager<PluginRow>(
-        `/plugins${q ? `?q=${encodeURIComponent(q)}` : ""}`,
-        render,
-        "No plugin matches.",
+  function stats(summary: Summary) {
+    part("stats").replaceChildren(
+      el(
+        "div",
+        { className: "stats" },
+        ...[
+          ["Listed", summary.listed],
+          ["Official", summary.official],
+          ["Unlisted", summary.unlisted],
+          ["Disabled", summary.disabled],
+          ["Installs · 30 d", summary.installs_30d],
+        ].map(([label, value]) =>
+          el(
+            "div",
+            { className: "stat" },
+            el("span", { className: "label", textContent: String(label) }),
+            el("b", { textContent: FORMATS.number(Number(value)) }),
+          ),
+        ),
       ),
     );
   }
 
-  input.value = new URLSearchParams(location.search).get("q") ?? "";
-  let typing: ReturnType<typeof setTimeout>;
-  input.addEventListener("input", () => {
-    clearTimeout(typing);
-    typing = setTimeout(refresh, SEARCH_DELAY_MS);
+  function ownerPicks(summary: Summary, labels: Labels) {
+    return summary.owners.flatMap((owner) =>
+      owner.kind === "account"
+        ? [
+            {
+              value: owner.discord_id,
+              label: labels.discord[owner.discord_id] ?? owner.discord_id,
+            },
+          ]
+        : [],
+    );
+  }
+
+  function listPath() {
+    const params = new URLSearchParams();
+    if (search.q) params.set("q", search.q);
+    if (search.picks.state) params.set("state", search.picks.state.value);
+    if (search.picks.owner) params.set("owner", search.picks.owner.value);
+    return `/plugins${params.size ? `?${params}` : ""}`;
+  }
+
+  function refresh() {
+    setQuery("q", search.q || null);
+    const path = listPath();
+    const fetchPage = async (cursor: string | null) => {
+      const join = path.includes("?") ? "&" : "?";
+      const listing = await load<Listing>(
+        cursor ? `${path}${join}cursor=${encodeURIComponent(cursor)}` : path,
+      );
+      if (listing.summary) {
+        stats(listing.summary);
+        owners = ownerPicks(listing.summary, listing.labels);
+      }
+      return listing;
+    };
+    part("table").replaceChildren(
+      head,
+      pager<PluginRow>(fetchPage, render, "No plugin matches."),
+    );
+  }
+
+  const bar = filterBar({
+    placeholder: "Search plugins, owners, slugs and repos",
+    hint: "Search names, descriptions, slugs, repos and owners, or pick a state or an owner",
+    state: search,
+    fields: [
+      { key: "state", label: "State", values: () => STATES },
+      { key: "owner", label: "Owner", values: () => owners },
+    ],
+    onChange: refresh,
   });
-  root
-    .querySelector("form")!
-    .addEventListener("submit", (event) => event.preventDefault());
+  part("search").append(bar.element);
   refresh();
 </script>

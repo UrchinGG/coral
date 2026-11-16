@@ -87,6 +87,7 @@ const current = (target: string) => (target === path ? "page" : undefined);
 </html>
 
 <script>
+  import { watchNames } from "@/lib/names";
   import { omnibox } from "@/lib/omnibox";
   import { can, session, type Permission } from "@/lib/session";
 
@@ -118,5 +119,6 @@ const current = (target: string) => (target === path ? "page" : undefined);
   if (can(viewer, "staff")) {
     search.hidden = false;
     omnibox(search);
+    watchNames(document.getElementById("content")!);
   }
 </script>

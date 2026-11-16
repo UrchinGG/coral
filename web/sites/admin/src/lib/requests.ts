@@ -1,7 +1,8 @@
 import { load } from "@/lib/api";
 import { el } from "@/lib/dom";
 import type { Labels } from "@/lib/members";
-import { refLink, refName, type Ref } from "@/lib/refs";
+import { markPending } from "@/lib/names";
+import { refLink, refText, type Ref } from "@/lib/refs";
 import { time, day } from "@/lib/time";
 
 export interface Subject {
@@ -37,6 +38,22 @@ interface RequestFull {
   server_error: string | null;
 }
 
+const VIA_LABELS: Record<string, string> = {
+  personal: "Key",
+  developer: "Developer",
+  internal: "Bot",
+  session: "Session",
+  minecraft: "Minecraft",
+  unverified: "Unverified",
+  invalid: "Bad key",
+  legacy: "Legacy",
+  none: "No key",
+};
+
+export const viaLabel = (keyKind: string) => VIA_LABELS[keyKind] ?? keyKind;
+
+export const VIA_KINDS = Object.keys(VIA_LABELS);
+
 const statusClass = (status: number) =>
   status >= 500
     ? "bad"
@@ -53,13 +70,20 @@ export function methodBadge(method: string) {
   });
 }
 
-function subjectText(subjects: Subject[], labels: Labels) {
-  if (!subjects.length) return "";
+function subjectCell(subjects: Subject[], labels: Labels) {
+  const cell = el("span", { className: "player" });
+  if (!subjects.length) return cell;
   const first = subjects[0];
-  const name = first.player
-    ? (labels.minecraft[first.player] ?? first.name ?? first.raw)
-    : (first.name ?? first.raw);
-  return subjects.length > 1 ? `${name} +${subjects.length - 1}` : name;
+  const name = el("span", {
+    textContent: first.player
+      ? (labels.minecraft[first.player] ?? first.name ?? first.raw)
+      : (first.name ?? first.raw),
+  });
+  if (first.player && !labels.minecraft[first.player])
+    markPending(name, "minecraft", first.player);
+  cell.append(name);
+  if (subjects.length > 1) cell.append(` +${subjects.length - 1}`);
+  return cell;
 }
 
 async function detail(row: RequestRow, box: HTMLElement) {
@@ -126,20 +150,17 @@ export function requestRow(row: RequestRow, labels: Labels) {
       methodBadge(row.method),
       row.route ?? row.path,
     ),
-    el("span", { textContent: refName(row.requester, labels) }),
-    el("span", {
-      className: "player",
-      textContent: subjectText(row.subjects, labels),
-    }),
+    refText(row.requester, labels),
+    subjectCell(row.subjects, labels),
     el("span", {
       className: `mono ${statusClass(row.status)}`,
       textContent: String(row.status),
     }),
     el("span", {
       className: "mono dim",
-      textContent: row.ip ? refName(row.ip, labels) : "",
+      textContent: row.ip?.kind === "ip" ? row.ip.ip : "",
     }),
-    el("span", { className: "num dim", textContent: `${row.latency_ms} ms` }),
+    el("span", { className: "dim", textContent: viaLabel(row.key_kind) }),
   );
   line.addEventListener("click", () => {
     box.hidden = !box.hidden;
@@ -153,7 +174,7 @@ export function requestHead() {
   return el(
     "div",
     { className: "table-row request head" },
-    ...["Time", "Route", "Requester", "Player", "Status", "IP", "Latency"].map(
+    ...["Time", "Route", "Requester", "Player", "Status", "IP", "Via"].map(
       (label) => el("span", { textContent: label }),
     ),
   );

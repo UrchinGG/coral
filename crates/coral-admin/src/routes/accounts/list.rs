@@ -30,6 +30,8 @@ pub struct ListQuery {
     has_key: Option<bool>,
     has_dev_key: Option<bool>,
     starfish: Option<bool>,
+    strikes: Option<bool>,
+    tagging: Option<bool>,
     sort: Option<SortColumn>,
     dir: Option<Direction>,
     cursor: Option<String>,
@@ -59,6 +61,20 @@ struct ListCursor {
     sort: SortColumn,
     value: i64,
     member_id: i64,
+}
+
+#[derive(Serialize)]
+pub struct MemberPage {
+    #[serde(flatten)]
+    page: CursorPage<AccountRow>,
+    #[serde(flatten)]
+    count: Option<MemberCount>,
+}
+
+#[derive(Serialize, FromRow)]
+struct MemberCount {
+    matched: i64,
+    total: i64,
 }
 
 #[derive(Serialize)]
@@ -106,7 +122,7 @@ struct ListedMember {
 pub async fn accounts(
     State(state): State<AppState>,
     query: Result<Query<ListQuery>, QueryRejection>,
-) -> Result<Json<CursorPage<AccountRow>>, AdminError> {
+) -> Result<Json<MemberPage>, AdminError> {
     let Query(query) = query?;
     let limit = page_limit(query.limit)?;
     let sort = query.sort.unwrap_or_default();
@@ -115,7 +131,15 @@ pub async fn accounts(
         .as_deref()
         .map(|raw| ListCursor::decode(raw, sort))
         .transpose()?;
-    let mut rows = list_members(state.db.pool(), &query, cursor, limit).await?;
+    let pool = state.db.pool();
+    let first_page = cursor.is_none();
+    let (mut rows, count) = tokio::try_join!(list_members(pool, &query, cursor, limit), async {
+        if first_page {
+            count_members(pool, &query).await.map(Some)
+        } else {
+            Ok(None)
+        }
+    },)?;
     let full = rows.len() > limit;
     rows.truncate(limit);
     let next_cursor = rows
@@ -127,11 +151,26 @@ pub async fn accounts(
         .iter()
         .flat_map(|row| std::iter::once(&row.account).chain(&row.minecraft));
     let labels = state.names.cached(&label_request(mentioned)).await?;
-    Ok(Json(CursorPage {
-        items,
-        next_cursor,
-        labels,
+    Ok(Json(MemberPage {
+        page: CursorPage {
+            items,
+            next_cursor,
+            labels,
+        },
+        count,
     }))
+}
+
+/// Counts once per search, not per page: the filtered members and every member.
+async fn count_members(pool: &PgPool, query: &ListQuery) -> Result<MemberCount, AdminError> {
+    let mut sql = QueryBuilder::new(
+        "SELECT count(*) AS matched, (SELECT count(*) FROM members) AS total FROM members m WHERE true",
+    );
+    push_filters(&mut sql, query);
+    sql.build_query_as()
+        .fetch_one(pool)
+        .await
+        .context("count the listed accounts")
 }
 
 async fn list_members(
@@ -165,7 +204,11 @@ fn list_sql(
                 (SELECT u.license_status FROM starfish_users u WHERE u.discord_id = m.discord_id) AS starfish_license,
                 (SELECT count(*) FROM member_strike s WHERE s.member_id = m.id AND s.revoked_at IS NULL
                   AND (s.expires_at IS NULL OR s.expires_at > now())) AS active_strikes,
-                traffic.requests_24h, traffic.rate_limited_24h, traffic.last_active
+                traffic.requests_24h, traffic.rate_limited_24h,
+                greatest(
+                  (SELECT max(c.hour) FROM api_caller_hour c WHERE c.member_id = m.id),
+                  (SELECT max(c.hour) FROM api_caller_hour c WHERE c.actor_id = m.discord_id)
+                ) AS last_active
          FROM (",
     );
     push_page(&mut sql, query, sort, dir, cursor, limit);
@@ -179,7 +222,7 @@ fn list_sql(
     .push(", ")
     .push_bind(Cause::UpstreamLimit.code())
     .push(
-        ")), 0)::int8 AS rate_limited_24h, max(c.hour) AS last_active
+        ")), 0)::int8 AS rate_limited_24h
             FROM api_caller_hour c
             WHERE (c.member_id = m.id OR c.actor_id = m.discord_id) AND c.hour >= ",
     )
@@ -249,6 +292,13 @@ fn push_filters(sql: &mut QueryBuilder<'static, Postgres>, query: &ListQuery) {
             .push(") = ")
             .push_bind(starfish);
     }
+    if let Some(strikes) = query.strikes {
+        sql.push(" AND EXISTS (SELECT 1 FROM member_strike s WHERE s.member_id = m.id AND s.revoked_at IS NULL AND (s.expires_at IS NULL OR s.expires_at > now())) = ")
+            .push_bind(strikes);
+    }
+    if let Some(tagging) = query.tagging {
+        sql.push(" AND m.tagging_disabled <> ").push_bind(tagging);
+    }
 }
 
 fn push_text_match(sql: &mut QueryBuilder<'static, Postgres>, text: &str) {
@@ -259,7 +309,12 @@ fn push_text_match(sql: &mut QueryBuilder<'static, Postgres>, text: &str) {
         .push(" OR m.id::text = ")
         .push_bind(bare.clone())
         .push(" OR m.uuid = ")
+        .push_bind(bare.clone())
+        .push(" OR m.id IN (SELECT l.member_id FROM member_mc_links l WHERE l.unlinked_at IS NULL AND (l.uuid = ")
         .push_bind(bare)
+        .push(" OR l.uuid IN (SELECT s.uuid FROM player_snapshots s WHERE lower(s.username) = ")
+        .push_bind(text.to_lowercase())
+        .push(")))")
         .push(" OR EXISTS (SELECT 1 FROM discord_username_cache c WHERE c.discord_id = m.discord_id AND ");
     contains.push_match(sql, "c.username");
     sql.push("))");
@@ -447,6 +502,67 @@ mod tests {
             cursor = Some(ListCursor::after(SortColumn::Requests, row));
         }
         assert_eq!(seen, inserted);
+    }
+
+    #[tokio::test]
+    async fn strike_and_tagging_filters_and_minecraft_names_narrow_the_list() {
+        let Some(pool) = pool().await else {
+            return;
+        };
+        let target = member(&pool, &unique_key()).await;
+        let member_id = target.member_id.unwrap();
+        let player = uuid::Uuid::new_v4().simple().to_string();
+        let name = format!("mc{}", &player[..10]);
+        sqlx::query("UPDATE members SET tagging_disabled = true WHERE id = $1")
+            .bind(member_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO member_strike (member_id, reason, struck_by) VALUES ($1, 'fixture', 1)",
+        )
+        .bind(member_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO member_mc_links (member_id, uuid, relation) VALUES ($1, $2, 'alt')",
+        )
+        .bind(member_id)
+        .bind(&player)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO player_snapshots (uuid, username, data) VALUES ($1, $2, '{}')")
+            .bind(&player)
+            .bind(&name)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let listed = |query: ListQuery| {
+            let pool = pool.clone();
+            async move {
+                list_members(&pool, &query, None, MAX_PAGE)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .any(|row| row.id == member_id)
+            }
+        };
+        let searched = |strikes, tagging| ListQuery {
+            q: Some(name.to_uppercase()),
+            strikes,
+            tagging,
+            ..ListQuery::default()
+        };
+        assert!(listed(searched(None, None)).await);
+        assert!(listed(searched(Some(true), Some(false))).await);
+        assert!(!listed(searched(Some(false), None)).await);
+        assert!(!listed(searched(None, Some(true))).await);
+        let count = count_members(&pool, &searched(Some(true), None))
+            .await
+            .unwrap();
+        assert!(count.matched >= 1 && count.total >= count.matched);
     }
 
     #[tokio::test]

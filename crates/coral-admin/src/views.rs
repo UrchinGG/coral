@@ -8,6 +8,7 @@ use axum::response::{IntoResponse, Response};
 use moka::Expiry;
 use moka::future::Cache;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::error::AdminError;
 
@@ -18,6 +19,8 @@ pub const ROUTES_TTL: Duration = Duration::from_secs(10 * 60);
 pub const GUILD_POPULATION_TTL: Duration = Duration::from_secs(10 * 60);
 pub const DISCORD_DIRECTORY_TTL: Duration = Duration::from_secs(10 * 60);
 pub const OVERVIEW_TTL: Duration = Duration::from_secs(60);
+pub const SYNC_SERVERS_TTL: Duration = Duration::from_secs(60);
+pub const MAINTENANCE_PENDING_TTL: Duration = Duration::from_secs(60);
 pub const RECENT_SUMMARY_SPAN: Duration = Duration::from_secs(24 * 3600);
 
 const MAX_VIEWS: u64 = 1_000;
@@ -32,6 +35,8 @@ pub enum View {
     GuildPopulation,
     DiscordDirectory,
     Overview,
+    SyncServers,
+    MaintenancePending,
 }
 
 #[derive(Clone)]
@@ -65,6 +70,8 @@ impl View {
             Self::GuildPopulation => GUILD_POPULATION_TTL,
             Self::DiscordDirectory => DISCORD_DIRECTORY_TTL,
             Self::Overview => OVERVIEW_TTL,
+            Self::SyncServers => SYNC_SERVERS_TTL,
+            Self::MaintenancePending => MAINTENANCE_PENDING_TTL,
         }
     }
 }
@@ -99,12 +106,21 @@ impl ViewCache {
             .map_err(Arc::unwrap_or_clone)
     }
 
+    pub async fn cached(&self, view: View, key: impl Into<String>) -> Option<CachedView> {
+        self.views.get(&(view, key.into())).await
+    }
+
     pub async fn forget(&self, view: View, key: impl Into<String>) {
         self.views.invalidate(&(view, key.into())).await;
     }
 }
 
 impl CachedView {
+    pub fn decode<T: DeserializeOwned>(&self) -> Result<T, AdminError> {
+        serde_json::from_slice(&self.body)
+            .map_err(|error| AdminError::Internal(format!("read a cached view: {error}")))
+    }
+
     fn serialize<T: Serialize>(value: &T) -> Result<Self, AdminError> {
         let body = serde_json::to_vec(value)
             .map_err(|error| AdminError::Internal(format!("serialize a cached view: {error}")))?;

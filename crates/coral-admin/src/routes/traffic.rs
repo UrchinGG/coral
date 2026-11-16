@@ -58,6 +58,7 @@ pub struct SeriesParams {
     cause: Option<Cause>,
     member: Option<i64>,
     actor: Option<String>,
+    key_prefix: Option<String>,
     key_kind: Option<KeyKind>,
 }
 
@@ -135,6 +136,7 @@ async fn traffic_series(
         },
         member: params.member,
         actor: params.actor.as_deref().map(discord_id).transpose()?,
+        key_prefix: params.key_prefix,
     };
     let key = format!("series:{}:{filter:?}", resolved.cache_key());
     state

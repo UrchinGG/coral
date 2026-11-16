@@ -1,44 +1,19 @@
 <section id="member-list" class="list">
-  <form class="toolbar" role="search">
-    <input
-      class="field grow"
-      type="search"
-      name="q"
-      placeholder="Search by Discord name, Discord ID, #number or UUID"
-      aria-label="Search members"
-    />
-    <select class="field" name="rank" aria-label="Access level">
-      <option value="">Any access</option>
-      <option value="2">Helper and up</option>
-      <option value="3">Moderator and up</option>
-      <option value="4">Admin and up</option>
-    </select>
-    <select class="field" name="key" aria-label="API key">
-      <option value="">Any key</option>
-      <option value="has">Has a key</option>
-      <option value="none">No key</option>
-      <option value="locked">Key locked</option>
-    </select>
-    <select class="field" name="dev" aria-label="Developer key">
-      <option value="">Any developer key</option>
-      <option value="true">Developer key</option>
-      <option value="false">No developer key</option>
-    </select>
-    <select class="field" name="starfish" aria-label="Starfish license">
-      <option value="">Any Starfish</option>
-      <option value="true">Starfish license</option>
-      <option value="false">No Starfish license</option>
-    </select>
-    <select class="field" name="sort" aria-label="Sort by">
-      <option value="member">Member #</option>
-      <option value="joined">Joined</option>
-      <option value="requests">Lifetime requests</option>
-      <option value="access">Access level</option>
-    </select>
-    <select class="field" name="dir" aria-label="Order">
-      <option value="desc">Descending</option>
-      <option value="asc">Ascending</option>
-    </select>
+  <form class="member-tools" role="search">
+    <div data-filters></div>
+    <div class="member-sort">
+      <span class="dim" data-count></span>
+      <label>
+        <span class="label">Sort</span>
+        <select class="field" name="sort" aria-label="Sort members by">
+          <option value="member">Member Number</option>
+          <option value="joined">Joined</option>
+          <option value="requests">Lifetime Requests</option>
+          <option value="access">Access Level</option>
+        </select>
+      </label>
+      <button type="button" class="button small" data-dir></button>
+    </div>
   </form>
   <div class="table" role="table" aria-label="Members">
     <div class="table-row head" role="row">
@@ -65,19 +40,54 @@
   </button>
 </section>
 
+<style>
+  .member-tools {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .member-sort {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--text-xs);
+
+    & label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+    }
+
+    & .field {
+      height: 26px;
+      padding: 0 6px;
+      font-size: var(--text-xs);
+    }
+  }
+</style>
+
 <script>
   import { load } from "@/lib/api";
+  import {
+    filterBar,
+    type FilterField,
+    type FilterState,
+  } from "@/lib/filterbar";
   import { FORMATS } from "@/lib/format";
   import { accessLabel, memberUrl, type Labels } from "@/lib/members";
+  import { refText, type Ref } from "@/lib/refs";
+  import { can, session, type Permission } from "@/lib/session";
   import { ago } from "@/lib/time";
 
   interface Row {
-    account: { discord_id: string; member_id: number | null };
-    minecraft: { uuid: string } | null;
+    account: Extract<Ref, { kind: "account" }>;
+    minecraft: Ref | null;
     alts: number;
     access_level: number;
     key_locked: boolean;
-    tagging_disabled: boolean;
     has_key: boolean;
     request_count: number;
     requests_24h: number;
@@ -88,26 +98,94 @@
     items: Row[];
     next_cursor: string | null;
     labels: Labels;
+    matched?: number;
+    total?: number;
   }
 
-  const SEARCH_DELAY_MS = 250;
-  const KEY_FILTERS: Record<string, [string, string]> = {
-    has: ["has_key", "true"],
-    none: ["has_key", "false"],
-    locked: ["locked", "true"],
+  type Filter = FilterField & {
+    needs?: Permission;
+    params: Record<string, Record<string, string>>;
   };
 
+  const DESCENDING = "desc";
+  const ASCENDING = "asc";
+  const FILTERS: Filter[] = [
+    filter("access", "Access", [
+      ["Helper or higher", { rank: "2" }],
+      ["Moderator or higher", { rank: "3" }],
+      ["Admin or higher", { rank: "4" }],
+    ]),
+    filter(
+      "key",
+      "API Key",
+      [
+        ["Active", { has_key: "true", locked: "false" }],
+        ["Locked", { locked: "true" }],
+        ["None", { has_key: "false" }],
+      ],
+      "keys_manage",
+    ),
+    filter(
+      "dev",
+      "Developer Key",
+      [
+        ["Has one", { has_dev_key: "true" }],
+        ["None", { has_dev_key: "false" }],
+      ],
+      "keys_manage",
+    ),
+    filter("strikes", "Strikes", [
+      ["Has active strikes", { strikes: "true" }],
+      ["None", { strikes: "false" }],
+    ]),
+    filter("tagging", "Tagging", [
+      ["Enabled", { tagging: "true" }],
+      ["Disabled", { tagging: "false" }],
+    ]),
+    filter(
+      "starfish",
+      "Starfish",
+      [
+        ["Licensed", { starfish: "true" }],
+        ["No license", { starfish: "false" }],
+      ],
+      "starfish",
+    ),
+  ];
+
+  const viewer = await session();
   const root = document.getElementById("member-list")!;
   const form = root.querySelector("form")!;
-  const rows = root.querySelector("[data-rows]")!;
-  const status = root.querySelector<HTMLElement>("[data-status]")!;
-  const more = root.querySelector<HTMLButtonElement>("[data-more]")!;
+  const sort = form.elements.namedItem("sort") as HTMLSelectElement;
+  const part = <T extends HTMLElement>(name: string) =>
+    root.querySelector<T>(`[data-${name}]`)!;
+  const filters = FILTERS.filter(
+    (candidate) => !candidate.needs || can(viewer, candidate.needs),
+  );
+  const state: FilterState = { q: "", picks: {}, range: null };
+  let direction = DESCENDING;
   let cursor: string | null = null;
   let generation = 0;
 
-  const cell = (text: string, className = "") => {
+  function filter(
+    key: string,
+    label: string,
+    choices: [string, Record<string, string>][],
+    needs?: Permission,
+  ): Filter {
+    return {
+      key,
+      label,
+      needs,
+      values: () =>
+        choices.map(([choice]) => ({ value: choice, label: choice })),
+      params: Object.fromEntries(choices),
+    };
+  }
+
+  const cell = (content: string | Node, className = "") => {
     const span = document.createElement("span");
-    span.textContent = text;
+    span.append(content);
     span.className = className;
     return span;
   };
@@ -119,24 +197,23 @@
         ? ["Active", ""]
         : ["None", "dim"];
 
-  const render = (row: Row, labels: Labels) => {
+  function render(row: Row, labels: Labels) {
     const link = document.createElement("a");
     link.className = "table-row";
     link.href = memberUrl(row.account.discord_id);
-    const minecraft = row.minecraft
-      ? (labels.minecraft[row.minecraft.uuid] ?? row.minecraft.uuid.slice(0, 8))
-      : "";
     const [key, keyClass] = keyState(row);
+    const player = cell(
+      row.minecraft ? refText(row.minecraft, labels) : "",
+      "ref-player",
+    );
+    if (row.alts) player.append(` +${row.alts}`);
     link.append(
-      cell(
-        labels.discord[row.account.discord_id] ?? row.account.discord_id,
-        "strong",
-      ),
+      cell(refText(row.account, labels), "ref-account strong"),
       cell(
         row.account.member_id === null ? "" : String(row.account.member_id),
         "dim",
       ),
-      cell(minecraft + (row.alts ? ` +${row.alts}` : "")),
+      player,
       cell(accessLabel(row.access_level), row.access_level ? "" : "dim"),
       cell(key, keyClass),
       cell(FORMATS.number(row.requests_24h), "num"),
@@ -144,69 +221,110 @@
       cell(ago(row.last_active), "dim"),
     );
     return link;
-  };
+  }
 
-  const params = () => {
-    const values = new FormData(form);
+  function params() {
     const query = new URLSearchParams();
-    for (const [name, value] of values) {
-      if (!value || name === "key") continue;
-      query.set(name, String(value));
-    }
-    const key = KEY_FILTERS[String(values.get("key"))];
-    if (key) query.set(...key);
+    if (state.q) query.set("q", state.q);
+    for (const candidate of filters)
+      for (const [name, value] of Object.entries(
+        candidate.params[state.picks[candidate.key]?.value] ?? {},
+      ))
+        query.set(name, value);
+    query.set("sort", sort.value);
+    query.set("dir", direction);
     return query;
-  };
+  }
+
+  function showCount(page: Page) {
+    if (page.matched === undefined || page.total === undefined) return;
+    part("count").textContent =
+      page.matched === page.total
+        ? `${FORMATS.number(page.total)} members`
+        : `${FORMATS.number(page.matched)} of ${FORMATS.number(page.total)} members`;
+  }
 
   async function fetchPage(reset: boolean) {
     const mine = reset ? ++generation : generation;
     if (reset) cursor = null;
     const query = params();
     if (cursor) query.set("cursor", cursor);
-    status.textContent = "Loading members…";
+    part("status").textContent = "Loading members…";
     try {
       const page = await load<Page>(`/accounts?${query}`);
       if (mine !== generation) return;
       const rendered = page.items.map((row) => render(row, page.labels));
-      if (reset) rows.replaceChildren(...rendered);
-      else rows.append(...rendered);
+      if (reset) part("rows").replaceChildren(...rendered);
+      else part("rows").append(...rendered);
+      showCount(page);
       cursor = page.next_cursor;
-      more.hidden = cursor === null;
-      status.textContent = rows.children.length ? "" : "No member matches.";
+      part("more").hidden = cursor === null;
+      part("status").textContent = part("rows").children.length
+        ? ""
+        : "No member matches these filters.";
     } catch (error) {
-      if (mine === generation) status.textContent = (error as Error).message;
+      if (mine === generation)
+        part("status").textContent = (error as Error).message;
     }
   }
 
-  const syncUrl = () => {
-    const query = new URLSearchParams(
-      new FormData(form) as unknown as Record<string, string>,
-    );
-    for (const [name, value] of [...query]) if (!value) query.delete(name);
+  function syncUrl() {
+    const query = new URLSearchParams();
+    if (state.q) query.set("q", state.q);
+    for (const [key, pick] of Object.entries(state.picks))
+      query.set(key, pick.value);
+    if (sort.value !== "member") query.set("sort", sort.value);
+    if (direction !== DESCENDING) query.set("dir", direction);
     history.replaceState(
       null,
       "",
       `${location.pathname}${query.size ? `?${query}` : ""}`,
     );
-  };
-
-  for (const [name, value] of new URLSearchParams(location.search)) {
-    const control = form.elements.namedItem(name) as
-      HTMLInputElement | HTMLSelectElement | null;
-    if (control) control.value = value;
   }
 
-  let typing: ReturnType<typeof setTimeout>;
-  form.addEventListener("input", (event) => {
-    clearTimeout(typing);
-    const delay =
-      (event.target as HTMLElement).tagName === "INPUT" ? SEARCH_DELAY_MS : 0;
-    typing = setTimeout(() => {
-      syncUrl();
-      fetchPage(true);
-    }, delay);
+  function refresh() {
+    syncUrl();
+    fetchPage(true);
+  }
+
+  function showDirection() {
+    const descending = direction === DESCENDING;
+    part("dir").textContent = descending ? "↓" : "↑";
+    part("dir").title = descending
+      ? "Descending, switch to ascending"
+      : "Ascending, switch to descending";
+    part("dir").setAttribute("aria-label", part("dir").title);
+  }
+
+  function restore() {
+    const query = new URLSearchParams(location.search);
+    state.q = query.get("q") ?? "";
+    sort.value = query.get("sort") ?? "member";
+    direction = query.get("dir") === ASCENDING ? ASCENDING : DESCENDING;
+    for (const candidate of filters) {
+      const choice = query.get(candidate.key);
+      if (choice && candidate.params[choice])
+        state.picks[candidate.key] = { value: choice, label: choice };
+    }
+  }
+
+  restore();
+  showDirection();
+  part("filters").replaceWith(
+    filterBar({
+      placeholder: "Search name, Discord ID, Minecraft name, #number or UUID",
+      state,
+      fields: filters,
+      onChange: refresh,
+    }).element,
+  );
+  sort.addEventListener("change", refresh);
+  part("dir").addEventListener("click", () => {
+    direction = direction === DESCENDING ? ASCENDING : DESCENDING;
+    showDirection();
+    refresh();
   });
   form.addEventListener("submit", (event) => event.preventDefault());
-  more.addEventListener("click", () => fetchPage(false));
+  part("more").addEventListener("click", () => fetchPage(false));
   fetchPage(true);
 </script>

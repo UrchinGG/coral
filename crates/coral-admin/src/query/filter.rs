@@ -8,6 +8,7 @@ use uuid::Uuid;
 use super::cursor::Cursor;
 use super::players::PlayerInput;
 use crate::error::AdminError;
+use crate::traffic::class::UNMATCHED_ROUTE;
 
 pub const DEFAULT_PAGE_LIMIT: usize = 100;
 pub const MAX_PAGE_LIMIT: usize = 500;
@@ -229,6 +230,9 @@ pub fn route(raw: &str) -> Result<Condition, AdminError> {
 }
 
 fn known_template(raw: &str) -> Result<&'static str, AdminError> {
+    if raw == UNMATCHED_ROUTE {
+        return Ok(UNMATCHED_ROUTE);
+    }
     ROUTE_TEMPLATES
         .iter()
         .find(|template| **template == raw)
@@ -330,6 +334,10 @@ mod tests {
     #[test]
     fn several_routes_match_any_of_them_and_one_stays_a_single_route() {
         assert_eq!(route("/v3/tags").unwrap(), Condition::Route("/v3/tags"));
+        assert_eq!(
+            route(UNMATCHED_ROUTE).unwrap(),
+            Condition::Route(UNMATCHED_ROUTE)
+        );
         assert_eq!(
             route("/v3/tags,/v3/players").unwrap(),
             Condition::Routes(vec!["/v3/tags", "/v3/players"])

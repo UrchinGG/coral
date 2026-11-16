@@ -13,11 +13,12 @@ use super::summary::Classes;
 use crate::error::{AdminError, Context};
 use crate::serde_ts;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct SeriesFilter {
     pub traffic: TrafficFilter,
     pub member: Option<i64>,
     pub actor: Option<i64>,
+    pub key_prefix: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -53,7 +54,7 @@ struct BucketRow {
 
 impl SeriesFilter {
     fn by_caller(&self) -> bool {
-        self.member.is_some() || self.actor.is_some()
+        self.member.is_some() || self.actor.is_some() || self.key_prefix.is_some()
     }
 }
 
@@ -68,7 +69,7 @@ pub async fn series(
     };
     let rows = async {
         match filter.by_caller() {
-            true => caller_buckets(pool, range, filter).await,
+            true => caller_buckets(pool, range, &filter).await,
             false => traffic_buckets(pool, range, filter.traffic).await,
         }
     };
@@ -113,7 +114,7 @@ async fn traffic_buckets(
 async fn caller_buckets(
     pool: &PgPool,
     range: TrafficRange,
-    filter: SeriesFilter,
+    filter: &SeriesFilter,
 ) -> Result<Vec<BucketRow>, AdminError> {
     let mut query = QueryBuilder::new(format!(
         "SELECT hour AS t, sum(requests)::bigint AS requests, {}, \
@@ -134,12 +135,15 @@ async fn caller_buckets(
         .context("bucket the caller rollups")
 }
 
-fn push_caller_conditions(query: &mut QueryBuilder<'_, Postgres>, filter: SeriesFilter) {
+fn push_caller_conditions(query: &mut QueryBuilder<'_, Postgres>, filter: &SeriesFilter) {
     if let Some(member) = filter.member {
         query.push(" AND member_id = ").push_bind(member);
     }
     if let Some(actor) = filter.actor {
         query.push(" AND actor_id = ").push_bind(actor);
+    }
+    if let Some(prefix) = &filter.key_prefix {
+        query.push(" AND key_prefix = ").push_bind(prefix.clone());
     }
     filter.traffic.push_conditions(query);
 }

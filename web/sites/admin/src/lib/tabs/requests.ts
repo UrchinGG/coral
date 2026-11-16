@@ -1,6 +1,12 @@
 import { load } from "@/lib/api";
 import { stackedBars, legend } from "@/lib/chart";
 import { el, panel } from "@/lib/dom";
+import {
+  filterBar,
+  rangeStart,
+  type FilterState,
+  type Pick,
+} from "@/lib/filterbar";
 import { FORMATS } from "@/lib/format";
 import type { Labels } from "@/lib/members";
 import { pager } from "@/lib/pager";
@@ -36,10 +42,24 @@ interface TopLookups {
   labels: Labels;
 }
 
-const WINDOWS: [string, string][] = [
-  ["24h", "24 hours"],
-  ["7d", "7 days"],
-  ["30d", "30 days"],
+const WINDOWS: [string, string, string, string][] = [
+  ["24h", "24 hours", "last 24 hours", "24h"],
+  ["7d", "7 days", "last 7 days", "7d"],
+  ["30d", "30 days", "last 30 days", "30d"],
+  ["400d", "All", "all retained", "all"],
+];
+const STATUS_CLASSES: Pick[] = [
+  { value: "2xx", label: "2xx" },
+  { value: "4xx", label: "4xx" },
+  { value: "rate_limited", label: "Rate limited" },
+  { value: "5xx", label: "5xx" },
+];
+const VIAS: Pick[] = [
+  { value: "personal", label: "Personal key" },
+  { value: "developer", label: "Developer key" },
+  { value: "internal", label: "Bot" },
+  { value: "session", label: "Session" },
+  { value: "minecraft", label: "Minecraft" },
 ];
 const TOP_WINDOW = "14d";
 const TOP_SHOWN = 10;
@@ -55,12 +75,14 @@ const COLORS = {
 export function memberRequestsTab(id: string) {
   const activity = el("div", { className: "stack" });
   const windows = el("div", { className: "seg" });
+  const stream = requestStream(id);
   const pick = (window: string) => {
     windows.querySelectorAll("button").forEach((button) => {
       button.className = button.dataset.window === window ? "on" : "";
     });
     activity.replaceChildren(el("p", { className: "muted" }, "Loading…"));
-    showActivity(id, window, activity).catch((error: Error) =>
+    stream.range(WINDOWS.find(([key]) => key === window)?.[3] ?? "24h");
+    showActivity(id, window, activity, stream.routes).catch((error: Error) =>
       activity.replaceChildren(el("p", { className: "bad" }, error.message)),
     );
   };
@@ -71,29 +93,76 @@ export function memberRequestsTab(id: string) {
     windows.append(button);
   }
   pick(WINDOWS[0][0]);
-  return el(
-    "div",
-    { className: "stack" },
-    windows,
-    activity,
-    el(
-      "div",
-      { className: "table" },
-      requestHead(),
-      pager<RequestRow>(
-        `/accounts/${id}/requests`,
-        requestRow,
-        "No requests recorded.",
-      ),
-    ),
-  );
+  return el("div", { className: "stack" }, windows, activity, stream.element);
 }
 
-async function showActivity(id: string, window: string, into: HTMLElement) {
+export async function activityChart(id: string) {
+  const [key] = WINDOWS[0];
+  const activity = await load<Activity>(
+    `/accounts/${id}/activity?window=${key}`,
+  );
+  return chartPanel(activity, key);
+}
+
+function requestStream(id: string) {
+  const routes = new Set<string>();
+  const ips = new Set<string>();
+  const state: FilterState = { q: "", picks: {}, range: "24h" };
+  const table = el("div", { className: "table" });
+  const show = () => {
+    const query = new URLSearchParams(
+      Object.entries(state.picks).map(([key, pick]) => [key, pick.value]),
+    );
+    const from = rangeStart(state.range);
+    if (from) query.set("from", from);
+    if (state.q) query.set("q", state.q);
+    table.replaceChildren(
+      requestHead(),
+      pager<RequestRow>(
+        `/accounts/${id}/requests?${query}`,
+        (row, labels) => {
+          if (row.ip?.kind === "ip") ips.add(row.ip.ip);
+          return requestRow(row, labels);
+        },
+        "No requests match.",
+      ),
+    );
+  };
+  const bar = filterBar({
+    placeholder: "Search paths, errors and user agents",
+    state,
+    fields: [
+      { key: "route", label: "Route", values: () => [...routes].map(same) },
+      { key: "class", label: "Status", values: () => STATUS_CLASSES },
+      { key: "ip", label: "IP", values: () => [...ips].map(same) },
+      { key: "key_kind", label: "Via", values: () => VIAS },
+    ],
+    onChange: show,
+  });
+  return {
+    element: el("div", { className: "list" }, bar.element, table),
+    routes,
+    range: (picked: string) => {
+      state.range = picked;
+      show();
+    },
+  };
+}
+
+const same = (value: string): Pick => ({ value, label: value });
+
+async function showActivity(
+  id: string,
+  window: string,
+  into: HTMLElement,
+  routesSeen: Set<string>,
+) {
   const [activity, top] = await Promise.all([
     load<Activity>(`/accounts/${id}/activity?window=${window}`),
     load<TopLookups>(`/accounts/${id}/lookups/top?window=${TOP_WINDOW}`),
   ]);
+  for (const entry of activity.breakdown)
+    if (entry.route) routesSeen.add(entry.route);
   into.replaceChildren(
     chartPanel(activity, window),
     el(
@@ -122,11 +191,11 @@ function chartPanel(activity: Activity, window: string) {
     { label: "Errors", color: COLORS.errors, values: errors },
   ];
   const { totals } = activity;
-  const label = WINDOWS.find(([key]) => key === window)?.[1] ?? window;
+  const label = WINDOWS.find(([key]) => key === window)?.[2] ?? window;
   return el(
     "section",
     { className: "panel wide" },
-    el("h2", { className: "panel-title" }, `Requests, last ${label}`),
+    el("h2", { className: "panel-title" }, `Requests, ${label}`),
     legend(series),
     stackedBars(
       series,
@@ -174,8 +243,9 @@ function routes(activity: Activity, window: string) {
   const rows = [...activity.breakdown]
     .sort((a, b) => b.requests - a.requests)
     .slice(0, ROUTES_SHOWN);
+  const label = WINDOWS.find(([key]) => key === window)?.[1] ?? window;
   return panel(
-    `Routes · ${window}`,
+    `Routes · ${label}`,
     ...(rows.length
       ? rows.map((entry) =>
           line(

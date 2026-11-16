@@ -39,7 +39,6 @@ pub struct AccountCore {
     strikes: Strikes,
     starfish: Option<StarfishSummary>,
     activity: ActivitySummary,
-    counts: Counts,
     labels: Labels,
 }
 
@@ -153,18 +152,6 @@ pub struct Totals {
     pub errors: i64,
 }
 
-#[derive(Default, Serialize)]
-struct Counts {
-    ips: i64,
-    agents: i64,
-    links: i64,
-    authored_tags: i64,
-    reviewed_tags: i64,
-    reviews: i64,
-    votes: i64,
-    admin_actions: i64,
-}
-
 #[derive(FromRow)]
 struct MemberRow {
     #[sqlx(flatten)]
@@ -200,17 +187,10 @@ struct CountRow {
     personal_id: Option<i64>,
     history_count: i64,
     ip_count: i64,
-    agent_count: i64,
     last_ip: Option<String>,
     last_country: Option<String>,
     last_proxied: Option<bool>,
-    links: i64,
     former_links: i64,
-    authored_tags: i64,
-    reviewed_tags: i64,
-    reviews: i64,
-    votes: i64,
-    admin_actions: i64,
 }
 
 struct Sections {
@@ -253,8 +233,6 @@ impl AccountCore {
         if !actor.can(Permission::Traffic) {
             self.activity.last_ip = None;
             self.activity.ip_count = 0;
-            self.counts.ips = 0;
-            self.counts.agents = 0;
         }
         if !actor.can(Permission::Starfish) {
             self.starfish = None;
@@ -281,7 +259,7 @@ async fn load_sections(
             starfish_summary(state, discord_id),
             activity_totals(state, member_id, discord_id, now),
             last_request_at(state, member_id, discord_id, attribution_from),
-            counts(state, member_id, discord_id, personal_key),
+            counts(state, member_id, personal_key),
         )?;
     Ok(Sections {
         developer,
@@ -362,16 +340,6 @@ fn assemble(
                 proxied: counts.last_proxied.unwrap_or_default(),
             }),
             ip_count: counts.ip_count,
-        },
-        counts: Counts {
-            ips: counts.ip_count,
-            agents: counts.agent_count,
-            links: counts.links,
-            authored_tags: counts.authored_tags,
-            reviewed_tags: counts.reviewed_tags,
-            reviews: counts.reviews,
-            votes: counts.votes,
-            admin_actions: counts.admin_actions,
         },
         labels: Labels::default(),
     }
@@ -527,23 +495,15 @@ async fn last_request_at(
 async fn counts(
     state: &AppState,
     member_id: Option<i64>,
-    discord_id: i64,
     personal_key: Option<&str>,
 ) -> Result<CountRow, AdminError> {
     sqlx::query_as(
         "SELECT
-            (SELECT id FROM member_api_keys WHERE member_id = $1 AND api_key = $4) AS personal_id,
+            (SELECT id FROM member_api_keys WHERE member_id = $1 AND api_key = $2) AS personal_id,
             (SELECT count(*) FROM member_api_keys WHERE member_id = $1 AND retired_at IS NOT NULL) AS history_count,
             (SELECT count(*) FROM api_key_ips WHERE member_id = $1) AS ip_count,
-            (SELECT count(*) FROM api_member_agents WHERE member_id = $1) AS agent_count,
             last.ip AS last_ip, last.country AS last_country, last.proxied AS last_proxied,
-            (SELECT count(*) FROM member_mc_links WHERE member_id = $1) AS links,
-            (SELECT count(*) FROM member_mc_links WHERE member_id = $1 AND unlinked_at IS NOT NULL) AS former_links,
-            (SELECT count(*) FROM player_events WHERE author = $2 AND kind IN ('tag_set', 'tag_clear')) AS authored_tags,
-            (SELECT count(*) FROM player_events WHERE $2 = ANY(reviewed_by)) AS reviewed_tags,
-            (SELECT count(*) FROM review WHERE submitter_id = $2) AS reviews,
-            (SELECT count(*) FROM review_vote WHERE voter_id = $2) AS votes,
-            (SELECT count(*) FROM admin_actions WHERE target = $3 OR actor = $2) AS admin_actions
+            (SELECT count(*) FROM member_mc_links WHERE member_id = $1 AND unlinked_at IS NOT NULL) AS former_links
          FROM (SELECT 1) AS one
          LEFT JOIN LATERAL (
             SELECT host(ip_address) AS ip, country, proxied FROM api_key_ips
@@ -551,8 +511,6 @@ async fn counts(
          ) AS last ON true",
     )
     .bind(member_id)
-    .bind(discord_id)
-    .bind(discord_id.to_string())
     .bind(personal_key)
     .fetch_one(state.db.pool())
     .await

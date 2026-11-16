@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use reqlog::{KeyKind, Service};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool, QueryBuilder};
@@ -8,6 +9,7 @@ use super::range::{RangeBounds, TrafficRange};
 use super::rows::TrafficFilter;
 use crate::error::{AdminError, Context};
 use crate::refs::EntityRef;
+use crate::serde_ts;
 
 pub const DEFAULT_CALLERS: i64 = 50;
 pub const MAX_CALLERS: i64 = 200;
@@ -40,6 +42,8 @@ pub struct CallerTraffic {
     pub rate_limited: i64,
     pub errors: i64,
     pub subjects: i64,
+    #[serde(serialize_with = "serde_ts::micros")]
+    pub last_hour: DateTime<Utc>,
 }
 
 #[derive(Debug, FromRow)]
@@ -50,6 +54,7 @@ struct CallerRow {
     rate_limited: i64,
     errors: i64,
     subjects: i64,
+    last_hour: DateTime<Utc>,
 }
 
 impl CallerSort {
@@ -85,7 +90,8 @@ pub async fn top_callers(
     let mut query = QueryBuilder::new(format!(
         "WITH grouped AS (SELECT key_kind, member_id, actor_id, key_prefix, service, \
          sum(requests)::bigint AS requests, {} AS rate_limited, {} AS errors, \
-         sum(subjects)::bigint AS subjects FROM api_caller_hour WHERE hour >= ",
+         sum(subjects)::bigint AS subjects, max(hour) AS last_hour \
+         FROM api_caller_hour WHERE hour >= ",
         requests_where(&rate_limited_predicate()),
         requests_where(&errors_predicate()),
     ));
@@ -101,7 +107,7 @@ pub async fn top_callers(
         .push_bind(limit)
         .push(format!(
             ") SELECT {CALLER_IDENTITY_COLUMNS}, grouped.requests, grouped.rate_limited, \
-             grouped.errors, grouped.subjects FROM grouped {CALLER_IDENTITY_JOINS} ORDER BY {order}"
+             grouped.errors, grouped.subjects, grouped.last_hour FROM grouped {CALLER_IDENTITY_JOINS} ORDER BY {order}"
         ));
     let rows: Vec<CallerRow> = query
         .build_query_as()
@@ -125,6 +131,7 @@ fn caller_traffic(row: CallerRow) -> CallerTraffic {
         rate_limited: row.rate_limited,
         errors: row.errors,
         subjects: row.subjects,
+        last_hour: row.last_hour,
     }
 }
 

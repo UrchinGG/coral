@@ -1,6 +1,9 @@
 ---
 import { page } from "@/lib/paths";
+import SnapshotStyles from "@/components/SnapshotStyles.astro";
 ---
+
+<SnapshotStyles />
 
 <section id="guild-page" class="member" hidden>
   <nav class="crumbs-nav" aria-label="Breadcrumb">
@@ -20,17 +23,33 @@ import { page } from "@/lib/paths";
 </section>
 
 <script>
-  import { API } from "@/lib/paths";
   import { load } from "@/lib/api";
-  import { el, panel, row } from "@/lib/dom";
+  import { loadBriefs } from "@/lib/briefs";
+  import { el } from "@/lib/dom";
   import { FORMATS } from "@/lib/format";
   import type { Labels } from "@/lib/members";
-  import { refLink } from "@/lib/refs";
+  import { refLink, refText, type Ref } from "@/lib/refs";
+  import {
+    countMonths,
+    figures,
+    monthChart,
+    monthLabel,
+    monthOf,
+    snapshotList,
+    type MonthCount,
+  } from "@/lib/snapshots";
   import { fillTab, setQuery, tabBar } from "@/lib/tabbar";
-  import { ago, day, moment } from "@/lib/time";
+  import { tagPill } from "@/lib/tags";
+  import { ago, day } from "@/lib/time";
+
+  interface Member {
+    uuid: string;
+    rank?: string;
+    joined?: number;
+  }
 
   interface GuildDetail {
-    guild: { guild_id: string; name: string | null };
+    guild: Extract<Ref, { kind: "guild" }>;
     summary: {
       tag: string | null;
       level: number;
@@ -38,10 +57,7 @@ import { page } from "@/lib/paths";
       experience: number;
       updated_at: string;
     } | null;
-    current: {
-      members?: { uuid: string; rank?: string; joined?: number }[];
-      created?: number;
-    } | null;
+    current: { members?: Member[]; created?: number } | null;
     snapshots: string[];
   }
 
@@ -49,133 +65,223 @@ import { page } from "@/lib/paths";
     ["overview", "Overview"],
     ["snapshots", "Snapshots"],
   ];
-  const LABEL_BATCH = 200;
+  const NO_LABELS: Labels = { discord: {}, minecraft: {} };
   const id = new URLSearchParams(location.search).get("id");
   const root = document.getElementById("guild-page")!;
   const part = (name: string) =>
     root.querySelector<HTMLElement>(`[data-${name}]`)!;
   let current = new URLSearchParams(location.search).get("tab") ?? "overview";
+  let month = new URLSearchParams(location.search).get("month");
 
-  async function labelsFor(uuids: string[]) {
-    const labels: Labels = { discord: {}, minecraft: {} };
-    for (let start = 0; start < uuids.length; start += LABEL_BATCH) {
-      const response = await fetch(`${API}/labels`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          discord: [],
-          minecraft: uuids.slice(start, start + LABEL_BATCH),
-        }),
-      });
-      if (response.ok)
-        Object.assign(labels.minecraft, (await response.json()).minecraft);
-    }
-    return labels;
-  }
+  const isoDay = (millis?: number) =>
+    millis ? day(new Date(millis).toISOString()) : "";
 
-  async function overview(guild: GuildDetail) {
+  function overview(guild: GuildDetail, months: MonthCount[]) {
     const members = guild.current?.members ?? [];
-    const labels = await labelsFor(members.map((member) => member.uuid));
-    const line = (
-      cells: (string | Node)[],
-      className = "table-row guild-member",
-    ) => el("div", { className }, ...cells.map((cell) => el("span", {}, cell)));
     return el(
       "div",
       { className: "stack" },
-      el(
-        "div",
-        { className: "stats" },
-        ...[
-          ["Level", String(guild.summary?.level ?? "")],
-          [
-            "Members",
-            FORMATS.number(guild.summary?.member_count ?? members.length),
-          ],
-          ["Experience", FORMATS.short(guild.summary?.experience ?? 0)],
-          [
-            "Refreshed",
-            guild.summary ? ago(guild.summary.updated_at) : "Never",
-          ],
-        ].map(([label, value]) =>
-          el(
-            "div",
-            { className: "stat" },
-            el("span", { className: "label", textContent: label }),
-            el("b", { textContent: value }),
-          ),
-        ),
-      ),
+      figures([
+        ["Level", String(guild.summary?.level ?? ""), ""],
+        [
+          "Members",
+          FORMATS.number(guild.summary?.member_count ?? members.length),
+          "",
+        ],
+        ["Experience", FORMATS.short(guild.summary?.experience ?? 0), ""],
+        ["Created", isoDay(guild.current?.created) || "Unknown", ""],
+        [
+          "Refreshed",
+          guild.summary ? ago(guild.summary.updated_at) : "Never",
+          "",
+        ],
+      ]),
+      memberTable(members),
+      monthChart({
+        title: "Snapshots, all time",
+        unit: "Snapshots per month",
+        months,
+        pick: (picked) => go(guild, "snapshots", picked),
+        action: ["Open Snapshots ›", () => go(guild, "snapshots")],
+      }),
+    );
+  }
+
+  function memberTable(members: Member[]) {
+    const search = el("input", {
+      className: "field grow",
+      type: "search",
+      placeholder: "Search members, tags and ranks",
+      ariaLabel: "Search members",
+    });
+    const tag = choice("Tag", "Every tag", []);
+    const ranks = [...new Set(members.map((member) => member.rank ?? ""))];
+    const rank = choice("Rank", "Every rank", ranks.filter(Boolean));
+    const rows = members.map(memberRow);
+    const filter = () =>
+      rows.forEach(
+        (line) =>
+          (line.hidden = !matches(line, search.value, tag.value, rank.value)),
+      );
+    search.addEventListener("input", filter);
+    tag.addEventListener("change", filter);
+    rank.addEventListener("change", filter);
+    fillMembers(rows, tag).then(filter);
+    return el(
+      "section",
+      { className: "stack" },
+      el("h2", {
+        className: "group-title",
+        textContent: `Members · ${members.length}`,
+      }),
+      el("div", { className: "toolbar" }, search, tag, rank),
       el(
         "div",
         { className: "table" },
-        line(["Player", "Rank", "Joined"], "table-row guild-member head"),
-        ...members.map((member) =>
-          line([
-            refLink({ kind: "player", uuid: member.uuid }, labels),
-            member.rank ?? "",
-            member.joined ? day(new Date(member.joined).toISOString()) : "",
-          ]),
+        el(
+          "div",
+          { className: "table-row guild-member head" },
+          ...["Player", "Tag", "Linked To", "Rank", "Joined"].map((label) =>
+            el("span", { textContent: label }),
+          ),
         ),
+        ...rows,
       ),
     );
   }
 
-  function snapshots(guild: GuildDetail) {
-    const viewer = el("pre", { className: "code", hidden: true });
-    const rows = guild.snapshots.map((at) => {
-      const view = el("button", {
-        type: "button",
-        className: "button small",
-        textContent: "View",
-      });
-      view.addEventListener("click", async () => {
-        viewer.hidden = false;
-        viewer.textContent = "Loading…";
-        const snapshot = await load<{ snapshot: unknown }>(
-          `/guilds/${id}/at?ts=${encodeURIComponent(at)}`,
-        );
-        viewer.textContent = JSON.stringify(snapshot.snapshot, null, 2);
-      });
-      return row(moment(at), view);
-    });
-    return el(
+  function memberRow(member: Member) {
+    const line = el(
       "div",
-      { className: "panels" },
-      panel(`Snapshots · ${rows.length}`, ...rows),
-      viewer,
+      { className: "table-row guild-member" },
+      refLink({ kind: "player", uuid: member.uuid }, NO_LABELS),
+      el("span"),
+      el("span"),
+      el("span", { textContent: member.rank ?? "" }),
+      el("span", { className: "dim", textContent: isoDay(member.joined) }),
+    );
+    line.dataset.player = member.uuid;
+    line.dataset.rank = member.rank ?? "";
+    line.dataset.tag = "";
+    return line;
+  }
+
+  async function fillMembers(rows: HTMLElement[], tag: HTMLSelectElement) {
+    if (!rows.length) return;
+    const briefs = await loadBriefs(rows.map((line) => line.dataset.player!));
+    const tags = new Map<string, string>();
+    for (const brief of briefs.players) {
+      const line = rows.find(
+        (candidate) => candidate.dataset.player === brief.player,
+      );
+      if (!line) continue;
+      const [, tagCell, ownerCell] = line.children;
+      if (brief.tag) {
+        tags.set(brief.tag.tag_type, brief.tag.display_name);
+        line.dataset.tag = brief.tag.tag_type;
+        tagCell.replaceChildren(
+          tagPill(brief.tag.tag_type, brief.tag.display_name),
+        );
+      }
+      if (brief.owner)
+        ownerCell.replaceChildren(refText(brief.owner, briefs.labels));
+    }
+    for (const [value, label] of tags)
+      tag.append(el("option", { value, textContent: label }));
+  }
+
+  function matches(line: HTMLElement, text: string, tag: string, rank: string) {
+    return (
+      line.textContent!.toLowerCase().includes(text.trim().toLowerCase()) &&
+      (!tag || line.dataset.tag === tag) &&
+      (!rank || line.dataset.rank === rank)
     );
   }
 
+  function choice(label: string, every: string, values: string[]) {
+    return el(
+      "select",
+      { className: "field", ariaLabel: label },
+      el("option", { value: "", textContent: every }),
+      ...values.map((value) => el("option", { value, textContent: value })),
+    );
+  }
+
+  function snapshots(guild: GuildDetail, months: MonthCount[]) {
+    const shown = guild.snapshots.filter(
+      (ts) => !month || monthOf(ts) === month,
+    );
+    return el(
+      "div",
+      { className: "stack" },
+      monthChart({
+        title: "Snapshots, all time",
+        count: `${FORMATS.number(guild.snapshots.length)} snapshots`,
+        unit: "Snapshots per month. Pick a month to list only its snapshots.",
+        months,
+        picked: month,
+        pick: (picked) =>
+          go(guild, "snapshots", picked === month ? null : picked),
+        action: month
+          ? ["Show all time", () => go(guild, "snapshots")]
+          : undefined,
+      }),
+      snapshotList({
+        title: month ? monthLabel(month) : "Every Snapshot",
+        pages: async () => ({
+          rows: shown.map((ts) => ({ ts, source: "Refresh", baseline: false })),
+          next_cursor: null,
+        }),
+        view: async (entry) => {
+          const at = await load<{ snapshot: unknown; delta: unknown | null }>(
+            `/guilds/${id}/at?ts=${encodeURIComponent(entry.ts)}`,
+          );
+          return { data: at.snapshot, delta: at.delta };
+        },
+      }),
+    );
+  }
+
+  function go(guild: GuildDetail, tab: string, picked: string | null = null) {
+    current = tab;
+    month = picked;
+    setQuery("tab", tab === "overview" ? null : tab);
+    setQuery("month", picked);
+    render(guild);
+  }
+
   function render(guild: GuildDetail) {
-    tabBar(part("tabs"), TABS, current, (key) => {
-      current = key;
-      setQuery("tab", key === "overview" ? null : key);
-      render(guild);
-    });
+    const months = countMonths(guild.snapshots);
+    tabBar(part("tabs"), TABS, current, (key) => go(guild, key));
     fillTab(part("tab"), () =>
-      current === "snapshots" ? snapshots(guild) : overview(guild),
+      current === "snapshots"
+        ? snapshots(guild, months)
+        : overview(guild, months),
+    );
+  }
+
+  function header(guild: GuildDetail) {
+    const name = guild.guild.name ?? guild.guild.guild_id;
+    document.title = `${name} | Urchin Admin`;
+    part("crumb").textContent = name;
+    part("name").textContent = name;
+    part("meta").replaceChildren(
+      ...[
+        guild.summary?.tag && `[${guild.summary.tag}]`,
+        guild.guild.guild_id,
+        guild.current?.created && `Created ${isoDay(guild.current.created)}`,
+        guild.summary && `Refreshed ${ago(guild.summary.updated_at)}`,
+        `${FORMATS.number(guild.snapshots.length)} snapshots`,
+      ]
+        .filter(Boolean)
+        .map((text) => el("span", { textContent: text as string })),
     );
   }
 
   async function show() {
     try {
       const guild = await load<GuildDetail>(`/guilds/${id}`);
-      const name = guild.guild.name ?? guild.guild.guild_id;
-      document.title = `${name} | Urchin Admin`;
-      part("crumb").textContent = name;
-      part("name").textContent = name;
-      part("meta").replaceChildren(
-        ...[
-          guild.summary?.tag && `[${guild.summary.tag}]`,
-          guild.guild.guild_id,
-          guild.current?.created &&
-            `Created ${day(new Date(guild.current.created).toISOString())}`,
-          `${guild.snapshots.length} snapshots`,
-        ]
-          .filter(Boolean)
-          .map((text) => el("span", { textContent: text as string })),
-      );
+      header(guild);
       render(guild);
     } catch (error) {
       part("status").textContent = (error as Error).message;
@@ -189,3 +295,12 @@ import { page } from "@/lib/paths";
     show();
   }
 </script>
+
+<style>
+  #guild-page :global(.table-row.guild-member) {
+    grid-template-columns:
+      minmax(120px, 1.2fr) 130px minmax(100px, 1fr) 110px
+      minmax(90px, 0.8fr);
+    min-width: 620px;
+  }
+</style>

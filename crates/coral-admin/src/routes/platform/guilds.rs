@@ -66,6 +66,7 @@ pub struct GuildSnapshot {
     #[serde(serialize_with = "serde_ts::micros")]
     at: DateTime<Utc>,
     snapshot: Value,
+    delta: Option<Value>,
 }
 
 #[derive(FromRow)]
@@ -192,19 +193,25 @@ pub async fn at(
 ) -> Result<Json<GuildSnapshot>, AdminError> {
     let Query(query) = query?;
     let guild_id = parse_guild_id(&guild_id)?;
-    let snapshot = GuildCacheRepository::new(state.db.pool())
-        .get_at(&guild_id, query.ts)
-        .await
-        .context("rebuild the guild snapshot")?
-        .ok_or_else(|| {
-            AdminError::NotFound(format!(
-                "guild {guild_id} has no snapshot at or before {}",
-                serde_ts::format(&query.ts)
-            ))
-        })?;
+    let (snapshot, delta) = tokio::try_join!(
+        async {
+            GuildCacheRepository::new(state.db.pool())
+                .get_at(&guild_id, query.ts)
+                .await
+                .context("rebuild the guild snapshot")
+        },
+        stored_delta(&state, &guild_id, query.ts),
+    )?;
+    let snapshot = snapshot.ok_or_else(|| {
+        AdminError::NotFound(format!(
+            "guild {guild_id} has no snapshot at or before {}",
+            serde_ts::format(&query.ts)
+        ))
+    })?;
     Ok(Json(GuildSnapshot {
         at: query.ts,
         snapshot,
+        delta,
     }))
 }
 
@@ -249,6 +256,23 @@ async fn guild_summary(
     .fetch_optional(state.db.pool())
     .await
     .context("read the cached guild")
+}
+
+async fn stored_delta(
+    state: &AppState,
+    guild_id: &str,
+    at: DateTime<Utc>,
+) -> Result<Option<Value>, AdminError> {
+    sqlx::query_scalar(
+        "SELECT data FROM guild_snapshots
+         WHERE guild_id = $1 AND timestamp = $2 AND NOT is_baseline
+         ORDER BY id DESC LIMIT 1",
+    )
+    .bind(guild_id)
+    .bind(at)
+    .fetch_optional(state.db.pool())
+    .await
+    .context("read the guild snapshot's stored changes")
 }
 
 fn snapshot_name(snapshot: Option<&Value>) -> Option<String> {

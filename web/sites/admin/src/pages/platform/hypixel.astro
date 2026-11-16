@@ -122,6 +122,14 @@ import Admin from "@/layouts/Admin.astro";
   }
 
   load<{ id: string; title: string }[]>("/extensions").then((extensions) => {
+    if (!extensions.length)
+      part("extensions").replaceChildren(
+        el("p", {
+          className: "muted",
+          textContent:
+            "No Hypixel key management is installed in this build, so keys can't be listed or changed here.",
+        }),
+      );
     for (const extension of extensions) {
       const holder = el("section", { className: "stack" });
       part("extensions").append(holder);

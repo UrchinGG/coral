@@ -19,6 +19,7 @@ use crate::maintenance::{
 use crate::rollups::{RECOMPUTE_JOB, ROLLUP_JOB, RecomputeJob, RollupState, Rollups};
 use crate::serde_ts;
 use crate::state::AppState;
+use crate::views::{CachedView, View};
 
 pub const MAINTENANCE_JOBS: [&str; 5] = [
     ROLLUP_JOB,
@@ -30,12 +31,12 @@ pub const MAINTENANCE_JOBS: [&str; 5] = [
 
 const RECOMPUTE_ACTION: &str = "recompute_rollups";
 const START_ACTION: &str = "start_maintenance_job";
+const PENDING_KEY: &str = "";
 
 #[derive(Debug, Serialize)]
 pub struct Maintenance {
     jobs: Vec<MaintenanceJob>,
     rollups: RollupState,
-    pending: PendingWork,
     window_open: bool,
 }
 
@@ -46,7 +47,7 @@ struct MaintenanceJob {
 }
 
 #[derive(Debug, Serialize)]
-struct PendingWork {
+pub struct PendingWork {
     subjects: BackfillPlan,
     discord_names: i64,
     indexes: Vec<String>,
@@ -60,25 +61,26 @@ pub struct RecomputeBody {
 }
 
 pub async fn overview(State(state): State<AppState>) -> Result<Json<Maintenance>, AdminError> {
-    let now = Utc::now();
-    let (jobs, rollups, subjects, discord_names, indexes, window_open) = tokio::try_join!(
+    let (jobs, rollups, window_open) = tokio::try_join!(
         job_statuses(&state),
         Rollups::state(&state.db),
-        BackfillPlan::load(&state.db, now),
-        missing_discord_names(&state.db),
-        missing_indexes(&state.db),
-        backfill_window_open(&state.db, now),
+        backfill_window_open(&state.db, Utc::now()),
     )?;
     Ok(Json(Maintenance {
         jobs,
         rollups,
-        pending: PendingWork {
-            subjects,
-            discord_names,
-            indexes,
-        },
         window_open,
     }))
+}
+
+/// The work the startable jobs would do, cached because counting it scans the catalog.
+pub async fn pending(State(state): State<AppState>) -> Result<CachedView, AdminError> {
+    state
+        .views
+        .get_or_load(View::MaintenancePending, PENDING_KEY, || {
+            pending_work(&state)
+        })
+        .await
 }
 
 pub async fn recompute(
@@ -93,6 +95,10 @@ pub async fn recompute(
         .await?;
     let job = RecomputeJob::new(state.rollups.clone(), span);
     let status = state.jobs.start(Arc::new(job)).await?;
+    state
+        .views
+        .forget(View::MaintenancePending, PENDING_KEY)
+        .await;
     crate::audit::log(
         &state,
         actor.discord_id,
@@ -111,6 +117,10 @@ pub async fn start(
 ) -> Result<(StatusCode, Json<JobStatus>), AdminError> {
     let job = startable_job(&state, &name).await?;
     let status = state.jobs.start(job).await?;
+    state
+        .views
+        .forget(View::MaintenancePending, PENDING_KEY)
+        .await;
     crate::audit::log(&state, actor.discord_id, START_ACTION, &name, json!({})).await;
     Ok((StatusCode::ACCEPTED, Json(status)))
 }
@@ -126,6 +136,19 @@ async fn startable_job(state: &AppState, name: &str) -> Result<Arc<dyn Job>, Adm
             "no maintenance job is called {other:?}; start {SUBJECTS_JOB}, {DISCORD_NAMES_JOB} or {INDEX_CATCHUP_JOB}"
         ))),
     }
+}
+
+async fn pending_work(state: &AppState) -> Result<PendingWork, AdminError> {
+    let (subjects, discord_names, indexes) = tokio::try_join!(
+        BackfillPlan::load(&state.db, Utc::now()),
+        missing_discord_names(&state.db),
+        missing_indexes(&state.db),
+    )?;
+    Ok(PendingWork {
+        subjects,
+        discord_names,
+        indexes,
+    })
 }
 
 async fn job_statuses(state: &AppState) -> Result<Vec<MaintenanceJob>, AdminError> {

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use database::{Database, MinecraftBlockRepository};
 use serde::Serialize;
+use serde_json::json;
 use sqlx::FromRow;
 use uuid::Uuid;
 
@@ -29,6 +30,7 @@ pub struct PlayerCore {
     pub blacklist: Blacklist,
     pub minecraft_block: Option<LockView>,
     pub snapshots: SnapshotSummary,
+    pub guild: Option<PlayerGuild>,
     pub session_markers: i64,
     pub requests: RequestTotals,
     pub labels: Labels,
@@ -62,22 +64,47 @@ pub enum Relation {
     Alt,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct SnapshotSummary {
     pub count: i64,
     #[serde(serialize_with = "serde_ts::micros_opt")]
     pub first: Option<DateTime<Utc>>,
     #[serde(serialize_with = "serde_ts::micros_opt")]
     pub last: Option<DateTime<Utc>>,
+    pub months: Vec<SnapshotMonth>,
+}
+
+/// Snapshots taken in one UTC calendar month, keyed `YYYY-MM`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SnapshotMonth {
+    pub month: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PlayerGuild {
+    pub guild: EntityRef,
+    pub tag: Option<String>,
+    pub rank: Option<String>,
+    #[serde(serialize_with = "serde_ts::micros_opt")]
+    pub joined: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, FromRow)]
-struct SpelledName {
-    name: Option<String>,
-    spelled: Option<String>,
+struct MonthRow {
+    month: String,
     count: i64,
     first: DateTime<Utc>,
     last: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct GuildRow {
+    guild_id: String,
+    name: String,
+    tag: Option<String>,
+    rank: Option<String>,
+    joined: Option<i64>,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -90,18 +117,14 @@ struct OwnerRow {
     primary_shared_with: i64,
 }
 
-struct SnapshotNames {
-    summary: SnapshotSummary,
-    spellings: HashMap<String, String>,
-}
-
 pub async fn read_core(state: &AppState, player: Uuid) -> Result<PlayerCore, AdminError> {
     let coverage = state.coverage.current();
     let uuid = player.simple().to_string();
     let input = PlayerInput::Uuid(player);
-    let (keys, snapshots, owners, events, session_markers, tally, block) = tokio::try_join!(
+    let (keys, snapshots, guild, owners, events, session_markers, tally, block) = tokio::try_join!(
         state.players.keys(&input),
-        snapshot_names(&state.db, &uuid),
+        snapshot_summary(&state.db, &uuid),
+        player_guild(&state.db, &uuid),
         owners(&state.db, &uuid),
         PlayerEvents::read(&state.db, player),
         session_markers(&state.db, &uuid),
@@ -113,55 +136,96 @@ pub async fn read_core(state: &AppState, player: Uuid) -> Result<PlayerCore, Adm
                 .context("read the Minecraft block")
         },
     )?;
-    let labels = state
-        .names
-        .cached(&LabelRequest {
-            discord: owners
-                .iter()
-                .filter_map(|owner| account_id(&owner.account))
-                .chain(events.mentioned.iter().copied())
-                .chain(block.as_ref().map(|block| block.blocked_by))
-                .collect(),
-            minecraft: vec![uuid],
-        })
-        .await?;
+    let labels_request = LabelRequest {
+        discord: owners
+            .iter()
+            .filter_map(|owner| account_id(&owner.account))
+            .chain(events.mentioned.iter().copied())
+            .chain(block.as_ref().map(|block| block.blocked_by))
+            .collect(),
+        minecraft: vec![uuid.clone()],
+    };
+    let (labels, spellings) = tokio::try_join!(
+        state.names.cached(&labels_request),
+        name_spellings(&state.db, &uuid, &keys),
+    )?;
     Ok(PlayerCore {
         uuid: player,
         dashed: player.hyphenated().to_string(),
-        name: current_name(&labels, player, &keys, &snapshots.spellings),
-        names: player_names(&keys, &snapshots.spellings),
+        name: current_name(&labels, player, &keys, &spellings),
+        names: player_names(&keys, &spellings),
         owners,
         blacklist: events.blacklist(),
         minecraft_block: block.map(LockView::from),
-        snapshots: snapshots.summary,
+        snapshots,
+        guild,
         session_markers,
         requests: tally.totals(),
         labels,
     })
 }
 
-async fn snapshot_names(db: &Database, uuid: &str) -> Result<SnapshotNames, AdminError> {
-    let rows: Vec<SpelledName> = sqlx::query_as(
-        "SELECT lower(username) AS name, (array_agg(username ORDER BY timestamp DESC))[1] AS spelled,
+async fn snapshot_summary(db: &Database, uuid: &str) -> Result<SnapshotSummary, AdminError> {
+    let rows: Vec<MonthRow> = sqlx::query_as(
+        "SELECT to_char(timestamp AT TIME ZONE 'UTC', 'YYYY-MM') AS month,
                 count(*) AS count, min(timestamp) AS first, max(timestamp) AS last
          FROM player_snapshots WHERE uuid = $1
-         GROUP BY lower(username)",
+         GROUP BY 1 ORDER BY 1",
     )
     .bind(uuid)
     .fetch_all(db.pool())
     .await
-    .context("read the player's snapshot names")?;
-    Ok(SnapshotNames {
-        summary: SnapshotSummary {
-            count: rows.iter().map(|row| row.count).sum(),
-            first: rows.iter().map(|row| row.first).min(),
-            last: rows.iter().map(|row| row.last).max(),
-        },
-        spellings: rows
+    .context("count the player's snapshots per month")?;
+    Ok(SnapshotSummary {
+        count: rows.iter().map(|row| row.count).sum(),
+        first: rows.first().map(|row| row.first),
+        last: rows.last().map(|row| row.last),
+        months: rows
             .into_iter()
-            .filter_map(|row| Some((row.name?, row.spelled?)))
+            .map(|row| SnapshotMonth {
+                month: row.month,
+                count: row.count,
+            })
             .collect(),
     })
+}
+
+async fn name_spellings(
+    db: &Database,
+    uuid: &str,
+    keys: &PlayerKeys,
+) -> Result<HashMap<String, String>, AdminError> {
+    let names: Vec<&str> = keys.names.iter().map(|held| held.name.as_str()).collect();
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT held.name, spelled.username
+         FROM unnest($2::text[]) AS held(name)
+         CROSS JOIN LATERAL (SELECT username FROM player_snapshots
+                             WHERE uuid = $1 AND lower(username) = held.name
+                             ORDER BY timestamp DESC LIMIT 1) spelled",
+    )
+    .bind(uuid)
+    .bind(&names)
+    .fetch_all(db.pool())
+    .await
+    .context("read how the player spelled their names")?;
+    Ok(rows.into_iter().collect())
+}
+
+async fn player_guild(db: &Database, uuid: &str) -> Result<Option<PlayerGuild>, AdminError> {
+    let row: Option<GuildRow> = sqlx::query_as(
+        "SELECT g.guild_id, g.name, g.tag, member->>'rank' AS rank,
+                (member->>'joined')::bigint AS joined
+         FROM guild_current g
+         CROSS JOIN LATERAL jsonb_array_elements(g.raw->'members') member
+         WHERE g.raw @> $1 AND member->>'uuid' = $2
+         ORDER BY g.updated_at DESC LIMIT 1",
+    )
+    .bind(json!({ "members": [{ "uuid": uuid }] }))
+    .bind(uuid)
+    .fetch_optional(db.pool())
+    .await
+    .context("read the player's guild")?;
+    Ok(row.map(GuildRow::into_guild))
 }
 
 async fn owners(db: &Database, uuid: &str) -> Result<Vec<Owner>, AdminError> {
@@ -214,6 +278,20 @@ impl OwnerRow {
             unlinked_at: self.unlinked_at,
             primary_shared_with: self.primary_shared_with,
         })
+    }
+}
+
+impl GuildRow {
+    fn into_guild(self) -> PlayerGuild {
+        PlayerGuild {
+            guild: EntityRef::Guild {
+                guild_id: self.guild_id,
+                name: Some(self.name),
+            },
+            tag: self.tag,
+            rank: self.rank,
+            joined: self.joined.and_then(DateTime::from_timestamp_millis),
+        }
     }
 }
 
@@ -414,5 +492,78 @@ mod tests {
             ]
         );
         forget_links(&db, uuid).await;
+    }
+
+    #[tokio::test]
+    async fn snapshots_count_per_month_names_keep_their_spelling_and_the_guild_is_found() {
+        let Some(db) = crate::players::fixtures::database().await else {
+            return;
+        };
+        let uuid = "73000018000040008000000000000001";
+        let guild_id = "730000180000400080000001";
+        for (statement, key) in [
+            ("DELETE FROM player_snapshots WHERE uuid = $1", uuid),
+            ("DELETE FROM guild_current WHERE guild_id = $1", guild_id),
+        ] {
+            sqlx::query(statement)
+                .bind(key)
+                .execute(db.pool())
+                .await
+                .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO player_snapshots (uuid, timestamp, username, is_baseline, data) VALUES
+               ($1, '2020-01-31 23:00Z', 'kes_tr', true, '{}'),
+               ($1, '2020-03-02 00:00Z', 'Kestrel_', false, '{}'),
+               ($1, '2020-03-05 00:00Z', 'KESTREL_', false, '{}')",
+        )
+        .bind(uuid)
+        .execute(db.pool())
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO guild_current (guild_id, name, tag, level, experience, member_count, raw)
+             VALUES ($1, 'Tidal Order', 'TIDE', 1, 0, 1,
+                     jsonb_build_object('members', jsonb_build_array(
+                       jsonb_build_object('uuid', $2::text, 'rank', 'Officer', 'joined', 1580515200000))))",
+        )
+        .bind(guild_id)
+        .bind(uuid)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        let summary = snapshot_summary(&db, uuid).await.unwrap();
+        let spellings = name_spellings(&db, uuid, &keys()).await.unwrap();
+        let guild = player_guild(&db, uuid).await.unwrap().unwrap();
+
+        let months: Vec<(&str, i64)> = summary
+            .months
+            .iter()
+            .map(|month| (month.month.as_str(), month.count))
+            .collect();
+        assert_eq!(months, vec![("2020-01", 1), ("2020-03", 2)]);
+        assert_eq!(summary.count, 3);
+        assert_eq!(
+            summary.last,
+            Some(Utc.with_ymd_and_hms(2020, 3, 5, 0, 0, 0).unwrap())
+        );
+        assert_eq!(
+            spellings,
+            HashMap::from([
+                ("kes_tr".to_string(), "kes_tr".to_string()),
+                ("kestrel_".to_string(), "KESTREL_".to_string()),
+            ])
+        );
+        assert_eq!(guild.rank.as_deref(), Some("Officer"));
+        assert_eq!(
+            guild.joined,
+            Some(Utc.with_ymd_and_hms(2020, 2, 1, 0, 0, 0).unwrap())
+        );
+        sqlx::query("DELETE FROM guild_current WHERE guild_id = $1")
+            .bind(guild_id)
+            .execute(db.pool())
+            .await
+            .unwrap();
     }
 }

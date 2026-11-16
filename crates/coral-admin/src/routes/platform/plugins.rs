@@ -16,13 +16,46 @@ use crate::serde_ts;
 use crate::state::AppState;
 
 const INSTALL_WINDOW: &str = "30 days";
+const LISTED: &str = "NOT p.official AND NOT p.unlisted AND NOT p.disabled";
+const OFFICIAL: &str = "p.official AND NOT p.unlisted AND NOT p.disabled";
+const UNLISTED: &str = "p.unlisted AND NOT p.disabled";
+const DISABLED: &str = "p.disabled";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginsQuery {
     q: Option<String>,
+    state: Option<PluginState>,
+    owner: Option<i64>,
     cursor: Option<RowCursor>,
     limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginState {
+    Listed,
+    Official,
+    Unlisted,
+    Disabled,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PluginListing {
+    #[serde(flatten)]
+    page: RowPage<PluginRow>,
+    summary: Option<PluginSummary>,
+}
+
+#[derive(Debug, Serialize, FromRow)]
+pub struct PluginSummary {
+    listed: i64,
+    official: i64,
+    unlisted: i64,
+    disabled: i64,
+    installs_30d: i64,
+    #[sqlx(skip)]
+    owners: Vec<EntityRef>,
 }
 
 #[derive(Debug, Serialize)]
@@ -49,6 +82,7 @@ pub struct PluginRow {
 pub struct PluginDetail {
     plugin: PluginView,
     owner: Option<EntityRef>,
+    owner_github: Option<String>,
     installs_30d: i64,
     installs_total: i64,
     releases: Vec<ReleaseView>,
@@ -153,6 +187,12 @@ struct PluginRecord {
 }
 
 #[derive(FromRow)]
+struct OwnerRecord {
+    discord_id: i64,
+    github_username: Option<String>,
+}
+
+#[derive(FromRow)]
 struct ReviewRecord {
     user_id: i64,
     discord_id: Option<i64>,
@@ -161,13 +201,20 @@ struct ReviewRecord {
     updated_at: DateTime<Utc>,
 }
 
+/// A page of plugins; the first page also carries the counts and owners of every plugin.
 pub async fn list(
     State(state): State<AppState>,
     query: Result<Query<PluginsQuery>, QueryRejection>,
-) -> Result<Json<RowPage<PluginRow>>, AdminError> {
+) -> Result<Json<PluginListing>, AdminError> {
     let Query(query) = query?;
     let limit = page_size(query.limit)?;
-    let records = plugin_records(&state, &query, limit).await?;
+    let first_page = query.cursor.is_none();
+    let (records, summary) = tokio::try_join!(plugin_records(&state, &query, limit), async {
+        match first_page {
+            true => plugin_summary(&state).await.map(Some),
+            false => Ok(None),
+        }
+    })?;
     let (records, next_cursor) = split_page(records, limit, |record| {
         RowCursor::at(record.created_at, record.id)
     });
@@ -175,16 +222,20 @@ pub async fn list(
     records
         .iter()
         .filter_map(|record| record.owner_discord_id)
+        .chain(summary.iter().flat_map(|summary| summary.owner_ids()))
         .for_each(|id| mentions.account(id));
     let accounts = Accounts::load(&state, &mentions.discord_ids()).await?;
     let labels = mentions.labels(&state).await?;
-    Ok(Json(RowPage {
-        items: records
-            .into_iter()
-            .map(|record| plugin_row(record, &accounts))
-            .collect(),
-        next_cursor,
-        labels,
+    Ok(Json(PluginListing {
+        page: RowPage {
+            items: records
+                .into_iter()
+                .map(|record| plugin_row(record, &accounts))
+                .collect(),
+            next_cursor,
+            labels,
+        },
+        summary: summary.map(|summary| summary.with_members(&accounts)),
     }))
 }
 
@@ -209,7 +260,9 @@ pub async fn detail(
         reviews_of(&state, plugin.id),
     )?;
     let mut mentions = Mentions::default();
-    owner.into_iter().for_each(|id| mentions.account(id));
+    owner
+        .iter()
+        .for_each(|owner| mentions.account(owner.discord_id));
     reviews
         .iter()
         .filter_map(|review| review.discord_id)
@@ -218,7 +271,8 @@ pub async fn detail(
     let labels = mentions.labels(&state).await?;
     let (installs_30d, installs_total) = installs;
     Ok(Json(PluginDetail {
-        owner: owner.map(|id| accounts.of(id)),
+        owner: owner.as_ref().map(|owner| accounts.of(owner.discord_id)),
+        owner_github: owner.and_then(|owner| owner.github_username),
         plugin: plugin_view(plugin),
         installs_30d,
         installs_total,
@@ -432,17 +486,17 @@ async fn plugin_records(
                 (SELECT count(*) FROM plugin_ratings pr WHERE pr.plugin_id = p.id) AS rating_count
          FROM plugins p
          LEFT JOIN starfish_users u ON u.id = p.owner_user_id
+         LEFT JOIN discord_username_cache d ON d.discord_id = u.discord_id
          WHERE TRUE"
     ));
     if let Some(text) = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
-        let contains = ContainsText::new(text);
-        sql.push(" AND (");
-        contains.push_match(&mut sql, "p.slug");
-        sql.push(" OR ");
-        contains.push_match(&mut sql, "p.display_name");
-        sql.push(" OR ");
-        contains.push_match(&mut sql, "p.description");
-        sql.push(")");
+        push_search(&mut sql, &ContainsText::new(text));
+    }
+    if let Some(state) = query.state {
+        sql.push(format!(" AND {}", state.predicate()));
+    }
+    if let Some(owner) = query.owner {
+        sql.push(" AND u.discord_id = ").push_bind(owner);
     }
     if let Some(cursor) = &query.cursor {
         sql.push(" AND (p.created_at, p.id) < (")
@@ -459,6 +513,81 @@ async fn plugin_records(
         .context("read plugins")
 }
 
+fn push_search(sql: &mut QueryBuilder<'_, Postgres>, contains: &ContainsText) {
+    sql.push(" AND (");
+    for (index, column) in [
+        "p.slug",
+        "p.display_name",
+        "p.description",
+        "p.repo",
+        "u.github_username",
+        "d.username",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if index > 0 {
+            sql.push(" OR ");
+        }
+        contains.push_match(sql, column);
+    }
+    sql.push(")");
+}
+
+async fn plugin_summary(state: &AppState) -> Result<PluginSummary, AdminError> {
+    let pool = state.db.pool();
+    let counts_sql = format!(
+        "SELECT count(*) FILTER (WHERE {LISTED}) AS listed,
+                count(*) FILTER (WHERE {OFFICIAL}) AS official,
+                count(*) FILTER (WHERE {UNLISTED}) AS unlisted,
+                count(*) FILTER (WHERE {DISABLED}) AS disabled,
+                (SELECT count(*) FROM plugin_installs i
+                 WHERE i.installed_at > now() - interval '{INSTALL_WINDOW}') AS installs_30d
+         FROM plugins p"
+    );
+    let counts = sqlx::query_as::<_, PluginSummary>(&counts_sql).fetch_one(pool);
+    let owners = sqlx::query_scalar::<_, i64>(
+        "SELECT DISTINCT u.discord_id FROM plugins p JOIN starfish_users u ON u.id = p.owner_user_id",
+    )
+    .fetch_all(pool);
+    let (counts, owners) = tokio::try_join!(counts, owners).context("summarize the plugins")?;
+    Ok(PluginSummary {
+        owners: owners
+            .into_iter()
+            .map(|discord_id| EntityRef::Account {
+                discord_id,
+                member_id: None,
+            })
+            .collect(),
+        ..counts
+    })
+}
+
+impl PluginState {
+    fn predicate(self) -> &'static str {
+        match self {
+            Self::Listed => LISTED,
+            Self::Official => OFFICIAL,
+            Self::Unlisted => UNLISTED,
+            Self::Disabled => DISABLED,
+        }
+    }
+}
+
+impl PluginSummary {
+    fn owner_ids(&self) -> impl Iterator<Item = i64> + '_ {
+        self.owners.iter().filter_map(|owner| match owner {
+            EntityRef::Account { discord_id, .. } => Some(*discord_id),
+            _ => None,
+        })
+    }
+
+    fn with_members(self, accounts: &Accounts) -> Self {
+        let owners = self.owner_ids().map(|id| accounts.of(id)).collect();
+        Self { owners, ..self }
+    }
+}
+
 async fn plugin_by_slug(
     repo: &PluginRegistryRepository<'_>,
     slug: &str,
@@ -469,8 +598,8 @@ async fn plugin_by_slug(
         .ok_or_else(|| AdminError::NotFound(format!("no plugin is published as {slug}")))
 }
 
-async fn owner_of(state: &AppState, plugin: &Plugin) -> Result<Option<i64>, AdminError> {
-    sqlx::query_scalar("SELECT discord_id FROM starfish_users WHERE id = $1")
+async fn owner_of(state: &AppState, plugin: &Plugin) -> Result<Option<OwnerRecord>, AdminError> {
+    sqlx::query_as("SELECT discord_id, github_username FROM starfish_users WHERE id = $1")
         .bind(plugin.owner_user_id)
         .fetch_optional(state.db.pool())
         .await

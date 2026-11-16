@@ -85,16 +85,16 @@ import { page } from "@/lib/paths";
 
   async function show(refresh = false) {
     const query = refresh ? "?refresh=true" : "";
-    const [config, directory, population] = await Promise.all([
+    const population = optional(load<Population>(`${base}/population`));
+    const [config, directory] = await Promise.all([
       load<ServerConfig>(base),
       optional(load<Directory>(`${base}/directory${query}`)),
-      optional(load<Population>(`${base}/population${query}`)),
     ]);
     const server: Server = {
       base,
       config,
       directory,
-      population,
+      population: null,
       refresh: () => show(),
       report,
     };
@@ -102,6 +102,8 @@ import { page } from "@/lib/paths";
     part("off").hidden = config.enabled;
     part("on").hidden = !config.enabled;
     if (config.enabled) render(server);
+    server.population = await population;
+    facts(server);
   }
 
   function header(server: Server) {
@@ -122,23 +124,7 @@ import { page } from "@/lib/paths";
     part("state").className = server.config.enabled
       ? "sync-state on"
       : "sync-state";
-    part("facts").replaceChildren(
-      ...[
-        ["Members", server.population?.member_count],
-        ["Linked", server.population?.linked_members],
-      ].map(([label, value]) =>
-        el(
-          "span",
-          { className: "fact" },
-          el("span", { className: "label" }, String(label)),
-          el(
-            "b",
-            { className: "strong" },
-            value === undefined ? "?" : FORMATS.number(Number(value)),
-          ),
-        ),
-      ),
-    );
+    facts(server, true);
     part("actions").replaceChildren(
       ...(server.config.enabled
         ? [
@@ -156,6 +142,30 @@ import { page } from "@/lib/paths";
               "button primary",
             ),
           ]),
+    );
+  }
+
+  function facts(server: Server, counting = false) {
+    part("facts").replaceChildren(
+      ...[
+        ["Members", server.population?.member_count],
+        ["Linked", server.population?.linked_members],
+      ].map(([label, value]) =>
+        el(
+          "span",
+          { className: "fact" },
+          el("span", { className: "label" }, String(label)),
+          el(
+            "b",
+            { className: "strong" },
+            counting
+              ? "…"
+              : value === undefined
+                ? "?"
+                : FORMATS.number(Number(value)),
+          ),
+        ),
+      ),
     );
   }
 
@@ -177,7 +187,7 @@ import { page } from "@/lib/paths";
   }
 
   function reread() {
-    report("Reading roles, channels and members from Discord…");
+    report("Reading roles and channels from Discord…");
     show(true).then(() => report("Roles and channels refreshed."));
   }
 

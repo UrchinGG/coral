@@ -86,6 +86,7 @@ pub async fn set_enabled(
         "set_sync_enabled",
     )
     .await?;
+    list::forget_servers(&state).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

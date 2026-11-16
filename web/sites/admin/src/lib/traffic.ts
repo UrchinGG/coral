@@ -1,17 +1,18 @@
 import { load } from "@/lib/api";
 import { legend, stackedArea, stackedBars } from "@/lib/chart";
 import { el } from "@/lib/dom";
+import { filterChip, type FilterState, type Pick } from "@/lib/filterbar";
 import { FORMATS } from "@/lib/format";
-import type { Labels } from "@/lib/members";
 import { pager, type CursorPage } from "@/lib/pager";
-import { refName, type Ref } from "@/lib/refs";
+import { refText, type Ref } from "@/lib/refs";
 import {
   methodBadge,
   requestHead,
   requestRow,
+  viaLabel,
   type RequestRow,
 } from "@/lib/requests";
-import { moment } from "@/lib/time";
+import { ago, moment } from "@/lib/time";
 import { API } from "@/lib/paths";
 
 export const WINDOWS: [string, string, number][] = [
@@ -21,34 +22,15 @@ export const WINDOWS: [string, string, number][] = [
   ["7d", "7 d", 604_800_000],
   ["30d", "30 d", 2_592_000_000],
 ];
+const TRAFFIC_WINDOWS = WINDOWS.slice(2);
+export const DEFAULT_WINDOW = "24h";
+const UNMATCHED = "unmatched";
 
-export interface Filters {
+export interface TrafficState {
   window: string;
-  route: string | null;
-  method: string | null;
-  class: string | null;
-  member: number | null;
-  key_prefix: string | null;
-  requester: string | null;
-  q: string;
-  ip: string;
-}
-
-interface Totals {
-  requests: number;
-  errors: number;
-  rate_limited: { caller: number; upstream: number };
-  p95: number | null;
-  rpm_now: number | null;
-}
-
-interface SeriesPoint {
-  t: string;
-  c2xx: number;
-  c4xx: number;
-  c429_caller: number;
-  c429_upstream: number;
-  c5xx: number;
+  routes: string[];
+  routeSearch: FilterState;
+  requestSearch: FilterState;
 }
 
 export interface RouteTraffic {
@@ -61,13 +43,30 @@ export interface RouteTraffic {
   p95: number | null;
 }
 
-interface Caller {
+export interface Caller {
   requester: Ref;
   key_kind: string;
   key_prefix: string | null;
   requests: number;
   rate_limited: number;
   errors: number;
+  last_hour: string;
+}
+
+interface Totals {
+  requests: number;
+  errors: number;
+  rate_limited: { caller: number; upstream: number };
+  p95: number | null;
+}
+
+interface SeriesPoint {
+  t: string;
+  c2xx: number;
+  c4xx: number;
+  c429_caller: number;
+  c429_upstream: number;
+  c5xx: number;
 }
 
 interface Upstream {
@@ -77,11 +76,25 @@ interface Upstream {
   step_s: number;
 }
 
-const HYPIXEL_WINDOW_S = 300;
-export const UNMATCHED = "unmatched";
+interface Brush {
+  pick: (pick: Pick) => void;
+}
 
-export const pickedRoutes = (filters: Filters) =>
-  filters.route ? filters.route.split(",") : [];
+const HOUR_MS = 3_600_000;
+const HYPIXEL_WINDOW_S = 300;
+const TIME_SEPARATOR = "~";
+const CLOCK_RANGE = /^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/;
+const API_GROUPS: [string, string][] = [
+  ["/v3/", "Urchin v3"],
+  ["/api/v1/", "Starfish"],
+  ["/auth/", "Sign-in"],
+];
+const OTHER_API = "Other";
+const REQUESTER_PARAMS: Record<string, string> = {
+  member: "member",
+  actor: "actor",
+  key: "key_prefix",
+};
 
 const CLASSES: [keyof SeriesPoint, string, string][] = [
   ["c2xx", "Answered", "#3a9a5b"],
@@ -91,23 +104,129 @@ const CLASSES: [keyof SeriesPoint, string, string][] = [
   ["c5xx", "Server error", "#e66767"],
 ];
 
-const query = (filters: Filters, keys: (keyof Filters)[]) => {
-  const params = new URLSearchParams();
-  for (const key of keys) {
-    const value = filters[key];
-    if (value !== null && value !== "") params.set(key, String(value));
-  }
-  return params;
+const sum = (points: SeriesPoint[], keys: (keyof SeriesPoint)[]) =>
+  points.reduce(
+    (total, point) =>
+      total + keys.reduce((part, key) => part + (point[key] as number), 0),
+    0,
+  );
+
+const FIGURES: [string, (keyof SeriesPoint)[], string, string][] = [
+  ["OK", ["c2xx"], "", "2xx"],
+  ["Rate Limited", ["c429_caller", "c429_upstream"], "", "answered 429"],
+  ["Client Errors", ["c4xx"], "", "other 4xx"],
+  ["Server Errors", ["c5xx"], "bad", "answered 5xx"],
+];
+
+const routeKey = (route: RouteTraffic) =>
+  `${route.method} ${route.route ?? UNMATCHED}`;
+
+const apiOf = (path: string) =>
+  API_GROUPS.find(([prefix]) => path.startsWith(prefix))?.[1] ?? OTHER_API;
+
+export const API_NAMES = [...API_GROUPS.map(([, name]) => name), OTHER_API];
+
+const splitKey = (key: string) => {
+  const [method, ...path] = key.split(" ");
+  return { method, path: path.join(" ") };
 };
 
-async function labelsOf(discord: string[]): Promise<Labels> {
-  const response = await fetch(`${API}/labels`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ discord, minecraft: [] }),
-  });
-  return response.ok ? response.json() : { discord: {}, minecraft: {} };
+const routeLabel = (key: string) => {
+  const { method, path } = splitKey(key);
+  return `${method} ${path === UNMATCHED ? "Unmatched paths" : path}`;
+};
+
+const windowSpan = (window: string) =>
+  WINDOWS.find(([key]) => key === window)?.[2] ?? WINDOWS[2][2];
+
+function routeParams(routes: string[]) {
+  const parts = routes.map(splitKey);
+  const methods = new Set(parts.map((part) => part.method));
+  const params: Record<string, string> = {};
+  if (parts.length) params.route = parts.map((part) => part.path).join(",");
+  if (methods.size === 1) params.method = [...methods][0];
+  return params;
 }
+
+function requesterParams(value: string | undefined) {
+  if (!value) return {};
+  const [kind, id] = value.split(":");
+  return { [REQUESTER_PARAMS[kind] ?? "key_kind"]: id };
+}
+
+function timeBounds(state: TrafficState): Record<string, string> {
+  const picked = state.requestSearch.picks.time?.value;
+  if (!picked)
+    return {
+      from: new Date(Date.now() - windowSpan(state.window)).toISOString(),
+    };
+  const [from, to] = picked.split(TIME_SEPARATOR);
+  return { from, to };
+}
+
+function seriesParams(state: TrafficState) {
+  const picks = state.requestSearch.picks;
+  const params = new URLSearchParams({
+    window: state.window,
+    ...(picks.via ? { key_kind: picks.via.value } : {}),
+    ...requesterParams(picks.requester?.value),
+  });
+  const { route } = routeParams(state.routes);
+  if (route) params.set("route", route);
+  if (picks.class) params.set("class", picks.class.value);
+  return params;
+}
+
+function requestBody(state: TrafficState) {
+  const picks = state.requestSearch.picks;
+  const body: Record<string, string | number> = {
+    ...timeBounds(state),
+    ...routeParams(state.routes),
+    ...(picks.via ? { key_kind: picks.via.value } : {}),
+    ...requesterParams(picks.requester?.value),
+  };
+  if (body.member) body.member = Number(body.member);
+  if (picks.class) body.class = picks.class.value;
+  if (picks.status) body.status = Number(picks.status.value);
+  if (picks.ip) body.ip = picks.ip.value;
+  if (state.requestSearch.q) body.q = state.requestSearch.q;
+  return body;
+}
+
+export function requesterPick(caller: Caller, label: string): Pick {
+  const ref = caller.requester;
+  const value =
+    ref.kind === "account"
+      ? ref.member_id !== null
+        ? `member:${ref.member_id}`
+        : `actor:${ref.discord_id}`
+      : caller.key_prefix
+        ? `key:${caller.key_prefix}`
+        : `kind:${caller.key_kind}`;
+  return { value, label };
+}
+
+export function clockRange(raw: string): Pick | null {
+  const match = CLOCK_RANGE.exec(raw);
+  if (!match) return null;
+  const [startHour, startMinute, endHour, endMinute] = match
+    .slice(1)
+    .map(Number);
+  const from = new Date();
+  from.setHours(startHour, startMinute, 0, 0);
+  if (from.getTime() > Date.now()) from.setDate(from.getDate() - 1);
+  const length =
+    (((endHour - startHour) * 60 + endMinute - startMinute + 1440) % 1440) *
+    60_000;
+  if (!length) return null;
+  const to = new Date(from.getTime() + length);
+  return timePick(from, to, raw.replace("-", " to "));
+}
+
+const timePick = (from: Date, to: Date, label: string): Pick => ({
+  value: `${from.toISOString()}${TIME_SEPARATOR}${to.toISOString()}`,
+  label,
+});
 
 const stat = (label: string, value: string, className = "") =>
   el(
@@ -117,9 +236,9 @@ const stat = (label: string, value: string, className = "") =>
     el("b", { className, textContent: value }),
   );
 
-export async function summary(filters: Filters) {
-  const data = await load<{ totals: Totals }>(
-    `/traffic/summary?${query(filters, ["window"])}`,
+export async function summary(window: string) {
+  const data = await load<{ totals: Totals; callers: number }>(
+    `/traffic/summary?window=${window}`,
   );
   const totals = data.totals;
   const errorRate = totals.requests
@@ -135,16 +254,17 @@ export async function summary(filters: Filters) {
       FORMATS.number(totals.rate_limited.caller + totals.rate_limited.upstream),
     ),
     stat("P95", totals.p95 === null ? "—" : `${totals.p95} ms`),
-    stat(
-      "Per Minute Now",
-      totals.rpm_now === null ? "—" : FORMATS.number(totals.rpm_now),
-    ),
+    stat("Callers", FORMATS.number(data.callers)),
   );
 }
 
-export async function series(filters: Filters) {
-  const data = await load<{ points: SeriesPoint[] }>(
-    `/traffic/series?${query(filters, ["window", "route", "class", "member"])}`,
+export async function chart(
+  state: TrafficState,
+  pickWindow: (window: string) => void,
+  brush: Brush,
+) {
+  const data = await load<{ points: SeriesPoint[]; step_s: number }>(
+    `/traffic/series?${seriesParams(state)}`,
   );
   const bars = stackedBars(
     CLASSES.map(([key, label, color]) => ({
@@ -157,28 +277,148 @@ export async function series(filters: Filters) {
   return el(
     "section",
     { className: "panel" },
-    el("h2", {
-      className: "panel-title",
-      textContent: filters.route
-        ? `Requests to ${pickedRoutes(filters).join(", ")}`
-        : "Requests by status class",
-    }),
+    el(
+      "div",
+      { className: "panel-head" },
+      el("h2", {
+        className: "panel-title",
+        textContent: state.routes.length
+          ? `Requests to ${state.routes.map(routeLabel).join(", ")}`
+          : "Requests by status class",
+      }),
+      windowPicker(state.window, pickWindow),
+    ),
     legend(CLASSES.map(([, label, color]) => ({ label, color }))),
-    bars,
+    brushArea(bars, data.points, data.step_s * 1000, brush, state),
+    el(
+      "div",
+      { className: "facts figures" },
+      ...FIGURES.map(([label, keys, className, note]) =>
+        el(
+          "div",
+          { className: "fact" },
+          el("span", { className: "label", textContent: label }),
+          el("b", {
+            className,
+            textContent: FORMATS.number(sum(data.points, keys)),
+          }),
+          el("span", { className: "dim", textContent: note }),
+        ),
+      ),
+    ),
   );
 }
 
-export async function routes(
-  filters: Filters,
-  search: string,
-  pick: (route: RouteTraffic) => void,
+function windowPicker(current: string, pick: (window: string) => void) {
+  const seg = el(
+    "div",
+    { className: "seg" },
+    ...TRAFFIC_WINDOWS.map(([key, label]) => {
+      const button = el("button", {
+        type: "button",
+        textContent: label,
+        className: key === current ? "on" : "",
+      });
+      button.setAttribute("aria-pressed", String(key === current));
+      button.addEventListener("click", () => pick(key));
+      return button;
+    }),
+  );
+  seg.setAttribute("role", "group");
+  seg.setAttribute("aria-label", "Time range");
+  return seg;
+}
+
+function brushArea(
+  bars: HTMLElement,
+  points: SeriesPoint[],
+  stepMs: number,
+  brush: Brush,
+  state: TrafficState,
 ) {
-  const data = {
-    routes: await load<RouteTraffic[]>(
-      `/traffic/routes?${query(filters, ["window"])}`,
-    ),
+  const selection = el("div", { className: "brush-sel", hidden: true });
+  const picked = state.requestSearch.picks.time;
+  const note = el("p", {
+    className: "dim brush-note",
+    textContent: picked
+      ? `Showing ${picked.label} in the list below.`
+      : "Drag across the chart to look at one period.",
+  });
+  const area = el("div", { className: "brush-area" }, bars, selection);
+  const at = (event: MouseEvent) => {
+    const box = area.getBoundingClientRect();
+    const share = (event.clientX - box.left) / box.width;
+    return Math.max(
+      0,
+      Math.min(points.length - 1, Math.floor(share * points.length)),
+    );
   };
-  const text = search.toLowerCase();
+  let start: number | null = null;
+  const draw = (a: number, b: number) => {
+    selection.hidden = false;
+    selection.style.left = `${(Math.min(a, b) / points.length) * 100}%`;
+    selection.style.width = `${((Math.abs(b - a) + 1) / points.length) * 100}%`;
+  };
+  area.addEventListener("mousedown", (event) => {
+    start = at(event);
+    draw(start, start);
+  });
+  area.addEventListener("mousemove", (event) => {
+    if (start !== null) draw(start, at(event));
+  });
+  const finish = (event: MouseEvent) => {
+    if (start === null || !points.length) return;
+    const [a, b] = [start, at(event)].sort((x, y) => x - y);
+    start = null;
+    const from = new Date(points[a].t);
+    const to = new Date(Date.parse(points[b].t) + stepMs);
+    brush.pick(
+      timePick(
+        from,
+        to,
+        `${moment(points[a].t)} to ${moment(to.toISOString())}`,
+      ),
+    );
+  };
+  const shown = picked && selectedBars(points, stepMs, picked.value);
+  if (shown) draw(...shown);
+  area.addEventListener("mouseup", finish);
+  area.addEventListener(
+    "mouseleave",
+    (event) => start !== null && finish(event),
+  );
+  return el("div", {}, area, note);
+}
+
+function selectedBars(points: SeriesPoint[], stepMs: number, value: string) {
+  const [from, to] = value.split(TIME_SEPARATOR).map(Date.parse);
+  const first = points.findIndex(
+    (point) => Date.parse(point.t) + stepMs > from,
+  );
+  const last = points.findLastIndex((point) => Date.parse(point.t) < to);
+  return first >= 0 && last >= first ? ([first, last] as const) : null;
+}
+
+export async function loadRoutes(window: string) {
+  return load<RouteTraffic[]>(`/traffic/routes?window=${window}`);
+}
+
+export function routeTable(
+  routes: RouteTraffic[],
+  state: TrafficState,
+  toggle: (key: string) => void,
+) {
+  const { q, picks } = state.routeSearch;
+  const text = q.toLowerCase();
+  const shown = routes.filter((route) => {
+    const label = routeLabel(routeKey(route)).toLowerCase();
+    return (
+      (!text || label.includes(text)) &&
+      (!picks.route || label.includes(picks.route.value.toLowerCase())) &&
+      (!picks.method || route.method === picks.method.value) &&
+      (!picks.api || apiOf(route.route ?? "") === picks.api.value)
+    );
+  });
   const head = el(
     "div",
     { className: "table-row route-row head" },
@@ -186,80 +426,179 @@ export async function routes(
       el("span", { className: index ? "num" : "", textContent: label }),
     ),
   );
-  const rows = data.routes
-    .filter(
-      (route) =>
-        !text ||
-        `${route.method} ${route.route ?? "unmatched"}`
-          .toLowerCase()
-          .includes(text),
-    )
-    .map((route) => {
-      const line = el(
-        "button",
-        { type: "button", className: "table-row route-row" },
-        el(
-          "span",
-          { className: "route" },
-          methodBadge(route.method),
-          route.route ?? "Unmatched paths",
-        ),
-        el("span", {
-          className: "num",
-          textContent: FORMATS.short(route.requests),
-        }),
-        el("span", {
-          className: "num",
-          textContent: `${(route.error_rate * 100).toFixed(1)}%`,
-        }),
-        el("span", {
-          className: "num",
-          textContent: FORMATS.number(route.rate_limited),
-        }),
-        el("span", {
-          className: "num",
-          textContent: route.p95 === null ? "" : `${route.p95} ms`,
-        }),
-      );
-      line.setAttribute(
-        "aria-pressed",
-        String(
-          pickedRoutes(filters).includes(route.route ?? UNMATCHED) &&
-            (filters.method === null || route.method === filters.method),
-        ),
-      );
-      line.addEventListener("click", () => pick(route));
-      return line;
-    });
-  return el("div", { className: "table" }, head, ...rows);
+  const rows = shown.map((route) => {
+    const key = routeKey(route);
+    const line = el(
+      "button",
+      { type: "button", className: "table-row route-row" },
+      el(
+        "span",
+        { className: "route" },
+        methodBadge(route.method),
+        route.route ?? "Unmatched paths",
+      ),
+      el("span", {
+        className: "num",
+        textContent: FORMATS.short(route.requests),
+      }),
+      el("span", {
+        className: "num",
+        textContent: `${(route.error_rate * 100).toFixed(1)}%`,
+      }),
+      el("span", {
+        className: "num",
+        textContent: FORMATS.number(route.rate_limited),
+      }),
+      el("span", {
+        className: "num",
+        textContent: route.p95 === null ? "" : `${route.p95} ms`,
+      }),
+    );
+    line.setAttribute("aria-pressed", String(state.routes.includes(key)));
+    line.addEventListener("click", () => toggle(key));
+    return line;
+  });
+  const empty = el("p", {
+    className: "muted table-empty",
+    textContent: "No route matches.",
+  });
+  return el(
+    "div",
+    { className: "table" },
+    head,
+    ...(rows.length ? rows : [empty]),
+  );
 }
 
-export async function callers(
-  filters: Filters,
-  pick: (caller: Caller, name: string) => void,
+export function routePicker(
+  routes: RouteTraffic[],
+  chosen: string[],
+  set: (routes: string[]) => void,
+  open: boolean,
+  setOpen: (open: boolean) => void,
 ) {
-  const data = await load<{ callers: Caller[] }>(
-    `/traffic/callers?${query(filters, ["window", "route", "method", "class"])}`,
-  );
-  const labels = await labelsOf(
-    data.callers.flatMap((caller) =>
-      caller.requester.kind === "account" ? [caller.requester.discord_id] : [],
+  const menu = el("div", { className: "pick-menu", hidden: !open });
+  menu.setAttribute("role", "group");
+  menu.setAttribute("aria-label", "Routes to show");
+  const keys = [...new Set([...routes.map(routeKey), ...chosen])];
+  for (const api of API_NAMES) {
+    const names = keys.filter((key) => apiOf(splitKey(key).path) === api);
+    if (!names.length) continue;
+    const all = names.every((name) => chosen.includes(name));
+    menu.append(
+      pickButton("pick-group", all, [el("span", { textContent: api })], () =>
+        set(
+          all
+            ? chosen.filter((key) => !names.includes(key))
+            : [...new Set([...chosen, ...names])],
+        ),
+      ),
+      ...names.map((name) => {
+        const { method, path } = splitKey(name);
+        const on = chosen.includes(name);
+        return pickButton(
+          "pick-item",
+          on,
+          [
+            methodBadge(method),
+            el("span", {
+              textContent: path === UNMATCHED ? "Unmatched paths" : path,
+            }),
+          ],
+          () =>
+            set(on ? chosen.filter((key) => key !== name) : [...chosen, name]),
+        );
+      }),
+    );
+  }
+  const summaryText = !chosen.length
+    ? "All routes"
+    : chosen.length === 1
+      ? routeLabel(chosen[0])
+      : `${chosen.length} routes`;
+  const toggle = el("button", {
+    type: "button",
+    className: "button small",
+    textContent: `Routes: ${summaryText} ▾`,
+  });
+  toggle.setAttribute("aria-expanded", String(open));
+  toggle.addEventListener("click", () => setOpen(!open));
+  const chips = chosen.map((key) =>
+    filterChip(
+      `Remove ${routeLabel(key)}`,
+      () => set(chosen.filter((other) => other !== key)),
+      routeLabel(key),
     ),
   );
+  const clear = el("button", {
+    type: "button",
+    className: "button small",
+    textContent: "All routes",
+    hidden: !chosen.length,
+  });
+  clear.addEventListener("click", () => set([]));
+  return el("div", { className: "picker" }, toggle, ...chips, clear, menu);
+}
+
+function pickButton(
+  className: string,
+  on: boolean,
+  content: Node[],
+  toggle: () => void,
+) {
+  const button = el(
+    "button",
+    { type: "button", className: on ? `${className} on` : className },
+    el("span", { className: "box" }),
+    ...content,
+  );
+  button.setAttribute("aria-pressed", String(on));
+  button.addEventListener("click", toggle);
+  return button;
+}
+
+export async function loadCallers(state: TrafficState) {
+  const params = new URLSearchParams({
+    window: state.window,
+    ...routeParams(state.routes),
+  });
+  const picked = state.requestSearch.picks.class;
+  if (picked) params.set("class", picked.value);
+  return (await load<{ callers: Caller[] }>(`/traffic/callers?${params}`))
+    .callers;
+}
+
+const lastSeen = (hour: string) =>
+  Date.now() - Date.parse(hour) < HOUR_MS
+    ? "This hour"
+    : ago(new Date(Date.parse(hour) + HOUR_MS).toISOString());
+
+export function callerTable(
+  callers: Caller[],
+  picked: string | undefined,
+  pick: (caller: Caller, name: HTMLElement) => void,
+) {
   const head = el(
     "div",
     { className: "table-row caller head" },
-    ...["Requester", "Via", "Requests", "429", "Errors"].map((label, index) =>
-      el("span", { className: index > 1 ? "num" : "", textContent: label }),
+    ...["Requester", "Via", "Requests", "429", "Errors", "Last"].map(
+      (label, index) =>
+        el("span", {
+          className: index > 1 && index < 5 ? "num" : "",
+          textContent: label,
+        }),
     ),
   );
-  const rows = data.callers.map((caller) => {
-    const name = refName(caller.requester, labels);
+  const empty = { discord: {}, minecraft: {} };
+  const rows = callers.map((caller) => {
+    const name = refText(caller.requester, empty);
+    name.className = "strong";
+    name.dataset.requester = requesterPick(caller, "").value;
     const line = el(
       "button",
       { type: "button", className: "table-row caller" },
-      el("span", { className: "strong", textContent: name }),
-      el("span", { textContent: caller.key_kind }),
+      name,
+      el("span", { textContent: viaLabel(caller.key_kind) }),
       el("span", {
         className: "num",
         textContent: FORMATS.number(caller.requests),
@@ -272,24 +611,20 @@ export async function callers(
         className: "num",
         textContent: FORMATS.number(caller.errors),
       }),
+      el("span", { className: "dim", textContent: lastSeen(caller.last_hour) }),
     );
-    line.setAttribute("aria-pressed", String(name === filters.requester));
+    line.setAttribute(
+      "aria-pressed",
+      String(name.dataset.requester === picked),
+    );
     line.addEventListener("click", () => pick(caller, name));
     return line;
   });
   return el("div", { className: "table" }, head, ...rows);
 }
 
-export function requests(filters: Filters) {
-  const span =
-    WINDOWS.find(([key]) => key === filters.window)?.[2] ?? WINDOWS[2][2];
-  const body: Record<string, string | number> = {
-    ...Object.fromEntries(
-      query(filters, ["route", "method", "class", "key_prefix", "q", "ip"]),
-    ),
-    from: new Date(Date.now() - span).toISOString(),
-  };
-  if (filters.member !== null) body.member = filters.member;
+export function requests(state: TrafficState) {
+  const body = requestBody(state);
   const fetchPage = async (cursor: string | null) => {
     const response = await fetch(`${API}/requests/query`, {
       method: "POST",

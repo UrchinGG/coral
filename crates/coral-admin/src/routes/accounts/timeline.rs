@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use axum::Json;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
@@ -19,21 +21,6 @@ const TIMELINE_PAGE: usize = 50;
 const MAX_TIMELINE_PAGE: usize = 200;
 const CURSOR_SEPARATOR: char = '_';
 const KIND_SEPARATOR: char = ',';
-const EVENT_KINDS: &[&str] = &[
-    "admin_action",
-    "strike_received",
-    "strike_revoked",
-    "strike_issued",
-    "player_event",
-    "tag_authored",
-    "tag_reviewed",
-    "review_submitted",
-    "vote",
-    "key_created",
-    "key_retired",
-    "linked",
-    "unlinked",
-];
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -41,6 +28,7 @@ pub struct TimelineQuery {
     cursor: Option<String>,
     limit: Option<usize>,
     kinds: Option<String>,
+    from: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize)]
@@ -77,65 +65,124 @@ struct TimelineCursor {
     key: String,
 }
 
-const TIMELINE_SQL: &str = "WITH own_players AS (
-        SELECT DISTINCT uuid FROM member_mc_links WHERE member_id = $1
-     ), events AS (
-        (SELECT 'admin:' || id AS key, ts AS at, 'admin_action' AS kind, actor, target,
-                NULL::text AS player, action, NULL::text AS detail, details AS data
-         FROM admin_actions WHERE target = $3 OR actor = $2)
-        UNION ALL
-        (SELECT 'strike:' || s.id, s.issued_at, 'strike_received', s.struck_by, $3, NULL, NULL, s.reason,
-                jsonb_build_object('strike_id', s.id, 'expires_at', s.expires_at)
-         FROM member_strike s WHERE s.member_id = $1)
-        UNION ALL
-        (SELECT 'unstrike:' || s.id, s.revoked_at, 'strike_revoked', s.revoked_by, $3, NULL, NULL, s.reason,
-                jsonb_build_object('strike_id', s.id)
-         FROM member_strike s WHERE s.member_id = $1 AND s.revoked_at IS NOT NULL)
-        UNION ALL
-        (SELECT 'issued:' || s.id, s.issued_at, 'strike_issued', s.struck_by, m.discord_id::text, NULL, NULL, s.reason,
-                jsonb_build_object('strike_id', s.id, 'expires_at', s.expires_at)
-         FROM member_strike s JOIN members m ON m.id = s.member_id
-         WHERE s.struck_by = $2 AND s.member_id IS DISTINCT FROM $1)
-        UNION ALL
-        (SELECT 'own:' || e.id, e.ts, 'player_event', e.author, NULL, e.uuid, e.kind, e.reason,
-                jsonb_build_object('tag_type', e.tag_type, 'expires_at', e.expires_at)
-         FROM player_events e WHERE e.uuid IN (SELECT uuid FROM own_players))
-        UNION ALL
-        (SELECT 'authored:' || e.id, e.ts, 'tag_authored', e.author, NULL, e.uuid, e.kind, e.reason,
-                jsonb_build_object('tag_type', e.tag_type)
-         FROM player_events e
-         WHERE e.author = $2 AND e.uuid NOT IN (SELECT uuid FROM own_players))
-        UNION ALL
-        (SELECT 'reviewed:' || e.id, e.ts, 'tag_reviewed', e.author, NULL, e.uuid, e.kind, e.reason,
-                jsonb_build_object('tag_type', e.tag_type)
-         FROM player_events e WHERE $2 = ANY(e.reviewed_by))
-        UNION ALL
-        (SELECT 'review:' || r.id, r.created_at, 'review_submitted', r.submitter_id, NULL, r.player_uuid, r.status, NULL,
-                jsonb_build_object('review_id', r.id)
-         FROM review r WHERE r.submitter_id = $2)
-        UNION ALL
-        (SELECT 'vote:' || v.id, v.cast_at, 'vote', v.voter_id, NULL, r.player_uuid, v.kind, v.reason,
-                jsonb_build_object('review_id', v.review_id, 'disposition', v.disposition)
-         FROM review_vote v JOIN review r ON r.id = v.review_id WHERE v.voter_id = $2)
-        UNION ALL
-        (SELECT 'key:' || k.id, k.created_at, 'key_created', NULL, $3, NULL, k.kind, NULL,
-                jsonb_build_object('key_id', k.id, 'prefix', left(k.api_key, $6))
-         FROM member_api_keys k WHERE k.member_id = $1 AND k.created_at IS NOT NULL)
-        UNION ALL
-        (SELECT 'retired:' || k.id, k.retired_at, 'key_retired', NULL, $3, NULL, k.kind, NULL,
-                jsonb_build_object('key_id', k.id, 'prefix', left(k.api_key, $6))
-         FROM member_api_keys k WHERE k.member_id = $1 AND k.retired_at IS NOT NULL)
-        UNION ALL
-        (SELECT 'link:' || l.id, l.linked_at, 'linked', NULL, $3, l.uuid, l.relation, NULL, NULL
-         FROM member_mc_links l WHERE l.member_id = $1 AND l.linked_at IS NOT NULL)
-        UNION ALL
-        (SELECT 'unlink:' || l.id, l.unlinked_at, 'unlinked', NULL, $3, l.uuid, l.relation, NULL, NULL
-         FROM member_mc_links l WHERE l.member_id = $1 AND l.unlinked_at IS NOT NULL)
-     )
-     SELECT key, at, kind, actor, target, player, action, detail, data FROM events
-     WHERE (at, key) < ($4, $5) AND ($8::text[] IS NULL OR kind = ANY($8))
-     ORDER BY at DESC, key DESC
-     LIMIT $7";
+/// One source of timeline events: its kind, its unique key and time, the remaining
+/// columns, and the rows it reads from.
+struct Branch {
+    kind: &'static str,
+    key: &'static str,
+    at: &'static str,
+    columns: &'static str,
+    source: &'static str,
+}
+
+const BRANCHES: &[Branch] = &[
+    Branch {
+        kind: "admin_action",
+        key: "'admin:' || id",
+        at: "ts",
+        columns: "actor, target, NULL::text, action, NULL::text, details",
+        source: "admin_actions WHERE (target = $3 OR actor = $2)",
+    },
+    Branch {
+        kind: "strike_received",
+        key: "'strike:' || s.id",
+        at: "s.issued_at",
+        columns: "s.struck_by, $3, NULL, NULL, s.reason, jsonb_build_object('strike_id', s.id, 'expires_at', s.expires_at)",
+        source: "member_strike s WHERE s.member_id = $1",
+    },
+    Branch {
+        kind: "strike_revoked",
+        key: "'unstrike:' || s.id",
+        at: "s.revoked_at",
+        columns: "s.revoked_by, $3, NULL, NULL, s.reason, jsonb_build_object('strike_id', s.id)",
+        source: "member_strike s WHERE s.member_id = $1 AND s.revoked_at IS NOT NULL",
+    },
+    Branch {
+        kind: "strike_issued",
+        key: "'issued:' || s.id",
+        at: "s.issued_at",
+        columns: "s.struck_by, m.discord_id::text, NULL, NULL, s.reason, jsonb_build_object('strike_id', s.id, 'expires_at', s.expires_at)",
+        source: "member_strike s JOIN members m ON m.id = s.member_id WHERE s.struck_by = $2 AND s.member_id IS DISTINCT FROM $1",
+    },
+    Branch {
+        kind: "player_event",
+        key: "'own:' || e.id",
+        at: "e.ts",
+        columns: "e.author, NULL, e.uuid, e.kind, e.reason, jsonb_build_object('tag_type', e.tag_type, 'expires_at', e.expires_at)",
+        source: "player_events e WHERE e.uuid IN (SELECT uuid FROM member_mc_links WHERE member_id = $1)",
+    },
+    Branch {
+        kind: "tag_authored",
+        key: "'authored:' || e.id",
+        at: "e.ts",
+        columns: "e.author, NULL, e.uuid, e.kind, e.reason, jsonb_build_object('tag_type', e.tag_type, 'expires_at', e.expires_at,
+            'ended_by', (SELECT later.kind FROM player_events later
+                         WHERE later.uuid = e.uuid AND later.tag_type = e.tag_type AND (later.ts, later.id) > (e.ts, e.id)
+                         ORDER BY later.ts, later.id LIMIT 1))",
+        source: "player_events e WHERE e.author = $2 AND e.uuid NOT IN (SELECT uuid FROM member_mc_links WHERE member_id = $1)",
+    },
+    Branch {
+        kind: "tag_reviewed",
+        key: "'reviewed:' || e.id",
+        at: "e.ts",
+        columns: "e.author, NULL, e.uuid, e.kind, e.reason, jsonb_build_object('tag_type', e.tag_type)",
+        source: "player_events e WHERE e.reviewed_by @> ARRAY[$2::int8]",
+    },
+    Branch {
+        kind: "review_submitted",
+        key: "'review:' || r.id",
+        at: "r.created_at",
+        columns: "r.submitter_id, NULL, r.player_uuid, r.status, NULL, jsonb_build_object('review_id', r.id)",
+        source: "review r WHERE r.submitter_id = $2",
+    },
+    Branch {
+        kind: "vote",
+        key: "'vote:' || v.id",
+        at: "v.cast_at",
+        columns: "v.voter_id, NULL, r.player_uuid, v.kind, v.reason, jsonb_build_object('review_id', v.review_id, 'disposition', v.disposition)",
+        source: "review_vote v JOIN review r ON r.id = v.review_id WHERE v.voter_id = $2",
+    },
+    Branch {
+        kind: "key_created",
+        key: "'key:' || k.id",
+        at: "k.created_at",
+        columns: "NULL, $3, NULL, k.kind, NULL, jsonb_build_object('key_id', k.id, 'prefix', left(k.api_key, $6))",
+        source: "member_api_keys k WHERE k.member_id = $1 AND k.created_at IS NOT NULL",
+    },
+    Branch {
+        kind: "key_retired",
+        key: "'retired:' || k.id",
+        at: "k.retired_at",
+        columns: "NULL, $3, NULL, k.kind, NULL, jsonb_build_object('key_id', k.id, 'prefix', left(k.api_key, $6))",
+        source: "member_api_keys k WHERE k.member_id = $1 AND k.retired_at IS NOT NULL",
+    },
+    Branch {
+        kind: "linked",
+        key: "'link:' || l.id",
+        at: "l.linked_at",
+        columns: "NULL, $3, l.uuid, l.relation, NULL, NULL",
+        source: "member_mc_links l WHERE l.member_id = $1 AND l.linked_at IS NOT NULL",
+    },
+    Branch {
+        kind: "unlinked",
+        key: "'unlink:' || l.id",
+        at: "l.unlinked_at",
+        columns: "NULL, $3, l.uuid, l.relation, NULL, NULL",
+        source: "member_mc_links l WHERE l.member_id = $1 AND l.unlinked_at IS NOT NULL",
+    },
+];
+
+/// Each branch sorts and limits itself below the cursor, so a page reads at most
+/// `limit` rows per kind instead of the account's whole history.
+static TIMELINE_SQL: LazyLock<String> = LazyLock::new(|| {
+    let branches: Vec<String> = BRANCHES.iter().map(Branch::sql).collect();
+    format!(
+        "SELECT key, at, kind, actor, target, player, action, detail, data FROM ({}) AS events(key, at, kind, actor, target, player, action, detail, data)
+         ORDER BY at DESC, key DESC
+         LIMIT $7",
+        branches.join(" UNION ALL ")
+    )
+});
 
 pub async fn timeline(
     State(state): State<AppState>,
@@ -152,8 +199,15 @@ pub async fn timeline(
         .transpose()?;
     let target = AccountTarget::resolve(&state, &raw).await?;
     let start = cursor.unwrap_or_else(TimelineCursor::newest);
-    let mut rows =
-        read_events(state.db.pool(), target, &start, kinds.as_deref(), limit + 1).await?;
+    let mut rows = read_events(
+        state.db.pool(),
+        target,
+        &start,
+        kinds.as_deref(),
+        query.from,
+        limit + 1,
+    )
+    .await?;
     let full = rows.len() > limit;
     rows.truncate(limit);
     let next_cursor = full
@@ -185,9 +239,10 @@ async fn read_events(
     target: AccountTarget,
     start: &TimelineCursor,
     kinds: Option<&[String]>,
+    from: Option<DateTime<Utc>>,
     fetch: usize,
 ) -> Result<Vec<EventRow>, AdminError> {
-    sqlx::query_as(TIMELINE_SQL)
+    sqlx::query_as(&TIMELINE_SQL)
         .bind(target.member_id)
         .bind(target.discord_id)
         .bind(target.discord_id.to_string())
@@ -196,6 +251,7 @@ async fn read_events(
         .bind(reqlog::KEY_PREFIX_CHARS as i32)
         .bind(fetch as i64)
         .bind(kinds)
+        .bind(from)
         .fetch_all(pool)
         .await
         .context("read the account's timeline")
@@ -205,14 +261,36 @@ async fn read_events(
 fn parse_kinds(raw: &str) -> Result<Vec<String>, AdminError> {
     raw.split(KIND_SEPARATOR)
         .map(|kind| {
-            EVENT_KINDS
-                .contains(&kind)
+            BRANCHES
+                .iter()
+                .any(|branch| branch.kind == kind)
                 .then(|| kind.to_string())
                 .ok_or_else(|| {
                     AdminError::BadRequest(format!("{kind:?} is not a timeline event kind"))
                 })
         })
         .collect()
+}
+
+impl Branch {
+    fn sql(&self) -> String {
+        let Self {
+            kind,
+            key,
+            at,
+            columns,
+            source,
+        } = self;
+        format!(
+            "(SELECT {key} AS key, {at} AS at, '{kind}' AS kind, {columns}
+              FROM {source}
+                AND ($8::text[] IS NULL OR '{kind}' = ANY($8))
+                AND {at} <= $4 AND ({at}, {key}) < ($4, $5)
+                AND ($9::timestamptz IS NULL OR {at} >= $9)
+              ORDER BY {at} DESC, {key} DESC
+              LIMIT $7)"
+        )
+    }
 }
 
 impl TimelineCursor {
@@ -371,7 +449,9 @@ mod tests {
         let mut seen = Vec::new();
         let mut cursor = TimelineCursor::newest();
         loop {
-            let page = read_events(&pool, target, &cursor, None, 2).await.unwrap();
+            let page = read_events(&pool, target, &cursor, None, None, 2)
+                .await
+                .unwrap();
             let Some(last) = page.last() else {
                 break;
             };

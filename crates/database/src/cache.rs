@@ -62,7 +62,7 @@ impl<'a> CacheRepository<'a> {
     ) -> Result<std::collections::HashMap<String, String>, sqlx::Error> {
         let rows: Vec<(String, Option<String>)> = sqlx::query_as(
             "SELECT DISTINCT ON (uuid) uuid, username FROM player_snapshots
-             WHERE uuid = ANY($1) ORDER BY uuid, timestamp DESC",
+             WHERE uuid = ANY($1) AND username IS NOT NULL ORDER BY uuid, timestamp DESC",
         )
         .bind(uuids)
         .fetch_all(self.pool)

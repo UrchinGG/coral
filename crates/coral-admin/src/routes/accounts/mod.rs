@@ -1,9 +1,11 @@
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::{Json, Router};
+use chrono::Utc;
 use serde::Serialize;
 
 use crate::error::{AdminError, Context};
+use crate::flags::{self, BlockedKeys};
 use crate::refs::Labels;
 use crate::serde_id;
 use crate::state::AppState;
@@ -50,6 +52,7 @@ pub fn router() -> Router<AppState> {
         .route("/", get(list::accounts))
         .route("/by-member/{member_id}", get(by_member))
         .route("/by-starfish/{user_id}", get(by_starfish))
+        .route("/blocked-keys", get(blocked_keys))
         .route("/{discord_id}", get(profile::account))
         .route("/{discord_id}/activity", get(activity::activity))
         .route("/{discord_id}/requests", get(requests::requests))
@@ -101,6 +104,12 @@ async fn by_member(
     Ok(Json(DiscordIdOf { discord_id }))
 }
 
+async fn blocked_keys(State(state): State<AppState>) -> Result<Json<BlockedKeys>, AdminError> {
+    Ok(Json(
+        flags::blocked_keys(state.db.pool(), &state.redis, Utc::now()).await?,
+    ))
+}
+
 async fn by_starfish(
     State(state): State<AppState>,
     Path(user_id): Path<String>,
@@ -119,7 +128,18 @@ async fn by_starfish(
 
 #[cfg(test)]
 mod tests {
+    use axum::http::Method;
+
     use super::*;
+    use crate::permissions::Permission;
+
+    #[test]
+    fn blocked_keys_are_read_at_the_member_list_tier() {
+        assert_eq!(
+            Permission::for_route(&Method::GET, "/accounts/blocked-keys"),
+            Permission::MembersRead
+        );
+    }
 
     #[test]
     fn discord_ids_are_snowflakes_of_seventeen_to_twenty_digits() {

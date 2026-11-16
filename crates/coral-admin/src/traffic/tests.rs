@@ -286,6 +286,7 @@ async fn summaries_read_whole_hours_from_the_hour_table_and_edges_from_minutes()
         .unwrap();
     assert_eq!(mixed.totals.requests, 10);
     assert_eq!(mixed.prev.unwrap().requests, 10);
+    assert_eq!(whole.callers, 2);
     clear(&pool).await;
 }
 
@@ -338,6 +339,14 @@ async fn series_fill_every_bucket_and_apply_their_filters() {
     assert_eq!(member.points.len(), 2);
     assert_eq!(member.points[0].requests, 3);
     assert_eq!(member.points[0].p95, None);
+    let by_key = SeriesFilter {
+        key_prefix: Some("1a2b3c4d".into()),
+        ..SeriesFilter::default()
+    };
+    let key = series(&pool, range(at(10, 0), at(11, 0)), by_key)
+        .await
+        .unwrap();
+    assert_eq!(key.points[0].requests, 6);
     clear(&pool).await;
 }
 
@@ -395,6 +404,7 @@ async fn callers_are_ranked_by_the_chosen_measure_over_whole_hours() {
         (member.requests, member.rate_limited, member.subjects),
         (13, 3, 900)
     );
+    assert_eq!(member.last_hour, at(10, 0));
     let by_errors = top_callers(
         &pool,
         range(at(10, 20), at(10, 40)),

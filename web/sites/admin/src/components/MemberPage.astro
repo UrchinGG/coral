@@ -65,6 +65,7 @@ import { page } from "@/lib/paths";
 </section>
 
 <script>
+  import { markPending } from "@/lib/names";
   import { page } from "@/lib/paths";
   import {
     BELOW_YOU,
@@ -74,7 +75,7 @@ import { page } from "@/lib/paths";
     session,
     type Permission,
   } from "@/lib/session";
-  import { memberRequestsTab } from "@/lib/tabs/requests";
+  import { activityChart, memberRequestsTab } from "@/lib/tabs/requests";
   import { load, send } from "@/lib/api";
   import { el, panel, row, widePanel } from "@/lib/dom";
   import { FORMATS } from "@/lib/format";
@@ -83,8 +84,10 @@ import { page } from "@/lib/paths";
     networkTab,
     rawTab,
     starfishTab,
+    tagsTab,
     timelineTab,
   } from "@/lib/tabs/member";
+  import { refLink, type Ref as EntityRef } from "@/lib/refs";
   import {
     blocksPanel,
     developerPanel,
@@ -104,7 +107,7 @@ import { page } from "@/lib/paths";
   interface Strike {
     id: number;
     reason: string;
-    struck_by: Ref;
+    struck_by: EntityRef;
     issued_at: string;
     expires_at: string | null;
     status: string;
@@ -126,7 +129,11 @@ import { page } from "@/lib/paths";
       personal: string | null;
       developer: DevKey | null;
     };
-    minecraft: { player: Ref; relation: string; linked_at: string | null }[];
+    minecraft: {
+      player: EntityRef;
+      relation: string;
+      linked_at: string | null;
+    }[];
     former_minecraft: number;
     standing: {
       can_vote: boolean;
@@ -196,6 +203,9 @@ import { page } from "@/lib/paths";
     document.title = `${name} | Urchin Admin`;
     part("crumb").textContent = name;
     part("name").textContent = name;
+    if (!core.labels.discord[core.account.discord_id!])
+      for (const node of [part("crumb"), part("name")])
+        markPending(node, "discord", core.account.discord_id!);
     part("meta").replaceChildren(
       ...[
         member && accessLabel(member.access_level),
@@ -312,7 +322,7 @@ import { page } from "@/lib/paths";
     const accounts = core.minecraft.map((link) =>
       row(
         link.relation === "primary" ? "Primary" : "Alt",
-        nameOf(link.player, core.labels),
+        refLink(link.player, core.labels),
         el(
           "span",
           { className: "dim" },
@@ -339,13 +349,15 @@ import { page } from "@/lib/paths";
       if (revoke.disabled) revoke.title = BELOW_YOU;
       return row(
         strike.reason,
-        `${nameOf(strike.struck_by, core.labels)} · ${day(strike.issued_at)}${strike.expires_at ? ` to ${day(strike.expires_at)}` : ""}`,
+        refLink(strike.struck_by, core.labels),
+        ` · ${day(strike.issued_at)}${strike.expires_at ? ` to ${day(strike.expires_at)}` : ""}`,
         strike.status === "active" && can(viewer, "strikes_write")
           ? revoke
           : el("span", { className: "dim" }, ` · ${strike.status}`),
       );
     });
     return [
+      ...(can(viewer, "traffic") ? [requestChart()] : []),
       panel(
         "Minecraft Accounts",
         ...(accounts.length ? accounts : [row("None", "No linked accounts")]),
@@ -401,8 +413,19 @@ import { page } from "@/lib/paths";
     ];
   }
 
+  function requestChart() {
+    const slot = el("div", { className: "panel wide" });
+    activityChart(id!).then(
+      (chart) => slot.replaceWith(chart),
+      (error: Error) =>
+        slot.replaceChildren(el("p", { className: "muted" }, error.message)),
+    );
+    return slot;
+  }
+
   const TABS: [string, string, Permission][] = [
     ["overview", "Overview", "members_read"],
+    ["tags", "Tags Added", "members_read"],
     ["timeline", "Timeline", "members_read"],
     ["starfish", "Starfish", "starfish"],
     ["requests", "Requests", "traffic"],
@@ -414,6 +437,8 @@ import { page } from "@/lib/paths";
 
   async function tabContent(core: Core, blocks: BlockState): Promise<Node> {
     switch (current) {
+      case "tags":
+        return tagsTab(id!);
       case "timeline":
         return timelineTab(id!);
       case "starfish":

@@ -1,25 +1,39 @@
-<section class="panel capacity" id="capacity">
+<section class="panel capacity" id="capacity" hidden>
   <h2 class="panel-title">Hypixel Capacity</h2>
   <div class="capacity-body">
     <div class="capacity-reading">
       <b class="big" data-percent>
         —
       </b>
-      <span class="meter">
+      <span class="meter capacity-meter">
         <span data-meter></span>
+        <i aria-hidden="true"></i>
       </span>
       <span class="muted" data-used>
         Reading Hypixel's limit…
       </span>
     </div>
     <div class="capacity-chart">
-      <span class="muted">Hypixel calls per minute, last hour</span>
-      <div
-        class="bars"
-        data-bars
-        role="img"
-        aria-label="Hypixel calls per minute over the last hour"
-      ></div>
+      <div class="legend">
+        <span>Calls per minute, last hour</span>
+        <span>
+          <i class="swatch over"></i>Over 90%
+        </span>
+        <span data-limit-key hidden>
+          <i class="swatch dashed limit"></i>
+          <span data-limit-label></span>
+        </span>
+      </div>
+      <div class="capacity-plot">
+        <div
+          class="bars"
+          data-bars
+          role="img"
+          aria-label="Hypixel calls per minute over the last hour, against the limit"
+        ></div>
+        <span class="line limit" data-line="limit" hidden></span>
+        <span class="line near" data-line="near" hidden></span>
+      </div>
       <div class="axis">
         <span>60 min ago</span>
         <span>30 min</span>
@@ -29,45 +43,142 @@
   </div>
 </section>
 
+<style>
+  .capacity-meter {
+    position: relative;
+    overflow: visible;
+
+    & i {
+      position: absolute;
+      top: -2px;
+      bottom: -2px;
+      left: 90%;
+      width: 1px;
+      background: #7b560d;
+    }
+  }
+
+  .capacity-plot {
+    position: relative;
+
+    & :global(.bars span) {
+      background: #5a5d66;
+    }
+
+    & :global(.bars span.over) {
+      background: #ffaa00;
+    }
+
+    & :global(.bars span:hover) {
+      filter: brightness(1.4);
+    }
+  }
+
+  .line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    border-top: 1px dashed;
+    pointer-events: none;
+
+    &.limit {
+      border-color: #e66767;
+    }
+
+    &.near {
+      border-color: #7b560d;
+      border-top-style: dotted;
+    }
+  }
+
+  .swatch.over {
+    background: #ffaa00;
+  }
+
+  .swatch.limit {
+    border-color: #e66767;
+  }
+</style>
+
 <script>
   import { can, session } from "@/lib/session";
   import { load } from "@/lib/api";
   import { FORMATS } from "@/lib/format";
 
   interface Upstream {
-    series: { requests: number }[];
+    series: { t: string; requests: number }[];
+    background: { window_s: number };
     capacity: { used: number; limit: number } | null;
   }
 
   const WARN_SHARE = 0.9;
+  const HEADROOM = 1.08;
+  const SECONDS_PER_MINUTE = 60;
+  const MINUTE_MS = 60_000;
   const root = document.getElementById("capacity")!;
   const part = (name: string) =>
     root.querySelector<HTMLElement>(`[data-${name}]`)!;
+  const line = (name: string) =>
+    root.querySelector<HTMLElement>(`[data-line="${name}"]`)!;
+
+  function showReading(capacity: Upstream["capacity"]) {
+    if (!capacity) {
+      part("used").textContent = "Hypixel hasn't reported a limit yet";
+      return;
+    }
+    const share = capacity.used / capacity.limit;
+    part("percent").textContent = `${Math.round(share * 100)}%`;
+    part("meter").style.width = `${Math.min(share, 1) * 100}%`;
+    root.classList.toggle("warn", share > WARN_SHARE);
+    part("used").textContent =
+      `${FORMATS.number(capacity.used)} of ${FORMATS.number(capacity.limit)} calls used this window`;
+  }
+
+  function placeLine(name: string, value: number, ceiling: number) {
+    line(name).hidden = false;
+    line(name).style.top = `${(1 - value / ceiling) * 100}%`;
+  }
+
+  const minutesAgo = (t: string) =>
+    Math.round((Date.now() - Date.parse(t)) / MINUTE_MS);
+
+  function perMinuteLimit({ background, capacity }: Upstream) {
+    if (!capacity) return null;
+    return (capacity.limit * SECONDS_PER_MINUTE) / background.window_s;
+  }
+
+  function showBars(upstream: Upstream) {
+    const limit = perMinuteLimit(upstream);
+    const peak = Math.max(1, ...upstream.series.map((point) => point.requests));
+    const ceiling = limit ? Math.max(limit * HEADROOM, peak) : peak;
+    const near = limit ? limit * WARN_SHARE : Infinity;
+    const of = limit ? ` of ${FORMATS.number(Math.round(limit))}` : "";
+    if (limit) {
+      placeLine("limit", limit, ceiling);
+      placeLine("near", near, ceiling);
+      part("limit-key").hidden = false;
+      part("limit-label").textContent =
+        `Limit ${FORMATS.number(Math.round(limit))} per minute`;
+    }
+    part("bars").replaceChildren(
+      ...upstream.series.map((point) => {
+        const bar = document.createElement("span");
+        const ago = minutesAgo(point.t);
+        bar.style.height = `${(point.requests / ceiling) * 100}%`;
+        bar.classList.toggle("over", point.requests > near);
+        bar.title = `${ago ? `${ago} min ago` : "Now"}: ${FORMATS.number(point.requests)}${of} calls`;
+        return bar;
+      }),
+    );
+  }
 
   const viewer = await session();
-  root.hidden = !can(viewer, "traffic");
+  root.hidden = !can(viewer, "staff");
   if (!root.hidden)
     load<Upstream>("/traffic/upstream?window=1h").then(
-      ({ series, capacity }) => {
-        if (capacity) {
-          const share = capacity.used / capacity.limit;
-          part("percent").textContent = `${Math.round(share * 100)}%`;
-          part("meter").style.width = `${Math.min(share, 1) * 100}%`;
-          root.classList.toggle("warn", share > WARN_SHARE);
-          part("used").textContent =
-            `${FORMATS.number(capacity.used)} of ${FORMATS.number(capacity.limit)} used this window`;
-        } else {
-          part("used").textContent = "Hypixel hasn't reported a limit yet";
-        }
-        const peak = Math.max(1, ...series.map((point) => point.requests));
-        part("bars").replaceChildren(
-          ...series.map((point) => {
-            const bar = document.createElement("span");
-            bar.style.height = `${(point.requests / peak) * 100}%`;
-            bar.title = `${FORMATS.number(point.requests)} calls`;
-            return bar;
-          }),
-        );
+      (upstream) => {
+        showReading(upstream.capacity);
+        showBars(upstream);
       },
       (error: Error) => (part("used").textContent = error.message),
     );

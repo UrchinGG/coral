@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use axum::extract::State;
 use database::{
     BlacklistRepository, CacheRepository, GuildCacheRepository, GuildCurrentRepository,
@@ -6,7 +8,7 @@ use database::{
 use serde::Serialize;
 use tracing::warn;
 
-use crate::error::{AdminError, Context};
+use crate::error::AdminError;
 use crate::state::AppState;
 use crate::views::{CachedView, View};
 
@@ -19,6 +21,7 @@ struct Overview {
     blacklist: Blacklist,
     players: Cached,
     guilds: Cached,
+    failures: Vec<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -29,14 +32,14 @@ struct BotInstalls {
 
 #[derive(Serialize)]
 struct Members {
-    registered: i64,
-    trusted: i64,
-    lifetime_requests: i64,
+    registered: Option<i64>,
+    trusted: Option<i64>,
+    lifetime_requests: Option<i64>,
 }
 
 #[derive(Serialize)]
 struct Blacklist {
-    active: i64,
+    active: Option<i64>,
     by_type: Vec<TagCount>,
 }
 
@@ -48,10 +51,14 @@ struct TagCount {
 
 #[derive(Serialize)]
 struct Cached {
-    tracked: i64,
-    snapshots: i64,
-    storage_bytes: i64,
+    tracked: Option<i64>,
+    snapshots: Option<i64>,
+    storage_bytes: Option<i64>,
 }
+
+/// Collects each count on its own, so one failing query blanks only its figure.
+#[derive(Default)]
+struct Failures(Vec<&'static str>);
 
 pub async fn overview(State(state): State<AppState>) -> Result<CachedView, AdminError> {
     state
@@ -67,14 +74,22 @@ async fn load(state: &AppState) -> Result<Overview, AdminError> {
     let players = CacheRepository::new(pool);
     let guild_snapshots = GuildCacheRepository::new(pool);
     let guilds = GuildCurrentRepository::new(pool);
-    let (counts, bot) = tokio::join!(
+    let (
+        (registered, trusted, requests, active, by_type),
+        (player_count, snapshots, storage, guild_count, guild_snaps, guild_storage),
+        bot,
+    ) = tokio::join!(
         async {
-            tokio::try_join!(
+            tokio::join!(
                 members.count(),
                 members.count_trusted(),
                 members.total_requests(),
                 blacklist.count_active_tags(),
                 blacklist.count_active_tags_by_type(),
+            )
+        },
+        async {
+            tokio::join!(
                 players.count_unique_players(),
                 players.count_snapshots(),
                 players.storage_bytes(),
@@ -85,44 +100,46 @@ async fn load(state: &AppState) -> Result<Overview, AdminError> {
         },
         bot_installs(state),
     );
-    let (
-        registered,
-        trusted,
-        requests,
-        active,
-        by_type,
-        players,
-        snapshots,
-        storage,
-        guilds,
-        guild_snaps,
-        guild_storage,
-    ) = counts.context("count the overview")?;
+    let mut failed = Failures::default();
     Ok(Overview {
         bot,
         members: Members {
-            registered,
-            trusted,
-            lifetime_requests: requests,
+            registered: failed.read("registered members", registered),
+            trusted: failed.read("trusted members", trusted),
+            lifetime_requests: failed.read("lifetime requests", requests),
         },
         blacklist: Blacklist {
-            active,
-            by_type: by_type
+            active: failed.read("active tags", active),
+            by_type: failed
+                .read("tags by type", by_type)
+                .unwrap_or_default()
                 .into_iter()
                 .map(|(tag_type, count)| TagCount { tag_type, count })
                 .collect(),
         },
         players: Cached {
-            tracked: players,
-            snapshots,
-            storage_bytes: storage,
+            tracked: failed.read("tracked players", player_count),
+            snapshots: failed.read("player snapshots", snapshots),
+            storage_bytes: failed.read("player cache size", storage),
         },
         guilds: Cached {
-            tracked: guilds,
-            snapshots: guild_snaps,
-            storage_bytes: guild_storage,
+            tracked: failed.read("tracked guilds", guild_count),
+            snapshots: failed.read("guild snapshots", guild_snaps),
+            storage_bytes: failed.read("guild cache size", guild_storage),
         },
+        failures: failed.0,
     })
+}
+
+impl Failures {
+    fn read<T, E: Display>(&mut self, figure: &'static str, outcome: Result<T, E>) -> Option<T> {
+        outcome
+            .inspect_err(|error| {
+                warn!(%error, figure, "count an overview figure");
+                self.0.push(figure);
+            })
+            .ok()
+    }
 }
 
 async fn bot_installs(state: &AppState) -> Option<BotInstalls> {

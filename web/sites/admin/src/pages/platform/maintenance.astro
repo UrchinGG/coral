@@ -26,50 +26,72 @@ import Admin from "@/layouts/Admin.astro";
           <button class="button">Recompute</button>
         </form>
       </section>
-      <section class="panel" data-pending>
+      <section class="panel">
         <h2 class="panel-title">Pending</h2>
+        <div data-pending>
+          <p class="muted">Loading…</p>
+        </div>
+        <div class="kv-row">
+          <span class="dim">Maintenance window</span>
+          <span data-window>…</span>
+        </div>
       </section>
     </div>
     <h2 class="group-title">Audit Log</h2>
-    <input
-      class="field"
-      type="search"
-      placeholder="Filter by staff, action or target"
-      aria-label="Filter the audit log"
-      data-filter
-    />
+    <div data-audit-search></div>
     <div class="table" data-actions></div>
+    <p class="muted" data-audit-status></p>
     <button type="button" class="button" data-older hidden>
       Load older
     </button>
   </div>
 </Admin>
 
+<style is:global>
+  #maintenance .table-row.audit {
+    grid-template-columns:
+      130px minmax(110px, 1fr) minmax(140px, 1.2fr) minmax(140px, 1.4fr)
+      minmax(140px, 1.6fr);
+    min-width: 760px;
+
+    & > span:last-child {
+      white-space: normal;
+    }
+  }
+</style>
+
 <script>
-  import { API } from "@/lib/paths";
   import { load, send } from "@/lib/api";
   import { el, row } from "@/lib/dom";
+  import {
+    TIME_RANGES,
+    filterBar,
+    rangeStart,
+    type FilterState,
+  } from "@/lib/filterbar";
   import { FORMATS, titleCase } from "@/lib/format";
   import type { Labels } from "@/lib/members";
-  import { refLink, refName, type Ref } from "@/lib/refs";
+  import {
+    ACTIVE_STATES,
+    lastResult,
+    pollsFor,
+    type JobStatus,
+    type RollupState,
+  } from "@/lib/maintenance";
+  import { page } from "@/lib/paths";
+  import { refLink, type Ref } from "@/lib/refs";
   import { ago, moment } from "@/lib/time";
-
-  interface JobStatus {
-    state: string;
-    started_at: string;
-    finished_at: string | null;
-    progress: unknown;
-    error: string | null;
-  }
 
   interface Maintenance {
     jobs: { name: string; status: JobStatus | null }[];
-    pending: {
-      subjects: { spans: unknown[] };
-      discord_names: number;
-      indexes: string[];
-    };
+    rollups: RollupState;
     window_open: boolean;
+  }
+
+  interface Pending {
+    subjects: { spans: unknown[] };
+    discord_names: number;
+    indexes: string[];
   }
 
   interface AdminAction {
@@ -79,12 +101,20 @@ import Admin from "@/layouts/Admin.astro";
     action: string;
     target: Ref | null;
     target_text: string;
+    server_id: string | null;
+    details: Record<string, unknown> | null;
+  }
+
+  interface Facets {
+    staff: string[];
+    actions: string[];
+    labels: Labels;
   }
 
   const STARTABLE = ["subjects", "discord-names", "index-catchup"];
-  const ACTIVE = ["running", "waiting"];
   const POLL_MS = 5_000;
   const PAGE = 50;
+  const NO_LABELS: Labels = { discord: {}, minecraft: {} };
   const DESCRIPTIONS: Record<string, string> = {
     rollups:
       "Rolls traffic, callers, network and top players out of the request log. Runs by itself.",
@@ -97,18 +127,23 @@ import Admin from "@/layouts/Admin.astro";
   const root = document.getElementById("maintenance")!;
   const part = <T extends HTMLElement = HTMLElement>(name: string) =>
     root.querySelector<T>(`[data-${name}]`)!;
+  const audit: FilterState = { q: "", picks: {}, range: "7d" };
   let poll: ReturnType<typeof setTimeout>;
+  let polling = false;
+  let before: string | null = null;
+  let generation = 0;
+  let facets: Promise<Facets> | null = null;
 
   const stateClass = (state: string) =>
-    state === "failed" ? "bad" : ACTIVE.includes(state) ? "ok" : "dim";
+    state === "failed" ? "bad" : ACTIVE_STATES.includes(state) ? "ok" : "dim";
 
-  function job(entry: Maintenance["jobs"][number]) {
+  function job(entry: Maintenance["jobs"][number], rollups: RollupState) {
     const status = entry.status;
     const start = el("button", {
       type: "button",
       className: "button small",
       textContent: "Start",
-      disabled: !!status && ACTIVE.includes(status.state),
+      disabled: !!status && ACTIVE_STATES.includes(status.state),
     });
     start.addEventListener("click", async () => {
       part("status").textContent = (await send(
@@ -120,8 +155,7 @@ import Admin from "@/layouts/Admin.astro";
         : "That job didn't start.";
       refreshJobs();
     });
-    const progress = status?.progress ? JSON.stringify(status.progress) : "";
-    const line = el(
+    return el(
       "div",
       { className: "table-row job" },
       el(
@@ -145,12 +179,11 @@ import Admin from "@/layouts/Admin.astro";
         textContent: status ? ago(status.finished_at ?? status.started_at) : "",
       }),
       el("span", {
-        className: status?.error ? "bad" : "mono dim",
-        textContent: status?.error ?? progress,
+        className: status?.error ? "bad" : "dim",
+        textContent: status ? lastResult(entry.name, status, rollups) : "",
       }),
       STARTABLE.includes(entry.name) ? start : el("span"),
     );
-    return line;
   }
 
   async function refreshJobs() {
@@ -159,31 +192,152 @@ import Admin from "@/layouts/Admin.astro";
     const head = el(
       "div",
       { className: "table-row job head" },
-      ...["Job", "State", "Last Run", "Progress", ""].map((label) =>
+      ...["Job", "State", "Last Run", "Last Result", ""].map((label) =>
         el("span", { textContent: label }),
       ),
     );
-    part("jobs").replaceChildren(head, ...data.jobs.map(job));
+    part("jobs").replaceChildren(
+      head,
+      ...data.jobs.map((entry) => job(entry, data.rollups)),
+    );
+    const finished = polling && !pollsFor(data.jobs);
+    polling = pollsFor(data.jobs);
+    if (polling) poll = setTimeout(refreshJobs, POLL_MS);
+    if (finished) refreshPending();
+    part("window").textContent = data.window_open ? "Open" : "Closed";
+  }
+
+  async function refreshPending() {
+    const pending = await load<Pending>("/maintenance/pending");
     part("pending").replaceChildren(
-      el("h2", { className: "panel-title", textContent: "Pending" }),
-      row("Discord names to fetch", FORMATS.number(data.pending.discord_names)),
+      row("Discord names to fetch", FORMATS.number(pending.discord_names)),
       row(
         "Indexes to build",
-        data.pending.indexes.length ? data.pending.indexes.join(", ") : "None",
+        pending.indexes.length ? pending.indexes.join(", ") : "None",
       ),
       row(
         "Subject spans to backfill",
-        FORMATS.number(data.pending.subjects.spans.length),
+        FORMATS.number(pending.subjects.spans.length),
       ),
-      row("Maintenance window", data.window_open ? "Open" : "Closed"),
     );
-    if (
-      data.jobs.some(
-        (entry) => entry.status && ACTIVE.includes(entry.status.state),
-      )
-    )
-      poll = setTimeout(refreshJobs, POLL_MS);
   }
+
+  function detailText(details: AdminAction["details"]) {
+    const entries = Object.entries(details ?? {}).filter(
+      ([, value]) => value !== null && value !== "",
+    );
+    const text = (value: unknown) =>
+      typeof value === "boolean"
+        ? value
+          ? "Yes"
+          : "No"
+        : typeof value === "object"
+          ? JSON.stringify(value)
+          : String(value);
+    if (entries.length === 1 && typeof entries[0][1] === "string")
+      return entries[0][1];
+    return entries
+      .map(([key, value]) => `${titleCase(key)}: ${text(value)}`)
+      .join(" · ");
+  }
+
+  function target(item: AdminAction) {
+    if (item.target) return refLink(item.target, NO_LABELS);
+    if (item.server_id)
+      return el("a", {
+        className: "ref",
+        href: page(`/sync/servers?id=${item.server_id}`),
+        textContent: item.target_text,
+      });
+    return el("span", { textContent: item.target_text });
+  }
+
+  function actionLine(item: AdminAction) {
+    return el(
+      "div",
+      { className: "table-row audit" },
+      el("span", { className: "dim", textContent: moment(item.at) }),
+      el("span", {}, refLink(item.actor, NO_LABELS)),
+      el("span", { textContent: titleCase(item.action) }),
+      el("span", {}, target(item)),
+      el("span", { className: "dim", textContent: detailText(item.details) }),
+    );
+  }
+
+  function auditParams() {
+    const params = new URLSearchParams({ limit: String(PAGE) });
+    if (before) params.set("before", before);
+    if (audit.q) params.set("q", audit.q);
+    if (audit.picks.staff) params.set("staff", audit.picks.staff.value);
+    if (audit.picks.action) params.set("action", audit.picks.action.value);
+    const from = rangeStart(audit.range);
+    if (from) params.set("from", from);
+    return params;
+  }
+
+  async function older() {
+    const mine = generation;
+    const result = await load<{
+      items: AdminAction[];
+      next_before: string | null;
+    }>(`/actions?${auditParams()}`);
+    if (mine !== generation) return;
+    part("actions").append(...result.items.map(actionLine));
+    before = result.next_before;
+    part("older").hidden = before === null;
+    part("audit-status").textContent =
+      part("actions").childElementCount > 1 ? "" : "No action matches.";
+  }
+
+  function reloadAudit() {
+    generation += 1;
+    before = null;
+    part("actions").replaceChildren(
+      el(
+        "div",
+        { className: "table-row audit head" },
+        ...["When", "Staff", "Action", "Target", "Detail"].map((label) =>
+          el("span", { textContent: label }),
+        ),
+      ),
+    );
+    part("audit-status").textContent = "Loading…";
+    older().catch((error: Error) => {
+      part("audit-status").textContent = error.message;
+    });
+  }
+
+  const loadFacets = () => (facets ??= load<Facets>("/actions/facets"));
+
+  const auditBar = filterBar({
+    placeholder: "Search staff, actions, targets",
+    hint: "Search actions, targets and details, or pick a staff member or an action",
+    state: audit,
+    ranges: TIME_RANGES,
+    fields: [
+      {
+        key: "staff",
+        label: "Staff",
+        values: async () => {
+          const { staff, labels } = await loadFacets();
+          return staff.map((id) => ({
+            value: id,
+            label: labels.discord[id] ?? id,
+          }));
+        },
+      },
+      {
+        key: "action",
+        label: "Action",
+        values: async () =>
+          (await loadFacets()).actions.map((action) => ({
+            value: action,
+            label: titleCase(action),
+          })),
+      },
+    ],
+    onChange: reloadAudit,
+  });
 
   part<HTMLFormElement>("recompute").addEventListener(
     "submit",
@@ -205,86 +359,9 @@ import Admin from "@/layouts/Admin.astro";
     },
   );
 
-  const actions: { item: AdminAction; line: HTMLElement; text: string }[] = [];
-  let before: string | null = null;
-  let labels: Labels = { discord: {}, minecraft: {} };
-
-  async function labelsFor(items: AdminAction[]) {
-    const discord = items.flatMap((item) =>
-      [item.actor, item.target].flatMap((ref) =>
-        ref?.kind === "account" ? [ref.discord_id] : [],
-      ),
-    );
-    const response = await fetch(`${API}/labels`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ discord, minecraft: [] }),
-    });
-    if (response.ok) {
-      const fresh: Labels = await response.json();
-      labels = {
-        discord: { ...labels.discord, ...fresh.discord },
-        minecraft: { ...labels.minecraft, ...fresh.minecraft },
-      };
-    }
-  }
-
-  function applyFilter() {
-    const text = part<HTMLInputElement>("filter").value.trim().toLowerCase();
-    for (const entry of actions)
-      entry.line.hidden = Boolean(text) && !entry.text.includes(text);
-  }
-
-  async function older() {
-    const params = new URLSearchParams({ limit: String(PAGE) });
-    if (before) params.set("before", before);
-    const page = await load<{
-      items: AdminAction[];
-      next_before: string | null;
-    }>(`/actions?${params}`);
-    await labelsFor(page.items);
-    for (const item of page.items) {
-      const line = el(
-        "div",
-        { className: "table-row audit" },
-        el("span", { className: "dim", textContent: moment(item.at) }),
-        el("span", {}, refLink(item.actor, labels)),
-        el("span", { textContent: titleCase(item.action) }),
-        el(
-          "span",
-          {},
-          item.target ? refLink(item.target, labels) : item.target_text,
-        ),
-      );
-      actions.push({
-        item,
-        line,
-        text: [
-          refName(item.actor, labels),
-          item.action,
-          item.target ? refName(item.target, labels) : item.target_text,
-        ]
-          .join(" ")
-          .toLowerCase(),
-      });
-      part("actions").append(line);
-    }
-    before = page.next_before;
-    part("older").hidden = before === null;
-    applyFilter();
-  }
-
-  part("actions").append(
-    el(
-      "div",
-      { className: "table-row audit head" },
-      ...["When", "Staff", "Action", "Target"].map((label) =>
-        el("span", { textContent: label }),
-      ),
-    ),
-  );
+  part("audit-search").append(auditBar.element);
   part("older").addEventListener("click", older);
-  part("filter").addEventListener("input", applyFilter);
   refreshJobs();
-  older();
+  refreshPending();
+  reloadAudit();
 </script>

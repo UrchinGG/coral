@@ -8,6 +8,7 @@ import StatGroup from "@/components/StatGroup.astro";
 <Admin title="Home">
   <Capacity />
   <div id="overview" class="overview">
+    <p class="muted" data-status hidden></p>
     <StatGroup
       title="Bot"
       stats={[
@@ -65,15 +66,43 @@ import StatGroup from "@/components/StatGroup.astro";
   import { tagPill } from "@/lib/tags";
 
   interface Overview {
+    bot: { servers: number; users: number } | null;
     blacklist: { by_type: { tag_type: string; count: number }[] };
+    failures: string[];
   }
 
+  const UNREAD = "—";
   const root = document.getElementById("overview")!;
+  const status = root.querySelector<HTMLElement>("[data-status]")!;
   const template = document.getElementById("tag-stat") as HTMLTemplateElement;
+
+  const report = (text: string) => {
+    status.hidden = !text;
+    status.textContent = text;
+  };
+
+  function markUnread(overview: Overview) {
+    for (const figure of root.querySelectorAll<HTMLElement>("[data-value]")) {
+      if (figure.textContent?.trim() !== UNREAD) continue;
+      figure.textContent = "Unavailable";
+      figure.classList.add("dim");
+    }
+    report(
+      [
+        overview.bot ? "" : "Discord didn't report the bot's install counts.",
+        overview.failures.length
+          ? `Couldn't read ${overview.failures.join(", ")}.`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+  }
 
   load<Overview>("/overview").then(
     (overview) => {
       fill(root, overview);
+      markUnread(overview);
       const tags = overview.blacklist.by_type.map(({ tag_type, count }) => {
         const stat = template.content.firstElementChild!.cloneNode(
           true,
@@ -86,6 +115,9 @@ import StatGroup from "@/components/StatGroup.astro";
       });
       template.before(...tags);
     },
-    (error: Error) => failed(root, error.message),
+    (error: Error) => {
+      failed(root, error.message);
+      report(`Couldn't load the overview: ${error.message}`);
+    },
   );
 </script>

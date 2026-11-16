@@ -5,6 +5,7 @@ use crate::error::AdminError;
 mod accounts;
 mod batches;
 mod blocks;
+mod briefs;
 #[cfg(test)]
 mod fixtures;
 mod forms;
@@ -21,6 +22,7 @@ mod tagged;
 mod tags;
 
 pub use blocks::{block, unblock};
+pub use briefs::{BriefsQuery, PlayerBriefs, read_briefs};
 pub use lookups::PlayerLookups;
 pub use params::{RequestersParams, StreamParams};
 pub use profile::{PlayerCore, read_core};

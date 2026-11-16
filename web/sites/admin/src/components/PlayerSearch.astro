@@ -15,60 +15,15 @@
 <script>
   import { can, session } from "@/lib/session";
   import { load } from "@/lib/api";
+  import { loadBriefs } from "@/lib/briefs";
   import { el, panel, row } from "@/lib/dom";
   import { FORMATS } from "@/lib/format";
   import type { Labels } from "@/lib/members";
-  import { refLink, type Ref } from "@/lib/refs";
-  import { search, searchMojang } from "@/lib/search";
+  import { refLink, refText, refUrl, type Ref } from "@/lib/refs";
+  import { search, searchMojang, type SearchHit } from "@/lib/search";
   import { setQuery } from "@/lib/tabbar";
   import { tagPill } from "@/lib/tags";
   import { ago } from "@/lib/time";
-
-  const SEARCH_DELAY_MS = 300;
-  const MINECRAFT_NAME = /^[a-z0-9_]{3,16}$/i;
-  const root = document.getElementById("player-search")!;
-  const input = root.querySelector("input")!;
-  const results = root.querySelector<HTMLElement>("[data-results]")!;
-  const lists = root.querySelector<HTMLElement>("[data-lists]")!;
-  let generation = 0;
-
-  async function run(q: string) {
-    const mine = ++generation;
-    setQuery("q", q || null);
-    lists.hidden = Boolean(q);
-    if (!q) return results.replaceChildren();
-    results.replaceChildren(
-      el("p", { className: "muted", textContent: "Searching…" }),
-    );
-    try {
-      const response = await search(q);
-      let hits = response.hits.filter((hit) => hit.ref.kind === "player");
-      if (!hits.length && MINECRAFT_NAME.test(q))
-        hits = (await searchMojang(q)).filter(
-          (hit) => hit.ref.kind === "player",
-        );
-      if (mine !== generation) return;
-      const rows = hits.map((hit) =>
-        row(hit.reason, refLink(hit.ref, response.labels)),
-      );
-      results.replaceChildren(
-        rows.length
-          ? panel(`Players · ${rows.length}`, ...rows)
-          : el("p", {
-              className: "muted",
-              textContent: `No player matches "${q}".`,
-            }),
-      );
-    } catch (error) {
-      if (mine === generation)
-        results.replaceChildren(
-          el("p", {
-            className: "muted",
-            textContent: (error as Error).message,
-          }),
-        );
-    }
-  }
 
   interface Top {
     players: { player: string; requests: number; last_seen: string }[];
@@ -86,13 +41,167 @@
     labels: Labels;
   }
 
+  const SEARCH_DELAY_MS = 300;
+  const MINECRAFT_NAME = /^[a-z0-9_]{3,16}$/i;
+  const NOT_FOUND = "answered 404";
+  const COLUMNS = ["Player", "Matched", "Tag", "Linked To", "Last Seen"];
+  const root = document.getElementById("player-search")!;
+  const input = root.querySelector("input")!;
+  const results = root.querySelector<HTMLElement>("[data-results]")!;
+  const lists = root.querySelector<HTMLElement>("[data-lists]")!;
+  let generation = 0;
+
+  const note = (text: string) =>
+    el("p", { className: "muted", textContent: text });
+
+  async function run(q: string) {
+    const mine = ++generation;
+    setQuery("q", q || null);
+    lists.hidden = Boolean(q);
+    if (!q) return results.replaceChildren();
+    results.replaceChildren(note("Searching…"));
+    try {
+      const response = await search(q);
+      if (mine !== generation) return;
+      const hits = response.hits.filter((hit) => hit.ref.kind === "player");
+      const fetchable =
+        MINECRAFT_NAME.test(q) && !hits.some((hit) => hit.exact);
+      if (!hits.length && !fetchable)
+        return results.replaceChildren(
+          note(
+            `No tracked player matches "${q}", and it is not a valid Minecraft name.`,
+          ),
+        );
+      results.replaceChildren(
+        resultTable(hits, response.labels, fetchable ? q : null),
+      );
+    } catch (error) {
+      if (mine === generation)
+        results.replaceChildren(note((error as Error).message));
+    }
+  }
+
+  function resultTable(
+    hits: SearchHit[],
+    labels: Labels,
+    uncached: string | null,
+  ) {
+    const rows = hits.map((hit) => hitRow(hit, labels));
+    fillBriefs(rows);
+    return el(
+      "section",
+      { className: "stack" },
+      el("h2", {
+        className: "group-title",
+        textContent: `Results · ${hits.length}`,
+      }),
+      el(
+        "div",
+        { className: "table" },
+        el(
+          "div",
+          { className: "table-row player-hit head" },
+          ...COLUMNS.map((label) => el("span", { textContent: label })),
+        ),
+        ...rows,
+        ...(uncached ? [uncachedRow(uncached)] : []),
+      ),
+    );
+  }
+
+  function hitRow(hit: SearchHit, labels: Labels) {
+    const link = el(
+      "a",
+      { className: "table-row player-hit", href: refUrl(hit.ref) ?? "" },
+      refText(hit.ref, labels),
+      el("span", { className: "dim", textContent: hit.reason }),
+      el("span"),
+      el("span"),
+      el("span", { className: "dim" }),
+    );
+    if (hit.ref.kind === "player") link.dataset.player = hit.ref.uuid;
+    return link;
+  }
+
+  async function fillBriefs(rows: HTMLElement[]) {
+    const players = rows.map((line) => line.dataset.player!);
+    if (!players.length) return;
+    const briefs = await loadBriefs(players);
+    for (const brief of briefs.players) {
+      const line = rows.find(
+        (candidate) => candidate.dataset.player === brief.player,
+      );
+      const [, , tag, owner, seen] = line?.children ?? [];
+      tag?.replaceChildren(
+        brief.tag ? tagPill(brief.tag.tag_type, brief.tag.display_name) : "",
+      );
+      owner?.replaceChildren(
+        brief.owner ? refText(brief.owner, briefs.labels) : "",
+      );
+      if (seen)
+        seen.textContent = brief.last_seen ? ago(brief.last_seen) : "Never";
+    }
+  }
+
+  function uncachedRow(name: string) {
+    const line = el(
+      "button",
+      { type: "button", className: "table-row player-hit" },
+      el("span", { textContent: name }),
+      el("span", {
+        className: "dim",
+        textContent: "Not cached yet, opening looks it up",
+      }),
+    );
+    line.addEventListener("click", async () => {
+      line.disabled = true;
+      const found = (await searchMojang(name).catch(() => [])).find(
+        (hit) => hit.ref.kind === "player",
+      );
+      const url = found && refUrl(found.ref);
+      if (url) location.href = url;
+      else
+        line.replaceChildren(
+          el("span", {
+            className: "dim",
+            textContent: `Mojang has no player named "${name}".`,
+          }),
+        );
+    });
+    return line;
+  }
+
   const topPanel = (top: Top) =>
     panel(
       "Top Looked Up · 24 h",
-      ...top.players.map((entry) =>
+      ...(top.players.length
+        ? top.players.map((entry) =>
+            row(
+              FORMATS.number(entry.requests),
+              refLink({ kind: "player", uuid: entry.player }, top.labels),
+            ),
+          )
+        : [note("Nobody was looked up in the last 24 hours.")]),
+    );
+
+  const topFailed = (error: Error) =>
+    panel(
+      "Top Looked Up · 24 h",
+      note(
+        error.message.endsWith(NOT_FOUND)
+          ? "No ranking yet. It appears once the hourly traffic rollup has run."
+          : error.message,
+      ),
+    );
+
+  const taggedPanel = (tagged: Tagged) =>
+    panel(
+      "Recently Tagged",
+      ...tagged.items.map((item) =>
         row(
-          FORMATS.number(entry.requests),
-          refLink({ kind: "player", uuid: entry.player }, top.labels),
+          tagPill(item.tag_type, item.display_name),
+          refLink(item.player, tagged.labels),
+          el("span", { className: "dim", textContent: ` · ${ago(item.at)}` }),
         ),
       ),
     );
@@ -100,24 +209,14 @@
   const viewer = await session();
   Promise.all([
     can(viewer, "traffic")
-      ? load<Top>("/players/top?window=24h")
-      : Promise.resolve(undefined),
-    load<Tagged>("/players/recently-tagged"),
-  ]).then(([top, tagged]) => {
-    lists.replaceChildren(
-      ...(top ? [topPanel(top)] : []),
-      panel(
-        "Recently Tagged",
-        ...tagged.items.map((item) =>
-          row(
-            tagPill(item.tag_type, item.display_name),
-            refLink(item.player, tagged.labels),
-            el("span", { className: "dim", textContent: ` · ${ago(item.at)}` }),
-          ),
-        ),
-      ),
-    );
-  });
+      ? load<Top>("/players/top?window=24h").then(topPanel, topFailed)
+      : undefined,
+    load<Tagged>("/players/recently-tagged").then(taggedPanel, (error: Error) =>
+      panel("Recently Tagged", note(error.message)),
+    ),
+  ]).then((panels) =>
+    lists.replaceChildren(...panels.filter((node) => node !== undefined)),
+  );
 
   let typing: ReturnType<typeof setTimeout>;
   input.addEventListener("input", () => {
@@ -134,3 +233,29 @@
     run(initial);
   }
 </script>
+
+<style>
+  #player-search :global(.table-row.player-hit) {
+    grid-template-columns:
+      minmax(140px, 1.2fr) minmax(160px, 1.6fr) 130px minmax(110px, 1fr)
+      110px;
+    min-width: 720px;
+  }
+
+  #player-search :global(.table-row.player-hit:not(.head)) {
+    width: 100%;
+    border: 0;
+    border-top: 1px solid var(--color-divider);
+    background: none;
+    color: inherit;
+    font: inherit;
+    font-size: var(--text-sm);
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+
+    &:hover {
+      background: var(--color-surface-hover);
+    }
+  }
+</style>
