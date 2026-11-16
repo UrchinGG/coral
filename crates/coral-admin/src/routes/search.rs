@@ -1,9 +1,10 @@
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::routing::post;
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use serde::Deserialize;
 
+use crate::auth::AdminActor;
 use crate::error::AdminError;
 use crate::search::{
     DEFAULT_HIT_LIMIT, MAX_HIT_LIMIT, MAX_QUERY_CHARS, SearchHit, SearchResults, Searcher,
@@ -32,11 +33,14 @@ pub fn router() -> Router<AppState> {
 
 async fn local(
     State(state): State<AppState>,
+    Extension(actor): Extension<AdminActor>,
     body: Result<Json<SearchBody>, JsonRejection>,
 ) -> Result<Json<SearchResults>, AdminError> {
     let Json(body) = body?;
     body.validate()?;
-    let results = Searcher::new(&state).search(&body.q, body.limit).await?;
+    let results = Searcher::new(&state)
+        .search(&body.q, body.limit, actor)
+        .await?;
     Ok(Json(results))
 }
 

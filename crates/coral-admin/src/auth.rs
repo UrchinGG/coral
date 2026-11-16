@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, Request, State};
@@ -10,6 +11,7 @@ use axum::middleware::{Next, from_fn_with_state};
 use axum::response::{AppendHeaders, Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use coral_redis::web_session;
+use database::{AccessRank, Database, MemberRepository};
 use serde::Deserialize;
 use url::Url;
 
@@ -21,20 +23,46 @@ const LOGOUT_PATH: &str = "/auth/logout";
 const ASSETS_PREFIX: &str = "/assets/";
 const SIGN_IN_URL: &str = "https://urchin.gg/auth/discord";
 const LOGIN_TEMPLATE: &str = include_str!("login.html");
-const SIGN_IN_PROMPT: &str = r#"<p>Sign in with the Discord account registered as an owner to continue.</p>
+const SIGN_IN_PROMPT: &str = r#"<p>Sign in with your Urchin staff Discord account to continue.</p>
 <a href="{sign_in}">Sign in with Discord</a>"#;
-const NOT_AN_OWNER: &str = r#"<p class="notice">That Discord account is not an owner.</p>
+const NOT_STAFF: &str = r#"<p class="notice">That Discord account is not Urchin staff.</p>
 <form method="post" action="/auth/logout"><button>Sign out</button></form>"#;
 
 #[derive(Clone, Copy)]
 pub struct AdminActor {
     pub discord_id: i64,
+    pub rank: AccessRank,
 }
 
 pub struct AuthConfig {
     pub owner_ids: HashSet<i64>,
     pub base_url: Url,
     pub sessions: Arc<dyn SessionStore>,
+    pub ranks: Arc<dyn StaffRanks>,
+}
+
+/// Where a signed-in Discord account's Urchin access rank is read from.
+#[async_trait]
+pub trait StaffRanks: Send + Sync {
+    async fn rank(&self, discord_id: i64) -> AccessRank;
+}
+
+#[async_trait]
+impl StaffRanks for Database {
+    async fn rank(&self, discord_id: i64) -> AccessRank {
+        match MemberRepository::new(self.pool())
+            .get_by_discord_id(discord_id)
+            .await
+        {
+            Ok(member) => member.map_or(AccessRank::Default, |member| {
+                AccessRank::from_level(member.access_level)
+            }),
+            Err(error) => {
+                tracing::error!("could not read the access rank of {discord_id}: {error}");
+                AccessRank::Default
+            }
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -49,11 +77,17 @@ impl AuthConfig {
         self.sessions.discord_id(token).await
     }
 
-    async fn owner(&self, headers: &HeaderMap) -> Option<AdminActor> {
+    async fn staff(&self, headers: &HeaderMap) -> Option<AdminActor> {
         let discord_id = self.discord_id(headers).await?;
-        self.owner_ids
-            .contains(&discord_id)
-            .then_some(AdminActor { discord_id })
+        let rank = self.rank(discord_id).await;
+        (rank >= AccessRank::Helper).then_some(AdminActor { discord_id, rank })
+    }
+
+    pub async fn rank(&self, discord_id: i64) -> AccessRank {
+        if self.owner_ids.contains(&discord_id) {
+            return AccessRank::Owner;
+        }
+        self.ranks.rank(discord_id).await
     }
 
     fn sign_in_url(&self, next: &str) -> String {
@@ -81,28 +115,24 @@ where
         .with_state(auth)
 }
 
-pub async fn require_owner(
+pub async fn require_staff(
     State(auth): State<Arc<AuthConfig>>,
     mut request: Request,
     next: Next,
 ) -> Response {
-    let Some(actor) = auth.owner(request.headers()).await else {
-        return json_error(
-            StatusCode::UNAUTHORIZED,
-            "unauthorized",
-            "Sign in as an owner",
-        );
+    let Some(actor) = auth.staff(request.headers()).await else {
+        return json_error(StatusCode::UNAUTHORIZED, "unauthorized", "Sign in as staff");
     };
     request.extensions_mut().insert(actor);
     next.run(request).await
 }
 
-pub async fn require_owner_page(
+pub async fn require_staff_page(
     State(auth): State<Arc<AuthConfig>>,
     mut request: Request,
     next: Next,
 ) -> Response {
-    if let Some(actor) = auth.owner(request.headers()).await {
+    if let Some(actor) = auth.staff(request.headers()).await {
         request.extensions_mut().insert(actor);
         return next.run(request).await;
     }
@@ -122,8 +152,10 @@ async fn login_page(
     let requested = query.map_or_else(|_| String::new(), |Query(query)| query.next);
     let next = security::safe_next(&requested, &auth.base_url);
     let body = match auth.discord_id(&headers).await {
-        Some(id) if auth.owner_ids.contains(&id) => return Redirect::to(&next).into_response(),
-        Some(_) => NOT_AN_OWNER.to_string(),
+        Some(id) if auth.rank(id).await >= AccessRank::Helper => {
+            return Redirect::to(&next).into_response();
+        }
+        Some(_) => NOT_STAFF.to_string(),
         None => SIGN_IN_PROMPT.replace("{sign_in}", &auth.sign_in_url(&next)),
     };
     Html(LOGIN_TEMPLATE.replace("{body}", &body)).into_response()

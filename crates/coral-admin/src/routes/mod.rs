@@ -105,7 +105,7 @@ async fn serve_page(
         let html = std::str::from_utf8(&page.data).map_err(|error| {
             AdminError::Internal(format!("the embedded {path} page is not UTF-8: {error}"))
         })?;
-        return Ok(Html(boot::inline_into(html, &boot.boot(actor.discord_id))?).into_response());
+        return Ok(Html(boot::inline_into(html, &boot.boot(actor))?).into_response());
     }
     let file = Assets::get(path)
         .ok_or_else(|| AdminError::NotFound(format!("the admin has no page at /{path}")))?;

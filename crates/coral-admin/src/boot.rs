@@ -1,9 +1,11 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
+use crate::auth::AdminActor;
 use crate::coverage::{Coverage, CoverageCache};
 use crate::error::AdminError;
 use crate::extensions::ExtensionSummary;
+use crate::permissions::Permission;
 use crate::{serde_id, serde_ts};
 
 pub const BUILD_ENV: &str = "CORAL_BUILD";
@@ -24,6 +26,8 @@ pub struct BootSource {
 pub struct Boot {
     #[serde(serialize_with = "serde_id::discord_id")]
     pub discord_id: i64,
+    pub rank: &'static str,
+    pub permissions: Vec<Permission>,
     pub build: Option<String>,
     #[serde(serialize_with = "serde_ts::micros")]
     pub now: DateTime<Utc>,
@@ -51,12 +55,19 @@ impl BootSource {
         Self::new(build, coverage, extensions)
     }
 
-    pub fn boot(&self, discord_id: i64) -> Boot {
+    pub fn boot(&self, viewer: AdminActor) -> Boot {
+        let extensions = if viewer.can(Permission::Owner) {
+            self.extensions.clone()
+        } else {
+            Vec::new()
+        };
         Boot {
-            discord_id,
+            discord_id: viewer.discord_id,
+            rank: viewer.rank.label(),
+            permissions: Permission::granted(viewer.rank),
             build: self.build.clone(),
             now: Utc::now(),
-            extensions: self.extensions.clone(),
+            extensions,
             coverage: self.coverage.current(),
         }
     }
@@ -94,7 +105,10 @@ mod tests {
             CoverageCache::fixed(Coverage::default()),
             extensions,
         );
-        source.boot(1_547_000_000_000_000_000)
+        source.boot(AdminActor {
+            discord_id: 1_547_000_000_000_000_000,
+            rank: database::AccessRank::Owner,
+        })
     }
 
     fn payload(html: &str) -> serde_json::Value {

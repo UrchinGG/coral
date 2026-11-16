@@ -5,7 +5,7 @@ use axum::middleware::{from_fn, from_fn_with_state};
 
 use crate::auth::{self, AuthConfig};
 use crate::boot::BootSource;
-use crate::{layers, routes, security};
+use crate::{layers, permissions, routes, security};
 
 pub fn router<S>(auth_config: Arc<AuthConfig>, boot: BootSource, api: Router<S>) -> Router<S>
 where
@@ -17,11 +17,12 @@ where
             auth_config.clone(),
             security::same_origin_writes,
         ))
-        .layer(from_fn_with_state(auth_config.clone(), auth::require_owner))
+        .layer(from_fn(permissions::authorize))
+        .layer(from_fn_with_state(auth_config.clone(), auth::require_staff))
         .layer(from_fn(security::no_store));
     let ui = routes::ui_router(boot).layer(from_fn_with_state(
         auth_config.clone(),
-        auth::require_owner_page,
+        auth::require_staff_page,
     ));
     let app = Router::new()
         .merge(auth::router(auth_config))
@@ -51,6 +52,7 @@ mod tests {
 
     const OWNER: i64 = 111;
     const STRANGER: i64 = 222;
+    const HELPER: i64 = 333;
     const BASE: &str = "https://admin.example";
     const BODY_LIMIT: usize = 1 << 20;
     const LOGIN_PAGE_LIMIT: usize = 2048;
@@ -71,6 +73,7 @@ mod tests {
                 owner_ids: HashSet::from([OWNER]),
                 base_url: Url::parse(BASE).unwrap(),
                 sessions: sessions.clone(),
+                ranks: Arc::new(FixedRanks),
             };
             Self {
                 auth: Arc::new(auth),
@@ -104,9 +107,24 @@ mod tests {
         }
     }
 
+    struct FixedRanks;
+
+    #[async_trait::async_trait]
+    impl auth::StaffRanks for FixedRanks {
+        async fn rank(&self, discord_id: i64) -> database::AccessRank {
+            match discord_id {
+                HELPER => database::AccessRank::Helper,
+                _ => database::AccessRank::Default,
+            }
+        }
+    }
+
     fn stub_api() -> Router {
         let members = Router::new().route("/{id}", get(|| async { "member" }));
+        let accounts = Router::new().route("/{id}/network", get(|| async { "network" }));
         Router::new()
+            .route("/session", get(|| async { "boot" }))
+            .nest("/accounts", accounts)
             .route(
                 "/ping",
                 get(|| async { "pong" }).post(|| async { "posted" }),
@@ -487,7 +505,7 @@ mod tests {
             .await;
         assert_eq!(response.status(), StatusCode::OK);
         let page = body_text(response).await;
-        assert!(page.contains("That Discord account is not an owner."));
+        assert!(page.contains("That Discord account is not Urchin staff."));
         assert!(page.contains("<form method=\"post\" action=\"/auth/logout\">"));
         assert!(!page.contains("api.urchin.gg"));
     }
@@ -530,5 +548,26 @@ mod tests {
             assert_eq!(headers[header::REFERRER_POLICY], "no-referrer");
             assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
         }
+    }
+
+    #[tokio::test]
+    async fn a_helper_reaches_staff_routes_but_not_owner_ones() {
+        let harness = Harness::new();
+        let helper = harness.session_cookie(HELPER);
+        let session = harness
+            .send(Request::get("/api/session").header(header::COOKIE, &helper))
+            .await;
+        assert_eq!(session.status(), StatusCode::OK);
+        for path in ["/api/accounts/5/network", "/api/ping"] {
+            let response = harness
+                .send(Request::get(path).header(header::COOKIE, &helper))
+                .await;
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
+            assert_eq!(error_code(response).await, "forbidden", "{path}");
+        }
+        let owner = harness
+            .send_as_owner(Request::get("/api/accounts/5/network"))
+            .await;
+        assert_eq!(owner.status(), StatusCode::OK);
     }
 }

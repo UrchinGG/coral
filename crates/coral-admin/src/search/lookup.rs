@@ -3,6 +3,7 @@ use std::net::IpAddr;
 use uuid::Uuid;
 
 use super::input::Kind;
+use crate::permissions::Permission;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reach {
@@ -32,6 +33,24 @@ pub enum Lookup {
 }
 
 impl Lookup {
+    /// Traffic, keys, IPs and Starfish stay with the owner, so other staff never probe them.
+    pub fn permission(&self) -> Permission {
+        match self {
+            Self::Account(_)
+            | Self::MemberNumber(_)
+            | Self::DiscordName(..)
+            | Self::NameHolders { .. } => Permission::MembersRead,
+            Self::Player { .. } | Self::Guild(_) | Self::GuildName(..) => Permission::PlayersRead,
+            Self::BotLookups(_)
+            | Self::PlayerRequests(_)
+            | Self::Request(_)
+            | Self::Ip(_)
+            | Self::NamedRequests(_) => Permission::Traffic,
+            Self::ApiKey(_) | Self::KeyPrefix(_) => Permission::KeysManage,
+            Self::StarfishNumber(_) | Self::Plugin(..) => Permission::Starfish,
+        }
+    }
+
     pub fn kinds(&self) -> &'static [Kind] {
         match self {
             Self::Account(_)

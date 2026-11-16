@@ -5,6 +5,7 @@ use std::{env, net::SocketAddr};
 
 use anyhow::{Context, Result, bail};
 use coral_redis::RedisPool;
+use database::Database;
 use tokio::net::TcpListener;
 use tokio::time;
 use tracing_subscriber::EnvFilter;
@@ -27,6 +28,7 @@ mod layers;
 mod maintenance;
 mod names;
 mod perimeter;
+mod permissions;
 mod players;
 mod query;
 mod refs;
@@ -67,7 +69,7 @@ async fn main() -> Result<()> {
         .jobs_db
         .migrate_tolerating_newer_schema()
         .await?;
-    let auth = Arc::new(auth_config(&redis)?);
+    let auth = Arc::new(auth_config(&redis, connections.db.clone())?);
 
     let discord = DiscordContext::from_env()?;
     let (state, name_workers) = AppState::start(connections, auth.clone(), discord).await?;
@@ -88,11 +90,12 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn auth_config(redis: &RedisPool) -> Result<AuthConfig> {
+fn auth_config(redis: &RedisPool, ranks: Arc<Database>) -> Result<AuthConfig> {
     Ok(AuthConfig {
         owner_ids: owner_ids(&required_env("OWNER_IDS")?)?,
         base_url: admin_base_url()?,
         sessions: Arc::new(redis.clone()),
+        ranks,
     })
 }
 

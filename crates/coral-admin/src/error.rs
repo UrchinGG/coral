@@ -15,6 +15,8 @@ pub enum AdminError {
     #[error("{0}")]
     BadRequest(String),
     #[error("{0}")]
+    Forbidden(String),
+    #[error("{0}")]
     Timeout(String),
     #[error("{0}")]
     Database(String),
@@ -48,6 +50,7 @@ impl AdminError {
         match self {
             Self::NotFound(_) => "not_found",
             Self::BadRequest(_) => "bad_request",
+            Self::Forbidden(_) => "forbidden",
             Self::Timeout(_) => "timeout",
             Self::Database(_) => "database",
             Self::Redis(_) => "redis",
@@ -61,6 +64,7 @@ impl AdminError {
         match self {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
+            Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
             Self::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Redis(_) => StatusCode::SERVICE_UNAVAILABLE,
@@ -74,6 +78,7 @@ impl AdminError {
         match self {
             Self::NotFound(message)
             | Self::BadRequest(message)
+            | Self::Forbidden(message)
             | Self::Timeout(message)
             | Self::Database(message)
             | Self::Redis(message)
@@ -88,6 +93,7 @@ impl AdminError {
         match self {
             Self::NotFound(_) => Self::NotFound(message),
             Self::BadRequest(_) => Self::BadRequest(message),
+            Self::Forbidden(_) => Self::Forbidden(message),
             Self::Timeout(_) => Self::Timeout(message),
             Self::Database(_) => Self::Database(message),
             Self::Redis(_) => Self::Redis(message),
@@ -103,7 +109,7 @@ impl AdminError {
             Self::Database(_) | Self::Redis(_) | Self::Upstream(_) | Self::Internal(_) => {
                 tracing::error!(code = self.code(), "{self}")
             }
-            Self::NotFound(_) | Self::BadRequest(_) | Self::Rejected(_) => {}
+            Self::NotFound(_) | Self::BadRequest(_) | Self::Forbidden(_) | Self::Rejected(_) => {}
         }
     }
 }
@@ -192,6 +198,7 @@ mod tests {
     async fn every_variant_has_its_own_status_and_code() {
         let cases = [
             (AdminError::BadRequest(String::new()), 400, "bad_request"),
+            (AdminError::Forbidden(String::new()), 403, "forbidden"),
             (AdminError::Timeout(String::new()), 504, "timeout"),
             (AdminError::Database(String::new()), 500, "database"),
             (AdminError::Redis(String::new()), 503, "redis"),
