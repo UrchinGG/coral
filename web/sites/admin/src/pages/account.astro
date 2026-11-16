@@ -57,14 +57,6 @@ const download = (platform: string) =>
     <section class="block key" id="developer-key" hidden>
       <h2>Developer Key</h2>
     </section>
-
-    <section class="block" id="requests" hidden>
-      <div class="requests-head">
-        <h2>Requests</h2>
-        <div class="seg" role="group" aria-label="Time range"></div>
-      </div>
-      <div class="requests-chart"></div>
-    </section>
   </div>
 </Admin>
 
@@ -72,9 +64,9 @@ const download = (platform: string) =>
   import { account } from "@shared/account";
   import { el } from "@/lib/dom";
   import { FORMATS } from "@/lib/format";
-  import { keySeries, switchableChart, type KeySeries } from "@/lib/keychart";
+  import { keyChart, sharedActivity, type KeyActivity } from "@/lib/keychart";
   import { displayName, head, UNKNOWN_PLAYER } from "@/lib/minecraft";
-  import { day, moment } from "@/lib/time";
+  import { day } from "@/lib/time";
 
   interface Linked {
     uuid: string;
@@ -99,12 +91,6 @@ const download = (platform: string) =>
     developer: ApiKey | null;
   }
 
-  interface KeyActivity {
-    from: string;
-    step_s: number;
-    by_key: KeySeries[];
-  }
-
   interface Member {
     member_id: number;
     joined_at: string;
@@ -116,11 +102,6 @@ const download = (platform: string) =>
     version: string | null;
   }
 
-  const ACTIVITY_WINDOWS: [string, string][] = [
-    ["24h", "24 h"],
-    ["7d", "7 d"],
-    ["30d", "30 d"],
-  ];
   const NEAR_LIMIT = 0.85;
   const MASK = "•".repeat(28);
   const LINK_HINT = "Use /link in the Urchin Discord to add another account";
@@ -324,43 +305,15 @@ const download = (platform: string) =>
       ...(permissions.length
         ? [el("div", { className: "chips" }, ...permissions)]
         : []),
+      keyChart(personal ? "personal" : "developer", keyActivity),
       facts(key, ...(personal ? [regenerate(section)] : [])),
     );
     section.hidden = false;
   }
 
-  async function showRequests(window: string) {
-    const section = document.getElementById("requests")!;
-    const seg = section.querySelector(".seg")!;
-    seg.replaceChildren(
-      ...ACTIVITY_WINDOWS.map(([key, label]) => {
-        const button = el("button", {
-          type: "button",
-          textContent: label,
-          className: key === window ? "on" : "",
-        });
-        button.setAttribute("aria-pressed", String(key === window));
-        button.addEventListener("click", () => showRequests(key));
-        return button;
-      }),
-    );
-    const activity = await me<KeyActivity>(`activity?window=${window}`);
-    if (!activity) return;
-    const steps = Math.max(
-      0,
-      ...activity.by_key.map((key) => key.values.length),
-    );
-    const start = Date.parse(activity.from);
-    const titles = Array.from({ length: steps }, (_, index) =>
-      moment(new Date(start + index * activity.step_s * 1000).toISOString()),
-    );
-    const chart = switchableChart(
-      [{ label: "By key", series: keySeries(activity.by_key) }],
-      titles,
-    );
-    section.querySelector(".requests-chart")!.replaceChildren(chart.body);
-    section.hidden = false;
-  }
+  const keyActivity = sharedActivity((window) =>
+    me<KeyActivity>(`activity?window=${window}`),
+  );
 
   const user = await account();
   if (user) {
@@ -377,18 +330,10 @@ const download = (platform: string) =>
       showKey(document.getElementById("personal-key")!, keys.personal, true);
     if (keys?.developer)
       showKey(document.getElementById("developer-key")!, keys.developer, false);
-    if (keys?.personal || keys?.developer) showRequests(ACTIVITY_WINDOWS[0][0]);
   }
 </script>
 
 <style>
-  .requests-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
-
   .account-page {
     display: grid;
     grid-template-columns: minmax(0, 1fr);

@@ -1,4 +1,5 @@
 import { load } from "@/lib/api";
+import { stackedBars, legend } from "@/lib/chart";
 import { el, panel } from "@/lib/dom";
 import {
   filterBar,
@@ -7,7 +8,6 @@ import {
   type Pick,
 } from "@/lib/filterbar";
 import { FORMATS } from "@/lib/format";
-import { keySeries, switchableChart, type KeySeries } from "@/lib/keychart";
 import type { Labels } from "@/lib/members";
 import { pager } from "@/lib/pager";
 import { refLink, type Ref } from "@/lib/refs";
@@ -29,7 +29,6 @@ interface Activity {
     rate_limited_upstream: number;
     errors: number;
   }[];
-  by_key: KeySeries[];
   breakdown: {
     route: string | null;
     method: string;
@@ -193,23 +192,15 @@ function chartPanel(activity: Activity, window: string) {
   ];
   const { totals } = activity;
   const label = WINDOWS.find(([key]) => key === window)?.[2] ?? window;
-  const chart = switchableChart(
-    [
-      { label: "By key", series: keySeries(activity.by_key) },
-      { label: "By status", series },
-    ],
-    activity.series.map((point) => moment(point.t)),
-  );
   return el(
     "section",
     { className: "panel wide" },
-    el(
-      "div",
-      { className: "panel-head" },
-      el("h2", { className: "panel-title" }, `Requests, ${label}`),
-      chart.switcher,
+    el("h2", { className: "panel-title" }, `Requests, ${label}`),
+    legend(series),
+    stackedBars(
+      series,
+      activity.series.map((point) => moment(point.t)),
     ),
-    chart.body,
     el(
       "div",
       { className: "stats" },

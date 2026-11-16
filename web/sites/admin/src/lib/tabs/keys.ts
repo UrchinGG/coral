@@ -73,7 +73,11 @@ export function exhausted(limits: Budget[]) {
   );
 }
 
-export function developerPanel(key: DevKey | null, change: Change) {
+export function developerPanel(
+  key: DevKey | null,
+  change: Change,
+  chart?: Node,
+) {
   if (!key)
     return panel(
       "Developer Key",
@@ -98,6 +102,7 @@ export function developerPanel(key: DevKey | null, change: Change) {
       button("Edit", () => editRateLimit(key, change)),
     ),
     row("Requests", FORMATS.number(key.request_count)),
+    ...(chart ? [chart] : []),
     row("Created", day(key.created_at)),
     row(
       "State",

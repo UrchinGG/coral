@@ -830,6 +830,29 @@ dialog {
   }
 }
 
+.key-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  & .stack-bars {
+    height: 72px;
+  }
+}
+
+.key-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--text-sm);
+}
+
+.key-chart-total {
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
 .table-more {
   width: 100%;
   padding: 8px 14px;

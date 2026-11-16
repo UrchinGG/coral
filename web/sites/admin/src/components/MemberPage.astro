@@ -76,6 +76,7 @@ import { page } from "@/lib/paths";
     type Permission,
   } from "@/lib/session";
   import { activityChart, memberRequestsTab } from "@/lib/tabs/requests";
+  import { keyChart, sharedActivity, type KeyActivity } from "@/lib/keychart";
   import { load, send } from "@/lib/api";
   import { el, panel, row, widePanel } from "@/lib/dom";
   import { FORMATS } from "@/lib/format";
@@ -356,6 +357,13 @@ import { page } from "@/lib/paths";
           : el("span", { className: "dim" }, ` · ${strike.status}`),
       );
     });
+    const keyActivity = can(viewer, "traffic")
+      ? sharedActivity((window) =>
+          load<KeyActivity>(`/accounts/${id}/activity?window=${window}`).catch(
+            () => undefined,
+          ),
+        )
+      : undefined;
     return [
       ...(can(viewer, "traffic") ? [requestChart()] : []),
       panel(
@@ -378,10 +386,21 @@ import { page } from "@/lib/paths";
               ),
             ]
           : []),
+        ...(core.keys.personal && keyActivity
+          ? [keyChart("personal", keyActivity)]
+          : []),
       ),
       ...(can(viewer, "key_limits_write") ? [blocksPanel(blocks, change)] : []),
       ...(member && can(viewer, "keys_manage")
-        ? [developerPanel(core.keys.developer, change)]
+        ? [
+            developerPanel(
+              core.keys.developer,
+              change,
+              core.keys.developer && keyActivity
+                ? keyChart("developer", keyActivity)
+                : undefined,
+            ),
+          ]
         : []),
       ...(standing
         ? [
