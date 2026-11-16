@@ -5,6 +5,7 @@ use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use chrono::{DateTime, Utc};
 use reqlog::Cause;
+use reqlog::rollup::{self, KeySeries};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
@@ -31,6 +32,7 @@ pub struct Activity {
     totals: Totals,
     mentions: i64,
     series: Vec<ActivityPoint>,
+    by_key: Vec<KeySeries>,
     breakdown: Vec<BreakdownRow>,
 }
 
@@ -80,9 +82,12 @@ pub async fn activity(
     let Query(query) = query?;
     let target = AccountTarget::resolve(&state, &raw).await?;
     let span = query.window.span(Utc::now());
-    let (buckets, groups) =
-        tokio::try_join!(buckets(&state, target, span), groups(&state, target, span))?;
-    Ok(Json(assemble(span, buckets, groups)))
+    let (buckets, groups, by_key) = tokio::try_join!(
+        buckets(&state, target, span),
+        groups(&state, target, span),
+        by_key(&state, target, span)
+    )?;
+    Ok(Json(assemble(span, buckets, groups, by_key)))
 }
 
 async fn buckets(
@@ -114,6 +119,24 @@ async fn buckets(
     .context("read the account's hourly activity")
 }
 
+async fn by_key(
+    state: &AppState,
+    target: AccountTarget,
+    span: Span,
+) -> Result<Vec<KeySeries>, AdminError> {
+    let range = rollup::Span::new(span.from, span.to)
+        .ok_or_else(|| AdminError::BadRequest("the activity window is empty".into()))?;
+    rollup::requests_by_key(
+        state.db.pool(),
+        target.member_id,
+        target.discord_id,
+        range,
+        span.step,
+    )
+    .await
+    .context("read the account's requests per key")
+}
+
 async fn groups(
     state: &AppState,
     target: AccountTarget,
@@ -135,7 +158,12 @@ async fn groups(
     .context("read the account's route breakdown")
 }
 
-fn assemble(span: Span, buckets: Vec<BucketRow>, groups: Vec<GroupRow>) -> Activity {
+fn assemble(
+    span: Span,
+    buckets: Vec<BucketRow>,
+    groups: Vec<GroupRow>,
+    by_key: Vec<KeySeries>,
+) -> Activity {
     let mut totals = Totals::default();
     let mut mentions = 0;
     let mut filled: BTreeMap<DateTime<Utc>, ActivityPoint> =
@@ -164,6 +192,7 @@ fn assemble(span: Span, buckets: Vec<BucketRow>, groups: Vec<GroupRow>) -> Activ
         totals,
         mentions,
         series: filled.into_values().collect(),
+        by_key,
         breakdown: groups.into_iter().map(breakdown_row).collect(),
     }
 }
@@ -217,6 +246,7 @@ mod tests {
                 errors: 2,
                 mentions: 7,
             }],
+            Vec::new(),
             Vec::new(),
         );
         assert_eq!(activity.series.len(), 24);

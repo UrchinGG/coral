@@ -10,6 +10,7 @@ use crate::TIME_ORDERED_VERSION;
 use crate::entry::KeyKind;
 use crate::subjects::Form;
 
+mod keys;
 mod network;
 pub(crate) mod rows;
 mod span;
@@ -17,6 +18,7 @@ mod tables;
 #[cfg(test)]
 mod tests;
 
+pub use keys::{KeySeries, requests_by_key};
 pub use network::{NETWORK_FOLD, advance_network};
 pub use span::{HOUR, MINUTE, Span, ceil_to, floor_to};
 pub use tables::{CALLER_HOUR, ROLLUP_TABLES, RollupTable, TRAFFIC_HOUR, TRAFFIC_MINUTE};

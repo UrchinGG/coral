@@ -795,18 +795,18 @@ dialog {
   }
 
   &.v-developer {
-    background: rgba(183, 167, 247, 0.15);
-    color: #c9bcfb;
+    background: rgba(232, 162, 58, 0.14);
+    color: #e8a23a;
   }
 
   &.v-session {
-    background: rgba(111, 214, 180, 0.13);
-    color: #6fd6b4;
+    background: rgba(47, 191, 159, 0.14);
+    color: #2fbf9f;
   }
 
   &.v-minecraft {
-    background: rgba(85, 255, 85, 0.1);
-    color: #7fe07f;
+    background: rgba(183, 167, 247, 0.15);
+    color: #c9bcfb;
   }
 
   &.v-internal {
@@ -1508,18 +1508,18 @@ button.table-row:hover:not(.head),
   }
 
   &.v-developer {
-    background: rgba(183, 167, 247, 0.15);
-    color: #c9bcfb;
+    background: rgba(232, 162, 58, 0.14);
+    color: #e8a23a;
   }
 
   &.v-session {
-    background: rgba(111, 214, 180, 0.13);
-    color: #6fd6b4;
+    background: rgba(47, 191, 159, 0.14);
+    color: #2fbf9f;
   }
 
   &.v-minecraft {
-    background: rgba(85, 255, 85, 0.1);
-    color: #7fe07f;
+    background: rgba(183, 167, 247, 0.15);
+    color: #c9bcfb;
   }
 
   &.v-internal {

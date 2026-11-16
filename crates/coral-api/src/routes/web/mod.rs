@@ -75,6 +75,7 @@ pub fn router() -> Router<AppState> {
             post(me::regenerate_personal_key),
         )
         .route("/me/starfish", get(me::starfish))
+        .route("/me/activity", get(me::activity))
 }
 
 async fn sign_in(

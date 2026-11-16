@@ -1,17 +1,18 @@
 use axum::{
     Json,
-    extract::State,
+    extract::{Query, State},
     http::{HeaderMap, HeaderName, header},
     response::{IntoResponse, Response},
 };
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, DurationRound, TimeDelta, Utc};
 use coral_redis::{LIMIT_WINDOW_SECS, PERSONAL_RATE_LIMIT};
 use database::{
     AccountRepository, CacheRepository, DeveloperKey, DeveloperKeyRepository, Member,
     MemberRepository, StarfishRepository, permissions,
 };
 use hypixel::extract_rank_prefix;
-use serde::Serialize;
+use reqlog::rollup::{self, KeySeries};
+use serde::{Deserialize, Serialize};
 
 use super::signed_in;
 use crate::{
@@ -28,6 +29,28 @@ const SAME_ORIGIN_SITE: &str = "same-origin";
 const SEC_FETCH_SITE: HeaderName = HeaderName::from_static("sec-fetch-site");
 const NO_STORE: &str = "no-store";
 const LICENSED: &str = "active";
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub enum ActivityWindow {
+    #[serde(rename = "24h")]
+    Day,
+    #[serde(rename = "7d")]
+    Week,
+    #[serde(rename = "30d")]
+    Month,
+}
+
+#[derive(Deserialize)]
+pub struct ActivityQuery {
+    window: ActivityWindow,
+}
+
+#[derive(Serialize)]
+pub struct KeyActivity {
+    from: DateTime<Utc>,
+    step_s: i64,
+    by_key: Vec<KeySeries>,
+}
 
 #[derive(Serialize)]
 pub struct MemberSummary {
@@ -66,6 +89,19 @@ pub struct StarfishDevice {
     licensed: bool,
     changes_left: i64,
     version: Option<String>,
+}
+
+impl ActivityWindow {
+    fn span(self, now: DateTime<Utc>) -> (rollup::Span, TimeDelta) {
+        let (length, step) = match self {
+            Self::Day => (TimeDelta::hours(24), rollup::HOUR),
+            Self::Week => (TimeDelta::days(7), rollup::HOUR),
+            Self::Month => (TimeDelta::days(30), TimeDelta::days(1)),
+        };
+        let to = now.duration_trunc(step).map_or(now, |start| start + step);
+        let span = rollup::Span::new(to - length, to).expect("activity windows have a length");
+        (span, step)
+    }
 }
 
 pub async fn member_summary(
@@ -175,6 +211,31 @@ pub async fn starfish(
         licensed: starfish.license_status == LICENSED,
         changes_left: changes_left(changes),
         version: latest_version(&state).await,
+    }))
+}
+
+pub async fn activity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ActivityQuery>,
+) -> Result<Json<KeyActivity>, ApiError> {
+    let user = signed_in(&state, &headers).await?;
+    let member = MemberRepository::new(state.db.pool())
+        .get_by_discord_id(user.discord_id)
+        .await?;
+    let (span, step) = query.window.span(Utc::now());
+    let by_key = rollup::requests_by_key(
+        state.db.pool(),
+        member.map(|member| member.id),
+        user.discord_id,
+        span,
+        step,
+    )
+    .await?;
+    Ok(Json(KeyActivity {
+        from: span.from,
+        step_s: step.num_seconds(),
+        by_key,
     }))
 }
 
