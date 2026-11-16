@@ -60,6 +60,7 @@
   import { load, send } from "@/lib/api";
   import { el } from "@/lib/dom";
   import { fillTab, setQuery, tabBar } from "@/lib/tabbar";
+  import { tagPill } from "@/lib/tags";
   import {
     overviewTab,
     lookupsTab,
@@ -118,7 +119,7 @@
     part("meta").replaceChildren(
       el("span", { className: "mono", textContent: core.dashed }),
       ...core.blacklist.active.map((tag) =>
-        el("span", { className: "issue", textContent: tag.display_name }),
+        tagPill(tag.tag_type, tag.display_name),
       ),
     );
     const issues = [

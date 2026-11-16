@@ -62,6 +62,7 @@ import StatGroup from "@/components/StatGroup.astro";
   import { load } from "@/lib/api";
   import { failed, fill } from "@/lib/fill";
   import { FORMATS, titleCase } from "@/lib/format";
+  import { tagPill } from "@/lib/tags";
 
   interface Overview {
     blacklist: { by_type: { tag_type: string; count: number }[] };
@@ -77,7 +78,9 @@ import StatGroup from "@/components/StatGroup.astro";
         const stat = template.content.firstElementChild!.cloneNode(
           true,
         ) as HTMLElement;
-        stat.querySelector(".label")!.textContent = titleCase(tag_type);
+        stat
+          .querySelector(".label")!
+          .replaceChildren(tagPill(tag_type, titleCase(tag_type)));
         stat.querySelector("b")!.textContent = FORMATS.number(count);
         return stat;
       });

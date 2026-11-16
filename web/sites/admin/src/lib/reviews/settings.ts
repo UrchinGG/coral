@@ -219,22 +219,7 @@ export async function rulesTab(reviews: Reviews) {
     ),
   );
   update();
-  return el(
-    "div",
-    { className: "stack" },
-    el(
-      "div",
-      { className: "notice-row" },
-      el(
-        "span",
-        {},
-        "Open reviews pick up new thresholds on their next vote. Saving re-checks every member's standing; granted access is only taken away by suspension.",
-      ),
-      actions,
-    ),
-    problem,
-    ...groups,
-  );
+  return el("div", { className: "stack" }, actions, problem, ...groups);
 }
 
 function ruleRow(

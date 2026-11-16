@@ -18,8 +18,6 @@ const BLOCKS: [string, string][] = [
 ];
 const BOT_NAME = "Urchin";
 const PING_BUTTON = "Ping Me For Reviews";
-const SYNTAX_HINT =
-  "Discord markdown: # ## ### headings, **bold**, `code`, - lists, -# small text, and --- on its own line for a divider.";
 
 let unsaved = false;
 addEventListener("beforeunload", (event) => {
@@ -43,7 +41,7 @@ export function guideTab(reviews: Reviews) {
     preview.replaceChildren(...renderGuide(input.value));
     note.textContent = dirty
       ? "Unsaved changes. Saving keeps them here; posting to Discord is a separate step."
-      : SYNTAX_HINT;
+      : "";
     actions.replaceChildren(
       ...(dirty
         ? [

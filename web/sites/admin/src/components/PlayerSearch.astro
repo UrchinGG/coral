@@ -20,6 +20,7 @@
   import { refLink, type Ref } from "@/lib/refs";
   import { search, searchMojang } from "@/lib/search";
   import { setQuery } from "@/lib/tabbar";
+  import { tagPill } from "@/lib/tags";
   import { ago } from "@/lib/time";
 
   const SEARCH_DELAY_MS = 300;
@@ -76,6 +77,7 @@
   interface Tagged {
     items: {
       player: Ref;
+      tag_type: string;
       display_name: string;
       author: Ref | null;
       at: string;
@@ -101,7 +103,7 @@
         "Recently Tagged",
         ...tagged.items.map((item) =>
           row(
-            item.display_name,
+            tagPill(item.tag_type, item.display_name),
             refLink(item.player, tagged.labels),
             el("span", { className: "dim", textContent: ` · ${ago(item.at)}` }),
           ),

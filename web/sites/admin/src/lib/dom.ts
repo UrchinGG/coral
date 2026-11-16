@@ -8,7 +8,7 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   return element;
 }
 
-export function row(label: string, ...value: (Node | string)[]) {
+export function row(label: Node | string, ...value: (Node | string)[]) {
   return el(
     "div",
     { className: "kv-row" },
