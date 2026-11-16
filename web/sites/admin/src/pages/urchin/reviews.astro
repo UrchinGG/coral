@@ -1,0 +1,77 @@
+---
+import Admin from "@/layouts/Admin.astro";
+---
+
+<Admin title="Tag Reviews">
+  <div id="reviews" class="stack">
+    <div
+      class="tabs"
+      role="tablist"
+      aria-label="Tag review sections"
+      data-tabs
+    ></div>
+    <p class="muted" data-status></p>
+    <div data-tab></div>
+  </div>
+</Admin>
+
+<script>
+  import { load } from "@/lib/api";
+  import type { Guide, Reviews } from "@/lib/reviews/common";
+  import { guideTab } from "@/lib/reviews/guide";
+  import { pingsTab, rulesTab } from "@/lib/reviews/settings";
+  import type { Directory, Population } from "@/lib/server/common";
+  import { fillTab, setQuery, tabBar } from "@/lib/tabbar";
+
+  const TABS: [string, string][] = [
+    ["guide", "Guide"],
+    ["pings", "Ping Roles"],
+    ["rules", "Review Rules"],
+  ];
+
+  const root = document.getElementById("reviews")!;
+  const part = (name: string) =>
+    root.querySelector<HTMLElement>(`[data-${name}]`)!;
+  let current = new URLSearchParams(location.search).get("tab") ?? "guide";
+  if (!TABS.some(([key]) => key === current)) current = "guide";
+
+  const report = (text: string, bad = false) => {
+    part("status").textContent = text;
+    part("status").className = bad ? "bad" : "muted";
+  };
+
+  const optional = <T,>(promise: Promise<T>) =>
+    promise.catch((error: Error) => {
+      report(error.message, true);
+      return null;
+    });
+
+  async function show() {
+    const [guide, directory, population] = await Promise.all([
+      load<Guide>("/moderation/guide"),
+      optional(load<Directory>("/moderation/directory")),
+      optional(load<Population>("/moderation/population")),
+    ]);
+    render({ guide, directory, population, refresh: show, report });
+  }
+
+  function render(reviews: Reviews) {
+    tabBar(part("tabs"), TABS, current, (key) => {
+      current = key;
+      setQuery("tab", key === "guide" ? null : key);
+      render(reviews);
+    });
+    fillTab(part("tab"), () => {
+      switch (current) {
+        case "pings":
+          return pingsTab(reviews);
+        case "rules":
+          return rulesTab(reviews);
+        default:
+          return guideTab(reviews);
+      }
+    });
+  }
+
+  show().catch((error: Error) => report(error.message, true));
+</script>

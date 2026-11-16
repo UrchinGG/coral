@@ -13,14 +13,12 @@ use crate::state::AppState;
 use crate::traffic::by_route::routes;
 use crate::traffic::callers::{CallerSort, caller_limit, top_callers};
 use crate::traffic::class::{RouteFilter, StatusClass, known_method};
-use crate::traffic::pressure::{Pressure, pressure};
 use crate::traffic::range::{RangeQuery, TrafficRange, Window};
 use crate::traffic::rows::TrafficFilter;
 use crate::traffic::series::{SeriesFilter, series};
 use crate::traffic::summary::summary;
 use crate::traffic::upstream::{Upstream, upstream};
 use crate::views::{CachedView, View};
-use crate::waste::{self, WasteOverview};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Deserialize)]
 pub enum Toggle {
@@ -90,9 +88,7 @@ pub fn router() -> Router<AppState> {
         .route("/series", get(traffic_series))
         .route("/routes", get(traffic_routes))
         .route("/callers", get(traffic_callers))
-        .route("/pressure", get(limit_pressure))
         .route("/upstream", get(upstream_traffic))
-        .route("/waste", get(waste_allowances))
 }
 
 async fn traffic_summary(
@@ -201,20 +197,6 @@ async fn traffic_callers(
             top_callers(state.db.pool(), resolved.range, filter, params.sort, limit)
         })
         .await
-}
-
-async fn limit_pressure(State(state): State<AppState>) -> Result<Json<Pressure>, AdminError> {
-    Ok(Json(
-        pressure(state.db.pool(), &state.redis, Utc::now()).await?,
-    ))
-}
-
-async fn waste_allowances(
-    State(state): State<AppState>,
-) -> Result<Json<WasteOverview>, AdminError> {
-    Ok(Json(
-        waste::overview(state.db.pool(), &state.redis, Utc::now()).await?,
-    ))
 }
 
 async fn upstream_traffic(

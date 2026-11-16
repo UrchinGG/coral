@@ -71,6 +71,8 @@ def main():
             touched.add("database")
         if clients:
             touched.add("clients")
+        if any(file.startswith(("web/sites/admin/", "web/shared/", "web/package")) for file in files):
+            touched.add("coral-admin")
 
     affected = with_dependents(touched, packages)
     services = sorted(SERVICES & {bin for name in affected for bin in packages[name]["bins"]})
@@ -82,8 +84,6 @@ def main():
         "rust": bool(affected),
         "packages": " ".join(sorted(affected)),
         "services": " ".join(services),
-        "admin_panel": changed("crates/coral-admin/ui/"),
-        "coral_web": changed("coral-web/"),
         "web": Path("web/package.json").is_file() and (site or changed("web/")),
         "deploy": changed("deploy/"),
     }

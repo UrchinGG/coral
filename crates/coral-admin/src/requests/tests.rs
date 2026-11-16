@@ -287,27 +287,6 @@ async fn insert_subject(db: &Database, row: &Row, form: Form, player: Uuid) {
     .unwrap();
 }
 
-async fn insert_caller_hour(db: &Database, hour: u32, member: i64, status: i16, requests: i32) {
-    let cause = match status {
-        429 => Cause::CallerLimit,
-        _ => Cause::Ok,
-    };
-    sqlx::query(
-        "INSERT INTO api_caller_hour (hour, key_kind, member_id, service, route, method, status,
-           cause, requests, latency_sum_ms, subjects)
-         VALUES ($1, $2, $3, 0, '/v3/player/tags', 'GET', $4, $5, $6, 0, $6)",
-    )
-    .bind(on(GROUP_DAY, hour, 0))
-    .bind(KeyKind::Personal.code())
-    .bind(member)
-    .bind(status)
-    .bind(cause.code())
-    .bind(requests)
-    .execute(db.pool())
-    .await
-    .unwrap();
-}
-
 async fn derived_row_id(db: &Database, nibble: &str) -> i64 {
     sqlx::query_scalar(DERIVED_ID_SEARCH)
         .bind(nibble)
@@ -357,11 +336,6 @@ async fn open(
     coverage: &Coverage,
 ) -> Result<RequestFull, DetailError> {
     read_request(&fixture.db, &fixture.names, coverage, request_id, t).await
-}
-
-async fn groups(fixture: &Fixture, body: Value) -> Result<GroupPage, AdminError> {
-    let filter: GroupFilter = serde_json::from_value(body).unwrap();
-    read_groups(&fixture.db, &fixture.names, &coverage(), filter).await
 }
 
 fn admin_error(result: Result<RequestFull, DetailError>) -> AdminError {
@@ -662,65 +636,4 @@ async fn missing_detail_is_expired_once_its_partition_is_gone() {
         .await
         .unwrap();
     assert_eq!(full.detail_state, DetailState::Expired);
-}
-
-#[tokio::test]
-async fn requester_groups_come_from_whole_caller_hours() {
-    let Some(fixture) = fixture().await else {
-        return;
-    };
-    sqlx::query("DELETE FROM api_caller_hour WHERE hour >= $1 AND hour < $2")
-        .bind(on(GROUP_DAY, 0, 0))
-        .bind(on(GROUP_DAY, 23, 0))
-        .execute(fixture.db.pool())
-        .await
-        .unwrap();
-    insert_caller_hour(&fixture.db, 10, LIST_MEMBER, 200, 40).await;
-    insert_caller_hour(&fixture.db, 11, LIST_MEMBER, 429, 5).await;
-    insert_caller_hour(&fixture.db, 11, DETAIL_MEMBER, 200, 70).await;
-
-    let page = groups(
-        &fixture,
-        json!({ "from": on(GROUP_DAY, 10, 30), "to": on(GROUP_DAY, 11, 15) }),
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        (page.from, page.to),
-        (on(GROUP_DAY, 10, 0), on(GROUP_DAY, 12, 0))
-    );
-    let totals: Vec<(i64, i64, i64)> = page
-        .groups
-        .iter()
-        .map(|group| (group.requests, group.rate_limited, group.subjects))
-        .collect();
-    assert_eq!(totals, vec![(70, 0, 70), (45, 5, 45)]);
-    assert_eq!(page.groups[1].requester, account(LIST_DISCORD, LIST_MEMBER));
-    assert!(!page.truncated);
-
-    let limited = groups(
-        &fixture,
-        json!({
-            "from": on(GROUP_DAY, 10, 0),
-            "to": on(GROUP_DAY, 12, 0),
-            "sort": "rate_limited",
-            "limit": 1,
-        }),
-    )
-    .await
-    .unwrap();
-    assert!(limited.truncated);
-    assert_eq!(limited.groups[0].rate_limited, 5);
-
-    let member = groups(
-        &fixture,
-        json!({ "from": on(GROUP_DAY, 10, 0), "to": on(GROUP_DAY, 12, 0), "member": DETAIL_MEMBER }),
-    )
-    .await
-    .unwrap();
-    assert_eq!(member.groups.len(), 1);
-    assert_eq!(member.groups[0].requests, 70);
-
-    let unrolled = serde_json::from_value::<GroupFilter>(json!({ "ip": "203.0.113.9" }));
-    assert!(unrolled.is_err());
 }

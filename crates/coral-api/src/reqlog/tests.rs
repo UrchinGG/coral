@@ -517,14 +517,17 @@ async fn starfish_sessions_are_attributed_to_their_discord_user() {
         return;
     };
     let session = harness.starfish_session().await;
-    let sent = harness
-        .get("/api/v1/starfish/users/me", &session.headers())
-        .await;
+    let sent = harness.get("/api/v1/users/me", &session.headers()).await;
     assert_eq!(sent.status, 200);
     assert_eq!(sent.entry.caller, Caller::session(None, session.discord_id));
 
     let sent = harness
-        .get("/api/v1/starfish/users/me", &session.with_signature("00"))
+        .get("/api/v1/starfish/users/me", &session.headers())
+        .await;
+    assert_eq!(sent.status, 200);
+
+    let sent = harness
+        .get("/api/v1/users/me", &session.with_signature("00"))
         .await;
     assert_eq!(sent.status, 401);
     assert_eq!(sent.entry.caller, Caller::session(None, session.discord_id));

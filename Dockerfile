@@ -2,10 +2,10 @@
 
 FROM node:22-alpine AS admin-ui
 WORKDIR /app
-COPY crates/coral-admin/ui/package.json crates/coral-admin/ui/package-lock.json ./
+COPY web/package.json web/package-lock.json ./
 RUN npm ci
-COPY crates/coral-admin/ui/ ./
-RUN npm run build
+COPY web/ ./
+RUN npm run build:admin
 
 FROM rust:1.92-bookworm AS builder
 RUN apt-get update && apt-get install -y pkg-config libssl-dev clang mold \
@@ -16,7 +16,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY migrations ./migrations
-COPY --from=admin-ui /app/dist ./crates/coral-admin/ui/dist
+COPY --from=admin-ui /app/sites/admin/dist ./web/sites/admin/dist
 
 ARG BINS="coral-api coral-bot coral-admin coral-sync coral-verify"
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
@@ -61,24 +61,3 @@ FROM runtime AS coral-verify
 COPY --from=builder /out/coral-verify /usr/local/bin/
 EXPOSE 25565
 CMD ["coral-verify"]
-
-
-FROM node:22-alpine AS web-deps
-WORKDIR /app
-COPY coral-web/package.json coral-web/package-lock.json ./
-RUN npm ci
-
-FROM node:22-alpine AS web-builder
-WORKDIR /app
-COPY --from=web-deps /app/node_modules ./node_modules
-COPY coral-web/ ./
-RUN npm run build
-
-FROM node:22-alpine AS coral-web
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=web-builder /app/.next/standalone ./
-COPY --from=web-builder /app/.next/static ./.next/static
-COPY --from=web-builder /app/public ./public
-EXPOSE 3000
-CMD ["node", "server.js"]

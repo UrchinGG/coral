@@ -363,14 +363,26 @@ mod tests {
         };
         let uuid = "73000012000040008000000000000001";
         forget_links(&db, uuid).await;
+        let ids: Vec<i64> = sqlx::query_scalar(
+            "INSERT INTO members (discord_id)
+             SELECT 730000120000000 + (random() * 1e9)::bigint FROM generate_series(1, 4)
+             RETURNING id",
+        )
+        .fetch_all(db.pool())
+        .await
+        .unwrap();
         sqlx::query(
             "INSERT INTO member_mc_links (member_id, uuid, relation, linked_at, unlinked_at) VALUES
-               (1, $1, 'primary', '2025-03-01', NULL),
-               (2, $1, 'primary', '2025-04-01', NULL),
-               (3, $1, 'alt', '2025-05-01', NULL),
-               (4, $1, 'primary', '2024-01-01', '2024-06-01')",
+               ($2, $1, 'primary', '2025-03-01', NULL),
+               ($3, $1, 'primary', '2025-04-01', NULL),
+               ($4, $1, 'alt', '2025-05-01', NULL),
+               ($5, $1, 'primary', '2024-01-01', '2024-06-01')",
         )
         .bind(uuid)
+        .bind(ids[0])
+        .bind(ids[1])
+        .bind(ids[2])
+        .bind(ids[3])
         .execute(db.pool())
         .await
         .unwrap();
@@ -395,10 +407,10 @@ mod tests {
         assert_eq!(
             shape,
             vec![
-                (Some(3), Relation::Alt, false, 0),
-                (Some(2), Relation::Primary, false, 1),
-                (Some(1), Relation::Primary, false, 1),
-                (Some(4), Relation::Primary, true, 0),
+                (Some(ids[2]), Relation::Alt, false, 0),
+                (Some(ids[1]), Relation::Primary, false, 1),
+                (Some(ids[0]), Relation::Primary, false, 1),
+                (Some(ids[3]), Relation::Primary, true, 0),
             ]
         );
         forget_links(&db, uuid).await;

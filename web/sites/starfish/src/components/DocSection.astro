@@ -1,0 +1,52 @@
+---
+import type { DocSection } from "@/lib/starfish";
+import Prose from "./Prose.astro";
+
+interface Props {
+  section: DocSection;
+}
+
+const { title, description, entries = [], table } = Astro.props.section;
+const columns = table?.columns ?? ["Field", "Type", "Description"];
+---
+
+<section>
+  <h2>{title}</h2>
+  {description && (
+    <p>
+      <Prose text={description} />
+    </p>
+  )}
+  {entries.map(({ signature, description }) => (
+    <>
+      <pre><code>{signature}</code></pre>
+      {description && (
+        <p>
+          <Prose text={description} />
+        </p>
+      )}
+    </>
+  ))}
+  {table && (
+    <div class="table">
+      <table>
+        <thead>
+          <tr>
+            {columns.map((column) => (
+              <th>{column}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {table.rows.map((row) => (
+            <tr>
+              {row.map((cell) => (
+                <td>{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )}
+</section>

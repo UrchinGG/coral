@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.astro/
+.env
+.env.*
+!.env.example
+!.env.development
+sites/urchin/public/replay-assets/*
+!sites/urchin/public/replay-assets/nick-skins.json
+sites/urchin/src/viewer/pkg/*
+!sites/urchin/src/viewer/pkg/replay_viewer.js
+!sites/urchin/src/viewer/pkg/replay_viewer.d.ts

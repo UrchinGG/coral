@@ -18,11 +18,10 @@ mod row;
 mod sql;
 mod time_box;
 
-pub use attribution::Attribution;
 pub use bounded::{SearchLimits, begin_bounded};
 pub use bounded::{acquire_within, bound_statements};
 pub use cursor::Cursor;
-pub use filter::{Bounds, Condition, Keyset, RequestFilter, Selection, StatusClass};
+pub use filter::{Bounds, Condition, Keyset, RequestFilter, Selection};
 pub use players::{HeldName, cached_identities};
 pub use players::{PlayerInput, PlayerKeys, PlayerSearch};
 pub use row::LogRow;

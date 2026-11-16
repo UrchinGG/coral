@@ -3,6 +3,7 @@ use database::Database;
 use futures_util::future::join_all;
 use serde::Serialize;
 
+use crate::auth::AdminActor;
 use crate::coverage::Coverage;
 use crate::error::AdminError;
 use crate::names::{LabelRequest, NameService};
@@ -68,9 +69,18 @@ impl<'a> Searcher<'a> {
         }
     }
 
-    pub async fn search(&self, q: &str, limit: u8) -> Result<SearchResults, AdminError> {
+    pub async fn search(
+        &self,
+        q: &str,
+        limit: u8,
+        viewer: AdminActor,
+    ) -> Result<SearchResults, AdminError> {
         let input = Input::parse(q);
-        let lookups = input.lookups();
+        let lookups: Vec<Lookup> = input
+            .lookups()
+            .into_iter()
+            .filter(|lookup| viewer.can(lookup.permission()))
+            .collect();
         let context = self.probe_context(limit);
         let results = join_all(
             lookups

@@ -54,7 +54,18 @@ pub enum StatusClass {
 pub enum RouteFilter {
     Template(&'static str),
     Unmatched,
+    Any(RouteSet),
 }
+
+/// Several routes picked at once: a bit per known template, plus unmatched paths.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct RouteSet {
+    templates: u128,
+    unmatched: bool,
+}
+
+const _: () = assert!(reqlog::ROUTE_TEMPLATES.len() <= u128::BITS as usize);
+const ROUTE_SEPARATOR: char = ',';
 
 impl Outcome {
     pub const ALL: [Self; 5] = [
@@ -105,7 +116,27 @@ impl StatusClass {
 }
 
 impl RouteFilter {
+    /// One route, or several separated by commas.
     pub fn parse(raw: &str) -> Result<Self, AdminError> {
+        let picked = raw
+            .split(ROUTE_SEPARATOR)
+            .map(Self::parse_one)
+            .collect::<Result<Vec<_>, _>>()?;
+        if let [single] = picked.as_slice() {
+            return Ok(*single);
+        }
+        let mut set = RouteSet::default();
+        for route in picked {
+            match route {
+                Self::Template(template) => set.templates |= 1 << template_index(template),
+                Self::Unmatched => set.unmatched = true,
+                Self::Any(_) => unreachable!("one route parses to a template or unmatched"),
+            }
+        }
+        Ok(Self::Any(set))
+    }
+
+    fn parse_one(raw: &str) -> Result<Self, AdminError> {
         if raw == UNMATCHED_ROUTE {
             return Ok(Self::Unmatched);
         }
@@ -116,6 +147,28 @@ impl RouteFilter {
             .map(Self::Template)
             .ok_or_else(|| AdminError::BadRequest(format!("unknown route template {raw}")))
     }
+}
+
+impl RouteSet {
+    pub fn templates(self) -> Vec<&'static str> {
+        reqlog::ROUTE_TEMPLATES
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| self.templates & (1 << index) != 0)
+            .map(|(_, template)| *template)
+            .collect()
+    }
+
+    pub fn unmatched(self) -> bool {
+        self.unmatched
+    }
+}
+
+fn template_index(template: &str) -> usize {
+    reqlog::ROUTE_TEMPLATES
+        .iter()
+        .position(|known| *known == template)
+        .expect("parsed templates come from ROUTE_TEMPLATES")
 }
 
 pub fn errors_predicate() -> String {
@@ -183,6 +236,17 @@ mod tests {
             RouteFilter::parse("/v3/nope").unwrap_err().code(),
             "bad_request"
         );
+    }
+
+    #[test]
+    fn several_routes_become_one_set() {
+        let RouteFilter::Any(set) = RouteFilter::parse("/v3/players,unmatched,/v3/tags").unwrap()
+        else {
+            panic!("several routes should parse to a set");
+        };
+        assert_eq!(set.templates(), vec!["/v3/players", "/v3/tags"]);
+        assert!(set.unmatched());
+        assert!(RouteFilter::parse("/v3/players,/v3/nope").is_err());
     }
 
     #[test]

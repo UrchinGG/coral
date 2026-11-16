@@ -42,12 +42,6 @@ services:
     ports:
       - "${API_PORT:-8000}:${API_PORT:-8000}"
 
-  coral-web:
-    environment:
-      CORAL_INTERNAL_KEY: ${INTERNAL_API_KEY:-dev-internal-key}
-    ports:
-      - "3000:3000"
-
   coral-bot:
     depends_on:
       postgres:

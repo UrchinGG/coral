@@ -594,7 +594,11 @@ fn holds_bypass_role(member: &Member) -> bool {
 
 pub(crate) async fn load_settings(data: &Data, guild_id: GuildId) -> Result<Option<ServerSync>> {
     let repo = GuildConfigRepository::new(data.db.pool());
-    let Some(config) = repo.get(guild_id.get() as i64).await? else {
+    let Some(config) = repo
+        .get(guild_id.get() as i64)
+        .await?
+        .filter(|config| config.enabled)
+    else {
         return Ok(None);
     };
     let rules = repo

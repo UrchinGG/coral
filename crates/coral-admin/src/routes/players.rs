@@ -26,6 +26,7 @@ pub fn router() -> Router<AppState> {
         .route("/{uuid}", get(core))
         .route("/{uuid}/requests", get(requests))
         .route("/{uuid}/requesters", get(requesters))
+        .route("/{uuid}/lookups", get(lookups))
         .route("/{uuid}/tags", get(tags).post(add_tag))
         .route("/{uuid}/tags/{tag_type}", delete(remove_tag))
         .route("/{uuid}/lock", post(lock))
@@ -70,6 +71,16 @@ async fn requesters(
     Ok(Json(
         players::read_requesters(&state, player, params).await?,
     ))
+}
+
+async fn lookups(
+    State(state): State<AppState>,
+    Path(uuid): Path<String>,
+    params: Result<Query<players::SeriesParams>, QueryRejection>,
+) -> Result<Json<players::LookupSeries>, AdminError> {
+    let player = players::parse_player(&uuid)?;
+    let Query(params) = params?;
+    Ok(Json(players::read_series(&state, player, params).await?))
 }
 
 async fn tags(

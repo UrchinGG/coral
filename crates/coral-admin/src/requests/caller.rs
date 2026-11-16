@@ -203,8 +203,8 @@ mod tests {
     fn plugin_slugs_are_read_from_the_slug_segment() {
         assert_eq!(
             plugin_slug(
-                Some("/api/v1/starfish/plugins/{slug}/releases/{version}"),
-                "/api/v1/starfish/plugins/bedwars-stats/releases/1.2.0"
+                Some("/api/v1/plugins/{slug}/releases/{version}"),
+                "/api/v1/plugins/bedwars-stats/releases/1.2.0"
             )
             .as_deref(),
             Some("bedwars-stats")
@@ -213,6 +213,6 @@ mod tests {
             plugin_slug(Some("/v3/player/tags"), "/v3/player/tags"),
             None
         );
-        assert_eq!(plugin_slug(None, "/api/v1/starfish/plugins/x"), None);
+        assert_eq!(plugin_slug(None, "/api/v1/plugins/x"), None);
     }
 }

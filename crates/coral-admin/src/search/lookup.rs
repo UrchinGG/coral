@@ -3,6 +3,7 @@ use std::net::IpAddr;
 use uuid::Uuid;
 
 use super::input::Kind;
+use crate::permissions::Permission;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reach {
@@ -16,6 +17,7 @@ pub enum Lookup {
     Account(i64),
     BotLookups(i64),
     MemberNumber(i64),
+    StarfishNumber(i64),
     Player { uuid: Uuid, dashed: bool },
     PlayerRequests(Uuid),
     Request(Uuid),
@@ -31,9 +33,30 @@ pub enum Lookup {
 }
 
 impl Lookup {
+    /// Traffic, keys, IPs and Starfish stay with the owner, so other staff never probe them.
+    pub fn permission(&self) -> Permission {
+        match self {
+            Self::Account(_)
+            | Self::MemberNumber(_)
+            | Self::DiscordName(..)
+            | Self::NameHolders { .. } => Permission::MembersRead,
+            Self::Player { .. } | Self::Guild(_) | Self::GuildName(..) => Permission::PlayersRead,
+            Self::BotLookups(_)
+            | Self::PlayerRequests(_)
+            | Self::Request(_)
+            | Self::Ip(_)
+            | Self::NamedRequests(_) => Permission::Traffic,
+            Self::ApiKey(_) | Self::KeyPrefix(_) => Permission::KeysManage,
+            Self::StarfishNumber(_) | Self::Plugin(..) => Permission::Starfish,
+        }
+    }
+
     pub fn kinds(&self) -> &'static [Kind] {
         match self {
-            Self::Account(_) | Self::BotLookups(_) | Self::MemberNumber(_) => &[Kind::Account],
+            Self::Account(_)
+            | Self::BotLookups(_)
+            | Self::MemberNumber(_)
+            | Self::StarfishNumber(_) => &[Kind::Account],
             Self::DiscordName(..) => &[Kind::Account],
             Self::Player { .. } | Self::PlayerRequests(_) | Self::NameHolders { .. } => {
                 &[Kind::Player]
@@ -52,6 +75,7 @@ impl Lookup {
             Self::Account(_) => "account by Discord id",
             Self::BotLookups(_) => "bot lookups by Discord id",
             Self::MemberNumber(_) => "account by member number",
+            Self::StarfishNumber(_) => "account by Starfish user number",
             Self::Player { .. } => "player by UUID",
             Self::PlayerRequests(_) => "requests naming the UUID",
             Self::Request(_) => "request by id",

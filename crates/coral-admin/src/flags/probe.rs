@@ -11,7 +11,7 @@ use crate::refs::EntityRef;
 
 pub const PROBE_THRESHOLD: i64 = 10;
 pub const PROBE_SPAN: TimeDelta = TimeDelta::hours(24);
-pub const STARFISH_ROUTE_PREFIX: &str = "/api/v1/starfish/";
+pub const STARFISH_ROUTE_PREFIX: &str = "/api/v1/";
 pub const AUTH_FAILURES: [i16; 2] = [401, 403];
 
 static STARFISH_ROUTES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
@@ -96,7 +96,7 @@ mod tests {
     #[test]
     fn only_starfish_templates_are_watched() {
         assert!(!STARFISH_ROUTES.is_empty());
-        assert!(STARFISH_ROUTES.contains(&"/api/v1/starfish/auth/poll"));
+        assert!(STARFISH_ROUTES.contains(&"/api/v1/auth/poll"));
         assert!(
             STARFISH_ROUTES
                 .iter()

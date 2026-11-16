@@ -142,22 +142,11 @@ services:
       retries: 3
       start_period: 10s
 
-  coral-web:
-    image: infra-vm:5000/coral-web:latest
-
-    restart: unless-stopped
-    environment:
-      CORAL_API_URL: http://coral-api:${API_PORT:-8000}
-      CORAL_INTERNAL_KEY: ${INTERNAL_API_KEY}
-      SITE_URL: ${SITE_URL:-http://localhost:3000}
-      STARFISH_DISCORD_CLIENT_ID: ${STARFISH_DISCORD_CLIENT_ID:-}
-      STARFISH_DISCORD_CLIENT_SECRET: ${STARFISH_DISCORD_CLIENT_SECRET:-}
-
   coral-bot:
     image: infra-vm:5000/coral-bot:latest
 
     restart: unless-stopped
-    depends_on: [coral-proxy, coral-web]
+    depends_on: [coral-proxy]
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
@@ -183,7 +172,7 @@ services:
     image: infra-vm:5000/coral-sync:latest
 
     restart: unless-stopped
-    depends_on: [coral-proxy, coral-web]
+    depends_on: [coral-proxy]
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
@@ -207,7 +196,7 @@ services:
       CORAL_SYNC_DISCORD_TOKEN: ${CORAL_SYNC_DISCORD_TOKEN:-}
       HOME_GUILD_ID: ${HOME_GUILD_ID:-}
       REVIEW_FORUM_ID: ${REVIEW_FORUM_ID:-}
-      ADMIN_BASE_URL: ${ADMIN_BASE_URL:-}
+      ADMIN_BASE_URL: https://urchin.gg
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       SYNC_SETTINGS_URL: http://coral-sync:8090
       RUST_LOG: ${RUST_LOG:-info}
@@ -225,7 +214,7 @@ services:
     command: ["tunnel", "--config", "/etc/cloudflared/config.yml", "--no-autoupdate", "run"]
     volumes:
       - /home/debian/.cloudflared:/etc/cloudflared:ro
-    depends_on: [coral-proxy, coral-web]
+    depends_on: [coral-proxy]
 
 volumes:
   pg_data:

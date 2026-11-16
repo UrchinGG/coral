@@ -1,0 +1,40 @@
+---
+import type { InferGetStaticPropsType } from "astro";
+import DocSection from "@/components/DocSection.astro";
+import Prose from "@/components/Prose.astro";
+import DocsLayout from "@/layouts/DocsLayout.astro";
+import { docs } from "@/lib/starfish";
+
+export function getStaticPaths() {
+  return docs.pages.map((page) => ({
+    params: { slug: page.slug },
+    props: { page },
+  }));
+}
+
+type Props = InferGetStaticPropsType<typeof getStaticPaths>;
+
+const { page } = Astro.props;
+---
+
+<DocsLayout
+  title={`Starfish ${page.title} API`}
+  heading={page.title}
+  summary={page.summary}
+>
+  {page.sections.map((section) => (
+    <DocSection section={section} />
+  ))}
+  {page.notes.length > 0 && (
+    <section>
+      <h2>Notes</h2>
+      <ul>
+        {page.notes.map((note) => (
+          <li>
+            <Prose text={note} />
+          </li>
+        ))}
+      </ul>
+    </section>
+  )}
+</DocsLayout>

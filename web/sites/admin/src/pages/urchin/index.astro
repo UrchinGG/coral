@@ -1,0 +1,91 @@
+---
+import Admin from "@/layouts/Admin.astro";
+import BlockedKeys from "@/components/BlockedKeys.astro";
+import Capacity from "@/components/Capacity.astro";
+import StatGroup from "@/components/StatGroup.astro";
+---
+
+<Admin title="Home">
+  <Capacity />
+  <div id="overview" class="overview">
+    <StatGroup
+      title="Bot"
+      stats={[
+        { label: "Server Installs", value: "bot.servers" },
+        { label: "User Installs", value: "bot.users" },
+      ]}
+    />
+    <StatGroup
+      title="Members"
+      stats={[
+        { label: "Registered", value: "members.registered" },
+        { label: "Trusted", value: "members.trusted" },
+        {
+          label: "Lifetime Requests",
+          value: "members.lifetime_requests",
+          format: "short",
+        },
+      ]}
+    />
+    <StatGroup
+      title="Blacklist"
+      stats={[{ label: "Active Tags", value: "blacklist.active" }]}
+    >
+      <template id="tag-stat">
+        <div class="stat">
+          <span class="label"></span>
+          <b></b>
+        </div>
+      </template>
+    </StatGroup>
+    <StatGroup
+      title="Guild Cache"
+      note={{ value: "guilds.storage_bytes", format: "bytes" }}
+      stats={[
+        { label: "Guilds Tracked", value: "guilds.tracked" },
+        { label: "Snapshots", value: "guilds.snapshots", format: "short" },
+      ]}
+    />
+    <StatGroup
+      title="Player Cache"
+      note={{ value: "players.storage_bytes", format: "bytes" }}
+      stats={[
+        { label: "Players Tracked", value: "players.tracked", format: "short" },
+        { label: "Snapshots", value: "players.snapshots", format: "short" },
+      ]}
+    />
+  </div>
+  <BlockedKeys />
+</Admin>
+
+<script>
+  import { load } from "@/lib/api";
+  import { failed, fill } from "@/lib/fill";
+  import { FORMATS, titleCase } from "@/lib/format";
+  import { tagPill } from "@/lib/tags";
+
+  interface Overview {
+    blacklist: { by_type: { tag_type: string; count: number }[] };
+  }
+
+  const root = document.getElementById("overview")!;
+  const template = document.getElementById("tag-stat") as HTMLTemplateElement;
+
+  load<Overview>("/overview").then(
+    (overview) => {
+      fill(root, overview);
+      const tags = overview.blacklist.by_type.map(({ tag_type, count }) => {
+        const stat = template.content.firstElementChild!.cloneNode(
+          true,
+        ) as HTMLElement;
+        stat
+          .querySelector(".label")!
+          .replaceChildren(tagPill(tag_type, titleCase(tag_type)));
+        stat.querySelector("b")!.textContent = FORMATS.number(count);
+        return stat;
+      });
+      template.before(...tags);
+    },
+    (error: Error) => failed(root, error.message),
+  );
+</script>

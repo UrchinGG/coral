@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, TimeZone, Utc};
 use coral_redis::RedisPool;
-use database::Database;
+use database::{AccessRank, Database};
 use serde_json::json;
 use tokio::sync::{Mutex, MutexGuard, OnceCell};
 use uuid::Uuid;
@@ -16,6 +16,10 @@ use super::*;
 use crate::coverage::Coverage;
 use crate::names::NameService;
 
+const OWNER_VIEWER: AdminActor = AdminActor {
+    discord_id: 1,
+    rank: AccessRank::Owner,
+};
 const DAY: (i32, u32, u32) = (2020, 1, 5);
 const PARTITIONED: [&str; 3] = [
     "api_request_log",
@@ -57,7 +61,7 @@ const HEAVY_SNAPSHOTS: i32 = 600;
 const EARLY_RENAMED_TO: &str = "SearchTestEarly";
 const GHOST_NAME: &str = "searchtestghost";
 const REMOTE_NAME: &str = "SearchTestRemote";
-const MISSING_NAME: &str = "SearchTestMissing";
+const MISSING_NAME: &str = "SearchTestGone";
 
 const IP: &str = "198.51.100.77";
 const IP_COUNTRY: &str = "NL";
@@ -90,7 +94,10 @@ impl Run {
     }
 
     async fn search(&self, q: &str) -> SearchResults {
-        self.searcher().search(q, MAX_HIT_LIMIT).await.unwrap()
+        self.searcher()
+            .search(q, MAX_HIT_LIMIT, OWNER_VIEWER)
+            .await
+            .unwrap()
     }
 }
 
@@ -701,7 +708,10 @@ async fn a_failed_lookup_is_reported_beside_the_hits_that_succeeded() {
         .await
         .unwrap();
     let partial = run.search(NAME).await;
-    let total = run.searcher().search("pl:searchtest", MAX_HIT_LIMIT).await;
+    let total = run
+        .searcher()
+        .search("pl:searchtest", MAX_HIT_LIMIT, OWNER_VIEWER)
+        .await;
     locker.rollback().await.unwrap();
 
     assert!(holds(&partial, &player(FORMER_HOLDER)));

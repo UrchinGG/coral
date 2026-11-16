@@ -132,6 +132,12 @@ fn requested_players(found: &[Found]) -> HashMap<Uuid, DateTime<Utc>> {
 fn hit_for(found: &Found, requested: &HashMap<Uuid, DateTime<Utc>>) -> SearchHit {
     match found {
         Found::Member { account, by_number } => member_hit(*account, *by_number),
+        Found::StarfishUser { account, number } => account_hit(
+            *account,
+            MEMBER_NUMBER,
+            true,
+            format!("Starfish user #{number}"),
+        ),
         Found::DiscordUser { discord_id, source } => discord_user_hit(*discord_id, *source),
         Found::BotLookups { account, last } => bot_lookups_hit(*account, *last),
         Found::Player {

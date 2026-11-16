@@ -1,11 +1,12 @@
-//! The home server's sync settings. coral-sync owns them; these routes check the
+//! Each server's sync settings. coral-sync owns them; these routes check the
 //! staff member, forward to its settings API and write the audit log.
 
 use std::sync::Arc;
 
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, State};
+use axum::extract::{FromRequestParts, Path, RawPathParams, State};
 use axum::http::StatusCode;
+use axum::http::request::Parts;
 use axum::{Extension, Json};
 use reqwest::Method;
 use serde_json::{Value, json};
@@ -18,8 +19,29 @@ use crate::sync_settings::SyncSettings;
 
 pub mod directory;
 pub mod jobs;
+pub mod list;
 
 const SOURCES_TARGET: &str = "sync_sources";
+
+/// The server a route names in its `{guild_id}` path segment.
+pub struct Server(pub GuildId);
+
+impl<S: Send + Sync> FromRequestParts<S> for Server {
+    type Rejection = AdminError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, AdminError> {
+        let params = RawPathParams::from_request_parts(parts, state)
+            .await
+            .map_err(|error| AdminError::BadRequest(error.to_string()))?;
+        params
+            .iter()
+            .find(|(name, _)| *name == "guild_id")
+            .and_then(|(_, value)| value.parse::<u64>().ok())
+            .filter(|id| *id > 0)
+            .map(|id| Server(GuildId::new(id)))
+            .ok_or_else(|| AdminError::BadRequest("the server id must be a Discord id".into()))
+    }
+}
 
 pub fn home_guild(state: &AppState) -> Result<GuildId, AdminError> {
     state
@@ -41,21 +63,43 @@ pub fn sync_settings(state: &AppState) -> Result<Arc<SyncSettings>, AdminError> 
 pub async fn config(
     State(state): State<AppState>,
     Extension(actor): Extension<AdminActor>,
+    Server(guild_id): Server,
 ) -> Result<Json<Value>, AdminError> {
-    let guild_id = home_guild(&state)?;
     let path = format!("/guilds/{guild_id}/config?preview_for={}", actor.discord_id);
     Ok(Json(sync_settings(&state)?.read(&path).await?))
+}
+
+pub async fn set_enabled(
+    State(state): State<AppState>,
+    Extension(actor): Extension<AdminActor>,
+    Server(guild_id): Server,
+    body: Result<Json<Value>, JsonRejection>,
+) -> Result<StatusCode, AdminError> {
+    let Json(body) = body?;
+    change(
+        &state,
+        &actor,
+        guild_id,
+        Method::PUT,
+        "/enabled",
+        Some(body),
+        "set_sync_enabled",
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn set_link_role(
     State(state): State<AppState>,
     Extension(actor): Extension<AdminActor>,
+    Server(guild_id): Server,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<Json<Value>, AdminError> {
     let Json(body) = body?;
     let job = change(
         &state,
         &actor,
+        guild_id,
         Method::PUT,
         "/link-role",
         Some(body),
@@ -68,12 +112,14 @@ pub async fn set_link_role(
 pub async fn set_unlinked_role(
     State(state): State<AppState>,
     Extension(actor): Extension<AdminActor>,
+    Server(guild_id): Server,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<Json<Value>, AdminError> {
     let Json(body) = body?;
     let job = change(
         &state,
         &actor,
+        guild_id,
         Method::PUT,
         "/unlinked-role",
         Some(body),
@@ -86,12 +132,14 @@ pub async fn set_unlinked_role(
 pub async fn set_link_channel(
     State(state): State<AppState>,
     Extension(actor): Extension<AdminActor>,
+    Server(guild_id): Server,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<StatusCode, AdminError> {
     let Json(body) = body?;
     change(
         &state,
         &actor,
+        guild_id,
         Method::PUT,
         "/link-channel",
         Some(body),
@@ -104,12 +152,14 @@ pub async fn set_link_channel(
 pub async fn set_nickname_template(
     State(state): State<AppState>,
     Extension(actor): Extension<AdminActor>,
+    Server(guild_id): Server,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<Json<Value>, AdminError> {
     let Json(body) = body?;
     let job = change(
         &state,
         &actor,
+        guild_id,
         Method::PUT,
         "/nickname-template",
         Some(body),
@@ -122,10 +172,12 @@ pub async fn set_nickname_template(
 pub async fn reset_nicknames(
     State(state): State<AppState>,
     Extension(actor): Extension<AdminActor>,
+    Server(guild_id): Server,
 ) -> Result<Json<Value>, AdminError> {
     let job = change(
         &state,
         &actor,
+        guild_id,
         Method::POST,
         "/nicknames/reset",
         None,
@@ -138,12 +190,14 @@ pub async fn reset_nicknames(
 pub async fn add_rule(
     State(state): State<AppState>,
     Extension(actor): Extension<AdminActor>,
+    Server(guild_id): Server,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<Json<Value>, AdminError> {
     let Json(body) = body?;
     let job = change(
         &state,
         &actor,
+        guild_id,
         Method::POST,
         "/rules",
         Some(body),
@@ -156,7 +210,8 @@ pub async fn add_rule(
 pub async fn update_rule(
     State(state): State<AppState>,
     Extension(actor): Extension<AdminActor>,
-    Path(rule_id): Path<i64>,
+    Server(guild_id): Server,
+    Path((_, rule_id)): Path<(u64, i64)>,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<Json<Value>, AdminError> {
     let Json(body) = body?;
@@ -164,6 +219,7 @@ pub async fn update_rule(
     let job = change(
         &state,
         &actor,
+        guild_id,
         Method::PUT,
         &path,
         Some(body),
@@ -176,12 +232,14 @@ pub async fn update_rule(
 pub async fn remove_rule(
     State(state): State<AppState>,
     Extension(actor): Extension<AdminActor>,
-    Path(rule_id): Path<i64>,
+    Server(guild_id): Server,
+    Path((_, rule_id)): Path<(u64, i64)>,
 ) -> Result<StatusCode, AdminError> {
     let path = format!("/rules/{rule_id}");
     change(
         &state,
         &actor,
+        guild_id,
         Method::DELETE,
         &path,
         None,
@@ -194,10 +252,20 @@ pub async fn remove_rule(
 pub async fn strip_role(
     State(state): State<AppState>,
     Extension(actor): Extension<AdminActor>,
-    Path(role_id): Path<String>,
+    Server(guild_id): Server,
+    Path((_, role_id)): Path<(u64, String)>,
 ) -> Result<Json<Value>, AdminError> {
     let path = format!("/roles/{role_id}/strip");
-    let job = change(&state, &actor, Method::POST, &path, None, "strip_role").await?;
+    let job = change(
+        &state,
+        &actor,
+        guild_id,
+        Method::POST,
+        &path,
+        None,
+        "strip_role",
+    )
+    .await?;
     Ok(started(job))
 }
 
@@ -248,12 +316,14 @@ pub async fn remove_source(
 pub async fn set_used_sources(
     State(state): State<AppState>,
     Extension(actor): Extension<AdminActor>,
+    Server(guild_id): Server,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<Json<Value>, AdminError> {
     let Json(body) = body?;
     let job = change(
         &state,
         &actor,
+        guild_id,
         Method::PUT,
         "/sources",
         Some(body),
@@ -263,17 +333,17 @@ pub async fn set_used_sources(
     Ok(started(job))
 }
 
-/// Forwards a write for the home server, audits what the sync reports it did, and
+/// Forwards a write for one server, audits what the sync reports it did, and
 /// returns the job it started, if any.
 pub async fn change(
     state: &AppState,
     actor: &AdminActor,
+    guild_id: GuildId,
     method: Method,
     path: &str,
     body: Option<Value>,
     action: &str,
 ) -> Result<Value, AdminError> {
-    let guild_id = home_guild(state)?;
     let path = format!("/guilds/{guild_id}{path}");
     forward(
         state,

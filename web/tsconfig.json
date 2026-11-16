@@ -1,0 +1,7 @@
+{
+  "extends": "astro/tsconfigs/strict",
+  "exclude": ["**/dist"],
+  "compilerOptions": {
+    "paths": { "@shared/*": ["./shared/*"] }
+  }
+}

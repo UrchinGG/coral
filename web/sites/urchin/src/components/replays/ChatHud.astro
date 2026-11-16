@@ -1,0 +1,53 @@
+<section id="hud" class="hud mc" aria-label="Chat">
+  <div id="hud-log" class="log">
+    <div id="hud-lines" class="lines"></div>
+  </div>
+</section>
+
+<style>
+  .hud {
+    --gui-pixel: 2px;
+    position: absolute;
+    z-index: 5;
+    bottom: calc(var(--transport-inset) + 0.625rem);
+    left: 1rem;
+    display: flex;
+    flex-direction: column;
+    width: min(calc(var(--gui-pixel) * 320), 100% - 2rem - var(--panel-inset));
+    font-size: calc(var(--gui-pixel) * 9);
+    line-height: calc(var(--gui-pixel) * 9);
+    pointer-events: none;
+
+    @media (width < 37.5rem) {
+      --gui-pixel: 1.5px;
+      left: 0.5rem;
+    }
+  }
+
+  .log {
+    display: flex;
+    flex-direction: column-reverse;
+    max-height: calc(var(--gui-pixel) * 9 * 20);
+    overflow: hidden;
+  }
+
+  .lines :global(.line) {
+    padding: var(--gui-pixel) calc(var(--gui-pixel) * 2) 0;
+    background: var(--mc-chat);
+    opacity: var(--fade);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
+  .hud[data-open] {
+    pointer-events: auto;
+
+    & .log {
+      overflow-y: auto;
+    }
+
+    & .lines :global(.line) {
+      opacity: 1;
+    }
+  }
+</style>

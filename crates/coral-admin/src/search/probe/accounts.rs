@@ -106,6 +106,30 @@ pub(super) async fn member_number(db: &Database, number: i64) -> Result<Vec<Foun
         .collect())
 }
 
+pub(super) async fn starfish_number(db: &Database, number: i64) -> Result<Vec<Found>, AdminError> {
+    let mut conn = open(db).await?;
+    let mut tx = bounded(&mut conn).await?;
+    let found: Option<(i64, Option<i64>)> = sqlx::query_as(
+        "SELECT s.discord_id, m.id FROM starfish_users s \
+         LEFT JOIN members m ON m.discord_id = s.discord_id WHERE s.id = $1",
+    )
+    .bind(number)
+    .fetch_optional(&mut *tx)
+    .await
+    .context("look up the Starfish user number")?;
+    finish(tx).await?;
+    Ok(found
+        .map(|(discord_id, member_id)| Found::StarfishUser {
+            account: Account {
+                discord_id,
+                member_id,
+            },
+            number,
+        })
+        .into_iter()
+        .collect())
+}
+
 pub(super) async fn discord_names(
     context: &ProbeContext<'_>,
     text: &str,

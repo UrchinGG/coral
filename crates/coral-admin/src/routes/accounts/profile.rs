@@ -1,5 +1,5 @@
-use axum::Json;
 use axum::extract::{Path, State};
+use axum::{Extension, Json};
 use chrono::{DateTime, TimeDelta, Utc};
 use database::{Member, ReviewRulesRepository, Strike, StrikeRepository, StrikeStatus, standing};
 use reqlog::Cause;
@@ -9,7 +9,9 @@ use sqlx::FromRow;
 
 use super::exact_json::exact_integers;
 use super::{FIRST_ERROR_STATUS, parse_discord_id};
+use crate::auth::AdminActor;
 use crate::error::{AdminError, Context};
+use crate::permissions::Permission;
 use crate::refs::{EntityRef, Labels};
 use crate::routes::ref_labels::label_request;
 use crate::serde_ts;
@@ -60,7 +62,7 @@ struct MemberView {
     row: Value,
 }
 
-#[derive(Serialize)]
+#[derive(Default, Serialize)]
 struct KeySummary {
     personal: Option<String>,
     personal_id: Option<i64>,
@@ -224,6 +226,7 @@ struct Sections {
 
 pub async fn account(
     State(state): State<AppState>,
+    Extension(actor): Extension<AdminActor>,
     Path(raw): Path<String>,
 ) -> Result<Json<AccountCore>, AdminError> {
     let discord_id = parse_discord_id(&raw)?;
@@ -233,9 +236,31 @@ pub async fn account(
         .await
         .context("read the member row")?;
     let sections = load_sections(&state, discord_id, row.as_ref()).await?;
-    let core = assemble(&state, discord_id, row, sections);
+    let core = assemble(&state, discord_id, row, sections).visible_to(actor);
     let labels = state.names.cached(&label_request(mentioned(&core))).await?;
     Ok(Json(AccountCore { labels, ..core }))
+}
+
+impl AccountCore {
+    /// Keys, IPs and Starfish details are owner-only; other staff see request counts but no requests.
+    fn visible_to(mut self, actor: AdminActor) -> Self {
+        if !actor.can(Permission::KeysManage) {
+            self.keys = KeySummary::default();
+            if let Some(member) = &mut self.member {
+                member.row = Value::Null;
+            }
+        }
+        if !actor.can(Permission::Traffic) {
+            self.activity.last_ip = None;
+            self.activity.ip_count = 0;
+            self.counts.ips = 0;
+            self.counts.agents = 0;
+        }
+        if !actor.can(Permission::Starfish) {
+            self.starfish = None;
+        }
+        self
+    }
 }
 
 async fn load_sections(

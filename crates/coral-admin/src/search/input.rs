@@ -148,7 +148,10 @@ impl Shape {
     pub fn lookups(&self, operator: Option<Operator>) -> Vec<Lookup> {
         match self {
             Self::DiscordId(id) => vec![Lookup::Account(*id), Lookup::BotLookups(*id)],
-            Self::MemberNumber(number) => vec![Lookup::MemberNumber(*number)],
+            Self::MemberNumber(number) => vec![
+                Lookup::MemberNumber(*number),
+                Lookup::StarfishNumber(*number),
+            ],
             Self::Uuid { uuid, dashed } => uuid_lookups(*uuid, *dashed, operator),
             Self::GuildId(id) => vec![Lookup::Guild(id.clone())],
             Self::KeyPrefix(prefix) => vec![Lookup::KeyPrefix(prefix.clone())],
@@ -671,6 +674,13 @@ mod tests {
             pl.lookups(),
             vec![Lookup::Plugin("bed".into(), Reach::Prefix)]
         );
+    }
+
+    #[test]
+    fn a_number_probes_both_member_and_starfish_numbers() {
+        let lookups = Input::parse("42").lookups();
+        assert!(lookups.contains(&Lookup::MemberNumber(42)));
+        assert!(lookups.contains(&Lookup::StarfishNumber(42)));
     }
 
     #[test]

@@ -1,0 +1,295 @@
+---
+import { page } from "@/lib/paths";
+---
+
+<section id="plugin-page" class="member" hidden>
+  <nav class="crumbs-nav" aria-label="Breadcrumb">
+    <a href={page("/starfish/plugins")}>Plugins</a>
+    <span aria-hidden="true">/</span>
+    <span data-crumb></span>
+  </nav>
+  <header class="member-head">
+    <div class="member-title">
+      <h1 data-name>Loading…</h1>
+      <p class="description" data-description></p>
+      <div class="meta" data-meta></div>
+      <div class="issues" data-issues></div>
+    </div>
+    <div class="actions" data-actions></div>
+  </header>
+  <p class="muted" data-status></p>
+  <div class="stack" data-body></div>
+</section>
+
+<script>
+  import { page } from "@/lib/paths";
+  import { load, send } from "@/lib/api";
+  import { el, panel, row, widePanel } from "@/lib/dom";
+  import { FORMATS } from "@/lib/format";
+  import type { Labels } from "@/lib/members";
+  import { refLink, type Ref } from "@/lib/refs";
+  import { day } from "@/lib/time";
+
+  interface Release {
+    version: string;
+    git_sha: string;
+    asset_url: string;
+    asset_sha256: string;
+    asset_size: number;
+    changelog: string | null;
+    yanked: boolean;
+    yanked_reason: string | null;
+    created_at: string;
+  }
+
+  interface PluginDetail {
+    plugin: {
+      slug: string;
+      display_name: string;
+      description: string;
+      repo: string;
+      homepage: string | null;
+      official: boolean;
+      unlisted: boolean;
+      disabled: boolean;
+      disabled_reason: string | null;
+      created_at: string;
+      updated_at: string;
+    };
+    owner: Ref | null;
+    installs_30d: number;
+    installs_total: number;
+    releases: Release[];
+    reviews: {
+      user_id: number;
+      reviewer: Ref | null;
+      stars: number;
+      review: string | null;
+      updated_at: string;
+    }[];
+    labels: Labels;
+  }
+
+  const KILOBYTE = 1024;
+  const slug = new URLSearchParams(location.search).get("slug");
+  const root = document.getElementById("plugin-page")!;
+  const part = (name: string) =>
+    root.querySelector<HTMLElement>(`[data-${name}]`)!;
+  const path = `/plugins/${slug}`;
+
+  async function act(suffix: string, method: string, body?: unknown) {
+    const ok = await send(`${path}${suffix}`, method, body ?? {});
+    part("status").textContent = ok ? "" : "That didn't work; nothing changed.";
+    if (ok) show();
+    return ok;
+  }
+
+  const button = (label: string, run: () => void, className = "button") => {
+    const element = el("button", {
+      type: "button",
+      className,
+      textContent: label,
+    });
+    element.addEventListener("click", run);
+    return element;
+  };
+
+  function actions(info: PluginDetail["plugin"]) {
+    return [
+      button(info.official ? "Remove Official" : "Make Official", () =>
+        act("/official", "POST", { official: !info.official }),
+      ),
+      button(info.unlisted ? "List" : "Unlist", () =>
+        act("/unlisted", "POST", { unlisted: !info.unlisted }),
+      ),
+      button(
+        info.disabled ? "Enable" : "Disable",
+        () => {
+          if (info.disabled)
+            return act("/disabled", "POST", { disabled: false, reason: null });
+          const reason = prompt(
+            "Why disable this plugin? Members see the reason.",
+          );
+          if (reason !== null)
+            act("/disabled", "POST", {
+              disabled: true,
+              reason: reason || null,
+            });
+        },
+        "button danger",
+      ),
+      button(
+        "Delete",
+        async () => {
+          if (
+            prompt(
+              `Type ${info.slug} to delete this plugin and every release.`,
+            ) === info.slug &&
+            (await send(path, "DELETE"))
+          )
+            location.href = page("/starfish/plugins");
+        },
+        "button danger",
+      ),
+    ];
+  }
+
+  function release(entry: Release) {
+    const controls = el(
+      "div",
+      { className: "actions" },
+      entry.yanked
+        ? button(
+            "Unyank",
+            () => act(`/releases/${entry.version}/unyank`, "POST"),
+            "button small",
+          )
+        : button(
+            "Yank",
+            () => {
+              const reason = prompt(`Why yank ${entry.version}?`);
+              if (reason !== null)
+                act(`/releases/${entry.version}/yank`, "POST", {
+                  reason: reason || null,
+                });
+            },
+            "button small",
+          ),
+      button(
+        "Delete Release",
+        () =>
+          confirm(`Delete ${entry.version}?`) &&
+          act(`/releases/${entry.version}`, "DELETE"),
+        "button small danger",
+      ),
+    );
+    return el(
+      "details",
+      { className: "machine" },
+      el(
+        "summary",
+        {},
+        el("span", { className: "mono strong", textContent: entry.version }),
+        el("span", {
+          className: entry.yanked ? "warn" : "ok",
+          textContent: entry.yanked
+            ? `Yanked${entry.yanked_reason ? `: ${entry.yanked_reason}` : ""}`
+            : "Active",
+        }),
+        el("span", {
+          className: "dim",
+          textContent: `${day(entry.created_at)} · ${FORMATS.number(Math.round(entry.asset_size / KILOBYTE))} KB`,
+        }),
+      ),
+      row("Changelog", entry.changelog ?? "None"),
+      row(
+        "Commit",
+        el("span", { className: "mono", textContent: entry.git_sha }),
+      ),
+      row(
+        "Asset SHA-256",
+        el("span", { className: "mono", textContent: entry.asset_sha256 }),
+      ),
+      row(
+        "Asset",
+        el("a", {
+          className: "ref",
+          href: entry.asset_url,
+          textContent: entry.asset_url.split("/").pop() ?? entry.asset_url,
+        }),
+      ),
+      controls,
+    );
+  }
+
+  async function show() {
+    try {
+      const detail = await load<PluginDetail>(path);
+      const info = detail.plugin;
+      document.title = `${info.display_name} | Urchin Admin`;
+      part("crumb").textContent = info.display_name;
+      part("name").textContent = info.display_name;
+      part("description").textContent = info.description;
+      part("meta").replaceChildren(
+        ...[
+          info.slug,
+          info.repo,
+          `Created ${day(info.created_at)}`,
+          `Updated ${day(info.updated_at)}`,
+        ].map((text) => el("span", { textContent: text })),
+      );
+      part("issues").replaceChildren(
+        ...[
+          info.official && ["Official", "issue ok"],
+          info.unlisted && ["Unlisted", "issue warn"],
+          info.disabled && [
+            `Disabled${info.disabled_reason ? `: ${info.disabled_reason}` : ""}`,
+            "issue",
+          ],
+        ]
+          .filter(Boolean)
+          .map((entry) =>
+            el("span", {
+              className: (entry as string[])[1],
+              textContent: (entry as string[])[0],
+            }),
+          ),
+      );
+      part("actions").replaceChildren(...actions(info));
+      const reviews = detail.reviews.map((review) =>
+        row(
+          `${"★".repeat(review.stars)}${"☆".repeat(5 - review.stars)}`,
+          review.review ?? "",
+          el(
+            "span",
+            { className: "dim" },
+            " · ",
+            review.reviewer ? refLink(review.reviewer, detail.labels) : "",
+            ` · ${day(review.updated_at)}`,
+          ),
+          button(
+            "Delete",
+            () =>
+              confirm("Delete this review?") &&
+              act(`/reviews/${review.user_id}`, "DELETE"),
+            "button small danger",
+          ),
+        ),
+      );
+      part("body").replaceChildren(
+        el(
+          "div",
+          { className: "panels" },
+          panel(
+            "About",
+            row(
+              "Owner",
+              detail.owner ? refLink(detail.owner, detail.labels) : "Unknown",
+            ),
+            row("Repository", info.repo),
+            row("Homepage", info.homepage ?? "None"),
+            row("Installs", FORMATS.number(detail.installs_total)),
+            row("Installs, 30 d", FORMATS.number(detail.installs_30d)),
+          ),
+          widePanel(
+            `Releases · ${detail.releases.length}`,
+            ...detail.releases.map(release),
+          ),
+          widePanel(
+            `Reviews · ${detail.reviews.length}`,
+            ...(reviews.length ? reviews : [row("None", "No reviews yet")]),
+          ),
+        ),
+      );
+    } catch (error) {
+      part("status").textContent = (error as Error).message;
+    }
+  }
+
+  if (slug) {
+    root.hidden = false;
+    document.getElementById("plugin-list")!.hidden = true;
+    document.querySelector("main > .crumbs")!.setAttribute("hidden", "");
+    show();
+  }
+</script>

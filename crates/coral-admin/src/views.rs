@@ -17,6 +17,7 @@ pub const LONG_SUMMARY_TTL: Duration = Duration::from_secs(60);
 pub const ROUTES_TTL: Duration = Duration::from_secs(10 * 60);
 pub const GUILD_POPULATION_TTL: Duration = Duration::from_secs(10 * 60);
 pub const DISCORD_DIRECTORY_TTL: Duration = Duration::from_secs(10 * 60);
+pub const OVERVIEW_TTL: Duration = Duration::from_secs(60);
 pub const RECENT_SUMMARY_SPAN: Duration = Duration::from_secs(24 * 3600);
 
 const MAX_VIEWS: u64 = 1_000;
@@ -30,6 +31,7 @@ pub enum View {
     Routes,
     GuildPopulation,
     DiscordDirectory,
+    Overview,
 }
 
 #[derive(Clone)]
@@ -62,6 +64,7 @@ impl View {
             Self::Routes => ROUTES_TTL,
             Self::GuildPopulation => GUILD_POPULATION_TTL,
             Self::DiscordDirectory => DISCORD_DIRECTORY_TTL,
+            Self::Overview => OVERVIEW_TTL,
         }
     }
 }

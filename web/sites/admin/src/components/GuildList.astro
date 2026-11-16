@@ -1,0 +1,106 @@
+<section id="guild-list" class="list">
+  <form class="toolbar" role="search">
+    <input
+      class="field grow"
+      type="search"
+      name="q"
+      placeholder="Search by name, tag or guild ID"
+      aria-label="Search guilds"
+    />
+    <select class="field" name="sort" aria-label="Sort by">
+      <option value="updated">Recently refreshed</option>
+      <option value="members">Most members</option>
+      <option value="level">Highest level</option>
+      <option value="experience">Most experience</option>
+    </select>
+  </form>
+  <div class="table" data-table></div>
+</section>
+
+<script>
+  import { page } from "@/lib/paths";
+  import { el } from "@/lib/dom";
+  import { FORMATS } from "@/lib/format";
+  import { pager } from "@/lib/pager";
+  import { setQuery } from "@/lib/tabbar";
+  import { ago } from "@/lib/time";
+
+  interface GuildRow {
+    guild: { guild_id: string; name: string | null };
+    tag: string | null;
+    level: number;
+    member_count: number;
+    experience: number;
+    updated_at: string;
+  }
+
+  const SEARCH_DELAY_MS = 250;
+  const root = document.getElementById("guild-list")!;
+  const form = root.querySelector("form")!;
+  const table = root.querySelector<HTMLElement>("[data-table]")!;
+
+  const line = (cells: (string | Node)[], className = "table-row guild") =>
+    el("div", { className }, ...cells.map((cell) => el("span", {}, cell)));
+
+  const render = (row: GuildRow) => {
+    const link = el("a", {
+      className: "table-row guild",
+      href: page(`/urchin/guilds?id=${row.guild.guild_id}`),
+    });
+    link.append(
+      ...[
+        el("span", {
+          className: "strong",
+          textContent: row.guild.name ?? row.guild.guild_id,
+        }),
+        el("span", {
+          className: "mono dim",
+          textContent: row.tag ? `[${row.tag}]` : "",
+        }),
+        el("span", { className: "num", textContent: String(row.level) }),
+        el("span", {
+          className: "num",
+          textContent: FORMATS.number(row.member_count),
+        }),
+        el("span", {
+          className: "num",
+          textContent: FORMATS.short(row.experience),
+        }),
+        el("span", { className: "dim", textContent: ago(row.updated_at) }),
+      ],
+    );
+    return link;
+  };
+
+  function refresh() {
+    const values = new FormData(form);
+    const q = String(values.get("q") ?? "").trim();
+    const sort = String(values.get("sort"));
+    setQuery("q", q || null);
+    setQuery("sort", sort === "updated" ? null : sort);
+    const params = new URLSearchParams({ sort });
+    if (q) params.set("q", q);
+    table.replaceChildren(
+      line(
+        ["Guild", "Tag", "Level", "Members", "Experience", "Refreshed"],
+        "table-row guild head",
+      ),
+      pager<GuildRow>(`/guilds?${params}`, render, "No guild matches."),
+    );
+  }
+
+  for (const [name, value] of new URLSearchParams(location.search)) {
+    const control = form.elements.namedItem(name) as HTMLInputElement | null;
+    if (control) control.value = value;
+  }
+  let typing: ReturnType<typeof setTimeout>;
+  form.addEventListener("input", (event) => {
+    clearTimeout(typing);
+    typing = setTimeout(
+      refresh,
+      (event.target as HTMLElement).tagName === "INPUT" ? SEARCH_DELAY_MS : 0,
+    );
+  });
+  form.addEventListener("submit", (event) => event.preventDefault());
+  refresh();
+</script>

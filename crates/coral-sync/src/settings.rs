@@ -68,6 +68,7 @@ struct Actor(i64);
 #[derive(Serialize)]
 struct ServerConfig {
     guild_id: String,
+    enabled: bool,
     config: ConfigView,
     rules: Vec<RuleView>,
     source_ids: Vec<String>,
@@ -153,6 +154,12 @@ struct PreviewQuery {
 #[serde(deny_unknown_fields)]
 struct RoleBody {
     role_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnabledBody {
+    enabled: bool,
 }
 
 #[derive(Deserialize)]
@@ -299,6 +306,7 @@ pub async fn serve(data: Data, http: Arc<Http>, key: String, port: u16) {
 fn router(state: ApiState) -> Router {
     Router::new()
         .route("/guilds/{guild_id}/config", get(config))
+        .route("/guilds/{guild_id}/enabled", put(set_enabled))
         .route("/guilds/{guild_id}/link-role", put(set_link_role))
         .route("/guilds/{guild_id}/unlinked-role", put(set_unlinked_role))
         .route("/guilds/{guild_id}/link-channel", put(set_link_channel))
@@ -354,6 +362,7 @@ async fn config(
     };
     Ok(Json(ServerConfig {
         guild_id: guild_id.to_string(),
+        enabled: config.as_ref().is_some_and(|config| config.enabled),
         config: config.as_ref().map(config_view).unwrap_or_default(),
         rules: rules
             .into_iter()
@@ -365,6 +374,21 @@ async fn config(
             .collect(),
         source_ids: sources.iter().map(|source| source.id.to_string()).collect(),
         preview_context,
+    }))
+}
+
+async fn set_enabled(
+    State(state): State<ApiState>,
+    Actor(actor): Actor,
+    Path(guild_id): Path<u64>,
+    Json(body): Json<EnabledBody>,
+) -> Result<Json<Change>, SettingsError> {
+    GuildConfigRepository::new(state.data.db.pool())
+        .set_enabled(guild_id as i64, actor, body.enabled)
+        .await?;
+    Ok(Json(Change {
+        job: None,
+        audit: json!({ "enabled": body.enabled }),
     }))
 }
 

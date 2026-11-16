@@ -1,0 +1,245 @@
+---
+import { page } from "@/lib/paths";
+---
+
+<section id="player-page" class="member" hidden>
+  <nav class="crumbs-nav" aria-label="Breadcrumb">
+    <a href={page("/urchin/players")}>Players</a>
+    <span aria-hidden="true">/</span>
+    <span data-crumb></span>
+  </nav>
+  <header class="member-head">
+    <div class="member-title">
+      <h1 data-name>Loading…</h1>
+      <div class="meta" data-meta></div>
+      <div class="issues" data-issues></div>
+    </div>
+    <div class="actions" data-actions></div>
+  </header>
+  <div class="tabs" role="tablist" aria-label="Player sections" data-tabs></div>
+  <p class="muted" data-status></p>
+  <div data-tab></div>
+
+  <dialog data-dialog="tag">
+    <form method="dialog" class="dialog-form">
+      <h2>Add Tag</h2>
+      <label>
+        Tag <select class="field" name="tag_type" data-tag-types></select>
+      </label>
+      <label>
+        Reason <input class="field" name="reason" required />
+      </label>
+      <label class="check">
+        <input type="checkbox" name="hide_username" /> Hide who added it
+      </label>
+      <div class="actions">
+        <button class="button" value="cancel" formnovalidate>
+          Cancel
+        </button>
+        <button class="button primary" value="confirm">
+          Add Tag
+        </button>
+      </div>
+    </form>
+  </dialog>
+  <dialog data-dialog="reason">
+    <form method="dialog" class="dialog-form">
+      <h2 data-reason-title></h2>
+      <label>
+        Reason <input class="field" name="reason" />
+      </label>
+      <div class="actions">
+        <button class="button" value="cancel" formnovalidate>
+          Cancel
+        </button>
+        <button class="button primary" value="confirm">
+          Confirm
+        </button>
+      </div>
+    </form>
+  </dialog>
+</section>
+
+<script>
+  import { load, send } from "@/lib/api";
+  import { el } from "@/lib/dom";
+  import { can, session, type Permission } from "@/lib/session";
+  import { fillTab, setQuery, tabBar } from "@/lib/tabbar";
+  import { tagPill } from "@/lib/tags";
+  import {
+    overviewTab,
+    lookupsTab,
+    snapshotsTab,
+    tagsTab,
+    type PlayerCore,
+    type Tag,
+  } from "@/lib/tabs/player";
+
+  const viewer = await session();
+  const TABS: [string, string][] = [
+    ["overview", "Overview"],
+    ["tags", "Tag History"],
+    ["snapshots", "Snapshots"],
+    ["lookups", "Lookups"],
+  ].filter(([key]) => key !== "lookups" || can(viewer, "traffic")) as [
+    string,
+    string,
+  ][];
+
+  const uuid = new URLSearchParams(location.search).get("uuid");
+  const root = document.getElementById("player-page")!;
+  const part = (name: string) =>
+    root.querySelector<HTMLElement>(`[data-${name}]`)!;
+  const dialog = (name: string) =>
+    root.querySelector<HTMLDialogElement>(`[data-dialog="${name}"]`)!;
+  let current = new URLSearchParams(location.search).get("tab") ?? "overview";
+
+  function ask(name: string, then: (form: FormData) => void) {
+    const box = dialog(name);
+    box.querySelector("form")!.reset();
+    box.showModal();
+    box.addEventListener(
+      "close",
+      () =>
+        box.returnValue === "confirm" &&
+        then(new FormData(box.querySelector("form")!)),
+      { once: true },
+    );
+  }
+
+  async function act(path: string, method: string, body?: unknown) {
+    const ok = await send(`/players/${uuid}${path}`, method, body);
+    part("status").textContent = ok ? "" : "That didn't work; nothing changed.";
+    if (ok) show();
+  }
+
+  const askReason = (title: string, path: string) => {
+    part("reason-title").textContent = title;
+    ask("reason", (form) =>
+      act(path, "POST", { reason: String(form.get("reason") || "") || null }),
+    );
+  };
+
+  function header(core: PlayerCore) {
+    const name = core.name ?? core.dashed;
+    document.title = `${name} | Urchin Admin`;
+    part("crumb").textContent = name;
+    part("name").textContent = name;
+    part("meta").replaceChildren(
+      el("span", { className: "mono", textContent: core.dashed }),
+      ...core.blacklist.active.map((tag) =>
+        tagPill(tag.tag_type, tag.display_name),
+      ),
+    );
+    const issues = [
+      core.blacklist.locked &&
+        `Locked: ${core.blacklist.locked.reason ?? "no reason"}`,
+      core.minecraft_block &&
+        `Sign-in blocked: ${core.minecraft_block.reason ?? "no reason"}`,
+    ].filter(Boolean) as string[];
+    part("issues").replaceChildren(
+      ...issues.map((text) =>
+        el("span", { className: "issue", textContent: text }),
+      ),
+    );
+    const button = (
+      label: string,
+      needs: Permission,
+      run: () => void,
+      className = "button",
+    ) => {
+      if (!can(viewer, needs)) return [];
+      const element = el("button", {
+        type: "button",
+        className,
+        textContent: label,
+      });
+      element.addEventListener("click", run);
+      return [element];
+    };
+    part("actions").replaceChildren(
+      ...button("Add Tag", "tags_write", addTag),
+      ...(core.blacklist.locked
+        ? button("Unlock", "player_locks_write", () =>
+            act("/unlock", "POST", {}),
+          )
+        : button("Lock", "player_locks_write", () =>
+            askReason("Lock Tags", "/lock"),
+          )),
+      ...(core.minecraft_block
+        ? button("Unblock Sign-in", "sign_in_blocks_write", () =>
+            act("/unblock", "POST", {}),
+          )
+        : button(
+            "Block Sign-in",
+            "sign_in_blocks_write",
+            () => askReason("Block Sign-in", "/block"),
+            "button danger",
+          )),
+    );
+  }
+
+  async function addTag() {
+    const { tag_types } = await load<{
+      tag_types: { name: string; display_name: string }[];
+    }>(`/players/${uuid}/tags`);
+    part("tag-types").replaceChildren(
+      ...tag_types.map((type) =>
+        el("option", { value: type.name, textContent: type.display_name }),
+      ),
+    );
+    ask("tag", (form) =>
+      act("/tags", "POST", {
+        tag_type: form.get("tag_type"),
+        reason: form.get("reason"),
+        hide_username: form.get("hide_username") === "on",
+      }),
+    );
+  }
+
+  const removeTag = (tag: Tag) =>
+    confirm(`Remove ${tag.display_name}?`) &&
+    act(`/tags/${encodeURIComponent(tag.tag_type)}`, "DELETE");
+
+  function content(core: PlayerCore): Promise<Node> | Node {
+    switch (current) {
+      case "tags":
+        return tagsTab(uuid!);
+      case "snapshots":
+        return snapshotsTab(uuid!);
+      case "lookups":
+        return lookupsTab(uuid!);
+      default:
+        return overviewTab(
+          core,
+          can(viewer, "tags_write") ? removeTag : undefined,
+        );
+    }
+  }
+
+  function render(core: PlayerCore) {
+    tabBar(part("tabs"), TABS, current, (key) => {
+      current = key;
+      setQuery("tab", key === "overview" ? null : key);
+      render(core);
+    });
+    fillTab(part("tab"), () => content(core));
+  }
+
+  async function show() {
+    try {
+      const core = await load<PlayerCore>(`/players/${uuid}`);
+      header(core);
+      render(core);
+    } catch (error) {
+      part("status").textContent = (error as Error).message;
+    }
+  }
+
+  if (uuid) {
+    root.hidden = false;
+    document.getElementById("player-search")!.hidden = true;
+    document.querySelector("main > .crumbs")!.setAttribute("hidden", "");
+    show();
+  }
+</script>

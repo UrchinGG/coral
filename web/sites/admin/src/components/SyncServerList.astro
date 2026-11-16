@@ -1,0 +1,118 @@
+<section id="sync-servers" class="stack">
+  <p class="muted" data-status>
+    Loading servers…
+  </p>
+  <div class="server-cards" data-cards></div>
+</section>
+
+<script>
+  import { page } from "@/lib/paths";
+  import { load } from "@/lib/api";
+  import { el } from "@/lib/dom";
+  import { renderNickname, type JsonValue } from "@/lib/expr";
+  import { FORMATS } from "@/lib/format";
+  import type { Population, ServerConfig } from "@/lib/server/common";
+  import { serverIcon, type SyncServer } from "@/lib/server/servers";
+
+  const root = document.getElementById("sync-servers")!;
+  const status = root.querySelector<HTMLElement>("[data-status]")!;
+  const cards = root.querySelector<HTMLElement>("[data-cards]")!;
+
+  async function show() {
+    if (new URLSearchParams(location.search).has("id")) {
+      root.hidden = true;
+      return;
+    }
+    const servers = await load<SyncServer[]>("/sync/servers");
+    status.hidden = servers.length > 0;
+    status.textContent = "The sync bot isn't in any servers.";
+    cards.replaceChildren(...servers.map(card));
+  }
+
+  function card(server: SyncServer) {
+    const base = `/sync/servers/${server.id}`;
+    const members = figure("Members");
+    const linked = figure("Linked");
+    const preview = el("span", { className: "server-card-preview" });
+    load<Population>(`${base}/population`)
+      .then((population) => {
+        members.value.textContent = FORMATS.number(population.member_count);
+        linked.value.textContent = FORMATS.number(population.linked_members);
+      })
+      .catch(() => {
+        members.value.textContent = "?";
+        linked.value.textContent = "?";
+      });
+    if (server.enabled)
+      load<ServerConfig>(base).then((config) =>
+        preview.replaceChildren(...displayName(config)),
+      );
+    return el(
+      "a",
+      { className: "server-card", href: page(`/sync/servers?id=${server.id}`) },
+      el(
+        "span",
+        { className: "server-card-top" },
+        serverIcon(server),
+        el(
+          "span",
+          { className: "server-card-name" },
+          el("b", {}, server.name),
+          el("span", { className: "mono dim" }, server.id),
+          el(
+            "span",
+            { className: server.enabled ? "sync-state on" : "sync-state" },
+            server.enabled ? "Sync enabled" : "Sync off",
+          ),
+        ),
+      ),
+      el(
+        "span",
+        { className: "server-card-figures" },
+        members.element,
+        linked.element,
+      ),
+      preview,
+    );
+  }
+
+  function figure(label: string) {
+    const value = el("b", {}, "…");
+    return {
+      value,
+      element: el(
+        "span",
+        { className: "server-card-figure" },
+        el("span", { className: "label" }, label),
+        value,
+      ),
+    };
+  }
+
+  function displayName(config: ServerConfig) {
+    const template = config.config.nickname_template;
+    const label = el("span", { className: "label" }, "Display Name");
+    if (!template)
+      return [label, el("span", { className: "dim" }, "No format set")];
+    if (!config.preview_context)
+      return [
+        label,
+        el(
+          "span",
+          { className: "dim" },
+          "Link your own account to see a preview",
+        ),
+      ];
+    const name = renderNickname(template, config.preview_context as JsonValue);
+    return [
+      label,
+      el("span", { className: "server-card-nick" }, name.truncated),
+    ];
+  }
+
+  show().catch((error: Error) => {
+    status.hidden = false;
+    status.textContent = error.message;
+    status.className = "bad";
+  });
+</script>

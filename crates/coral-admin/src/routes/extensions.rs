@@ -244,7 +244,10 @@ mod tests {
             .method(Method::POST)
             .uri(path)
             .header(header::CONTENT_TYPE, "application/json")
-            .extension(AdminActor { discord_id: actor })
+            .extension(AdminActor {
+                discord_id: actor,
+                rank: database::AccessRank::Owner,
+            })
             .body(Body::from(input.to_string()))
             .unwrap()
     }
@@ -342,7 +345,10 @@ mod tests {
             .method(Method::POST)
             .uri("/api/extensions/fake/echo")
             .header(header::CONTENT_TYPE, "application/json")
-            .extension(AdminActor { discord_id: 1 })
+            .extension(AdminActor {
+                discord_id: 1,
+                rank: database::AccessRank::Owner,
+            })
             .body(Body::from("{"))
             .unwrap();
         let (status, body) = send(&offline_host(), request).await;

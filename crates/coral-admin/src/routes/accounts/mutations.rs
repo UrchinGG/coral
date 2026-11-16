@@ -163,6 +163,11 @@ async fn set_access_level(
     let Json(body) = body?;
     let level = access_level(body.level)?;
     let audited = Audited::member(&state, actor, &raw).await?;
+    if !actor.may_set_rank(audited.target_rank().await, AccessRank::from_level(level)) {
+        return Err(AdminError::Forbidden(
+            "Only admins change staff ranks, and only to a rank below their own".into(),
+        ));
+    }
     MemberRepository::new(state.db.pool())
         .set_access_level(audited.target.discord_id, level)
         .await
@@ -509,7 +514,16 @@ impl<'a> Audited<'a> {
     async fn member(state: &'a AppState, actor: AdminActor, raw: &str) -> Result<Self, AdminError> {
         let audited = Self::any(state, actor, raw).await?;
         audited.target.member()?;
+        if !actor.outranks(audited.target_rank().await) {
+            return Err(AdminError::Forbidden(
+                "Staff can only act on members ranked below them".into(),
+            ));
+        }
         Ok(audited)
+    }
+
+    async fn target_rank(&self) -> AccessRank {
+        self.state.auth.rank(self.target.discord_id).await
     }
 
     async fn record(&self, action: &str, details: Value) {

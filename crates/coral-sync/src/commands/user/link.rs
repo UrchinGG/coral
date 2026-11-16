@@ -157,7 +157,7 @@ async fn assign_unlinked_role(ctx: &Context, data: &Data, member: &Member) {
         .get(member.guild_id.get() as i64)
         .await
     {
-        Ok(Some(c)) => c,
+        Ok(Some(c)) if c.enabled => c,
         _ => return,
     };
 

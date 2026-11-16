@@ -1,0 +1,219 @@
+---
+import { page } from "@/lib/paths";
+---
+
+<section id="sync-server" class="stack" hidden>
+  <a class="back-link" href={page("/sync/servers")}>
+    ← All Servers
+  </a>
+  <header class="server-head">
+    <span data-icon></span>
+    <div class="server-head-name">
+      <h2 data-name>Loading…</h2>
+      <div class="meta">
+        <span class="mono" data-id></span>
+        <span class="sync-state" data-state></span>
+      </div>
+    </div>
+    <div class="actions" data-actions></div>
+  </header>
+  <div class="server-facts" data-facts></div>
+  <p class="muted" data-status></p>
+  <div data-off hidden>
+    <div class="notice-row">
+      Turn sync on to set this server's roles, display names and autoroles.
+      Nothing in the server changes until you save one.
+    </div>
+  </div>
+  <div class="stack" data-on hidden>
+    <div class="stack" data-running></div>
+    <div
+      class="tabs"
+      role="tablist"
+      aria-label="Server sections"
+      data-tabs
+    ></div>
+    <div data-tab></div>
+  </div>
+</section>
+
+<script>
+  import { call, load } from "@/lib/api";
+  import { el } from "@/lib/dom";
+  import { FORMATS } from "@/lib/format";
+  import { autorolesTab } from "@/lib/server/autoroles";
+  import {
+    smallButton,
+    type Directory,
+    type Population,
+    type Server,
+    type ServerConfig,
+  } from "@/lib/server/common";
+  import { watchJobs } from "@/lib/server/jobs";
+  import { linkingTab } from "@/lib/server/linking";
+  import { nicknamesTab } from "@/lib/server/nicknames";
+  import { serverIcon } from "@/lib/server/servers";
+  import { sourcesTab } from "@/lib/server/sources";
+  import { fillTab, setQuery, tabBar } from "@/lib/tabbar";
+
+  const TABS: [string, string][] = [
+    ["linking", "Account Linking"],
+    ["nicknames", "Display Names"],
+    ["autoroles", "Autoroles"],
+    ["sources", "Data Sources"],
+    ["jobs", "Bulk Updates"],
+  ];
+
+  const id = new URLSearchParams(location.search).get("id");
+  const base = `/sync/servers/${id}`;
+  const root = document.getElementById("sync-server")!;
+  const part = <T extends HTMLElement = HTMLElement>(name: string) =>
+    root.querySelector<T>(`[data-${name}]`)!;
+  let current = new URLSearchParams(location.search).get("tab") ?? "linking";
+  if (!TABS.some(([key]) => key === current)) current = "linking";
+
+  const report = (text: string, bad = false) => {
+    part("status").textContent = text;
+    part("status").className = bad ? "bad" : "muted";
+  };
+
+  const optional = <T,>(promise: Promise<T>) =>
+    promise.catch((error: Error) => {
+      report(error.message, true);
+      return null;
+    });
+
+  async function show(refresh = false) {
+    const query = refresh ? "?refresh=true" : "";
+    const [config, directory, population] = await Promise.all([
+      load<ServerConfig>(base),
+      optional(load<Directory>(`${base}/directory${query}`)),
+      optional(load<Population>(`${base}/population${query}`)),
+    ]);
+    const server: Server = {
+      base,
+      config,
+      directory,
+      population,
+      refresh: () => show(),
+      report,
+    };
+    header(server);
+    part("off").hidden = config.enabled;
+    part("on").hidden = !config.enabled;
+    if (config.enabled) render(server);
+  }
+
+  function header(server: Server) {
+    const guild = server.directory?.guild;
+    const name = guild?.name ?? server.config.guild_id;
+    document.title = `${name} · Sync`;
+    part("icon").replaceChildren(
+      serverIcon(
+        { name, icon_url: guild?.icon_url ?? null },
+        "server-icon large",
+      ),
+    );
+    part("name").textContent = name;
+    part("id").textContent = server.config.guild_id;
+    part("state").textContent = server.config.enabled
+      ? "Sync enabled"
+      : "Sync off";
+    part("state").className = server.config.enabled
+      ? "sync-state on"
+      : "sync-state";
+    part("facts").replaceChildren(
+      ...[
+        ["Members", server.population?.member_count],
+        ["Linked", server.population?.linked_members],
+      ].map(([label, value]) =>
+        el(
+          "span",
+          { className: "fact" },
+          el("span", { className: "label" }, String(label)),
+          el(
+            "b",
+            { className: "strong" },
+            value === undefined ? "?" : FORMATS.number(Number(value)),
+          ),
+        ),
+      ),
+    );
+    part("actions").replaceChildren(
+      ...(server.config.enabled
+        ? [
+            smallButton("Refresh Roles and Channels", () => reread(), "button"),
+            smallButton(
+              "Turn Off Sync",
+              () => toggle(false, name),
+              "button danger",
+            ),
+          ]
+        : [
+            smallButton(
+              "Turn On Sync",
+              () => toggle(true, name),
+              "button primary",
+            ),
+          ]),
+    );
+  }
+
+  async function toggle(enabled: boolean, name: string) {
+    if (
+      !enabled &&
+      !confirm(
+        `Turn off sync in ${name}? Coral stops changing nicknames and roles there; its settings are kept.`,
+      )
+    )
+      return;
+    try {
+      await call(`${base}/enabled`, "PUT", { enabled });
+      report(enabled ? "Sync turned on." : "Sync turned off.");
+      await show();
+    } catch (error) {
+      report((error as Error).message, true);
+    }
+  }
+
+  function reread() {
+    report("Reading roles, channels and members from Discord…");
+    show(true).then(() => report("Roles and channels refreshed."));
+  }
+
+  function render(server: Server) {
+    tabBar(part("tabs"), TABS, current, (key) => {
+      current = key;
+      setQuery("tab", key === "linking" ? null : key);
+      render(server);
+    });
+    const jobs = current === "jobs";
+    watchJobs(
+      base,
+      jobs ? part("tab") : part("running"),
+      !jobs,
+      server.refresh,
+    );
+    if (jobs) {
+      part("running").replaceChildren();
+      return;
+    }
+    fillTab(part("tab"), () => {
+      switch (current) {
+        case "nicknames":
+          return nicknamesTab(server);
+        case "autoroles":
+          return autorolesTab(server);
+        case "sources":
+          return sourcesTab(server);
+        default:
+          return linkingTab(server);
+      }
+    });
+  }
+
+  if (id) {
+    root.hidden = false;
+    show().catch((error: Error) => report(error.message, true));
+  }
+</script>

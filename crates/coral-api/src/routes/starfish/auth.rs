@@ -24,8 +24,8 @@ const HWID_LEN: usize = 64;
 pub const SESSION_SLIDING_HOURS: i64 = 2;
 pub const SESSION_MAX_LIFETIME_DAYS: i64 = 7;
 const HWID_FUZZY_MATCH_THRESHOLD: usize = 3;
-const HWID_MAX_CHANGES_PER_WINDOW: i64 = 2;
-const HWID_CHANGE_WINDOW_DAYS: i32 = 30;
+pub(crate) const HWID_MAX_CHANGES_PER_WINDOW: i64 = 2;
+pub(crate) const HWID_CHANGE_WINDOW_DAYS: i32 = 30;
 
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()

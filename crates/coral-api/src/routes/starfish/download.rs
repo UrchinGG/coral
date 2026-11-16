@@ -289,6 +289,18 @@ fn starfish_session_headers(headers: &axum::http::HeaderMap) -> Option<(String, 
     ))
 }
 
+/// The latest public release's tag, or None when Starfish or GitHub can't answer.
+pub(crate) async fn latest_version(state: &AppState) -> Option<String> {
+    let config = require_starfish(state).ok()?;
+    match fetch_latest_release(&config).await {
+        Ok(release) => Some(release.tag_name),
+        Err(error) => {
+            tracing::warn!("could not read the latest Starfish release: {error:?}");
+            None
+        }
+    }
+}
+
 pub(super) async fn fetch_latest_release(
     config: &StarfishConfig,
 ) -> Result<GitHubRelease, ApiError> {

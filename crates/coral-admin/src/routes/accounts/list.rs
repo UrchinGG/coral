@@ -10,6 +10,7 @@ use super::CursorPage;
 use super::profile::player_ref;
 use crate::error::{AdminError, Context};
 use crate::refs::EntityRef;
+use crate::routes::platform::page::ContainsText;
 use crate::routes::ref_labels::label_request;
 use crate::serde_ts;
 use crate::state::AppState;
@@ -23,6 +24,7 @@ const LICENSE_INACTIVE: &str = "inactive";
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ListQuery {
+    q: Option<String>,
     rank: Option<i16>,
     locked: Option<bool>,
     has_key: Option<bool>,
@@ -224,6 +226,9 @@ fn push_page(
 }
 
 fn push_filters(sql: &mut QueryBuilder<'static, Postgres>, query: &ListQuery) {
+    if let Some(text) = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
+        push_text_match(sql, text);
+    }
     if let Some(rank) = query.rank {
         sql.push(" AND m.access_level >= ").push_bind(rank);
     }
@@ -244,6 +249,20 @@ fn push_filters(sql: &mut QueryBuilder<'static, Postgres>, query: &ListQuery) {
             .push(") = ")
             .push_bind(starfish);
     }
+}
+
+fn push_text_match(sql: &mut QueryBuilder<'static, Postgres>, text: &str) {
+    let contains = ContainsText::new(text);
+    let bare = text.trim_start_matches('#').replace('-', "").to_lowercase();
+    sql.push(" AND (m.discord_id::text = ")
+        .push_bind(text.to_string())
+        .push(" OR m.id::text = ")
+        .push_bind(bare.clone())
+        .push(" OR m.uuid = ")
+        .push_bind(bare)
+        .push(" OR EXISTS (SELECT 1 FROM discord_username_cache c WHERE c.discord_id = m.discord_id AND ");
+    contains.push_match(sql, "c.username");
+    sql.push("))");
 }
 
 impl SortColumn {
@@ -428,5 +447,34 @@ mod tests {
             cursor = Some(ListCursor::after(SortColumn::Requests, row));
         }
         assert_eq!(seen, inserted);
+    }
+
+    #[tokio::test]
+    async fn text_search_finds_a_member_by_name_id_or_number() {
+        let Some(pool) = pool().await else {
+            return;
+        };
+        let target = member(&pool, &unique_key()).await;
+        let name = format!("searchable_{}", target.discord_id);
+        sqlx::query("INSERT INTO discord_username_cache (discord_id, username) VALUES ($1, $2)")
+            .bind(target.discord_id)
+            .bind(&name)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let member_id = target.member_id.unwrap();
+        let searched = [
+            name[..14].to_uppercase(),
+            target.discord_id.to_string(),
+            format!("#{member_id}"),
+        ];
+        for text in searched {
+            let query = ListQuery {
+                q: Some(text.clone()),
+                ..ListQuery::default()
+            };
+            let rows = list_members(&pool, &query, None, 50).await.unwrap();
+            assert!(rows.iter().any(|row| row.id == member_id), "{text}");
+        }
     }
 }

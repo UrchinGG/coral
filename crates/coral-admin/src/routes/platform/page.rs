@@ -5,7 +5,6 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sqlx::{Postgres, QueryBuilder};
-use uuid::Uuid;
 
 use crate::error::{AdminError, Context};
 use crate::names::LabelRequest;
@@ -34,7 +33,6 @@ pub struct RowPage<T> {
 #[derive(Debug, Default)]
 pub struct Mentions {
     discord: BTreeSet<i64>,
-    minecraft: BTreeSet<Uuid>,
 }
 
 pub struct Accounts {
@@ -110,10 +108,6 @@ impl Mentions {
         self.discord.insert(discord_id);
     }
 
-    pub fn player(&mut self, uuid: Uuid) {
-        self.minecraft.insert(uuid);
-    }
-
     pub fn discord_ids(&self) -> Vec<i64> {
         self.discord.iter().copied().collect()
     }
@@ -121,11 +115,7 @@ impl Mentions {
     pub async fn labels(&self, state: &AppState) -> Result<Labels, AdminError> {
         let request = LabelRequest {
             discord: self.discord_ids(),
-            minecraft: self
-                .minecraft
-                .iter()
-                .map(|uuid| uuid.simple().to_string())
-                .collect(),
+            minecraft: Vec::new(),
         };
         state.names.cached(&request).await
     }

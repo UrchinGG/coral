@@ -70,6 +70,18 @@ impl Condition {
                 sql.push("l.method = ").push_bind(method.clone());
             }
             Self::Route(template) => push_route(template, era, sql),
+            Self::Routes(templates) => {
+                sql.push("(");
+                for (index, template) in templates.iter().enumerate() {
+                    if index > 0 {
+                        sql.push(" OR ");
+                    }
+                    sql.push("(");
+                    push_route(template, era, sql);
+                    sql.push(")");
+                }
+                sql.push(")");
+            }
             Self::Status(status) => push_status(*status, era, sql),
             Self::Class(class) => {
                 let (low, high) = class.range();

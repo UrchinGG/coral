@@ -1,0 +1,191 @@
+---
+import { page } from "@/lib/paths";
+---
+
+<section id="guild-page" class="member" hidden>
+  <nav class="crumbs-nav" aria-label="Breadcrumb">
+    <a href={page("/urchin/guilds")}>Guilds</a>
+    <span aria-hidden="true">/</span>
+    <span data-crumb></span>
+  </nav>
+  <header class="member-head">
+    <div class="member-title">
+      <h1 data-name>Loading…</h1>
+      <div class="meta" data-meta></div>
+    </div>
+  </header>
+  <div class="tabs" role="tablist" aria-label="Guild sections" data-tabs></div>
+  <p class="muted" data-status></p>
+  <div data-tab></div>
+</section>
+
+<script>
+  import { API } from "@/lib/paths";
+  import { load } from "@/lib/api";
+  import { el, panel, row } from "@/lib/dom";
+  import { FORMATS } from "@/lib/format";
+  import type { Labels } from "@/lib/members";
+  import { refLink } from "@/lib/refs";
+  import { fillTab, setQuery, tabBar } from "@/lib/tabbar";
+  import { ago, day, moment } from "@/lib/time";
+
+  interface GuildDetail {
+    guild: { guild_id: string; name: string | null };
+    summary: {
+      tag: string | null;
+      level: number;
+      member_count: number;
+      experience: number;
+      updated_at: string;
+    } | null;
+    current: {
+      members?: { uuid: string; rank?: string; joined?: number }[];
+      created?: number;
+    } | null;
+    snapshots: string[];
+  }
+
+  const TABS: [string, string][] = [
+    ["overview", "Overview"],
+    ["snapshots", "Snapshots"],
+  ];
+  const LABEL_BATCH = 200;
+  const id = new URLSearchParams(location.search).get("id");
+  const root = document.getElementById("guild-page")!;
+  const part = (name: string) =>
+    root.querySelector<HTMLElement>(`[data-${name}]`)!;
+  let current = new URLSearchParams(location.search).get("tab") ?? "overview";
+
+  async function labelsFor(uuids: string[]) {
+    const labels: Labels = { discord: {}, minecraft: {} };
+    for (let start = 0; start < uuids.length; start += LABEL_BATCH) {
+      const response = await fetch(`${API}/labels`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          discord: [],
+          minecraft: uuids.slice(start, start + LABEL_BATCH),
+        }),
+      });
+      if (response.ok)
+        Object.assign(labels.minecraft, (await response.json()).minecraft);
+    }
+    return labels;
+  }
+
+  async function overview(guild: GuildDetail) {
+    const members = guild.current?.members ?? [];
+    const labels = await labelsFor(members.map((member) => member.uuid));
+    const line = (
+      cells: (string | Node)[],
+      className = "table-row guild-member",
+    ) => el("div", { className }, ...cells.map((cell) => el("span", {}, cell)));
+    return el(
+      "div",
+      { className: "stack" },
+      el(
+        "div",
+        { className: "stats" },
+        ...[
+          ["Level", String(guild.summary?.level ?? "")],
+          [
+            "Members",
+            FORMATS.number(guild.summary?.member_count ?? members.length),
+          ],
+          ["Experience", FORMATS.short(guild.summary?.experience ?? 0)],
+          [
+            "Refreshed",
+            guild.summary ? ago(guild.summary.updated_at) : "Never",
+          ],
+        ].map(([label, value]) =>
+          el(
+            "div",
+            { className: "stat" },
+            el("span", { className: "label", textContent: label }),
+            el("b", { textContent: value }),
+          ),
+        ),
+      ),
+      el(
+        "div",
+        { className: "table" },
+        line(["Player", "Rank", "Joined"], "table-row guild-member head"),
+        ...members.map((member) =>
+          line([
+            refLink({ kind: "player", uuid: member.uuid }, labels),
+            member.rank ?? "",
+            member.joined ? day(new Date(member.joined).toISOString()) : "",
+          ]),
+        ),
+      ),
+    );
+  }
+
+  function snapshots(guild: GuildDetail) {
+    const viewer = el("pre", { className: "code", hidden: true });
+    const rows = guild.snapshots.map((at) => {
+      const view = el("button", {
+        type: "button",
+        className: "button small",
+        textContent: "View",
+      });
+      view.addEventListener("click", async () => {
+        viewer.hidden = false;
+        viewer.textContent = "Loading…";
+        const snapshot = await load<{ snapshot: unknown }>(
+          `/guilds/${id}/at?ts=${encodeURIComponent(at)}`,
+        );
+        viewer.textContent = JSON.stringify(snapshot.snapshot, null, 2);
+      });
+      return row(moment(at), view);
+    });
+    return el(
+      "div",
+      { className: "panels" },
+      panel(`Snapshots · ${rows.length}`, ...rows),
+      viewer,
+    );
+  }
+
+  function render(guild: GuildDetail) {
+    tabBar(part("tabs"), TABS, current, (key) => {
+      current = key;
+      setQuery("tab", key === "overview" ? null : key);
+      render(guild);
+    });
+    fillTab(part("tab"), () =>
+      current === "snapshots" ? snapshots(guild) : overview(guild),
+    );
+  }
+
+  async function show() {
+    try {
+      const guild = await load<GuildDetail>(`/guilds/${id}`);
+      const name = guild.guild.name ?? guild.guild.guild_id;
+      document.title = `${name} | Urchin Admin`;
+      part("crumb").textContent = name;
+      part("name").textContent = name;
+      part("meta").replaceChildren(
+        ...[
+          guild.summary?.tag && `[${guild.summary.tag}]`,
+          guild.guild.guild_id,
+          guild.current?.created &&
+            `Created ${day(new Date(guild.current.created).toISOString())}`,
+          `${guild.snapshots.length} snapshots`,
+        ]
+          .filter(Boolean)
+          .map((text) => el("span", { textContent: text as string })),
+      );
+      render(guild);
+    } catch (error) {
+      part("status").textContent = (error as Error).message;
+    }
+  }
+
+  if (id) {
+    root.hidden = false;
+    document.getElementById("guild-list")!.hidden = true;
+    document.querySelector("main > .crumbs")!.setAttribute("hidden", "");
+    show();
+  }
+</script>

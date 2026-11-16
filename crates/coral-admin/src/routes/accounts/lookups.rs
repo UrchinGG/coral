@@ -1,8 +1,8 @@
 use axum::Json;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
-use chrono::{DateTime, DurationRound, TimeDelta, Utc};
-use reqlog::{Form, KeyKind, SubjectSource};
+use chrono::{DateTime, Utc};
+use reqlog::{Form, KeyKind};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
@@ -20,7 +20,6 @@ pub const LOOKUP_SAMPLE: i64 = 50_000;
 const TOP_PLAYERS: i64 = 50;
 const STREAM_PAGE: usize = 100;
 const MAX_STREAM_PAGE: usize = 500;
-const HOUR: TimeDelta = TimeDelta::hours(1);
 const SKIP_SEPARATOR: char = '.';
 const VIA_KEY: &str = "key";
 const VIA_BOT: &str = "bot";
@@ -36,23 +35,6 @@ pub struct WindowQuery {
 pub struct StreamQuery {
     cursor: Option<String>,
     limit: Option<usize>,
-}
-
-#[derive(Serialize)]
-pub struct LookupSummary {
-    #[serde(serialize_with = "serde_ts::micros")]
-    from: DateTime<Utc>,
-    #[serde(serialize_with = "serde_ts::micros")]
-    to: DateTime<Utc>,
-    via_key: Channel,
-    via_bot: Channel,
-    uncaptured_batches: i64,
-}
-
-#[derive(Serialize)]
-struct Channel {
-    requests: i64,
-    player_mentions: i64,
 }
 
 #[derive(Serialize)]
@@ -96,15 +78,6 @@ pub struct LookupRow {
 }
 
 #[derive(FromRow)]
-struct SummaryRow {
-    key_requests: i64,
-    key_mentions: i64,
-    bot_requests: i64,
-    bot_mentions: i64,
-    uncaptured_batches: i64,
-}
-
-#[derive(FromRow)]
 struct TopRow {
     player: Option<Uuid>,
     name: Option<String>,
@@ -130,50 +103,6 @@ struct SubjectRow {
 struct StreamCursor {
     at: Cursor,
     skip: usize,
-}
-
-pub async fn summary(
-    State(state): State<AppState>,
-    Path(raw): Path<String>,
-    query: Result<Query<WindowQuery>, QueryRejection>,
-) -> Result<Json<LookupSummary>, AdminError> {
-    let Query(query) = query?;
-    let target = AccountTarget::resolve(&state, &raw).await?;
-    let to = Utc::now();
-    let from = hour_floor(query.window.from(to));
-    let row: SummaryRow = sqlx::query_as(
-        "SELECT
-            coalesce(sum(requests) FILTER (WHERE key_kind <> $4), 0)::int8 AS key_requests,
-            coalesce(sum(subjects) FILTER (WHERE key_kind <> $4), 0)::int8 AS key_mentions,
-            coalesce(sum(requests) FILTER (WHERE key_kind = $4), 0)::int8 AS bot_requests,
-            coalesce(sum(subjects) FILTER (WHERE key_kind = $4), 0)::int8 AS bot_mentions,
-            coalesce(sum(requests) FILTER (WHERE route = ANY($5) AND hour < coalesce($6, 'infinity')), 0)::int8
-                AS uncaptured_batches
-         FROM api_caller_hour
-         WHERE (member_id = $1 OR actor_id = $2) AND hour >= $3",
-    )
-    .bind(target.member_id)
-    .bind(target.discord_id)
-    .bind(from)
-    .bind(KeyKind::Internal.code())
-    .bind(batch_templates())
-    .bind(state.coverage.current().body_subjects_from)
-    .fetch_one(state.db.pool())
-    .await
-    .context("read the account's lookup totals")?;
-    Ok(Json(LookupSummary {
-        from,
-        to,
-        via_key: Channel {
-            requests: row.key_requests,
-            player_mentions: row.key_mentions,
-        },
-        via_bot: Channel {
-            requests: row.bot_requests,
-            player_mentions: row.bot_mentions,
-        },
-        uncaptured_batches: row.uncaptured_batches,
-    }))
 }
 
 pub async fn top(
@@ -398,23 +327,6 @@ fn top_player(row: TopRow) -> TopPlayer {
     }
 }
 
-fn batch_templates() -> Vec<&'static str> {
-    reqlog::ROUTE_SUBJECTS
-        .iter()
-        .filter(|route| {
-            route
-                .sources
-                .iter()
-                .any(|source| matches!(source, SubjectSource::BodyArray { .. }))
-        })
-        .flat_map(|route| route.templates.iter().copied())
-        .collect()
-}
-
-fn hour_floor(at: DateTime<Utc>) -> DateTime<Utc> {
-    at.duration_trunc(HOUR).unwrap_or(at)
-}
-
 #[cfg(test)]
 mod tests {
     use chrono::TimeZone;
@@ -471,11 +383,6 @@ mod tests {
         let (second, after) = page_of(refetched, next, 2);
         assert_eq!(ids(&second), vec![(3, 3), (3, 4)]);
         assert_eq!(after.unwrap().skip, 4);
-    }
-
-    #[test]
-    fn batch_lookups_are_the_routes_whose_body_lists_players() {
-        assert_eq!(batch_templates(), vec!["/v3/players"]);
     }
 
     #[test]

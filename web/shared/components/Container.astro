@@ -1,0 +1,29 @@
+---
+import type { HTMLAttributes } from "astro/types";
+
+interface Props extends HTMLAttributes<"div"> {
+  width?: "narrow" | "content" | "wide";
+}
+
+const { width = "content", class: className, ...attributes } = Astro.props;
+---
+
+<div class:list={["container", className]} data-width={width} {...attributes}>
+  <slot />
+</div>
+
+<style>
+  .container {
+    --max-width: var(--width-content);
+    width: min(100% - 2 * var(--gutter), var(--max-width));
+    margin-inline: auto;
+  }
+
+  [data-width="narrow"] {
+    --max-width: var(--width-narrow);
+  }
+
+  [data-width="wide"] {
+    --max-width: var(--width-wide);
+  }
+</style>

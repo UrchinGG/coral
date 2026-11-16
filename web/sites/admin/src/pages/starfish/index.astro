@@ -1,0 +1,132 @@
+---
+import Admin from "@/layouts/Admin.astro";
+import StatGroup from "@/components/StatGroup.astro";
+---
+
+<Admin title="Home">
+  <div id="starfish-counts">
+    <StatGroup
+      stats={[
+        { label: "Licensed", value: "licensed" },
+        { label: "Suspended", value: "suspended" },
+        { label: "Signed In Now", value: "signed_in" },
+      ]}
+    />
+  </div>
+  <section id="licensed" class="list">
+    <h2 class="group-title">Members</h2>
+    <form class="toolbar" role="search">
+      <input
+        class="field grow"
+        type="search"
+        name="q"
+        placeholder="Search Discord names and IDs, GitHub names"
+        aria-label="Search Starfish members"
+      />
+    </form>
+    <div class="table" data-table></div>
+  </section>
+</Admin>
+
+<script>
+  import { page } from "@/lib/paths";
+  import { load } from "@/lib/api";
+  import { el } from "@/lib/dom";
+  import { fill } from "@/lib/fill";
+  import { titleCase } from "@/lib/format";
+  import type { Labels } from "@/lib/members";
+  import { pager } from "@/lib/pager";
+  import { refName, type Ref } from "@/lib/refs";
+  import { setQuery } from "@/lib/tabbar";
+  import { ago } from "@/lib/time";
+
+  interface StarfishUser {
+    account: Ref & { discord_id: string };
+    license_status: string;
+    github_username: string | null;
+    hwids: number;
+    active_session: boolean;
+    last_heartbeat_at: string | null;
+    plugins_installed: number;
+  }
+
+  const SEARCH_DELAY_MS = 250;
+  const root = document.getElementById("licensed")!;
+  const input = root.querySelector("input")!;
+  const table = root.querySelector<HTMLElement>("[data-table]")!;
+
+  load("/starfish/overview").then((counts) =>
+    fill(document.getElementById("starfish-counts")!, counts),
+  );
+
+  const head = el(
+    "div",
+    { className: "table-row starfish head" },
+    ...[
+      "Discord",
+      "License",
+      "Session",
+      "Machines",
+      "Plugins",
+      "GitHub",
+      "Last Seen",
+    ].map((label) => el("span", { textContent: label })),
+  );
+
+  const render = (user: StarfishUser, labels: Labels) =>
+    el(
+      "a",
+      {
+        className: "table-row starfish",
+        href: page(
+          `/urchin/members?id=${user.account.discord_id}&tab=starfish`,
+        ),
+      },
+      el("span", {
+        className: "strong",
+        textContent: refName(user.account, labels),
+      }),
+      el("span", {
+        className: user.license_status === "active" ? "ok" : "bad",
+        textContent: titleCase(user.license_status),
+      }),
+      el("span", {
+        className: user.active_session ? "" : "dim",
+        textContent: user.active_session ? "Signed in" : "Signed out",
+      }),
+      el("span", { className: "num", textContent: String(user.hwids) }),
+      el("span", {
+        className: "num",
+        textContent: String(user.plugins_installed),
+      }),
+      el("span", { className: "dim", textContent: user.github_username ?? "" }),
+      el("span", {
+        className: "dim",
+        textContent: ago(user.last_heartbeat_at),
+      }),
+    );
+
+  function refresh() {
+    const q = input.value.trim();
+    setQuery("q", q || null);
+    table.replaceChildren(
+      head,
+      pager<StarfishUser>(
+        `/starfish/users${q ? `?q=${encodeURIComponent(q)}` : ""}`,
+        render,
+        "No licensed member matches.",
+      ),
+    );
+  }
+
+  input.value = new URLSearchParams(location.search).get("q") ?? "";
+  let typing: ReturnType<typeof setTimeout>;
+  input.addEventListener("input", () => {
+    clearTimeout(typing);
+    typing = setTimeout(refresh, SEARCH_DELAY_MS);
+  });
+  root
+    .querySelector("form")!
+    .addEventListener("submit", (event) => event.preventDefault());
+  refresh();
+</script>

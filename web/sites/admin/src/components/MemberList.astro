@@ -1,0 +1,212 @@
+<section id="member-list" class="list">
+  <form class="toolbar" role="search">
+    <input
+      class="field grow"
+      type="search"
+      name="q"
+      placeholder="Search by Discord name, Discord ID, #number or UUID"
+      aria-label="Search members"
+    />
+    <select class="field" name="rank" aria-label="Access level">
+      <option value="">Any access</option>
+      <option value="2">Helper and up</option>
+      <option value="3">Moderator and up</option>
+      <option value="4">Admin and up</option>
+    </select>
+    <select class="field" name="key" aria-label="API key">
+      <option value="">Any key</option>
+      <option value="has">Has a key</option>
+      <option value="none">No key</option>
+      <option value="locked">Key locked</option>
+    </select>
+    <select class="field" name="dev" aria-label="Developer key">
+      <option value="">Any developer key</option>
+      <option value="true">Developer key</option>
+      <option value="false">No developer key</option>
+    </select>
+    <select class="field" name="starfish" aria-label="Starfish license">
+      <option value="">Any Starfish</option>
+      <option value="true">Starfish license</option>
+      <option value="false">No Starfish license</option>
+    </select>
+    <select class="field" name="sort" aria-label="Sort by">
+      <option value="member">Member #</option>
+      <option value="joined">Joined</option>
+      <option value="requests">Lifetime requests</option>
+      <option value="access">Access level</option>
+    </select>
+    <select class="field" name="dir" aria-label="Order">
+      <option value="desc">Descending</option>
+      <option value="asc">Ascending</option>
+    </select>
+  </form>
+  <div class="table" role="table" aria-label="Members">
+    <div class="table-row head" role="row">
+      <span role="columnheader">Member</span>
+      <span role="columnheader">#</span>
+      <span role="columnheader">Minecraft</span>
+      <span role="columnheader">Access</span>
+      <span role="columnheader">Key</span>
+      <span role="columnheader" class="num">
+        24 h
+      </span>
+      <span role="columnheader" class="num">
+        Lifetime
+      </span>
+      <span role="columnheader">Last Active</span>
+    </div>
+    <div data-rows></div>
+  </div>
+  <p class="muted" data-status>
+    Loading members…
+  </p>
+  <button type="button" class="button" data-more hidden>
+    Load more
+  </button>
+</section>
+
+<script>
+  import { load } from "@/lib/api";
+  import { FORMATS } from "@/lib/format";
+  import { accessLabel, memberUrl, type Labels } from "@/lib/members";
+  import { ago } from "@/lib/time";
+
+  interface Row {
+    account: { discord_id: string; member_id: number | null };
+    minecraft: { uuid: string } | null;
+    alts: number;
+    access_level: number;
+    key_locked: boolean;
+    tagging_disabled: boolean;
+    has_key: boolean;
+    request_count: number;
+    requests_24h: number;
+    last_active: string | null;
+  }
+
+  interface Page {
+    items: Row[];
+    next_cursor: string | null;
+    labels: Labels;
+  }
+
+  const SEARCH_DELAY_MS = 250;
+  const KEY_FILTERS: Record<string, [string, string]> = {
+    has: ["has_key", "true"],
+    none: ["has_key", "false"],
+    locked: ["locked", "true"],
+  };
+
+  const root = document.getElementById("member-list")!;
+  const form = root.querySelector("form")!;
+  const rows = root.querySelector("[data-rows]")!;
+  const status = root.querySelector<HTMLElement>("[data-status]")!;
+  const more = root.querySelector<HTMLButtonElement>("[data-more]")!;
+  let cursor: string | null = null;
+  let generation = 0;
+
+  const cell = (text: string, className = "") => {
+    const span = document.createElement("span");
+    span.textContent = text;
+    span.className = className;
+    return span;
+  };
+
+  const keyState = (row: Row) =>
+    row.key_locked
+      ? ["Locked", "bad"]
+      : row.has_key
+        ? ["Active", ""]
+        : ["None", "dim"];
+
+  const render = (row: Row, labels: Labels) => {
+    const link = document.createElement("a");
+    link.className = "table-row";
+    link.href = memberUrl(row.account.discord_id);
+    const minecraft = row.minecraft
+      ? (labels.minecraft[row.minecraft.uuid] ?? row.minecraft.uuid.slice(0, 8))
+      : "";
+    const [key, keyClass] = keyState(row);
+    link.append(
+      cell(
+        labels.discord[row.account.discord_id] ?? row.account.discord_id,
+        "strong",
+      ),
+      cell(
+        row.account.member_id === null ? "" : String(row.account.member_id),
+        "dim",
+      ),
+      cell(minecraft + (row.alts ? ` +${row.alts}` : "")),
+      cell(accessLabel(row.access_level), row.access_level ? "" : "dim"),
+      cell(key, keyClass),
+      cell(FORMATS.number(row.requests_24h), "num"),
+      cell(FORMATS.short(row.request_count), "num"),
+      cell(ago(row.last_active), "dim"),
+    );
+    return link;
+  };
+
+  const params = () => {
+    const values = new FormData(form);
+    const query = new URLSearchParams();
+    for (const [name, value] of values) {
+      if (!value || name === "key") continue;
+      query.set(name, String(value));
+    }
+    const key = KEY_FILTERS[String(values.get("key"))];
+    if (key) query.set(...key);
+    return query;
+  };
+
+  async function fetchPage(reset: boolean) {
+    const mine = reset ? ++generation : generation;
+    if (reset) cursor = null;
+    const query = params();
+    if (cursor) query.set("cursor", cursor);
+    status.textContent = "Loading members…";
+    try {
+      const page = await load<Page>(`/accounts?${query}`);
+      if (mine !== generation) return;
+      const rendered = page.items.map((row) => render(row, page.labels));
+      if (reset) rows.replaceChildren(...rendered);
+      else rows.append(...rendered);
+      cursor = page.next_cursor;
+      more.hidden = cursor === null;
+      status.textContent = rows.children.length ? "" : "No member matches.";
+    } catch (error) {
+      if (mine === generation) status.textContent = (error as Error).message;
+    }
+  }
+
+  const syncUrl = () => {
+    const query = new URLSearchParams(
+      new FormData(form) as unknown as Record<string, string>,
+    );
+    for (const [name, value] of [...query]) if (!value) query.delete(name);
+    history.replaceState(
+      null,
+      "",
+      `${location.pathname}${query.size ? `?${query}` : ""}`,
+    );
+  };
+
+  for (const [name, value] of new URLSearchParams(location.search)) {
+    const control = form.elements.namedItem(name) as
+      HTMLInputElement | HTMLSelectElement | null;
+    if (control) control.value = value;
+  }
+
+  let typing: ReturnType<typeof setTimeout>;
+  form.addEventListener("input", (event) => {
+    clearTimeout(typing);
+    const delay =
+      (event.target as HTMLElement).tagName === "INPUT" ? SEARCH_DELAY_MS : 0;
+    typing = setTimeout(() => {
+      syncUrl();
+      fetchPage(true);
+    }, delay);
+  });
+  form.addEventListener("submit", (event) => event.preventDefault());
+  more.addEventListener("click", () => fetchPage(false));
+  fetchPage(true);
+</script>

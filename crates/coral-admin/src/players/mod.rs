@@ -14,6 +14,7 @@ mod profile;
 mod requester;
 mod requesters;
 mod resolved;
+mod series;
 mod snapshots;
 mod stream;
 mod tagged;
@@ -24,6 +25,7 @@ pub use lookups::PlayerLookups;
 pub use params::{RequestersParams, StreamParams};
 pub use profile::{PlayerCore, read_core};
 pub use requesters::{Requesters, read_requesters};
+pub use series::{LookupSeries, SeriesParams, read_series};
 pub use snapshots::{
     SnapshotAt, SnapshotAtQuery, SnapshotPage, SnapshotQuery, read_snapshot_at, read_snapshots,
 };
