@@ -1,3 +1,4 @@
+mod me;
 pub(crate) mod session;
 
 use axum::{
@@ -66,6 +67,14 @@ pub fn router() -> Router<AppState> {
         .route("/auth/discord/callback", get(callback))
         .route("/auth/me", get(me))
         .route("/auth/logout", post(sign_out))
+        .route("/me/member", get(me::member_summary))
+        .route("/me/accounts", get(me::accounts))
+        .route("/me/keys", get(me::keys))
+        .route(
+            "/me/keys/personal/regenerate",
+            post(me::regenerate_personal_key),
+        )
+        .route("/me/starfish", get(me::starfish))
 }
 
 async fn sign_in(
