@@ -9,10 +9,7 @@ use uuid::Uuid;
 use crate::error::AdminError;
 use crate::query::{LogQuery, RequestFilter};
 use crate::refs::{Page, RequestRow};
-use crate::requests::{
-    DetailError, GroupFilter, GroupPage, RequestFull, RequestRows, read_groups, read_request,
-    read_route_counts,
-};
+use crate::requests::{DetailError, RequestFull, RequestRows, read_request, read_route_counts};
 use crate::state::AppState;
 use crate::views::{CachedView, View};
 
@@ -27,7 +24,6 @@ struct RequestInstant {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/query", post(query))
-        .route("/groups", post(groups))
         .route("/routes", get(routes))
         .route("/{request_id}", get(request))
 }
@@ -47,17 +43,6 @@ async fn query(
         coverage: &coverage,
     };
     Ok(Json(rows.page(page).await?))
-}
-
-async fn groups(
-    State(state): State<AppState>,
-    body: Result<Json<GroupFilter>, JsonRejection>,
-) -> Result<Json<GroupPage>, AdminError> {
-    let Json(filter) = body?;
-    let coverage = state.coverage.current();
-    Ok(Json(
-        read_groups(&state.db, &state.names, &coverage, filter).await?,
-    ))
 }
 
 async fn routes(State(state): State<AppState>) -> Result<CachedView, AdminError> {

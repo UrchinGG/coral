@@ -5,13 +5,11 @@ use crate::error::AdminError;
 use crate::state::AppState;
 
 mod guilds;
-mod moderation;
 pub(crate) mod page;
 mod plugins;
 mod review;
 mod server;
 mod starfish;
-mod tools;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -20,15 +18,10 @@ pub fn router() -> Router<AppState> {
         .nest("/starfish", starfish_router())
         .nest("/plugins", plugins_router())
         .nest("/guilds", guilds_router())
-        .route("/tools/resolve", post(tools::resolve))
 }
 
 fn moderation_router() -> Router<AppState> {
     Router::new()
-        .route("/tag-types", get(moderation::tag_types))
-        .route("/blacklist", get(moderation::blacklist))
-        .route("/strikes", get(moderation::strikes))
-        .route("/audit", get(moderation::audit))
         .route("/guide", get(review::guide).put(review::save_guide))
         .route("/guide/ping-roles", put(review::set_ping_roles))
         .route("/guide/publish", post(review::publish_guide))
@@ -65,7 +58,6 @@ fn server_router() -> Router<AppState> {
         .route("/sources", put(server::set_used_sources))
         .route("/jobs", get(server::jobs::list))
         .route("/jobs/{job_id}/cancel", post(server::jobs::cancel))
-        .route("/jobs/{job_id}/events", get(server::jobs::events))
 }
 
 fn starfish_router() -> Router<AppState> {

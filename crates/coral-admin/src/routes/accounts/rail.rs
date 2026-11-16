@@ -29,16 +29,6 @@ pub struct KeyRecord {
     retired_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Serialize, FromRow)]
-pub struct LinkRecord {
-    uuid: String,
-    relation: String,
-    #[serde(serialize_with = "serde_ts::micros_opt")]
-    linked_at: Option<DateTime<Utc>>,
-    #[serde(serialize_with = "serde_ts::micros_opt")]
-    unlinked_at: Option<DateTime<Utc>>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Limiter {
@@ -102,26 +92,6 @@ pub async fn keys(
     .await
     .context("read the account's key history")?;
     Ok(Json(keys))
-}
-
-pub async fn links(
-    State(state): State<AppState>,
-    Path(raw): Path<String>,
-) -> Result<Json<Vec<LinkRecord>>, AdminError> {
-    let target = AccountTarget::resolve(&state, &raw).await?;
-    let Some(member_id) = target.member_id else {
-        return Ok(Json(Vec::new()));
-    };
-    let links = sqlx::query_as(
-        "SELECT uuid, relation, linked_at, unlinked_at FROM member_mc_links
-         WHERE member_id = $1
-         ORDER BY unlinked_at IS NULL DESC, coalesce(unlinked_at, linked_at) DESC NULLS LAST, id DESC",
-    )
-    .bind(member_id)
-    .fetch_all(state.db.pool())
-    .await
-    .context("read the account's Minecraft link history")?;
-    Ok(Json(links))
 }
 
 pub async fn limits(

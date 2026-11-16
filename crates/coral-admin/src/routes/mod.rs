@@ -16,8 +16,6 @@ mod accounts;
 mod actions;
 mod extensions;
 mod flags;
-mod ips;
-mod keys;
 mod labels;
 mod maintenance;
 mod moderation_recent;
@@ -56,8 +54,6 @@ pub fn api_router(state: AppState) -> Router {
         .nest("/extensions", extensions::router())
         .merge(platform::router())
         .nest("/accounts", accounts::router())
-        .nest("/ips", ips::router())
-        .nest("/keys", keys::router())
         .nest("/traffic", traffic::router())
         .nest("/flags", flags::router())
         .nest("/actions", actions::router())

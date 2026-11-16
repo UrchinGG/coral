@@ -15,8 +15,6 @@ pub const CF_WORKER_HEADER: &str = "cf-worker";
 pub enum StreamScope {
     Member(i64),
     Actor(i64),
-    Ip(String),
-    KeyPrefix(String),
 }
 
 impl StreamScope {
@@ -42,8 +40,6 @@ impl StreamScope {
         match self {
             Self::Member(member_id) => filter.member = Some(member_id),
             Self::Actor(discord_id) => filter.actor = Some(discord_id.to_string()),
-            Self::Ip(ip) => filter.ip = Some(ip),
-            Self::KeyPrefix(prefix) => filter.key_prefix = Some(prefix),
         }
         Ok(filter)
     }
@@ -218,10 +214,6 @@ mod tests {
         let narrowed = StreamScope::Actor(42).narrow(filter).unwrap();
         assert_eq!(narrowed.actor.as_deref(), Some("42"));
         assert_eq!(narrowed.cursor, Some(cursor));
-        let by_key = StreamScope::KeyPrefix("1a2b3c4d".into())
-            .narrow(RequestFilter::default())
-            .unwrap();
-        assert_eq!(by_key.key_prefix.as_deref(), Some("1a2b3c4d"));
     }
 
     fn tags_lookup(query: &str) -> LogRow {
