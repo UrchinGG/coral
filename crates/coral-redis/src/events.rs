@@ -27,6 +27,8 @@ pub enum BlacklistEvent {
         overwritten_by: i64,
         #[serde(default)]
         silent: bool,
+        #[serde(default)]
+        skip_notice: bool,
     },
     TagRemoved {
         uuid: String,

@@ -955,6 +955,7 @@ pub async fn handle_overwrite_button(
             new_tag_id: new_tag.id,
             overwritten_by: discord_id as i64,
             silent: overwrite.silent,
+            skip_notice: false,
         })
         .await;
 
@@ -1820,6 +1821,7 @@ async fn apply_tag_edit(
             new_tag_id: new_tag.id,
             overwritten_by: discord_id as i64,
             silent: true,
+            skip_notice: true,
         })
         .await;
 

@@ -365,6 +365,7 @@ pub async fn update_tag(
             new_tag_id: new_tag.id,
             overwritten_by: member.0.discord_id,
             silent: body.silent,
+            skip_notice: false,
         })
         .await;
 

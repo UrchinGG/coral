@@ -390,11 +390,7 @@ pub async fn post_new_tag(
     silent: bool,
     review_url: Option<&str>,
 ) -> Option<MessageId> {
-    let notice = if silent {
-        None
-    } else {
-        Some(appeal::notify_tagged_player(ctx, data, uuid, name, tag).await)
-    };
+    let notice = appeal::notify_tagged_player(ctx, data, uuid, name, tag, None).await;
     let ign = ign_line(data, uuid, name).await;
     post_tag_to_log(
         ctx,
@@ -405,7 +401,7 @@ pub async fn post_new_tag(
         "New Tag",
         EMOTE_ADDTAG,
         review_url,
-        notice.as_ref(),
+        Some(&notice),
     )
     .await;
     if silent {
@@ -432,15 +428,17 @@ pub async fn post_overwritten_tag(
     data: &Data,
     uuid: &str,
     name: &str,
+    previous: &PlayerEvent,
     tag: &PlayerEvent,
     all_tags: &[PlayerEvent],
     silent: bool,
+    notify: bool,
     review_url: Option<&str>,
 ) -> Option<MessageId> {
-    let notice = if silent {
-        None
+    let notice = if notify {
+        Some(appeal::notify_tagged_player(ctx, data, uuid, name, tag, Some(previous)).await)
     } else {
-        Some(appeal::notify_tagged_player(ctx, data, uuid, name, tag).await)
+        None
     };
     let ign = ign_line(data, uuid, name).await;
     post_tag_to_log(

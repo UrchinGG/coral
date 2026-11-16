@@ -113,6 +113,7 @@ async fn overwrite(
                     new_tag_id: new.id,
                     overwritten_by: actor as i64,
                     silent: false,
+                    skip_notice: false,
                 }
             } else {
                 BlacklistEvent::TagAdded {

@@ -72,6 +72,7 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
             new_tag_id,
             overwritten_by,
             silent,
+            skip_notice,
             ..
         } => {
             let new_tag = fetch_event(&repo, new_tag_id, "TagOverwritten").await?;
@@ -93,7 +94,16 @@ async fn handle_event(ctx: &Context, data: &Data, event: BlacklistEvent) -> anyh
             )
             .await;
             channel::post_overwritten_tag(
-                ctx, data, &uuid, &name, &new_tag, &all_tags, silent, None,
+                ctx,
+                data,
+                &uuid,
+                &name,
+                &old_tag,
+                &new_tag,
+                &all_tags,
+                silent,
+                !skip_notice,
+                None,
             )
             .await;
         }

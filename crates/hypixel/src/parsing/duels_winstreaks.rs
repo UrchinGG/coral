@@ -12,6 +12,7 @@ pub struct DuelsCategorySnapshot {
     pub wins: u64,
     pub losses: u64,
     pub winstreak: Option<u64>,
+    pub best_winstreak: Option<u64>,
 }
 
 #[derive(Clone, Default)]
@@ -19,6 +20,7 @@ pub struct DuelsWinstreakSnapshot {
     pub overall_wins: u64,
     pub overall_losses: u64,
     pub overall_winstreak: Option<u64>,
+    pub overall_best_winstreak: Option<u64>,
     pub categories: Vec<DuelsCategorySnapshot>,
 }
 
@@ -35,6 +37,8 @@ pub fn extract_duels_winstreak_snapshot(player: &Value) -> Option<DuelsWinstreak
     ]
     .iter()
     .find_map(|key| duels.get(key).and_then(|v| v.as_u64()));
+
+    let overall_best_winstreak = duels.get("best_overall_winstreak").and_then(|v| v.as_u64());
 
     let categories = DUELS_CATEGORIES
         .iter()
@@ -55,11 +59,16 @@ pub fn extract_duels_winstreak_snapshot(player: &Value) -> Option<DuelsWinstreak
                 .get(&format!("current_{}_winstreak", meta.category_key))
                 .and_then(|v| v.as_u64());
 
+            let best_winstreak = duels
+                .get(&format!("best_{}_winstreak", meta.category_key))
+                .and_then(|v| v.as_u64());
+
             DuelsCategorySnapshot {
                 division_id: meta.division_id,
                 wins,
                 losses,
                 winstreak,
+                best_winstreak,
             }
         })
         .collect();
@@ -68,6 +77,7 @@ pub fn extract_duels_winstreak_snapshot(player: &Value) -> Option<DuelsWinstreak
         overall_wins,
         overall_losses,
         overall_winstreak,
+        overall_best_winstreak,
         categories,
     })
 }
@@ -126,6 +136,23 @@ pub fn calculate(
                 None => (prev_wins.saturating_sub(start_wins), true),
             };
 
+            // A new personal best recorded inside this gap is the streak that just ended
+            // whenever no streak that began after a loss could have been long enough to
+            // set it, which makes the value exact rather than inferred.
+            let (value, approximate) = match (
+                best_winstreak(&snapshots[prev_idx].1, view),
+                best_winstreak(stats, view),
+            ) {
+                (Some(before), Some(after))
+                    if after > before
+                        && after > wins.saturating_sub(prev_wins)
+                        && after >= value =>
+                {
+                    (after, false)
+                }
+                _ => (value, approximate),
+            };
+
             if value >= MIN_STREAK_THRESHOLD {
                 streaks.push(Streak {
                     value,
@@ -172,6 +199,63 @@ fn api_winstreak(stats: &DuelsWinstreakSnapshot, view: DuelsView) -> Option<u64>
     }
 }
 
+fn best_winstreak(stats: &DuelsWinstreakSnapshot, view: DuelsView) -> Option<u64> {
+    match view {
+        DuelsView::Overall => stats.overall_best_winstreak,
+        DuelsView::Category(id) => stats
+            .categories
+            .iter()
+            .find(|c| c.division_id == id)
+            .and_then(|c| c.best_winstreak),
+    }
+}
+
 fn stat(json: &Value, key: &str) -> u64 {
     json.get(key).and_then(|value| value.as_u64()).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn snap(wins: u64, losses: u64, ws: Option<u64>, best: Option<u64>) -> DuelsWinstreakSnapshot {
+        DuelsWinstreakSnapshot {
+            overall_wins: wins,
+            overall_losses: losses,
+            overall_winstreak: ws,
+            overall_best_winstreak: best,
+            categories: Vec::new(),
+        }
+    }
+
+    fn at(minute: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 1, 1, 0, minute, 0).unwrap()
+    }
+
+    #[test]
+    fn new_best_in_a_gap_makes_the_streak_exact() {
+        let snapshots = [
+            (at(0), snap(100, 10, Some(0), Some(40))),
+            (at(1), snap(197, 10, Some(97), Some(97))),
+            (at(2), snap(201, 11, None, Some(100))),
+        ];
+        let history = calculate(&snapshots, DuelsView::Overall);
+        assert_eq!(history.streaks.len(), 1);
+        assert_eq!(history.streaks[0].value, 100);
+        assert!(!history.streaks[0].approximate);
+    }
+
+    #[test]
+    fn unchanged_best_stays_approximate() {
+        let snapshots = [
+            (at(0), snap(100, 10, Some(0), Some(100))),
+            (at(1), snap(137, 10, Some(37), Some(100))),
+            (at(2), snap(141, 11, None, Some(100))),
+        ];
+        let history = calculate(&snapshots, DuelsView::Overall);
+        assert_eq!(history.streaks.len(), 1);
+        assert_eq!(history.streaks[0].value, 37);
+        assert!(history.streaks[0].approximate);
+    }
 }
