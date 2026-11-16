@@ -9,6 +9,7 @@ use rust_embed::RustEmbed;
 use crate::auth::AdminActor;
 use crate::boot::{self, BootSource};
 use crate::error::AdminError;
+use crate::perimeter::MOUNT;
 use crate::security::json_error;
 use crate::state::AppState;
 
@@ -32,7 +33,7 @@ mod traffic;
 
 const ASSETS_DIR: &str = "assets";
 const HTML_SUFFIX: &str = ".html";
-const HOME: &str = "/urchin";
+const HOME: &str = "/account";
 const PRIVATE_IMMUTABLE: &str = "private, max-age=31536000, immutable";
 
 #[derive(RustEmbed)]
@@ -99,7 +100,7 @@ async fn serve_page(
 ) -> Result<Response, AdminError> {
     let path = uri.path().trim_matches('/');
     if path.is_empty() {
-        return Ok(Redirect::to(HOME).into_response());
+        return Ok(Redirect::to(&format!("{MOUNT}{HOME}")).into_response());
     }
     if let Some(page) = Assets::get(&format!("{path}{HTML_SUFFIX}")) {
         let html = std::str::from_utf8(&page.data).map_err(|error| {

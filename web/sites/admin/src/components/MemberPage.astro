@@ -1,6 +1,10 @@
+---
+import { page } from "@/lib/paths";
+---
+
 <section id="member-page" class="member" hidden>
   <nav class="crumbs-nav" aria-label="Breadcrumb">
-    <a href="/urchin/members">Members</a>
+    <a href={page("/urchin/members")}>Members</a>
     <span aria-hidden="true">/</span>
     <span data-crumb></span>
   </nav>
@@ -61,6 +65,15 @@
 </section>
 
 <script>
+  import { page } from "@/lib/paths";
+  import {
+    BELOW_YOU,
+    can,
+    outranks,
+    rankOf,
+    session,
+    type Permission,
+  } from "@/lib/session";
   import { memberRequestsTab } from "@/lib/tabs/requests";
   import { load, send } from "@/lib/api";
   import { el, panel, row, widePanel } from "@/lib/dom";
@@ -107,6 +120,7 @@
       join_date: string;
       last_request_at: string | null;
       request_count: number;
+      is_owner: boolean;
     } | null;
     keys: {
       personal: string | null;
@@ -131,6 +145,13 @@
   }
 
   const id = new URLSearchParams(location.search).get("id");
+  const viewer = await session();
+  const NO_WASTE: WasteStanding = {
+    allowance: 0,
+    refill_per_day: 0,
+    spent: 0,
+    blocked_until: null,
+  };
   const root = document.getElementById("member-page")!;
   const part = <T extends HTMLElement>(name: string) =>
     root.querySelector<T>(`[data-${name}]`)!;
@@ -200,43 +221,68 @@
     part("actions").replaceChildren(...(member ? actions(member) : []));
   }
 
-  function actions(member: NonNullable<Core["member"]>) {
-    const button = (label: string, run: () => void, className = "button") => {
-      const element = el("button", {
-        type: "button",
-        className,
-        textContent: label,
-      });
-      element.addEventListener("click", run);
-      return element;
-    };
-    const keyMenu = el("select", { className: "field", ariaLabel: "API key" });
-    keyMenu.append(
+  const above = (member: NonNullable<Core["member"]>) =>
+    !outranks(viewer, rankOf(member.access_level, member.is_owner));
+
+  function keyMenu(member: NonNullable<Core["member"]>) {
+    const options = [
+      can(viewer, "keys_manage") &&
+        el("option", {
+          value: member.key_locked ? "unlock" : "lock",
+          textContent: member.key_locked ? "Unlock Key" : "Lock Key",
+        }),
+      can(viewer, "keys_manage") &&
+        el("option", {
+          value: "api-key/regenerate",
+          textContent: "Regenerate Key",
+        }),
+      can(viewer, "key_limits_write") &&
+        el("option", { value: "limits/reset", textContent: "Reset Limits" }),
+    ].filter((option): option is HTMLOptionElement => Boolean(option));
+    if (!options.length) return [];
+    const menu = el("select", { className: "field", ariaLabel: "API key" });
+    menu.append(
       el("option", { value: "", textContent: "API Key…" }),
-      el("option", {
-        value: member.key_locked ? "unlock" : "lock",
-        textContent: member.key_locked ? "Unlock Key" : "Lock Key",
-      }),
-      el("option", {
-        value: "api-key/regenerate",
-        textContent: "Regenerate Key",
-      }),
-      el("option", { value: "limits/reset", textContent: "Reset Limits" }),
+      ...options,
     );
-    keyMenu.addEventListener("change", () => {
-      const path = keyMenu.value;
-      keyMenu.value = "";
+    menu.disabled = above(member);
+    if (menu.disabled) menu.title = BELOW_YOU;
+    menu.addEventListener("change", () => {
+      const path = menu.value;
+      menu.value = "";
       if (
         path &&
         confirm(
-          `${keyMenu.querySelector(`option[value="${path}"]`)?.textContent ?? path}?`,
+          `${menu.querySelector(`option[value="${path}"]`)?.textContent ?? path}?`,
         )
       )
         act(`/${path}`);
     });
+    return [menu];
+  }
+
+  function actions(member: NonNullable<Core["member"]>) {
+    const button = (
+      label: string,
+      needs: Permission,
+      run: () => void,
+      className = "button",
+    ) => {
+      if (!can(viewer, needs)) return [];
+      const element = el("button", {
+        type: "button",
+        className,
+        textContent: label,
+        disabled: above(member),
+        title: above(member) ? BELOW_YOU : "",
+      });
+      element.addEventListener("click", run);
+      return [element];
+    };
     return [
-      button(
+      ...button(
         "Strike",
+        "strikes_write",
         () =>
           ask("strike", (form) =>
             act("/strikes", {
@@ -246,18 +292,19 @@
           ),
         "button danger",
       ),
-      button(
+      ...button(
         member.tagging_disabled ? "Enable Tagging" : "Disable Tagging",
+        "tagging_write",
         () => act("/tagging", { disabled: !member.tagging_disabled }),
       ),
-      button("Access Level", () => {
+      ...button("Access Level", "access_level_write", () => {
         (dialog("access").querySelector("select") as HTMLSelectElement).value =
           String(member.access_level);
         ask("access", (form) =>
           act("/access-level", { level: Number(form.get("level")) }),
         );
       }),
-      keyMenu,
+      ...keyMenu(member),
     ];
   }
 
@@ -288,10 +335,12 @@
         )
           show();
       });
+      revoke.disabled = member ? above(member) : false;
+      if (revoke.disabled) revoke.title = BELOW_YOU;
       return row(
         strike.reason,
         `${nameOf(strike.struck_by, core.labels)} · ${day(strike.issued_at)}${strike.expires_at ? ` to ${day(strike.expires_at)}` : ""}`,
-        strike.status === "active"
+        strike.status === "active" && can(viewer, "strikes_write")
           ? revoke
           : el("span", { className: "dim" }, ` · ${strike.status}`),
       );
@@ -309,13 +358,19 @@
         row("Requests, 24 h", FORMATS.number(core.activity.h24.requests)),
         row("Requests, 14 d", FORMATS.number(core.activity.d14.requests)),
         row("Requests, total", FORMATS.number(member?.request_count ?? 0)),
-        row(
-          "API key",
-          core.keys.personal ? masked(core.keys.personal) : "None",
-        ),
+        ...(can(viewer, "keys_manage")
+          ? [
+              row(
+                "API key",
+                core.keys.personal ? masked(core.keys.personal) : "None",
+              ),
+            ]
+          : []),
       ),
-      blocksPanel(blocks, change),
-      ...(member ? [developerPanel(core.keys.developer, change)] : []),
+      ...(can(viewer, "key_limits_write") ? [blocksPanel(blocks, change)] : []),
+      ...(member && can(viewer, "keys_manage")
+        ? [developerPanel(core.keys.developer, change)]
+        : []),
       ...(standing
         ? [
             panel(
@@ -346,13 +401,13 @@
     ];
   }
 
-  const TABS: [string, string][] = [
-    ["overview", "Overview"],
-    ["timeline", "Timeline"],
-    ["starfish", "Starfish"],
-    ["requests", "Requests"],
-    ["network", "Keys & Network"],
-    ["raw", "Raw"],
+  const TABS: [string, string, Permission][] = [
+    ["overview", "Overview", "members_read"],
+    ["timeline", "Timeline", "members_read"],
+    ["starfish", "Starfish", "starfish"],
+    ["requests", "Requests", "traffic"],
+    ["network", "Keys & Network", "keys_manage"],
+    ["raw", "Raw", "keys_manage"],
   ];
 
   let current = new URLSearchParams(location.search).get("tab") ?? "overview";
@@ -378,7 +433,8 @@
 
   function tabs(core: Core, blocks: BlockState) {
     const available = TABS.filter(
-      ([key]) => key !== "starfish" || core.starfish,
+      ([key, , needs]) =>
+        can(viewer, needs) && (key !== "starfish" || core.starfish),
     );
     if (!available.some(([key]) => key === current)) current = "overview";
     part("tabs").replaceChildren(
@@ -420,10 +476,15 @@
 
   async function show() {
     try {
+      const keyLimits = can(viewer, "key_limits_write");
       const [core, waste, limits] = await Promise.all([
         load<Core>(`/accounts/${id}`),
-        load<WasteStanding>(`/accounts/${id}/waste`),
-        load<Budget[]>(`/accounts/${id}/limits`),
+        keyLimits
+          ? load<WasteStanding>(`/accounts/${id}/waste`)
+          : Promise.resolve(NO_WASTE),
+        keyLimits
+          ? load<Budget[]>(`/accounts/${id}/limits`)
+          : Promise.resolve<Budget[]>([]),
       ]);
       const blocks: BlockState = {
         keyLocked: core.member?.key_locked ?? false,
@@ -454,7 +515,7 @@
       `/accounts/${route}/${encodeURIComponent(number)}`,
     )
       .then(({ discord_id }) =>
-        location.replace(`/urchin/members?id=${discord_id}`),
+        location.replace(page(`/urchin/members?id=${discord_id}`)),
       )
       .catch((error: Error) => {
         root.hidden = false;

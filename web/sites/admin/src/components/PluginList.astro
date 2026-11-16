@@ -12,6 +12,7 @@
 </section>
 
 <script>
+  import { page } from "@/lib/paths";
   import { el } from "@/lib/dom";
   import { FORMATS } from "@/lib/format";
   import type { Labels } from "@/lib/members";
@@ -59,7 +60,7 @@
       "a",
       {
         className: "table-row plugin",
-        href: `/starfish/plugins?slug=${row.plugin.slug}`,
+        href: page(`/starfish/plugins?slug=${row.plugin.slug}`),
       },
       el("span", {
         className: "strong",

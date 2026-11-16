@@ -5,7 +5,7 @@ ingress:
   - hostname: api.urchin.gg
     service: http://coral-proxy:8080
   - hostname: admin.urchin.gg
-    service: http://coral-admin:8080
+    service: http://coral-proxy:80
   - hostname: starfish.hexze.dev
     service: http://coral-proxy:80
   - hostname: urchin.gg

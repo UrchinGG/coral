@@ -1,4 +1,3 @@
-use anyhow::Result;
 use async_trait::async_trait;
 use axum::http::{HeaderMap, header};
 use coral_redis::{RedisPool, web_session};
@@ -8,17 +7,12 @@ pub use web_session::COOKIE as SESSION_COOKIE;
 #[async_trait]
 pub trait SessionStore: Send + Sync {
     async fn discord_id(&self, token: &str) -> Option<i64>;
-    async fn end(&self, token: &str) -> Result<()>;
 }
 
 #[async_trait]
 impl SessionStore for RedisPool {
     async fn discord_id(&self, token: &str) -> Option<i64> {
         Some(web_session::user(self, token).await?.discord_id)
-    }
-
-    async fn end(&self, token: &str) -> Result<()> {
-        Ok(web_session::end(self, token).await?)
     }
 }
 
@@ -51,21 +45,12 @@ pub mod tests {
             sessions.insert(token.clone(), discord_id);
             token
         }
-
-        pub fn is_live(&self, token: &str) -> bool {
-            self.0.lock().unwrap().contains_key(token)
-        }
     }
 
     #[async_trait]
     impl SessionStore for MemorySessions {
         async fn discord_id(&self, token: &str) -> Option<i64> {
             self.0.lock().unwrap().get(token).copied()
-        }
-
-        async fn end(&self, token: &str) -> Result<()> {
-            self.0.lock().unwrap().remove(token);
-            Ok(())
         }
     }
 

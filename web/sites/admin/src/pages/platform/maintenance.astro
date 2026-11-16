@@ -46,6 +46,7 @@ import Admin from "@/layouts/Admin.astro";
 </Admin>
 
 <script>
+  import { API } from "@/lib/paths";
   import { load, send } from "@/lib/api";
   import { el, row } from "@/lib/dom";
   import { FORMATS, titleCase } from "@/lib/format";
@@ -214,7 +215,7 @@ import Admin from "@/layouts/Admin.astro";
         ref?.kind === "account" ? [ref.discord_id] : [],
       ),
     );
-    const response = await fetch("/api/labels", {
+    const response = await fetch(`${API}/labels`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ discord, minecraft: [] }),

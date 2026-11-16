@@ -6,6 +6,7 @@
 </section>
 
 <script>
+  import { page } from "@/lib/paths";
   import { load } from "@/lib/api";
   import { el } from "@/lib/dom";
   import { renderNickname, type JsonValue } from "@/lib/expr";
@@ -48,7 +49,7 @@
       );
     return el(
       "a",
-      { className: "server-card", href: `/sync/servers?id=${server.id}` },
+      { className: "server-card", href: page(`/sync/servers?id=${server.id}`) },
       el(
         "span",
         { className: "server-card-top" },

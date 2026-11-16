@@ -1,5 +1,6 @@
 :root {
   --topbar: 56px;
+  --nav-height: var(--topbar);
   --drawer: 240px;
   --gutter: 20px;
   --syntax-text: #d4d4d4;
@@ -28,7 +29,7 @@ body {
   background: var(--color-background);
 }
 
-.menu {
+.nav-toggle {
   flex: none;
   display: grid;
   place-items: center;
@@ -75,13 +76,6 @@ body {
   font-size: var(--text-sm);
 }
 
-.who {
-  flex: none;
-  margin-left: auto;
-  color: var(--color-text-secondary);
-  font-size: var(--text-xs);
-}
-
 @media (max-width: 640px) {
   .topbar {
     gap: 10px;
@@ -91,8 +85,7 @@ body {
     flex: 1 1 auto;
   }
 
-  .brand span,
-  .who {
+  .brand span {
     display: none;
   }
 }

@@ -13,6 +13,7 @@
 </section>
 
 <script>
+  import { can, session } from "@/lib/session";
   import { load } from "@/lib/api";
   import { el, panel, row } from "@/lib/dom";
   import { FORMATS } from "@/lib/format";
@@ -85,20 +86,26 @@
     labels: Labels;
   }
 
+  const topPanel = (top: Top) =>
+    panel(
+      "Top Looked Up · 24 h",
+      ...top.players.map((entry) =>
+        row(
+          FORMATS.number(entry.requests),
+          refLink({ kind: "player", uuid: entry.player }, top.labels),
+        ),
+      ),
+    );
+
+  const viewer = await session();
   Promise.all([
-    load<Top>("/players/top?window=24h"),
+    can(viewer, "traffic")
+      ? load<Top>("/players/top?window=24h")
+      : Promise.resolve(undefined),
     load<Tagged>("/players/recently-tagged"),
   ]).then(([top, tagged]) => {
     lists.replaceChildren(
-      panel(
-        "Top Looked Up · 24 h",
-        ...top.players.map((entry) =>
-          row(
-            FORMATS.number(entry.requests),
-            refLink({ kind: "player", uuid: entry.player }, top.labels),
-          ),
-        ),
-      ),
+      ...(top ? [topPanel(top)] : []),
       panel(
         "Recently Tagged",
         ...tagged.items.map((item) =>

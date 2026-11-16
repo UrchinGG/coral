@@ -242,7 +242,7 @@ pub async fn account(
 }
 
 impl AccountCore {
-    /// Keys, traffic and Starfish details are owner-only; other staff get the rest.
+    /// Keys, IPs and Starfish details are owner-only; other staff see request counts but no requests.
     fn visible_to(mut self, actor: AdminActor) -> Self {
         if !actor.can(Permission::KeysManage) {
             self.keys = KeySummary::default();
@@ -251,7 +251,8 @@ impl AccountCore {
             }
         }
         if !actor.can(Permission::Traffic) {
-            self.activity = ActivitySummary::default();
+            self.activity.last_ip = None;
+            self.activity.ip_count = 0;
             self.counts.ips = 0;
             self.counts.agents = 0;
         }

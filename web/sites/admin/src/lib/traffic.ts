@@ -12,6 +12,7 @@ import {
   type RequestRow,
 } from "@/lib/requests";
 import { moment } from "@/lib/time";
+import { API } from "@/lib/paths";
 
 export const WINDOWS: [string, string, number][] = [
   ["1h", "1 h", 3_600_000],
@@ -100,7 +101,7 @@ const query = (filters: Filters, keys: (keyof Filters)[]) => {
 };
 
 async function labelsOf(discord: string[]): Promise<Labels> {
-  const response = await fetch("/api/labels", {
+  const response = await fetch(`${API}/labels`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ discord, minecraft: [] }),
@@ -290,7 +291,7 @@ export function requests(filters: Filters) {
   };
   if (filters.member !== null) body.member = filters.member;
   const fetchPage = async (cursor: string | null) => {
-    const response = await fetch("/api/requests/query", {
+    const response = await fetch(`${API}/requests/query`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(cursor ? { ...body, cursor } : body),

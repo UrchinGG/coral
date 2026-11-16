@@ -65,15 +65,16 @@ interface PlayerTags {
   labels: Labels;
 }
 
-export function overviewTab(core: PlayerCore, removeTag: (tag: Tag) => void) {
+export function overviewTab(core: PlayerCore, removeTag?: (tag: Tag) => void) {
   const labels = core.labels;
   const tags = core.blacklist.active.map((tag) => {
     const remove = el("button", {
       type: "button",
       className: "button small danger",
       textContent: "Remove",
+      hidden: !removeTag,
     });
-    remove.addEventListener("click", () => removeTag(tag));
+    remove.addEventListener("click", () => removeTag?.(tag));
     return row(
       tagPill(tag.tag_type, tag.display_name),
       tag.reason ?? "",

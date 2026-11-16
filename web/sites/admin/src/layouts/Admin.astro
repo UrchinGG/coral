@@ -1,31 +1,35 @@
 ---
 import Head from "@shared/components/Head.astro";
-import { SECTIONS, sectionOf } from "@/lib/nav";
+import SignIn from "@shared/components/SignIn.astro";
+import { ACCOUNT, SECTIONS, sectionOf } from "@/lib/nav";
+import { page, pagePath } from "@/lib/paths";
 import "@shared/styles/global.css";
 import "@shared/styles/controls.css";
 import "@/styles/admin.css";
 
 interface Props {
   title: string;
+  crumbs?: boolean;
 }
 
-const { title } = Astro.props;
-const path = Astro.url.pathname.replace(/\.html$/, "");
+const { title, crumbs = true } = Astro.props;
+const path = pagePath(Astro.url.pathname.replace(/\.html$/, ""));
 const section = sectionOf(path);
+const current = (target: string) => (target === path ? "page" : undefined);
 ---
 
 <html lang="en">
   <Head
-    siteName="Urchin Admin"
-    logo="/brand/urchin.svg"
+    siteName="Urchin"
+    logo={page("/brand/urchin.svg")}
     title={title}
-    description="Urchin staff dashboard"
+    description="Your Urchin dashboard"
   />
   <body>
     <header class="topbar">
       <button
         type="button"
-        class="menu"
+        class="nav-toggle"
         aria-label="Open navigation"
         aria-expanded="false"
         aria-controls="drawer"
@@ -34,8 +38,8 @@ const section = sectionOf(path);
           <path d="M3 6h18M3 12h18M3 18h18"></path>
         </svg>
       </button>
-      <a class="brand" href="/urchin" aria-label="Urchin">
-        <img src="/brand/urchin.svg" alt="" width="22" height="22" />
+      <a class="brand" href={page(ACCOUNT.path)} aria-label="Urchin">
+        <img src={page("/brand/urchin.svg")} alt="" width="22" height="22" />
         <span>Urchin</span>
       </a>
       <input
@@ -43,30 +47,40 @@ const section = sectionOf(path);
         type="search"
         placeholder="Search member, player, UUID, guild…"
         aria-label="Search"
+        hidden
       />
-      <span class="who" id="who"></span>
+      <SignIn />
     </header>
     <div class="backdrop" hidden></div>
     <nav id="drawer" class="drawer" aria-label="Sections">
+      <div class="group">
+        <a href={page(ACCOUNT.path)} aria-current={current(ACCOUNT.path)}>
+          {ACCOUNT.title}
+        </a>
+      </div>
       {SECTIONS.map((group) => (
-        <div class="group">
+        <div class="group" hidden>
           <span class="label">{group.name}</span>
-          {group.pages.map((page) => (
+          {group.pages.map((entry) => (
             <a
-              href={page.path}
-              aria-current={page.path === path ? "page" : undefined}
+              href={page(entry.path)}
+              data-needs={entry.needs}
+              aria-current={current(entry.path)}
+              hidden
             >
-              {page.title}
+              {entry.title}
             </a>
           ))}
         </div>
       ))}
     </nav>
     <main id="content">
-      <h1 class="crumbs">
-        {section ? `${section.name} / ` : ""}
-        {title}
-      </h1>
+      {crumbs && (
+        <h1 class="crumbs">
+          {section ? `${section.name} / ` : ""}
+          {title}
+        </h1>
+      )}
       <slot />
     </main>
   </body>
@@ -74,20 +88,21 @@ const section = sectionOf(path);
 
 <script>
   import { omnibox } from "@/lib/omnibox";
-  import { session } from "@/lib/session";
+  import { can, session, type Permission } from "@/lib/session";
 
-  const menu = document.querySelector<HTMLButtonElement>(".menu")!;
+  const toggle = document.querySelector<HTMLButtonElement>(".nav-toggle")!;
   const drawer = document.getElementById("drawer")!;
   const backdrop = document.querySelector<HTMLElement>(".backdrop")!;
+  const search = document.querySelector<HTMLInputElement>(".search")!;
 
   const setOpen = (open: boolean) => {
-    menu.setAttribute("aria-expanded", String(open));
+    toggle.setAttribute("aria-expanded", String(open));
     drawer.classList.toggle("open", open);
     backdrop.hidden = !open;
   };
 
-  menu.addEventListener("click", () =>
-    setOpen(menu.getAttribute("aria-expanded") !== "true"),
+  toggle.addEventListener("click", () =>
+    setOpen(toggle.getAttribute("aria-expanded") !== "true"),
   );
   backdrop.addEventListener("click", () => setOpen(false));
   document.addEventListener(
@@ -95,19 +110,13 @@ const section = sectionOf(path);
     (event) => event.key === "Escape" && setOpen(false),
   );
 
-  omnibox(document.querySelector<HTMLInputElement>(".search")!);
-
-  const me = await session();
-  if (me) {
-    const who = document.getElementById("who")!;
-    who.textContent = me.discord_id;
-    const response = await fetch("/api/labels", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ discord: [me.discord_id], minecraft: [] }),
-    });
-    if (response.ok)
-      who.textContent =
-        (await response.json()).discord[me.discord_id] ?? me.discord_id;
+  const viewer = await session();
+  for (const link of drawer.querySelectorAll<HTMLElement>("[data-needs]"))
+    link.hidden = !can(viewer, link.dataset.needs as Permission);
+  for (const group of drawer.querySelectorAll<HTMLElement>(".group[hidden]"))
+    group.hidden = !group.querySelector("a:not([hidden])");
+  if (can(viewer, "staff")) {
+    search.hidden = false;
+    omnibox(search);
   }
 </script>

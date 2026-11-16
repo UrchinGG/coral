@@ -1,0 +1,568 @@
+---
+import { STARFISH_URL } from "astro:env/server";
+import Admin from "@/layouts/Admin.astro";
+import { page } from "@/lib/paths";
+
+const platforms = [
+  { id: "windows", label: "Windows" },
+  { id: "macos", label: "macOS" },
+  { id: "linux", label: "Linux" },
+];
+const download = (platform: string) =>
+  `${STARFISH_URL}/api/v1/download/latest?platform=${platform}`;
+---
+
+<Admin title="Account" crumbs={false}>
+  <div class="account-page">
+    <header class="identity" hidden>
+      <img class="avatar" alt="" width="64" height="64" />
+      <div>
+        <h1></h1>
+        <p class="facts"></p>
+      </div>
+    </header>
+
+    <section class="block" id="minecraft">
+      <h2>Minecraft Accounts</h2>
+      <div class="tiles"></div>
+    </section>
+
+    <section class="block" id="starfish" hidden>
+      <div class="starfish-head">
+        <img src={page("/brand/starfish.svg")} alt="" width="36" height="30" />
+        <div>
+          <h2>Starfish</h2>
+          <span class="licensed">Licensed</span>
+        </div>
+        <span class="version" hidden></span>
+      </div>
+      <div class="downloads">
+        {platforms.map((platform) => (
+          <a
+            class="button download"
+            href={download(platform.id)}
+            data-platform={platform.id}
+          >
+            {platform.label}
+          </a>
+        ))}
+      </div>
+      <p class="changes"></p>
+    </section>
+
+    <section class="block key" id="personal-key" hidden>
+      <h2>API Key</h2>
+    </section>
+
+    <section class="block key" id="developer-key" hidden>
+      <h2>Developer Key</h2>
+    </section>
+  </div>
+</Admin>
+
+<script>
+  import { account } from "@shared/account";
+  import { el } from "@/lib/dom";
+  import { FORMATS } from "@/lib/format";
+  import { displayName, head } from "@/lib/minecraft";
+  import { day } from "@/lib/time";
+
+  interface Linked {
+    uuid: string;
+    name: string | null;
+    prefix: string | null;
+    primary: boolean;
+  }
+
+  interface ApiKey {
+    key: string;
+    permissions: string[] | null;
+    used: number;
+    limit: number;
+    window_secs: number;
+    total: number;
+    created_at: string | null;
+    locked: boolean;
+  }
+
+  interface Keys {
+    personal: ApiKey | null;
+    developer: ApiKey | null;
+  }
+
+  interface Member {
+    member_id: number;
+    joined_at: string;
+  }
+
+  interface Starfish {
+    licensed: boolean;
+    changes_left: number;
+    version: string | null;
+  }
+
+  const NEAR_LIMIT = 0.85;
+  const MASK = "•".repeat(28);
+  const LINK_HINT = "Use /link in the Urchin Discord to add another account";
+
+  const me = async <T,>(
+    path: string,
+    method = "GET",
+  ): Promise<T | undefined> => {
+    const response = await fetch(`/me/${path}`, { method }).catch(
+      () => undefined,
+    );
+    return response?.ok ? response.json() : undefined;
+  };
+
+  function showIdentity(
+    name: string,
+    username: string,
+    avatar: string,
+    member?: Member,
+  ) {
+    const identity = document.querySelector<HTMLElement>(".identity")!;
+    identity.querySelector<HTMLImageElement>(".avatar")!.src = avatar;
+    identity.querySelector("h1")!.textContent = name;
+    const facts = [`@${username}`];
+    if (member)
+      facts.push(
+        `Member #${member.member_id}`,
+        `Joined ${day(member.joined_at)}`,
+      );
+    identity
+      .querySelector(".facts")!
+      .replaceChildren(
+        ...facts.map((fact) => el("span", { textContent: fact })),
+      );
+    identity.hidden = false;
+  }
+
+  function showMinecraft(accounts: Linked[]) {
+    const tiles = accounts.map((linked) =>
+      el(
+        "div",
+        { className: "tile" },
+        el("img", {
+          src: head(linked.uuid, 40),
+          alt: "",
+          width: 40,
+          height: 40,
+        }),
+        el(
+          "div",
+          {},
+          displayName(linked.prefix, linked.name ?? linked.uuid),
+          ...(linked.primary ? [el("small", { textContent: "Primary" })] : []),
+        ),
+      ),
+    );
+    const hint = el("div", { className: "tile hint", textContent: LINK_HINT });
+    document
+      .querySelector("#minecraft .tiles")!
+      .replaceChildren(...tiles, hint);
+  }
+
+  function preferredPlatform() {
+    const agent = navigator.userAgent;
+    if (/Mac/.test(agent)) return "macos";
+    if (/Linux|X11/.test(agent) && !/Android/.test(agent)) return "linux";
+    return "windows";
+  }
+
+  function showStarfish(starfish: Starfish) {
+    const section = document.getElementById("starfish")!;
+    const preferred = preferredPlatform();
+    for (const link of section.querySelectorAll<HTMLAnchorElement>(
+      ".download",
+    )) {
+      const isPreferred = link.dataset.platform === preferred;
+      link.classList.toggle("primary", isPreferred);
+      if (isPreferred) link.textContent = `Download for ${link.textContent}`;
+    }
+    section
+      .querySelector(".downloads")!
+      .prepend(section.querySelector(".download.primary")!);
+    const version = section.querySelector<HTMLElement>(".version")!;
+    version.textContent = starfish.version ?? "";
+    version.hidden = !starfish.version;
+    section
+      .querySelector(".changes")!
+      .replaceChildren(
+        el("span", { className: "dim", textContent: "Device changes left" }),
+        el("strong", { textContent: String(starfish.changes_left) }),
+      );
+    section.hidden = false;
+  }
+
+  function keyField(key: string) {
+    const value = el("code", { textContent: MASK });
+    const reveal = el("button", {
+      type: "button",
+      className: "icon-button",
+      textContent: "Show",
+      onclick: () => {
+        const hidden = value.textContent === MASK;
+        value.textContent = hidden ? key : MASK;
+        reveal.textContent = hidden ? "Hide" : "Show";
+      },
+    });
+    const copy = el("button", {
+      type: "button",
+      className: "icon-button",
+      textContent: "Copy",
+      onclick: () =>
+        navigator.clipboard.writeText(key).then(() => {
+          copy.textContent = "Copied";
+          setTimeout(() => (copy.textContent = "Copy"), 1500);
+        }),
+    });
+    return el("div", { className: "key-field" }, value, reveal, copy);
+  }
+
+  function usage(key: ApiKey) {
+    const share = key.limit > 0 ? Math.min(key.used / key.limit, 1) : 0;
+    const bar = el("div", { className: "meter" }, el("span"));
+    bar.querySelector("span")!.style.width = `${share * 100}%`;
+    bar.classList.toggle("near", share >= NEAR_LIMIT);
+    const minutes = Math.round(key.window_secs / 60);
+    return el(
+      "div",
+      { className: "usage" },
+      el(
+        "div",
+        { className: "usage-line" },
+        el("span", {
+          className: "dim",
+          textContent: `Last ${minutes} minutes`,
+        }),
+        el(
+          "span",
+          {},
+          el("strong", { textContent: FORMATS.number(key.used) }),
+          ` of ${FORMATS.number(key.limit)}`,
+        ),
+      ),
+      bar,
+    );
+  }
+
+  function facts(key: ApiKey, ...extra: Node[]) {
+    return el(
+      "div",
+      { className: "key-facts" },
+      el(
+        "span",
+        {},
+        el("span", { className: "dim", textContent: "All time " }),
+        FORMATS.number(key.total),
+      ),
+      ...(key.created_at
+        ? [
+            el(
+              "span",
+              {},
+              el("span", { className: "dim", textContent: "Created " }),
+              day(key.created_at),
+            ),
+          ]
+        : []),
+      ...(key.locked
+        ? [el("span", { className: "locked", textContent: "Locked" })]
+        : []),
+      ...extra,
+    );
+  }
+
+  function regenerate(section: HTMLElement) {
+    const button = el("button", {
+      type: "button",
+      className: "regenerate",
+      textContent: "Regenerate",
+    });
+    button.addEventListener("click", async () => {
+      if (!button.dataset.sure) {
+        button.dataset.sure = "";
+        button.textContent = "Regenerate? Your old key stops working";
+        return;
+      }
+      const key = await me<ApiKey>("keys/personal/regenerate", "POST");
+      if (key) showKey(section, key, true);
+    });
+    return button;
+  }
+
+  function showKey(section: HTMLElement, key: ApiKey, personal: boolean) {
+    const title = section.querySelector("h2")!;
+    const permissions = (key.permissions ?? []).map((permission) =>
+      el("span", { className: "chip", textContent: permission }),
+    );
+    section.replaceChildren(
+      title,
+      keyField(key.key),
+      usage(key),
+      ...(permissions.length
+        ? [el("div", { className: "chips" }, ...permissions)]
+        : []),
+      facts(key, ...(personal ? [regenerate(section)] : [])),
+    );
+    section.hidden = false;
+  }
+
+  const user = await account();
+  if (user) {
+    const [member, linked, keys, starfish] = await Promise.all([
+      me<Member>("member"),
+      me<Linked[]>("accounts"),
+      me<Keys>("keys"),
+      user.starfish_licensed ? me<Starfish>("starfish") : undefined,
+    ]);
+    showIdentity(user.name, user.username, user.avatar, member);
+    showMinecraft(linked ?? []);
+    if (starfish?.licensed) showStarfish(starfish);
+    if (keys?.personal)
+      showKey(document.getElementById("personal-key")!, keys.personal, true);
+    if (keys?.developer)
+      showKey(document.getElementById("developer-key")!, keys.developer, false);
+  }
+</script>
+
+<style>
+  .account-page {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+    max-width: 840px;
+  }
+
+  .identity {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+
+    & .avatar {
+      border-radius: 50%;
+    }
+
+    & h1 {
+      font-size: var(--text-xl);
+      font-weight: 600;
+    }
+  }
+
+  .facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+
+  .block {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    padding: 18px 20px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-panel);
+
+    & h2 {
+      font-size: var(--text-base);
+      font-weight: 600;
+    }
+  }
+
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 8px;
+  }
+
+  .tiles :global(.tile) {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+
+    & img {
+      border-radius: var(--radius-sm);
+      image-rendering: pixelated;
+    }
+
+    & small {
+      display: block;
+      color: var(--color-text-muted);
+      font-size: var(--text-xs);
+    }
+  }
+
+  .tiles :global(.tile.hint) {
+    border-style: dashed;
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+  }
+
+  .starfish-head {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+
+    & img {
+      image-rendering: pixelated;
+    }
+
+    & div {
+      flex: 1;
+    }
+  }
+
+  .licensed {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+
+    &::before {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--color-success);
+      content: "";
+    }
+  }
+
+  .version {
+    padding: 2px 8px;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    color: var(--color-text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
+  .downloads {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .download.primary {
+    border-color: #ffda30;
+    background: #ffda30;
+    color: #1a1500;
+    font-weight: 600;
+  }
+
+  .changes {
+    display: flex;
+    gap: 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--color-divider);
+    font-size: var(--text-sm);
+  }
+
+  .key :global(.key-field) {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    padding: 8px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-inset);
+
+    & code {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      font-size: var(--text-sm);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .key :global(.icon-button),
+  .key :global(.regenerate) {
+    border: 0;
+    background: none;
+    color: var(--color-text-muted);
+    font: inherit;
+    font-size: var(--text-xs);
+    cursor: pointer;
+  }
+
+  .key :global(.regenerate) {
+    margin-left: auto;
+    color: var(--color-danger);
+  }
+
+  .key :global(.usage-line) {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 6px;
+    font-size: var(--text-sm);
+  }
+
+  .key :global(.meter) {
+    height: 4px;
+    overflow: hidden;
+    border-radius: 2px;
+    background: var(--color-border);
+
+    & span {
+      display: block;
+      height: 100%;
+      background: var(--color-accent);
+    }
+  }
+
+  .key :global(.meter.near span) {
+    background: var(--color-warning);
+  }
+
+  .key :global(.key-facts) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+    align-items: center;
+    font-size: var(--text-sm);
+  }
+
+  .key :global(.chips) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .key :global(.chip) {
+    padding: 1px 8px;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+  }
+
+  .key :global(.locked) {
+    color: var(--color-warning);
+  }
+
+  .dim,
+  .key :global(.dim) {
+    color: var(--color-text-muted);
+  }
+
+  @media (max-width: 640px) {
+    .identity .avatar {
+      width: 48px;
+      height: 48px;
+    }
+
+    .download.primary {
+      flex-basis: 100%;
+      justify-content: center;
+    }
+  }
+</style>

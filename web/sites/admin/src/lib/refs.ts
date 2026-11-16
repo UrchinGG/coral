@@ -1,5 +1,6 @@
 import { el } from "@/lib/dom";
 import type { Labels } from "@/lib/members";
+import { page } from "@/lib/paths";
 
 export type Ref =
   | { kind: "account"; discord_id: string; member_id: number | null }
@@ -43,17 +44,17 @@ export function refUrl(ref: Ref | null): string | null {
   if (!ref) return null;
   switch (ref.kind) {
     case "account":
-      return `/urchin/members?id=${ref.discord_id}`;
+      return page(`/urchin/members?id=${ref.discord_id}`);
     case "player":
-      return `/urchin/players?uuid=${ref.uuid}`;
+      return page(`/urchin/players?uuid=${ref.uuid}`);
     case "name":
-      return `/urchin/players?q=${encodeURIComponent(ref.name)}`;
+      return page(`/urchin/players?q=${encodeURIComponent(ref.name)}`);
     case "guild":
-      return `/urchin/guilds?id=${ref.guild_id}`;
+      return page(`/urchin/guilds?id=${ref.guild_id}`);
     case "plugin":
-      return `/starfish/plugins?slug=${ref.slug}`;
+      return page(`/starfish/plugins?slug=${ref.slug}`);
     case "ip":
-      return `/platform/traffic?ip=${encodeURIComponent(ref.ip)}`;
+      return page(`/platform/traffic?ip=${encodeURIComponent(ref.ip)}`);
     default:
       return null;
   }

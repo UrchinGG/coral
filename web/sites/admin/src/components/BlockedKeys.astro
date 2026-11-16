@@ -6,6 +6,8 @@
 </section>
 
 <script>
+  import { can, session } from "@/lib/session";
+  import { page } from "@/lib/paths";
   import { load, send } from "@/lib/api";
 
   interface Flag {
@@ -26,7 +28,7 @@
     item.append(text);
     if (account) {
       const link = document.createElement("a");
-      link.href = `/urchin/members?id=${account}`;
+      link.href = page(`/urchin/members?id=${account}`);
       link.textContent = "Open member";
       item.append(link);
     }
@@ -42,10 +44,12 @@
     return item;
   };
 
-  load<{ flags: Flag[] }>("/flags").then(({ flags }) => {
-    const blocked = flags.filter((flag) => flag.kind === "waste");
-    root.hidden = blocked.length === 0;
-    root.querySelector("[data-count]")!.textContent = String(blocked.length);
-    list.replaceChildren(...blocked.map(row));
-  });
+  const viewer = await session();
+  if (can(viewer, "owner"))
+    load<{ flags: Flag[] }>("/flags").then(({ flags }) => {
+      const blocked = flags.filter((flag) => flag.kind === "waste");
+      root.hidden = blocked.length === 0;
+      root.querySelector("[data-count]")!.textContent = String(blocked.length);
+      list.replaceChildren(...blocked.map(row));
+    });
 </script>

@@ -1,3 +1,5 @@
 ---
-return Astro.redirect("/urchin");
+import { page } from "@/lib/paths";
+
+return Astro.redirect(page("/account"));
 ---

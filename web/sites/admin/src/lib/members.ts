@@ -1,3 +1,4 @@
+import { page } from "@/lib/paths";
 export const ACCESS_LEVELS: Record<number, string> = {
   0: "Default",
   2: "Helper",
@@ -20,4 +21,4 @@ export interface Labels {
 }
 
 export const memberUrl = (discordId: string) =>
-  `/urchin/members?id=${discordId}`;
+  page(`/urchin/members?id=${discordId}`);

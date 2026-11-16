@@ -31,6 +31,9 @@
     handle @account {
         import coral-api
     }
+    handle /dashboard* {
+        reverse_proxy coral-admin:8080
+    }
     handle {
         root * {args[0]}
         import site
@@ -63,6 +66,10 @@ http://urchin.gg {
 
 http://starfish.urchin.gg {
     import starfish /srv/web/live/starfish
+}
+
+http://admin.urchin.gg {
+    redir https://urchin.gg/dashboard{uri} permanent
 }
 
 http://starfish.hexze.dev {

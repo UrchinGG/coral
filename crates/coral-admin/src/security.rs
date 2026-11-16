@@ -10,15 +10,12 @@ use url::Url;
 
 use crate::auth::AuthConfig;
 
-pub const ROOT_PATH: &str = "/";
-
-const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://cdn.discordapp.com https://mc-heads.net; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 const REFERRER_POLICY: &str = "no-referrer";
 const NO_SNIFF: &str = "nosniff";
 const NO_STORE: &str = "no-store";
 const SEC_FETCH_SITE: HeaderName = HeaderName::from_static("sec-fetch-site");
 const SAME_ORIGIN_SITE: &str = "same-origin";
-const SCHEME_RELATIVE_PREFIX: &str = "//";
 
 pub async fn headers(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
@@ -64,10 +61,6 @@ pub async fn same_origin_writes(
     )
 }
 
-pub fn safe_next(raw: &str, base: &Url) -> String {
-    same_origin_target(raw, base).unwrap_or_else(|| ROOT_PATH.to_string())
-}
-
 pub fn json_error(status: StatusCode, code: &'static str, message: &str) -> Response {
     let body = json!({ "error": { "code": code, "message": message } });
     (status, Json(body)).into_response()
@@ -82,30 +75,11 @@ fn is_same_origin(headers: &HeaderMap, base: &Url) -> bool {
     }
 }
 
-fn same_origin_target(raw: &str, base: &Url) -> Option<String> {
-    if raw.chars().any(|c| c.is_control() || c == '\\') {
-        return None;
-    }
-    let target = base.join(raw).ok()?;
-    let leaves_origin = target.scheme() != base.scheme() || target.origin() != base.origin();
-    if leaves_origin || target.path().starts_with(SCHEME_RELATIVE_PREFIX) {
-        return None;
-    }
-    Some(match target.query() {
-        Some(query) => format!("{}?{query}", target.path()),
-        None => target.path().to_string(),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const BASE: &str = "https://admin.example";
-
-    fn next(raw: &str) -> String {
-        safe_next(raw, &Url::parse(BASE).unwrap())
-    }
 
     fn headers(pairs: &[(&'static str, &'static str)]) -> HeaderMap {
         pairs
@@ -121,46 +95,6 @@ mod tests {
 
     fn same_origin(pairs: &[(&'static str, &'static str)]) -> bool {
         is_same_origin(&headers(pairs), &Url::parse(BASE).unwrap())
-    }
-
-    #[test]
-    fn rejects_values_that_leave_the_origin() {
-        for raw in [
-            "/\t/evil.example",
-            "//evil",
-            "/\\evil",
-            "https://evil",
-            "///evil",
-            "javascript:alert(1)",
-            "http://admin.example/members",
-            "https://admin.example:8443/members",
-            "/.//evil",
-            "/a/..//evil",
-            "/\r\n/evil",
-            "/\u{7f}evil",
-            "blob:https://admin.example//evil.example/",
-            "blob:https://admin.example/members?q=1",
-        ] {
-            assert_eq!(next(raw), "/", "{raw:?}");
-        }
-    }
-
-    #[test]
-    fn percent_encoded_tricks_stay_on_the_admin_origin() {
-        assert_eq!(next("/%09/evil.example"), "/%09/evil.example");
-        assert_eq!(next("/%2F%2Fevil"), "/%2F%2Fevil");
-    }
-
-    #[test]
-    fn keeps_same_origin_path_and_query_without_fragment() {
-        assert_eq!(next("/members?q=a&b=1#top"), "/members?q=a&b=1");
-        assert_eq!(next("https://admin.example/players/x"), "/players/x");
-        assert_eq!(next("/a/../members"), "/members");
-    }
-
-    #[test]
-    fn empty_next_resolves_to_root() {
-        assert_eq!(next(""), "/");
     }
 
     #[test]

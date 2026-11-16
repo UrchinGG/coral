@@ -18,6 +18,7 @@
 </section>
 
 <script>
+  import { page } from "@/lib/paths";
   import { el } from "@/lib/dom";
   import { FORMATS } from "@/lib/format";
   import { pager } from "@/lib/pager";
@@ -44,7 +45,7 @@
   const render = (row: GuildRow) => {
     const link = el("a", {
       className: "table-row guild",
-      href: `/urchin/guilds?id=${row.guild.guild_id}`,
+      href: page(`/urchin/guilds?id=${row.guild.guild_id}`),
     });
     link.append(
       ...[

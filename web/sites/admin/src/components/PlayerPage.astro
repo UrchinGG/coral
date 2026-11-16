@@ -1,6 +1,10 @@
+---
+import { page } from "@/lib/paths";
+---
+
 <section id="player-page" class="member" hidden>
   <nav class="crumbs-nav" aria-label="Breadcrumb">
-    <a href="/urchin/players">Players</a>
+    <a href={page("/urchin/players")}>Players</a>
     <span aria-hidden="true">/</span>
     <span data-crumb></span>
   </nav>
@@ -59,6 +63,7 @@
 <script>
   import { load, send } from "@/lib/api";
   import { el } from "@/lib/dom";
+  import { can, session, type Permission } from "@/lib/session";
   import { fillTab, setQuery, tabBar } from "@/lib/tabbar";
   import { tagPill } from "@/lib/tags";
   import {
@@ -70,12 +75,16 @@
     type Tag,
   } from "@/lib/tabs/player";
 
+  const viewer = await session();
   const TABS: [string, string][] = [
     ["overview", "Overview"],
     ["tags", "Tag History"],
     ["snapshots", "Snapshots"],
     ["lookups", "Lookups"],
-  ];
+  ].filter(([key]) => key !== "lookups" || can(viewer, "traffic")) as [
+    string,
+    string,
+  ][];
 
   const uuid = new URLSearchParams(location.search).get("uuid");
   const root = document.getElementById("player-page")!;
@@ -133,27 +142,40 @@
         el("span", { className: "issue", textContent: text }),
       ),
     );
-    const button = (label: string, run: () => void, className = "button") => {
+    const button = (
+      label: string,
+      needs: Permission,
+      run: () => void,
+      className = "button",
+    ) => {
+      if (!can(viewer, needs)) return [];
       const element = el("button", {
         type: "button",
         className,
         textContent: label,
       });
       element.addEventListener("click", run);
-      return element;
+      return [element];
     };
     part("actions").replaceChildren(
-      button("Add Tag", addTag),
-      core.blacklist.locked
-        ? button("Unlock", () => act("/unlock", "POST", {}))
-        : button("Lock", () => askReason("Lock Tags", "/lock")),
-      core.minecraft_block
-        ? button("Unblock Sign-in", () => act("/unblock", "POST", {}))
+      ...button("Add Tag", "tags_write", addTag),
+      ...(core.blacklist.locked
+        ? button("Unlock", "player_locks_write", () =>
+            act("/unlock", "POST", {}),
+          )
+        : button("Lock", "player_locks_write", () =>
+            askReason("Lock Tags", "/lock"),
+          )),
+      ...(core.minecraft_block
+        ? button("Unblock Sign-in", "sign_in_blocks_write", () =>
+            act("/unblock", "POST", {}),
+          )
         : button(
             "Block Sign-in",
+            "sign_in_blocks_write",
             () => askReason("Block Sign-in", "/block"),
             "button danger",
-          ),
+          )),
     );
   }
 
@@ -188,7 +210,10 @@
       case "lookups":
         return lookupsTab(uuid!);
       default:
-        return overviewTab(core, removeTag);
+        return overviewTab(
+          core,
+          can(viewer, "tags_write") ? removeTag : undefined,
+        );
     }
   }
 

@@ -33,6 +33,7 @@ import Admin from "@/layouts/Admin.astro";
 </Admin>
 
 <script>
+  import { API } from "@/lib/paths";
   import { load } from "@/lib/api";
   import { el } from "@/lib/dom";
   import { renderView, type ExtensionView } from "@/lib/extension";
@@ -99,7 +100,7 @@ import Admin from "@/layouts/Admin.astro";
   async function show(id: string, holder: HTMLElement) {
     const run = async (action: string, input: Record<string, unknown>) => {
       const response = await fetch(
-        `/api/extensions/${encodeURIComponent(id)}/${encodeURIComponent(action)}`,
+        `${API}/extensions/${encodeURIComponent(id)}/${encodeURIComponent(action)}`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },

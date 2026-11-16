@@ -1,0 +1,30 @@
+---
+import Admin from "@/layouts/Admin.astro";
+---
+
+<Admin title="Shared Accounts">
+  <section class="panel shared">
+    <div class="panel-head">
+      <h2 class="panel-title">Your Accounts</h2>
+      <button class="button primary small" type="button" disabled>
+        Add Account
+      </button>
+    </div>
+    <p class="empty">
+      You haven't shared any accounts yet. Sharing accounts is coming soon.
+    </p>
+  </section>
+</Admin>
+
+<style>
+  .shared {
+    max-width: 840px;
+  }
+
+  .empty {
+    padding: 32px 16px;
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    text-align: center;
+  }
+</style>

@@ -30,6 +30,7 @@
 </section>
 
 <script>
+  import { can, session } from "@/lib/session";
   import { load } from "@/lib/api";
   import { FORMATS } from "@/lib/format";
 
@@ -43,28 +44,31 @@
   const part = (name: string) =>
     root.querySelector<HTMLElement>(`[data-${name}]`)!;
 
-  load<Upstream>("/traffic/upstream?window=1h").then(
-    ({ series, capacity }) => {
-      if (capacity) {
-        const share = capacity.used / capacity.limit;
-        part("percent").textContent = `${Math.round(share * 100)}%`;
-        part("meter").style.width = `${Math.min(share, 1) * 100}%`;
-        root.classList.toggle("warn", share > WARN_SHARE);
-        part("used").textContent =
-          `${FORMATS.number(capacity.used)} of ${FORMATS.number(capacity.limit)} used this window`;
-      } else {
-        part("used").textContent = "Hypixel hasn't reported a limit yet";
-      }
-      const peak = Math.max(1, ...series.map((point) => point.requests));
-      part("bars").replaceChildren(
-        ...series.map((point) => {
-          const bar = document.createElement("span");
-          bar.style.height = `${(point.requests / peak) * 100}%`;
-          bar.title = `${FORMATS.number(point.requests)} calls`;
-          return bar;
-        }),
-      );
-    },
-    (error: Error) => (part("used").textContent = error.message),
-  );
+  const viewer = await session();
+  root.hidden = !can(viewer, "traffic");
+  if (!root.hidden)
+    load<Upstream>("/traffic/upstream?window=1h").then(
+      ({ series, capacity }) => {
+        if (capacity) {
+          const share = capacity.used / capacity.limit;
+          part("percent").textContent = `${Math.round(share * 100)}%`;
+          part("meter").style.width = `${Math.min(share, 1) * 100}%`;
+          root.classList.toggle("warn", share > WARN_SHARE);
+          part("used").textContent =
+            `${FORMATS.number(capacity.used)} of ${FORMATS.number(capacity.limit)} used this window`;
+        } else {
+          part("used").textContent = "Hypixel hasn't reported a limit yet";
+        }
+        const peak = Math.max(1, ...series.map((point) => point.requests));
+        part("bars").replaceChildren(
+          ...series.map((point) => {
+            const bar = document.createElement("span");
+            bar.style.height = `${(point.requests / peak) * 100}%`;
+            bar.title = `${FORMATS.number(point.requests)} calls`;
+            return bar;
+          }),
+        );
+      },
+      (error: Error) => (part("used").textContent = error.message),
+    );
 </script>

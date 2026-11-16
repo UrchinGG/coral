@@ -2,10 +2,15 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::middleware::{from_fn, from_fn_with_state};
+use axum::response::Redirect;
+use axum::routing::get;
 
 use crate::auth::{self, AuthConfig};
 use crate::boot::BootSource;
 use crate::{layers, permissions, routes, security};
+
+/// Where the dashboard is served on the Urchin site; Caddy forwards this path to coral-admin.
+pub const MOUNT: &str = "/dashboard";
 
 pub fn router<S>(auth_config: Arc<AuthConfig>, boot: BootSource, api: Router<S>) -> Router<S>
 where
@@ -18,16 +23,22 @@ where
             security::same_origin_writes,
         ))
         .layer(from_fn(permissions::authorize))
-        .layer(from_fn_with_state(auth_config.clone(), auth::require_staff))
+        .layer(from_fn_with_state(
+            auth_config.clone(),
+            auth::require_signed_in,
+        ))
         .layer(from_fn(security::no_store));
     let ui = routes::ui_router(boot).layer(from_fn_with_state(
-        auth_config.clone(),
-        auth::require_staff_page,
+        auth_config,
+        auth::require_signed_in_page,
     ));
+    let dashboard = Router::new().nest("/api", api).merge(ui);
     let app = Router::new()
-        .merge(auth::router(auth_config))
-        .nest("/api", api)
-        .merge(ui)
+        .route(
+            &format!("{MOUNT}/"),
+            get(|| async { Redirect::permanent(MOUNT) }),
+        )
+        .nest(MOUNT, dashboard)
         .layer(from_fn(security::headers));
     layers::apply(app)
 }
@@ -40,7 +51,6 @@ mod tests {
     use axum::body::{Body, to_bytes};
     use axum::http::{HeaderMap, HeaderName, Request, Response, StatusCode, header, request};
     use axum::response::sse::{Event, Sse};
-    use axum::routing::get;
     use futures_util::stream;
     use tower::ServiceExt;
     use url::Url;
@@ -55,11 +65,10 @@ mod tests {
     const HELPER: i64 = 333;
     const BASE: &str = "https://admin.example";
     const BODY_LIMIT: usize = 1 << 20;
-    const LOGIN_PAGE_LIMIT: usize = 2048;
     const BUILD: &str = "test-build";
     const HOME_PAGE: &str = "/urchin";
-    const CLEARED_SESSION: &str = "__Secure-urchin_session=; Domain=urchin.gg; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0";
-    const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+    const LANDING: &str = "/dashboard/account";
+    const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://cdn.discordapp.com https://mc-heads.net; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
     struct Harness {
         auth: Arc<AuthConfig>,
@@ -90,6 +99,12 @@ mod tests {
         }
 
         async fn send(&self, request: request::Builder) -> Response<Body> {
+            let path = request.uri_ref().unwrap().to_string();
+            let target = match path.as_str() {
+                "/" => MOUNT.to_string(),
+                _ => format!("{MOUNT}{path}"),
+            };
+            let request = request.uri(target);
             let boot = BootSource::new(
                 Some(BUILD.into()),
                 CoverageCache::fixed(Coverage::default()),
@@ -148,15 +163,6 @@ mod tests {
         header_value(response, header::LOCATION)
     }
 
-    fn set_cookies(response: &Response<Body>) -> Vec<String> {
-        response
-            .headers()
-            .get_all(header::SET_COOKIE)
-            .iter()
-            .map(|value| value.to_str().unwrap().to_string())
-            .collect()
-    }
-
     async fn body_text(response: Response<Body>) -> String {
         let bytes = to_bytes(response.into_body(), BODY_LIMIT).await.unwrap();
         String::from_utf8(bytes.to_vec()).unwrap()
@@ -177,15 +183,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unauthenticated_page_redirects_to_login_with_next() {
+    async fn unauthenticated_page_goes_to_the_site_sign_in_and_returns_there() {
         let harness = Harness::new();
-        let response = harness.send(Request::get("/members?q=1")).await;
-        assert_eq!(response.status(), StatusCode::SEE_OTHER);
-        assert_eq!(location(&response), "/login?next=%2Fmembers%3Fq%3D1");
-
-        let root = harness.send(Request::get("/")).await;
-        assert_eq!(root.status(), StatusCode::SEE_OTHER);
-        assert_eq!(location(&root), "/login?next=%2F");
+        let cases = [
+            (
+                "/members?q=1",
+                "https://admin.example/dashboard/members?q=1",
+            ),
+            ("/", "https://admin.example/dashboard"),
+        ];
+        for (path, return_to) in cases {
+            let response = harness.send(Request::get(path)).await;
+            assert_eq!(response.status(), StatusCode::SEE_OTHER, "{path}");
+            let sign_in = location(&response);
+            assert!(
+                sign_in.starts_with("https://urchin.gg/auth/discord?"),
+                "{sign_in}"
+            );
+            assert_eq!(query_param(sign_in, "return"), return_to, "{path}");
+        }
     }
 
     #[tokio::test]
@@ -311,7 +327,7 @@ mod tests {
         let harness = Harness::new();
         let root = harness.send_as_owner(Request::get("/")).await;
         assert_eq!(root.status(), StatusCode::SEE_OTHER);
-        assert_eq!(location(&root), HOME_PAGE);
+        assert_eq!(location(&root), LANDING);
         let missing = harness.send_as_owner(Request::get("/members/12")).await;
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
     }
@@ -374,17 +390,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn non_owner_session_is_treated_as_unauthenticated() {
+    async fn a_member_without_a_staff_rank_gets_pages_and_the_session_only() {
         let harness = Harness::new();
         let cookie = harness.session_cookie(STRANGER);
+        let session = harness
+            .send(Request::get("/api/session").header(header::COOKIE, &cookie))
+            .await;
+        assert_eq!(session.status(), StatusCode::OK);
         let api = harness
             .send(Request::get("/api/ping").header(header::COOKIE, &cookie))
             .await;
-        assert_eq!(api.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(api.status(), StatusCode::FORBIDDEN);
         let page = harness
-            .send(Request::get("/").header(header::COOKIE, &cookie))
+            .send(Request::get(HOME_PAGE).header(header::COOKIE, &cookie))
             .await;
-        assert_eq!(page.status(), StatusCode::SEE_OTHER);
+        assert_eq!(page.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -405,135 +425,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn logout_ends_the_shared_session_and_clears_its_cookie() {
-        let harness = Harness::new();
-        let token = harness.sessions.sign_in(OWNER);
-        let other_browser = harness.sessions.sign_in(OWNER);
-        let logout = Request::post("/auth/logout")
-            .header(header::COOKIE, format!("{SESSION_COOKIE}={token}"))
-            .header("sec-fetch-site", "same-origin");
-        let response = harness.send(logout).await;
-        assert_eq!(response.status(), StatusCode::SEE_OTHER);
-        assert_eq!(location(&response), "/login");
-        assert_eq!(set_cookies(&response), [CLEARED_SESSION]);
-        assert!(!harness.sessions.is_live(&token));
-        assert!(harness.sessions.is_live(&other_browser));
-    }
-
-    #[tokio::test]
-    async fn logout_without_a_session_still_clears_the_cookie() {
-        let harness = Harness::new();
-        for cookie in [None, Some(format!("{SESSION_COOKIE}=forged"))] {
-            let mut request = Request::post("/auth/logout").header("sec-fetch-site", "same-origin");
-            if let Some(cookie) = &cookie {
-                request = request.header(header::COOKIE, cookie);
-            }
-            let response = harness.send(request).await;
-            assert_eq!(location(&response), "/login", "{cookie:?}");
-            assert_eq!(set_cookies(&response), [CLEARED_SESSION]);
-        }
-    }
-
-    #[tokio::test]
-    async fn logout_requires_same_origin_and_a_post() {
-        let harness = Harness::new();
-        let token = harness.sessions.sign_in(OWNER);
-        let cookie = format!("{SESSION_COOKIE}={token}");
-        let cross_site = harness
-            .send(
-                Request::post("/auth/logout")
-                    .header(header::COOKIE, &cookie)
-                    .header("sec-fetch-site", "same-site"),
-            )
-            .await;
-        assert_eq!(cross_site.status(), StatusCode::FORBIDDEN);
-        let by_link = harness
-            .send(Request::get("/auth/logout").header(header::COOKIE, &cookie))
-            .await;
-        assert_eq!(by_link.status(), StatusCode::METHOD_NOT_ALLOWED);
-        assert!(harness.sessions.is_live(&token));
-    }
-
-    #[tokio::test]
-    async fn login_page_is_small_script_free_html() {
-        let harness = Harness::new();
-        let response = harness.send(Request::get("/login")).await;
-        assert_eq!(response.status(), StatusCode::OK);
-        assert!(header_value(&response, header::CONTENT_TYPE).starts_with("text/html"));
-        assert_eq!(header_value(&response, header::CACHE_CONTROL), "no-store");
-        let page = body_text(response).await;
-        assert!(page.len() <= LOGIN_PAGE_LIMIT, "{} bytes", page.len());
-        assert!(!page.contains("<script"));
-        assert!(!page.contains("class=\"notice\""));
-    }
-
-    #[tokio::test]
-    async fn login_page_signs_in_on_the_site_and_returns_to_a_validated_next() {
-        let harness = Harness::new();
-        let cases = [
-            ("/login", "https://admin.example/"),
-            (
-                "/login?next=%2Fmembers%3Fq%3D1",
-                "https://admin.example/members?q=1",
-            ),
-            ("/login?next=//evil", "https://admin.example/"),
-            ("/login?next=/%09/evil.example", "https://admin.example/"),
-            ("/login?next=https://evil", "https://admin.example/"),
-            (
-                "/login?next=/members&next=/players",
-                "https://admin.example/",
-            ),
-        ];
-        for (uri, return_to) in cases {
-            let page = body_text(harness.send(Request::get(uri)).await).await;
-            let start = page.find("href=\"").unwrap() + "href=\"".len();
-            let href = &page[start..start + page[start..].find('"').unwrap()];
-            assert!(
-                href.starts_with("https://urchin.gg/auth/discord?"),
-                "{uri}: {href}"
-            );
-            assert_eq!(query_param(href, "return"), return_to, "{uri}");
-        }
-    }
-
-    #[tokio::test]
-    async fn signed_in_stranger_is_told_and_offered_a_sign_out() {
-        let harness = Harness::new();
-        let cookie = harness.session_cookie(STRANGER);
-        let response = harness
-            .send(Request::get("/login?next=/members").header(header::COOKIE, cookie))
-            .await;
-        assert_eq!(response.status(), StatusCode::OK);
-        let page = body_text(response).await;
-        assert!(page.contains("That Discord account is not Urchin staff."));
-        assert!(page.contains("<form method=\"post\" action=\"/auth/logout\">"));
-        assert!(!page.contains("api.urchin.gg"));
-    }
-
-    #[tokio::test]
-    async fn signed_in_owner_on_login_page_is_sent_to_a_safe_next() {
-        let harness = Harness::new();
-        let cases = [
-            ("/login?next=/members", "/members"),
-            ("/login", "/"),
-            ("/login?next=/%09/evil.example", "/"),
-            ("/login?next=//evil", "/"),
-            ("/login?next=/%2F%2Fevil", "/"),
-            ("/login?next=https://evil", "/"),
-            ("/login?next=javascript:alert(1)", "/"),
-        ];
-        for (uri, expected) in cases {
-            let response = harness.send_as_owner(Request::get(uri)).await;
-            assert_eq!(response.status(), StatusCode::SEE_OTHER, "{uri}");
-            assert_eq!(location(&response), expected, "{uri}");
-        }
-    }
-
-    #[tokio::test]
     async fn security_headers_are_set_on_every_kind_of_response() {
         let harness = Harness::new();
         let responses = [
-            harness.send(Request::get("/login")).await,
             harness.send(Request::get("/members")).await,
             harness.send(Request::get("/assets/x.js")).await,
             harness.send(Request::get("/api/ping")).await,

@@ -61,7 +61,7 @@ const HEAVY_SNAPSHOTS: i32 = 600;
 const EARLY_RENAMED_TO: &str = "SearchTestEarly";
 const GHOST_NAME: &str = "searchtestghost";
 const REMOTE_NAME: &str = "SearchTestRemote";
-const MISSING_NAME: &str = "SearchTestMissing";
+const MISSING_NAME: &str = "SearchTestGone";
 
 const IP: &str = "198.51.100.77";
 const IP_COUNTRY: &str = "NL";

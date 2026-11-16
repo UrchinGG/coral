@@ -12,6 +12,7 @@ use crate::security::json_error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Permission {
+    SignedIn,
     Staff,
     PlayersRead,
     TagsWrite,
@@ -37,7 +38,7 @@ const DELETE: Option<Method> = Some(Method::DELETE);
 /// Routes below the owner, matched by method and path with `*` for one segment.
 /// A route missing here is owner-only, so a new endpoint stays closed until it is placed.
 const ROUTES: &[(Option<Method>, &str, Permission)] = &[
-    (GET, "/session", Permission::Staff),
+    (GET, "/session", Permission::SignedIn),
     (POST, "/search", Permission::Staff),
     (POST, "/search/remote", Permission::Staff),
     (POST, "/labels", Permission::Staff),
@@ -89,7 +90,8 @@ const ROUTES: &[(Option<Method>, &str, Permission)] = &[
 ];
 
 impl Permission {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
+        Self::SignedIn,
         Self::Staff,
         Self::PlayersRead,
         Self::TagsWrite,
@@ -109,6 +111,7 @@ impl Permission {
 
     pub const fn minimum(self) -> AccessRank {
         match self {
+            Self::SignedIn => AccessRank::Default,
             Self::Staff
             | Self::PlayersRead
             | Self::TagsWrite
@@ -161,7 +164,11 @@ impl AdminActor {
 
 pub async fn authorize(request: Request, next: Next) -> Response {
     let Some(actor) = request.extensions().get::<AdminActor>().copied() else {
-        return json_error(StatusCode::UNAUTHORIZED, "unauthorized", "Sign in as staff");
+        return json_error(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "Sign in to continue",
+        );
     };
     let needed = Permission::for_route(request.method(), request.uri().path());
     if !actor.can(needed) {
@@ -275,7 +282,10 @@ mod tests {
         let helper = Permission::granted(AccessRank::Helper);
         assert!(helper.contains(&Permission::TagsWrite));
         assert!(!helper.contains(&Permission::StrikesWrite));
-        assert!(Permission::granted(AccessRank::Default).is_empty());
+        assert_eq!(
+            Permission::granted(AccessRank::Default),
+            vec![Permission::SignedIn]
+        );
         assert_eq!(
             Permission::granted(AccessRank::Owner).len(),
             Permission::ALL.len()

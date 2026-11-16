@@ -1,6 +1,10 @@
+---
+import { page } from "@/lib/paths";
+---
+
 <section id="guild-page" class="member" hidden>
   <nav class="crumbs-nav" aria-label="Breadcrumb">
-    <a href="/urchin/guilds">Guilds</a>
+    <a href={page("/urchin/guilds")}>Guilds</a>
     <span aria-hidden="true">/</span>
     <span data-crumb></span>
   </nav>
@@ -16,6 +20,7 @@
 </section>
 
 <script>
+  import { API } from "@/lib/paths";
   import { load } from "@/lib/api";
   import { el, panel, row } from "@/lib/dom";
   import { FORMATS } from "@/lib/format";
@@ -54,7 +59,7 @@
   async function labelsFor(uuids: string[]) {
     const labels: Labels = { discord: {}, minecraft: {} };
     for (let start = 0; start < uuids.length; start += LABEL_BATCH) {
-      const response = await fetch("/api/labels", {
+      const response = await fetch(`${API}/labels`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({

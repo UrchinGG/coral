@@ -1,6 +1,7 @@
 import { send } from "@/lib/api";
 import type { Labels } from "@/lib/members";
 import type { Ref } from "@/lib/refs";
+import { API } from "@/lib/paths";
 
 export interface SearchHit {
   ref: Ref;
@@ -18,7 +19,7 @@ export interface SearchResponse {
 const SEARCH_LIMIT = 20;
 
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`/api${path}`, {
+  const response = await fetch(`${API}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),

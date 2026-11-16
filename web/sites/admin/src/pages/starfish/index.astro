@@ -29,6 +29,7 @@ import StatGroup from "@/components/StatGroup.astro";
 </Admin>
 
 <script>
+  import { page } from "@/lib/paths";
   import { load } from "@/lib/api";
   import { el } from "@/lib/dom";
   import { fill } from "@/lib/fill";
@@ -77,7 +78,9 @@ import StatGroup from "@/components/StatGroup.astro";
       "a",
       {
         className: "table-row starfish",
-        href: `/urchin/members?id=${user.account.discord_id}&tab=starfish`,
+        href: page(
+          `/urchin/members?id=${user.account.discord_id}&tab=starfish`,
+        ),
       },
       el("span", {
         className: "strong",

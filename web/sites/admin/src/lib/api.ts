@@ -1,11 +1,13 @@
+import { API } from "@/lib/paths";
+
 export async function load<T>(path: string): Promise<T> {
-  const response = await fetch(`/api${path}`);
+  const response = await fetch(`${API}${path}`);
   if (!response.ok) throw new Error(`${path} answered ${response.status}`);
   return response.json();
 }
 
 export async function send(path: string, method: string, body?: unknown) {
-  const response = await fetch(`/api${path}`, {
+  const response = await fetch(`${API}${path}`, {
     method,
     headers: body ? { "content-type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
@@ -18,7 +20,7 @@ export async function call<T>(
   method: string,
   body?: unknown,
 ): Promise<T> {
-  const response = await fetch(`/api${path}`, {
+  const response = await fetch(`${API}${path}`, {
     method,
     headers:
       body === undefined ? undefined : { "content-type": "application/json" },

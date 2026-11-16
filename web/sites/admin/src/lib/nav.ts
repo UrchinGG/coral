@@ -1,6 +1,9 @@
+import type { Permission } from "@/lib/session";
+
 export interface Page {
   title: string;
   path: string;
+  needs: Permission;
 }
 
 export interface Section {
@@ -8,34 +11,49 @@ export interface Section {
   pages: Page[];
 }
 
+export const ACCOUNT: Page = {
+  title: "Account",
+  path: "/account",
+  needs: "signed_in",
+};
+
 export const SECTIONS: Section[] = [
   {
     name: "Urchin",
     pages: [
-      { title: "Home", path: "/urchin" },
-      { title: "Members", path: "/urchin/members" },
-      { title: "Players", path: "/urchin/players" },
-      { title: "Guilds", path: "/urchin/guilds" },
-      { title: "Tag Reviews", path: "/urchin/reviews" },
+      { title: "Home", path: "/urchin", needs: "staff" },
+      { title: "Members", path: "/urchin/members", needs: "members_read" },
+      { title: "Players", path: "/urchin/players", needs: "players_read" },
+      { title: "Guilds", path: "/urchin/guilds", needs: "players_read" },
+      {
+        title: "Tag Reviews",
+        path: "/urchin/reviews",
+        needs: "reviews_manage",
+      },
+      { title: "Shared Accounts", path: "/urchin/shared", needs: "staff" },
     ],
   },
   {
     name: "Starfish",
     pages: [
-      { title: "Home", path: "/starfish" },
-      { title: "Plugins", path: "/starfish/plugins" },
+      { title: "Home", path: "/starfish", needs: "starfish" },
+      { title: "Plugins", path: "/starfish/plugins", needs: "starfish" },
     ],
   },
   {
     name: "Sync",
-    pages: [{ title: "Servers", path: "/sync/servers" }],
+    pages: [{ title: "Servers", path: "/sync/servers", needs: "owner" }],
   },
   {
     name: "API",
     pages: [
-      { title: "Traffic", path: "/platform/traffic" },
-      { title: "Hypixel", path: "/platform/hypixel" },
-      { title: "Maintenance & Audit", path: "/platform/maintenance" },
+      { title: "Traffic", path: "/platform/traffic", needs: "traffic" },
+      { title: "Hypixel", path: "/platform/hypixel", needs: "owner" },
+      {
+        title: "Maintenance & Audit",
+        path: "/platform/maintenance",
+        needs: "owner",
+      },
     ],
   },
 ];

@@ -196,7 +196,7 @@ services:
       CORAL_SYNC_DISCORD_TOKEN: ${CORAL_SYNC_DISCORD_TOKEN:-}
       HOME_GUILD_ID: ${HOME_GUILD_ID:-}
       REVIEW_FORUM_ID: ${REVIEW_FORUM_ID:-}
-      ADMIN_BASE_URL: ${ADMIN_BASE_URL:-}
+      ADMIN_BASE_URL: https://urchin.gg
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       SYNC_SETTINGS_URL: http://coral-sync:8090
       RUST_LOG: ${RUST_LOG:-info}
