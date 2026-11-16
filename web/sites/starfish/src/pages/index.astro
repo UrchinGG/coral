@@ -1,7 +1,7 @@
 ---
+import { URCHIN_URL } from "astro:env/server";
 import Container from "@shared/components/Container.astro";
 import Legacy from "@shared/components/Legacy.astro";
-import { DISCORD_URL } from "@shared/links";
 import ChatPreview from "@/components/ChatPreview.astro";
 import ProcessesWindow from "@/components/ProcessesWindow.astro";
 import TabPreview from "@/components/TabPreview.astro";
@@ -47,7 +47,7 @@ const features = [
         <Legacy text="§6S§eta§fr§bfi§3sh" />
       </h1>
       <p>{tagline}</p>
-      <a class="button primary" href={DISCORD_URL}>
+      <a class="button primary" href={`${URCHIN_URL}/dashboard`}>
         Get Starfish
       </a>
     </div>
