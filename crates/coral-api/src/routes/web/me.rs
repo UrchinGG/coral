@@ -16,7 +16,10 @@ use serde::Serialize;
 use super::signed_in;
 use crate::{
     error::ApiError,
-    routes::starfish::auth::{HWID_CHANGE_WINDOW_DAYS, HWID_MAX_CHANGES_PER_WINDOW},
+    routes::starfish::{
+        auth::{HWID_CHANGE_WINDOW_DAYS, HWID_MAX_CHANGES_PER_WINDOW},
+        latest_version,
+    },
     state::AppState,
 };
 
@@ -62,7 +65,6 @@ struct Keys {
 pub struct StarfishDevice {
     licensed: bool,
     changes_left: i64,
-    /// shortcut: the release lookup is an uncached GitHub call, so this stays null until it is cached.
     version: Option<String>,
 }
 
@@ -172,7 +174,7 @@ pub async fn starfish(
     Ok(Json(StarfishDevice {
         licensed: starfish.license_status == LICENSED,
         changes_left: changes_left(changes),
-        version: None,
+        version: latest_version(&state).await,
     }))
 }
 
