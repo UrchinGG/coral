@@ -538,10 +538,25 @@ a.table-row:hover {
 }
 
 .panels {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 12px;
-  align-items: start;
+  column-width: 320px;
+  column-gap: 12px;
+
+  & > * {
+    margin-bottom: 12px;
+    break-inside: avoid;
+  }
+
+  & > :last-child {
+    margin-bottom: 0;
+  }
+
+  & > .wide {
+    column-span: all;
+  }
+
+  & > .wide:not(:first-child) {
+    margin-top: 12px;
+  }
 }
 
 .kv-row {
