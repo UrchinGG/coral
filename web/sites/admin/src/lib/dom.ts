@@ -17,6 +17,21 @@ export function row(label: Node | string, ...value: (Node | string)[]) {
   );
 }
 
+export function pressable(element: HTMLElement, press: () => void) {
+  element.setAttribute("role", "button");
+  element.tabIndex = 0;
+  element.addEventListener("click", (event) => {
+    if (!(event.target as Element).closest("a")) press();
+  });
+  element.addEventListener("keydown", (event) => {
+    if (event.target !== element) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    press();
+  });
+  return element;
+}
+
 export function panel(title: string, ...rows: Node[]) {
   return el(
     "section",

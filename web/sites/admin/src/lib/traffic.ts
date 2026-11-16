@@ -1,15 +1,15 @@
 import { load } from "@/lib/api";
 import { legend, stackedArea, stackedBars } from "@/lib/chart";
-import { el } from "@/lib/dom";
+import { el, pressable } from "@/lib/dom";
 import { filterChip, type FilterState, type Pick } from "@/lib/filterbar";
 import { FORMATS } from "@/lib/format";
 import { pager, type CursorPage } from "@/lib/pager";
-import { refText, type Ref } from "@/lib/refs";
+import { refLink, type Ref } from "@/lib/refs";
 import {
   methodBadge,
   requestHead,
   requestRow,
-  viaLabel,
+  viaBadge,
   type RequestRow,
 } from "@/lib/requests";
 import { ago, moment } from "@/lib/time";
@@ -81,6 +81,11 @@ interface Brush {
 }
 
 const HOUR_MS = 3_600_000;
+const SHORT_TABLE_ROWS = 8;
+const ERROR_RATE_WARN = 0.01;
+const ERROR_RATE_BAD = 0.05;
+const P95_WARN_MS = 1000;
+const P95_BAD_MS = 3000;
 const HYPIXEL_WINDOW_S = 300;
 const TIME_SEPARATOR = "~";
 const CLOCK_RANGE = /^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/;
@@ -110,13 +115,6 @@ const sum = (points: SeriesPoint[], keys: (keyof SeriesPoint)[]) =>
       total + keys.reduce((part, key) => part + (point[key] as number), 0),
     0,
   );
-
-const FIGURES: [string, (keyof SeriesPoint)[], string, string][] = [
-  ["OK", ["c2xx"], "", "2xx"],
-  ["Rate Limited", ["c429_caller", "c429_upstream"], "", "answered 429"],
-  ["Client Errors", ["c4xx"], "", "other 4xx"],
-  ["Server Errors", ["c5xx"], "bad", "answered 5xx"],
-];
 
 const routeKey = (route: RouteTraffic) =>
   `${route.method} ${route.route ?? UNMATCHED}`;
@@ -288,24 +286,13 @@ export async function chart(
       }),
       windowPicker(state.window, pickWindow),
     ),
-    legend(CLASSES.map(([, label, color]) => ({ label, color }))),
-    brushArea(bars, data.points, data.step_s * 1000, brush, state),
-    el(
-      "div",
-      { className: "facts figures" },
-      ...FIGURES.map(([label, keys, className, note]) =>
-        el(
-          "div",
-          { className: "fact" },
-          el("span", { className: "label", textContent: label }),
-          el("b", {
-            className,
-            textContent: FORMATS.number(sum(data.points, keys)),
-          }),
-          el("span", { className: "dim", textContent: note }),
-        ),
-      ),
+    legend(
+      CLASSES.map(([key, label, color]) => ({
+        label: `${label} ${FORMATS.short(sum(data.points, [key]))}`,
+        color,
+      })),
     ),
+    brushArea(bars, data.points, data.step_s * 1000, brush, state),
   );
 }
 
@@ -442,15 +429,12 @@ export function routeTable(
         textContent: FORMATS.short(route.requests),
       }),
       el("span", {
-        className: "num",
+        className: `num ${errorRateClass(route.error_rate)}`,
         textContent: `${(route.error_rate * 100).toFixed(1)}%`,
       }),
+      count(route.rate_limited, "warn"),
       el("span", {
-        className: "num",
-        textContent: FORMATS.number(route.rate_limited),
-      }),
-      el("span", {
-        className: "num",
+        className: `num ${p95Class(route.p95)}`,
         textContent: route.p95 === null ? "" : `${route.p95} ms`,
       }),
     );
@@ -462,12 +446,39 @@ export function routeTable(
     className: "muted table-empty",
     textContent: "No route matches.",
   });
-  return el(
-    "div",
-    { className: "table" },
-    head,
-    ...(rows.length ? rows : [empty]),
-  );
+  return rows.length
+    ? shortTable(head, rows)
+    : el("div", { className: "table" }, head, empty);
+}
+
+const errorRateClass = (rate: number) =>
+  rate >= ERROR_RATE_BAD ? "bad" : rate >= ERROR_RATE_WARN ? "warn" : "dim";
+
+const p95Class = (p95: number | null) =>
+  p95 === null || p95 < P95_WARN_MS ? "" : p95 < P95_BAD_MS ? "warn" : "bad";
+
+const count = (value: number, className: string) =>
+  el("span", {
+    className: `num ${value ? className : "dim"}`,
+    textContent: FORMATS.number(value),
+  });
+
+function shortTable(head: HTMLElement, rows: HTMLElement[]) {
+  const table = el("div", { className: "table" }, head, ...rows);
+  if (rows.length <= SHORT_TABLE_ROWS) return table;
+  const hidden = rows.slice(SHORT_TABLE_ROWS);
+  for (const row of hidden) row.hidden = true;
+  const more = el("button", {
+    type: "button",
+    className: "table-more",
+    textContent: `Show all ${rows.length}`,
+  });
+  more.addEventListener("click", () => {
+    for (const row of hidden) row.hidden = false;
+    more.remove();
+  });
+  table.append(more);
+  return table;
 }
 
 export function routePicker(
@@ -591,36 +602,29 @@ export function callerTable(
   );
   const empty = { discord: {}, minecraft: {} };
   const rows = callers.map((caller) => {
-    const name = refText(caller.requester, empty);
-    name.className = "strong";
+    const name = refLink(caller.requester, empty);
     name.dataset.requester = requesterPick(caller, "").value;
     const line = el(
-      "button",
-      { type: "button", className: "table-row caller" },
-      name,
-      el("span", { textContent: viaLabel(caller.key_kind) }),
+      "div",
+      { className: "table-row caller" },
+      el("span", {}, name),
+      el("span", {}, viaBadge(caller.key_kind)),
       el("span", {
         className: "num",
         textContent: FORMATS.number(caller.requests),
       }),
-      el("span", {
-        className: "num",
-        textContent: FORMATS.number(caller.rate_limited),
-      }),
-      el("span", {
-        className: "num",
-        textContent: FORMATS.number(caller.errors),
-      }),
+      count(caller.rate_limited, "warn"),
+      count(caller.errors, "bad"),
       el("span", { className: "dim", textContent: lastSeen(caller.last_hour) }),
     );
     line.setAttribute(
       "aria-pressed",
       String(name.dataset.requester === picked),
     );
-    line.addEventListener("click", () => pick(caller, name));
+    pressable(line, () => pick(caller, name));
     return line;
   });
-  return el("div", { className: "table" }, head, ...rows);
+  return shortTable(head, rows);
 }
 
 export function requests(state: TrafficState) {

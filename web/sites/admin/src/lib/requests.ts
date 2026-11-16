@@ -1,8 +1,7 @@
 import { load } from "@/lib/api";
-import { el } from "@/lib/dom";
+import { el, pressable } from "@/lib/dom";
 import type { Labels } from "@/lib/members";
-import { markPending } from "@/lib/names";
-import { refLink, refText, type Ref } from "@/lib/refs";
+import { refLink, type Ref } from "@/lib/refs";
 import { time, day } from "@/lib/time";
 
 export interface Subject {
@@ -54,14 +53,25 @@ export const viaLabel = (keyKind: string) => VIA_LABELS[keyKind] ?? keyKind;
 
 export const VIA_KINDS = Object.keys(VIA_LABELS);
 
-const statusClass = (status: number) =>
+const UPSTREAM_LIMIT = "upstream_limit";
+
+const statusClass = (status: number, cause: string) =>
   status >= 500
-    ? "bad"
+    ? "s5xx"
     : status === 429
-      ? "warn"
+      ? cause === UPSTREAM_LIMIT
+        ? "s429-upstream"
+        : "s429"
       : status >= 400
-        ? "warn"
-        : "ok";
+        ? "s4xx"
+        : "s2xx";
+
+export function viaBadge(keyKind: string) {
+  return el("span", {
+    className: `via v-${keyKind}`,
+    textContent: viaLabel(keyKind),
+  });
+}
 
 export function methodBadge(method: string) {
   return el("span", {
@@ -74,13 +84,11 @@ function subjectCell(subjects: Subject[], labels: Labels) {
   const cell = el("span", { className: "player" });
   if (!subjects.length) return cell;
   const first = subjects[0];
-  const name = el("span", {
-    textContent: first.player
-      ? (labels.minecraft[first.player] ?? first.name ?? first.raw)
-      : (first.name ?? first.raw),
-  });
-  if (first.player && !labels.minecraft[first.player])
-    markPending(name, "minecraft", first.player);
+  const name = first.player
+    ? refLink({ kind: "player", uuid: first.player }, labels)
+    : el("span", { textContent: first.name ?? first.raw });
+  if (first.player && !labels.minecraft[first.player] && first.name)
+    name.textContent = first.name;
   cell.append(name);
   if (subjects.length > 1) cell.append(` +${subjects.length - 1}`);
   return cell;
@@ -141,8 +149,8 @@ async function detail(row: RequestRow, box: HTMLElement) {
 export function requestRow(row: RequestRow, labels: Labels) {
   const box = el("div", { className: "row-detail", hidden: true });
   const line = el(
-    "button",
-    { type: "button", className: "table-row request", title: day(row.ts) },
+    "div",
+    { className: "table-row request", title: day(row.ts) },
     el("span", { className: "dim", textContent: time(row.ts) }),
     el(
       "span",
@@ -150,24 +158,33 @@ export function requestRow(row: RequestRow, labels: Labels) {
       methodBadge(row.method),
       row.route ?? row.path,
     ),
-    refText(row.requester, labels),
+    refLink(row.requester, labels),
     subjectCell(row.subjects, labels),
-    el("span", {
-      className: `mono ${statusClass(row.status)}`,
-      textContent: String(row.status),
-    }),
-    el("span", {
-      className: "mono dim",
-      textContent: row.ip?.kind === "ip" ? row.ip.ip : "",
-    }),
-    el("span", { className: "dim", textContent: viaLabel(row.key_kind) }),
+    el(
+      "span",
+      {},
+      el("span", {
+        className: `status ${statusClass(row.status, row.cause)}`,
+        textContent: String(row.status),
+      }),
+    ),
+    ipCell(row.ip),
+    el("span", {}, viaBadge(row.key_kind)),
   );
-  line.addEventListener("click", () => {
+  line.setAttribute("aria-expanded", "false");
+  pressable(line, () => {
     box.hidden = !box.hidden;
     line.setAttribute("aria-expanded", String(!box.hidden));
     if (!box.hidden && !box.childElementCount) detail(row, box);
   });
   return el("div", { className: "request-item" }, line, box);
+}
+
+function ipCell(ip: Ref | null) {
+  const cell = el("span", { className: "mono" });
+  if (ip?.kind === "ip")
+    cell.append(refLink(ip, { discord: {}, minecraft: {} }));
+  return cell;
 }
 
 export function requestHead() {

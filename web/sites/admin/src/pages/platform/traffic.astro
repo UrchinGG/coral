@@ -7,24 +7,26 @@ import Admin from "@/layouts/Admin.astro";
     <div data-summary></div>
     <div data-chart></div>
     <section class="list">
-      <h2 class="group-title">
-        Routes <span class="note">Click to pick routes</span>
-      </h2>
-      <div data-route-search></div>
-      <div data-routes></div>
-    </section>
-    <section class="list">
-      <h2 class="group-title">
-        Top Callers <span class="note">Click one to filter requests</span>
-      </h2>
-      <div data-callers></div>
-    </section>
-    <section class="list">
       <h2 class="group-title">Requests</h2>
       <div data-picker></div>
       <div data-request-search></div>
       <div data-requests></div>
     </section>
+    <div class="breakdown">
+      <section class="list">
+        <h2 class="group-title">
+          Top Callers <span class="note">Click one to filter requests</span>
+        </h2>
+        <div data-callers></div>
+      </section>
+      <section class="list">
+        <h2 class="group-title">
+          Routes <span class="note">Click to pick routes</span>
+        </h2>
+        <div data-route-search></div>
+        <div data-routes></div>
+      </section>
+    </div>
   </div>
 </Admin>
 
@@ -50,15 +52,23 @@ import Admin from "@/layouts/Admin.astro";
       font-size: var(--text-2xs);
     }
 
-    & .figures {
-      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    & .breakdown {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr));
+      align-items: start;
+      gap: 12px;
     }
 
     & .table-row.caller {
       grid-template-columns:
-        minmax(160px, 1.6fr) 90px repeat(3, minmax(70px, 1fr))
-        90px;
-      min-width: 640px;
+        minmax(120px, 1.4fr) 96px repeat(3, minmax(56px, 1fr))
+        80px;
+      min-width: 540px;
+    }
+
+    & .table-row.route-row {
+      grid-template-columns: minmax(200px, 2fr) repeat(4, minmax(56px, 1fr));
+      min-width: 540px;
     }
 
     & .table-empty {
