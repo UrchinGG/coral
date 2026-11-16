@@ -84,7 +84,6 @@ def main():
         "rust": bool(affected),
         "packages": " ".join(sorted(affected)),
         "services": " ".join(services),
-        "coral_web": changed("coral-web/"),
         "web": Path("web/package.json").is_file() and (site or changed("web/")),
         "deploy": changed("deploy/"),
     }

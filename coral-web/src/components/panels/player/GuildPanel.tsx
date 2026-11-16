@@ -1,1 +1,0 @@
-// TODO: Add guild panel

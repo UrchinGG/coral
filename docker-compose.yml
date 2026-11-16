@@ -29,18 +29,6 @@ services:
       retries: 3
       start_period: 10s
 
-  coral-web:
-    build:
-      context: .
-      target: coral-web
-    restart: unless-stopped
-    environment:
-      CORAL_API_URL: http://coral-api:${API_PORT:-8000}
-      CORAL_INTERNAL_KEY: ${INTERNAL_API_KEY}
-      SITE_URL: ${SITE_URL:-http://localhost:3000}
-      STARFISH_DISCORD_CLIENT_ID: ${STARFISH_DISCORD_CLIENT_ID:-}
-      STARFISH_DISCORD_CLIENT_SECRET: ${STARFISH_DISCORD_CLIENT_SECRET:-}
-
   coral-bot:
     build:
       context: .
