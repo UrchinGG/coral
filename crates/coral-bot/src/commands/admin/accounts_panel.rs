@@ -302,7 +302,7 @@ pub async fn handle_manage_accounts_back(
     interact::update_message(
         ctx,
         component,
-        super::manage::build_main_view(data, invoker_rank, target_id).await,
+        super::manage::build_main_view(data, invoker_id, invoker_rank, target_id).await,
     )
     .await
 }

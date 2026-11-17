@@ -111,7 +111,7 @@ pub async fn handle_cancel(
     interact::update_message(
         ctx,
         component,
-        build_main_view(data, invoker_rank, target_id).await,
+        build_main_view(data, invoker_id, invoker_rank, target_id).await,
     )
     .await
 }

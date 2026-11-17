@@ -56,7 +56,7 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
         })
         .ok_or_else(|| anyhow!("Missing user"))?;
 
-    let components = build_main_view(data, invoker_rank, target_id).await;
+    let components = build_main_view(data, invoker_id, invoker_rank, target_id).await;
     command
         .create_response(
             &ctx.http,
@@ -72,6 +72,7 @@ pub async fn run(ctx: &Context, command: &CommandInteraction, data: &Data) -> Re
 
 pub(crate) async fn build_main_view(
     data: &Data,
+    invoker_id: u64,
     invoker_rank: AccessRank,
     target_id: u64,
 ) -> Vec<CreateComponent<'static>> {
@@ -321,7 +322,9 @@ pub(crate) async fn build_main_view(
                         .label("Tag Reviews")
                         .style(ButtonStyle::Secondary)
                         .disabled(!super::review_scores::can_correct(
+                            invoker_id,
                             invoker_rank,
+                            target_id,
                             target_rank,
                         )),
                 ]),
@@ -476,7 +479,7 @@ async fn refresh_main(
     interact::update_message(
         ctx,
         component,
-        build_main_view(data, invoker_rank, target_id).await,
+        build_main_view(data, component.user.id.get(), invoker_rank, target_id).await,
     )
     .await
 }
@@ -491,7 +494,7 @@ async fn refresh_main_from_modal(
     interact::update_modal(
         ctx,
         modal,
-        build_main_view(data, invoker_rank, target_id).await,
+        build_main_view(data, modal.user.id.get(), invoker_rank, target_id).await,
     )
     .await
 }
@@ -1001,7 +1004,7 @@ pub async fn handle_dev_rate_limit_modal(
     )
     .await;
 
-    let components = build_main_view(data, invoker_rank, target_id).await;
+    let components = build_main_view(data, invoker_id, invoker_rank, target_id).await;
     modal
         .create_response(
             &ctx.http,

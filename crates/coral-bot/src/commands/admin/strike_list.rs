@@ -74,7 +74,7 @@ pub async fn handle_back(
     interact::update_message(
         ctx,
         component,
-        build_main_view(data, invoker_rank, target_id).await,
+        build_main_view(data, component.user.id.get(), invoker_rank, target_id).await,
     )
     .await
 }

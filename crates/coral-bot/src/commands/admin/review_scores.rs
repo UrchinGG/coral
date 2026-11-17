@@ -162,9 +162,17 @@ fn check_available(
     Ok(())
 }
 
-pub(crate) fn can_correct(invoker_rank: AccessRank, target_rank: AccessRank) -> bool {
+/// Owners can correct anyone. Admins can correct members ranked below them,
+/// and their own scores; corrections are logged either way.
+pub(crate) fn can_correct(
+    invoker_id: u64,
+    invoker_rank: AccessRank,
+    target_id: u64,
+    target_rank: AccessRank,
+) -> bool {
     invoker_rank >= AccessRank::Owner
-        || (invoker_rank >= AccessRank::Admin && invoker_rank > target_rank)
+        || (invoker_rank >= AccessRank::Admin
+            && (invoker_rank > target_rank || invoker_id == target_id))
 }
 
 pub async fn build_view(data: &Data, target_id: u64) -> Vec<CreateComponent<'static>> {
@@ -245,7 +253,7 @@ pub async fn handle_open(
     let invoker_id = component.user.id.get();
     let (invoker_rank, _, target_rank) = fetch_context(data, invoker_id, target_id).await?;
 
-    if !can_correct(invoker_rank, target_rank) {
+    if !can_correct(invoker_id, invoker_rank, target_id, target_rank) {
         return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
             .await;
     }
@@ -265,7 +273,7 @@ pub async fn handle_back(
     interact::update_message(
         ctx,
         component,
-        build_main_view(data, invoker_rank, target_id).await,
+        build_main_view(data, invoker_id, invoker_rank, target_id).await,
     )
     .await
 }
@@ -286,7 +294,7 @@ pub async fn handle_action_select(
     let invoker_id = component.user.id.get();
     let (invoker_rank, _, target_rank) = fetch_context(data, invoker_id, target_id).await?;
 
-    if !can_correct(invoker_rank, target_rank) {
+    if !can_correct(invoker_id, invoker_rank, target_id, target_rank) {
         return interact::send_component_error(ctx, component, "Error", "Insufficient permissions")
             .await;
     }
@@ -330,7 +338,7 @@ pub async fn handle_modal(ctx: &Context, modal: &ModalInteraction, data: &Data) 
     let invoker_id = modal.user.id.get();
     let (invoker_rank, target, target_rank) = fetch_context(data, invoker_id, target_id).await?;
 
-    if !can_correct(invoker_rank, target_rank) {
+    if !can_correct(invoker_id, invoker_rank, target_id, target_rank) {
         return interact::send_modal_error(ctx, modal, "Error", "Insufficient permissions").await;
     }
     let Some(member) = target else {
@@ -424,9 +432,25 @@ mod tests {
 
     #[test]
     fn admin_cannot_correct_an_equal_rank() {
-        assert!(!can_correct(AccessRank::Admin, AccessRank::Admin));
-        assert!(can_correct(AccessRank::Admin, AccessRank::Moderator));
-        assert!(!can_correct(AccessRank::Moderator, AccessRank::Default));
-        assert!(can_correct(AccessRank::Owner, AccessRank::Owner));
+        assert!(!can_correct(1, AccessRank::Admin, 2, AccessRank::Admin));
+        assert!(can_correct(1, AccessRank::Admin, 2, AccessRank::Moderator));
+        assert!(!can_correct(
+            1,
+            AccessRank::Moderator,
+            2,
+            AccessRank::Default
+        ));
+        assert!(can_correct(1, AccessRank::Owner, 2, AccessRank::Owner));
+    }
+
+    #[test]
+    fn admin_can_correct_their_own_scores() {
+        assert!(can_correct(1, AccessRank::Admin, 1, AccessRank::Admin));
+        assert!(!can_correct(
+            1,
+            AccessRank::Moderator,
+            1,
+            AccessRank::Moderator
+        ));
     }
 }
