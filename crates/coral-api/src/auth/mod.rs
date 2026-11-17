@@ -183,7 +183,27 @@ pub async fn allow_key_or_starfish_session(
             .await
             .map_err(IntoResponse::into_response)?;
     }
+    if is_tag_write(request.method(), request.uri().path())
+        && let Some(discord_id) = tagger_to_verify(&request).map_err(IntoResponse::into_response)?
+    {
+        require_home_guild_membership(&state, discord_id)
+            .await
+            .map_err(IntoResponse::into_response)?;
+    }
     Ok(next.run(request).await)
+}
+
+fn tagger_to_verify(request: &Request) -> Result<Option<i64>, ApiError> {
+    let extensions = request.extensions();
+    if extensions.get::<InternalAuth>().is_some() || extensions.get::<DeveloperKeyAuth>().is_some()
+    {
+        return Ok(None);
+    }
+    extensions
+        .get::<AuthenticatedMember>()
+        .filter(|AuthenticatedMember(member)| member.uuid.is_some())
+        .map(|AuthenticatedMember(member)| Some(member.discord_id))
+        .ok_or_else(|| ApiError::Forbidden("link your Minecraft account to Urchin to tag".into()))
 }
 
 async fn authorize_with_key(
@@ -233,10 +253,6 @@ async fn authorize_with_session(state: &AppState, request: &mut Request) -> Resu
     }
 
     let (discord_id, member) = resolve_session_member(state, &triad).await?;
-    if is_tag_write(&method, &path) {
-        require_home_guild_membership(state, discord_id).await?;
-    }
-
     request.extensions_mut().insert(AuthenticatedMember(member));
     request.extensions_mut().insert(SessionAuth { discord_id });
     Ok(())
@@ -285,12 +301,6 @@ async fn authorize_with_minecraft(
 
     if member.as_ref().is_some_and(|m| m.key_locked) {
         return Err(ApiError::Forbidden("account locked".into()));
-    }
-    if is_tag_write(&method, &path) {
-        let member = member.as_ref().ok_or_else(|| {
-            ApiError::Forbidden("link your Minecraft account to Urchin to tag".into())
-        })?;
-        require_home_guild_membership(state, member.discord_id).await?;
     }
 
     if let Some(member) = member {

@@ -9,7 +9,7 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::{
-    auth::{AuthenticatedMember, DeveloperKeyAuth, MinecraftAuth, SessionAuth},
+    auth::{AuthenticatedMember, DeveloperKeyAuth},
     error::ApiError,
     routes::tags::effective_level,
     state::AppState,
@@ -24,6 +24,7 @@ pub struct AccessResponse {
 pub struct MemberAccess {
     pub discord_id: String,
     pub discord_username: Option<String>,
+    pub minecraft_linked: bool,
     pub in_urchin_server: Option<bool>,
     pub suspended: bool,
     pub tagging_disabled: bool,
@@ -70,7 +71,8 @@ async fn member_access(
         in_urchin_server(state, discord_id),
     );
     let level = level?;
-    let can_tag = credentials_can_tag(extensions, in_urchin_server);
+    let minecraft_linked = member.uuid.is_some();
+    let can_tag = credentials_can_tag(extensions, minecraft_linked, in_urchin_server);
     let addable_tags = tag_names(blacklist::user_addable(), |tag| {
         can_tag && !member.tagging_disabled && can_add(tag, level)
     });
@@ -78,6 +80,7 @@ async fn member_access(
     Ok(MemberAccess {
         discord_id: member.discord_id.to_string(),
         discord_username,
+        minecraft_linked,
         in_urchin_server,
         suspended: level < 0,
         tagging_disabled: member.tagging_disabled,
@@ -104,50 +107,44 @@ async fn in_urchin_server(state: &AppState, discord_id: u64) -> Option<bool> {
         .await
 }
 
-fn credentials_can_tag(extensions: &Extensions, in_urchin_server: Option<bool>) -> bool {
-    let key_allows = extensions
-        .get::<DeveloperKeyAuth>()
-        .is_none_or(|key| key.has(database::permissions::TAGS));
-    let needs_server =
-        extensions.get::<MinecraftAuth>().is_some() || extensions.get::<SessionAuth>().is_some();
-    key_allows && !(needs_server && in_urchin_server == Some(false))
+fn credentials_can_tag(
+    extensions: &Extensions,
+    minecraft_linked: bool,
+    in_urchin_server: Option<bool>,
+) -> bool {
+    match extensions.get::<DeveloperKeyAuth>() {
+        Some(key) => key.has(database::permissions::TAGS),
+        None => minecraft_linked && in_urchin_server != Some(false),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
 
-    fn with<T: Clone + Send + Sync + 'static>(auth: T) -> Extensions {
+    fn developer_key(permissions: i64) -> Extensions {
         let mut extensions = Extensions::new();
-        extensions.insert(auth);
+        extensions.insert(DeveloperKeyAuth { permissions });
         extensions
     }
 
     #[test]
     fn developer_keys_tag_only_with_the_tags_permission() {
-        let granted = with(DeveloperKeyAuth {
-            permissions: database::permissions::TAGS,
-        });
-        let denied = with(DeveloperKeyAuth { permissions: 0 });
-        assert!(credentials_can_tag(&granted, Some(false)));
-        assert!(!credentials_can_tag(&denied, Some(true)));
+        let granted = developer_key(database::permissions::TAGS);
+        assert!(credentials_can_tag(&granted, false, Some(false)));
+        assert!(!credentials_can_tag(&developer_key(0), true, Some(true)));
     }
 
     #[test]
-    fn minecraft_and_session_sign_ins_need_the_urchin_server() {
-        for extensions in [
-            with(MinecraftAuth { uuid: Uuid::nil() }),
-            with(SessionAuth { discord_id: 1 }),
-        ] {
-            assert!(credentials_can_tag(&extensions, Some(true)));
-            assert!(credentials_can_tag(&extensions, None));
-            assert!(!credentials_can_tag(&extensions, Some(false)));
-        }
+    fn member_credentials_need_the_urchin_server() {
+        let personal = Extensions::new();
+        assert!(credentials_can_tag(&personal, true, Some(true)));
+        assert!(credentials_can_tag(&personal, true, None));
+        assert!(!credentials_can_tag(&personal, true, Some(false)));
     }
 
     #[test]
-    fn personal_keys_tag_outside_the_urchin_server() {
-        assert!(credentials_can_tag(&Extensions::new(), Some(false)));
+    fn unlinked_members_never_tag() {
+        assert!(!credentials_can_tag(&Extensions::new(), false, Some(true)));
     }
 }
