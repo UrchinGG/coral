@@ -64,6 +64,25 @@ const theme = `
   .scalar-app .t-doc__header:has(> header + *) > header > button::before {
     content: "▼";
   }
+
+  @media (700px <= width < 1000px) {
+    .scalar-app.references-layout {
+      grid-template-areas: "header header" "navigation rendered" "footer footer";
+      grid-template-rows: 0 auto auto;
+      grid-template-columns: 240px minmax(0, 1fr);
+    }
+
+    .scalar-app .t-doc__sidebar {
+      top: var(--nav-height);
+      display: flex;
+      width: 240px;
+      height: calc(100dvh - var(--nav-height));
+    }
+
+    .scalar-app .t-doc__header {
+      display: none;
+    }
+  }
 `;
 ---
 
