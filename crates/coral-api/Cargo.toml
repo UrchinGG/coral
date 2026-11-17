@@ -48,4 +48,3 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 
 utoipa.workspace = true
 utoipa-axum.workspace = true
-utoipa-scalar.workspace = true

@@ -63,6 +63,25 @@ body {
   text-decoration: none;
 }
 
+.area {
+  flex: none;
+  padding-left: 14px;
+  border-left: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  text-decoration: none;
+
+  &:hover {
+    color: var(--color-text-strong);
+  }
+}
+
+.drawer .site {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-divider);
+}
+
 .search {
   flex: 0 1 420px;
   min-width: 0;

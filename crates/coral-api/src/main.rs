@@ -6,19 +6,18 @@ use anyhow::Result;
 use axum::Router;
 use axum::extract::State;
 use axum::http::{StatusCode, header};
-use axum::response::{IntoResponse, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{SignalKind, signal};
 use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
-use utoipa_scalar::{Scalar, Servable};
 
 use clients::{HypixelClient, LocalSkinProvider, MojangClient, SkinProvider};
 use coral_redis::RedisPool;
 use database::Database;
 
-const SCALAR_HTML: &str = include_str!("scalar.html");
+const DOCS_URL: &str = "https://urchin.gg/docs";
 
 mod auth;
 mod cache;
@@ -162,7 +161,7 @@ fn build_router(state: AppState, request_log: reqlog::RequestLog) -> Router {
                 move || async move { ([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], body) }
             }),
         )
-        .merge(Scalar::with_url("/", api).custom_html(SCALAR_HTML))
+        .route("/", get(|| async { Redirect::permanent(DOCS_URL) }))
         .nest("/v3", routes::router(state.clone()))
         .nest(
             routes::starfish::MOUNT_PREFIX,

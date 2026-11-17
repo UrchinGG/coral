@@ -1,7 +1,7 @@
 ---
 import Head from "@shared/components/Head.astro";
 import SignIn from "@shared/components/SignIn.astro";
-import { ACCOUNT, SECTIONS, sectionOf } from "@/lib/nav";
+import { ACCOUNT, SECTIONS, SITE, sectionOf } from "@/lib/nav";
 import { page, pagePath } from "@/lib/paths";
 import "@shared/styles/global.css";
 import "@shared/styles/controls.css";
@@ -38,10 +38,11 @@ const current = (target: string) => (target === path ? "page" : undefined);
           <path d="M3 6h18M3 12h18M3 18h18"></path>
         </svg>
       </button>
-      <a class="brand" href={page(ACCOUNT.path)} aria-label="Urchin">
+      <a class="brand" href="/" aria-label="Urchin home">
         <img src={page("/brand/urchin.svg")} alt="" width="22" height="22" />
         <span>Urchin</span>
       </a>
+      <a class="area" href={page(ACCOUNT.path)}>Dashboard</a>
       <input
         class="search"
         type="search"
@@ -73,6 +74,10 @@ const current = (target: string) => (target === path ? "page" : undefined);
           ))}
         </div>
       ))}
+      <div class="group site">
+        <span class="label">urchin.gg</span>
+        {SITE.map(([title, href]) => <a href={href}>{title}</a>)}
+      </div>
     </nav>
     <main id="content">
       {crumbs && (
