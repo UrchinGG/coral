@@ -34,6 +34,12 @@
     handle /dashboard* {
         reverse_proxy coral-admin:8080
     }
+    @starfish_site path /starfish /starfish/*
+    handle @starfish_site {
+        uri strip_prefix /starfish
+        root * {args[1]}
+        import site
+    }
     handle {
         root * {args[0]}
         import site
@@ -45,9 +51,11 @@
     handle @backend {
         import coral-api
     }
+    handle / {
+        redir {args[0]}/starfish permanent
+    }
     handle {
-        root * {args[0]}
-        import site
+        redir {args[0]}/starfish{uri} permanent
     }
 }
 
@@ -61,11 +69,11 @@
 }
 
 http://urchin.gg {
-    import urchin /srv/web/live/urchin
+    import urchin /srv/web/live/urchin /srv/web/live/starfish
 }
 
 http://starfish.urchin.gg {
-    import starfish /srv/web/live/starfish
+    import starfish https://urchin.gg
 }
 
 http://admin.urchin.gg {
@@ -73,7 +81,7 @@ http://admin.urchin.gg {
 }
 
 http://starfish.hexze.dev {
-    redir https://starfish.urchin.gg{uri} permanent
+    redir https://urchin.gg/starfish{uri} permanent
 }
 
 http://*.urchin.gg {
@@ -82,10 +90,10 @@ http://*.urchin.gg {
     header X-Robots-Tag noindex
 
     handle @urchin {
-        import urchin /srv/web/previews/pr-{re.urchin.1}/urchin
+        import urchin /srv/web/previews/pr-{re.urchin.1}/urchin /srv/web/previews/pr-{re.urchin.1}/starfish
     }
     handle @starfish {
-        import starfish /srv/web/previews/pr-{re.starfish.1}/starfish
+        import starfish https://pr-{re.starfish.1}.urchin.gg
     }
     respond 404
 }

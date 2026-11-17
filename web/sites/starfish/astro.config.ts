@@ -1,3 +1,3 @@
 import { siteConfig } from "../../shared/astro";
 
-export default siteConfig("https://starfish.urchin.gg", 4322);
+export default { ...siteConfig("https://urchin.gg", 4322), base: "/starfish" };

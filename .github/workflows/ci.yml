@@ -164,7 +164,7 @@ jobs:
         run: |
           curl -fsS -X POST -H "Authorization: Bearer $GH_TOKEN" \
             "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
-            -d "{\"body\":\"Preview: https://pr-$PR.urchin.gg and https://pr-$PR-starfish.urchin.gg\"}"
+            -d "{\"body\":\"Preview: https://pr-$PR.urchin.gg (Starfish at /starfish)\"}"
 
   images:
     needs: changes

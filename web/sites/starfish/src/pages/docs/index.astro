@@ -1,4 +1,5 @@
 ---
+import * as paths from "@/lib/paths";
 import Card from "@shared/components/Card.astro";
 import DocSection from "@/components/DocSection.astro";
 import Prose from "@/components/Prose.astro";
@@ -30,7 +31,11 @@ import { docGroups, docs } from "@/lib/starfish";
       <div class="group">
         <h3 class="label">{group}</h3>
         {pages.map((page) => (
-          <Card title={page.title} href={`/docs/${page.slug}`} level={4}>
+          <Card
+            title={page.title}
+            href={paths.page(`/docs/${page.slug}`)}
+            level={4}
+          >
             {page.summary}
           </Card>
         ))}
@@ -42,7 +47,7 @@ import { docGroups, docs } from "@/lib/starfish";
     <h2>For AI Agents</h2>
     <p>
       The whole API as one plain-text file, for pasting into an LLM:{" "}
-      <a href="/llms.txt">llms.txt</a>
+      <a href={paths.page("/llms.txt")}>llms.txt</a>
     </p>
   </section>
 </DocsLayout>

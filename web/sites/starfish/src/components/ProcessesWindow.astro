@@ -1,4 +1,5 @@
 ---
+import { page } from "@/lib/paths";
 import Wordmark from "@shared/components/Wordmark.astro";
 
 const icons = {
@@ -80,7 +81,7 @@ const autoInjectCount = instances.filter(
               <div class="instance">
                 <span class="tile">
                   <img
-                    src={`/clients/${icon}.png`}
+                    src={page(`/clients/${icon}.png`)}
                     alt=""
                     width="24"
                     height="24"

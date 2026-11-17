@@ -1,4 +1,5 @@
 ---
+import { page } from "@/lib/paths";
 import { URCHIN_URL } from "astro:env/server";
 import Container from "@shared/components/Container.astro";
 import Legacy from "@shared/components/Legacy.astro";
@@ -62,7 +63,7 @@ const features = [
           Install others' plugins straight from the Starfish app, or write your
           own with the full Lua API.
         </p>
-        <a class="button" href="/docs">
+        <a class="button" href={page("/docs")}>
           Read the Docs
         </a>
       </div>

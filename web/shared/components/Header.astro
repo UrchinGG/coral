@@ -1,5 +1,4 @@
 ---
-import { STARFISH_URL, URCHIN_URL } from "astro:env/server";
 import { DISCORD_URL, pagePath } from "@shared/links";
 import Discord from "./Discord.astro";
 import SignIn from "./SignIn.astro";
@@ -12,13 +11,11 @@ interface Props {
 
 const { site } = Astro.props;
 const pathname = pagePath(Astro.url);
-const origins = { urchin: URCHIN_URL, starfish: STARFISH_URL };
 const names = { urchin: "Urchin", starfish: "Starfish" };
-const at = (target: Site, path: string) =>
-  target === site ? path : new URL(path, origins[target]).href;
-const current = (target: Site, path: string) =>
-  target === site &&
-  (pathname === path || (path !== "/" && pathname.startsWith(`${path}/`)))
+const homes = { urchin: "/", starfish: "/starfish" };
+const isHome = (path: string) => Object.values(homes).includes(path);
+const current = (path: string) =>
+  pathname === path || (!isHome(path) && pathname.startsWith(`${path}/`))
     ? "page"
     : undefined;
 
@@ -47,9 +44,9 @@ const sections = [
     site: "starfish",
     name: "Starfish",
     pages: [
-      ["Home", "/", icons.home],
-      ["Docs", "/docs", icons.docs],
-      ["Patch Notes", "/patch-notes", icons.notes],
+      ["Home", "/starfish", icons.home],
+      ["Docs", "/starfish/docs", icons.docs],
+      ["Patch Notes", "/starfish/patch-notes", icons.notes],
     ],
   },
 ] as const;
@@ -69,7 +66,7 @@ const sections = [
         <path d="M2 12h12"></path>
       </svg>
     </button>
-    <a class="brand" href="/">
+    <a class="brand" href={homes[site]}>
       <img src={`/brand/${site}.svg`} alt="" width="22" height="22" />
       <span class="name">{names[site]}</span>
     </a>
@@ -85,7 +82,7 @@ const sections = [
           href="/replays"
           aria-label="Replays"
           title="Replays"
-          aria-current={current("urchin", "/replays")}
+          aria-current={current("/replays")}
         >
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
             <path d={icons.replays} />
@@ -107,7 +104,7 @@ const sections = [
       <ul role="list">
         {pages.map(([label, path, icon]) => (
           <li>
-            <a href={at(site, path)} aria-current={current(site, path)}>
+            <a href={path} aria-current={current(path)}>
               <svg
                 viewBox="0 0 24 24"
                 width="18"

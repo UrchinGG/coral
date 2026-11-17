@@ -1,6 +1,7 @@
 ---
 import DocsShell from "@shared/components/DocsShell.astro";
 import { docGroups } from "@/lib/starfish";
+import { page } from "@/lib/paths";
 import Layout from "./Layout.astro";
 
 interface Props {
@@ -16,11 +17,14 @@ const groups = docGroups.map(({ group, pages }, index) => ({
   items: [
     ...(index === 0
       ? [
-          { title: "Introduction", href: "/docs" },
-          { title: "Publishing", href: "/docs/publishing" },
+          { title: "Introduction", href: page("/docs") },
+          { title: "Publishing", href: page("/docs/publishing") },
         ]
       : []),
-    ...pages.map((page) => ({ title: page.title, href: `/docs/${page.slug}` })),
+    ...pages.map((entry) => ({
+      title: entry.title,
+      href: page(`/docs/${entry.slug}`),
+    })),
   ],
 }));
 ---

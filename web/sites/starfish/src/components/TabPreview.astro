@@ -1,4 +1,5 @@
 ---
+import { page } from "@/lib/paths";
 import Legacy from "@shared/components/Legacy.astro";
 import type { tabList } from "@/data/showcase";
 
@@ -22,7 +23,10 @@ const SEPARATOR = "§8|";
     </div>
     {rows.map(({ skin, team, badge, star, name, fkdr, finals }) => (
       <div class="row entry">
-        <span class="head" style={`--skin: url(/skins/${skin}.png)`} />
+        <span
+          class="head"
+          style={`--skin: url(${page(`/skins/${skin}.png`)})`}
+        />
         <Legacy text={`${team} ${badge}`} />
         <Legacy text={star} class="star" />
         <Legacy text={SEPARATOR} />

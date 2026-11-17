@@ -1,4 +1,5 @@
 import type { APIRoute } from "astro";
+import { page } from "@/lib/paths";
 import { docs, type DocPage, type DocSection } from "@/lib/starfish";
 
 export const GET: APIRoute = ({ site }) =>
@@ -23,7 +24,7 @@ export const GET: APIRoute = ({ site }) =>
       "",
       ...docs.pages.map(
         ({ slug, title, summary }) =>
-          `- [${title}](${new URL(`/docs/${slug}`, site)}): ${summary}`,
+          `- [${title}](${new URL(page(`/docs/${slug}`), site)}): ${summary}`,
       ),
       "",
       ...docs.pages.map(pageText),
