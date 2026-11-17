@@ -25,7 +25,7 @@ import SnapshotStyles from "@/components/SnapshotStyles.astro";
 <script>
   import { load } from "@/lib/api";
   import { loadBriefs } from "@/lib/briefs";
-  import { el } from "@/lib/dom";
+  import { el, problem } from "@/lib/dom";
   import { FORMATS } from "@/lib/format";
   import type { Labels } from "@/lib/members";
   import { refLink, refText, type Ref } from "@/lib/refs";
@@ -284,7 +284,10 @@ import SnapshotStyles from "@/components/SnapshotStyles.astro";
       header(guild);
       render(guild);
     } catch (error) {
-      part("status").textContent = (error as Error).message;
+      part("name").textContent = "Couldn't load this guild";
+      part("status").replaceChildren(
+        problem((error as Error).message, () => location.reload()),
+      );
     }
   }
 

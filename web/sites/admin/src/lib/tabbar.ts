@@ -1,4 +1,4 @@
-import { el } from "@/lib/dom";
+import { el, problem } from "@/lib/dom";
 
 export function tabBar(
   root: HTMLElement,
@@ -31,7 +31,7 @@ export async function fillTab(
     container.replaceChildren(await content());
   } catch (error) {
     container.replaceChildren(
-      el("p", { className: "muted", textContent: (error as Error).message }),
+      problem((error as Error).message, () => fillTab(container, content)),
     );
   }
 }

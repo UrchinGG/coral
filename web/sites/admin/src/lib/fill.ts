@@ -1,3 +1,4 @@
+import { problem } from "@/lib/dom";
 import { FORMATS, type Format } from "@/lib/format";
 
 const at = (data: unknown, path: string) =>
@@ -19,7 +20,7 @@ export function fill(root: ParentNode, data: unknown) {
   }
 }
 
-export function failed(root: Element, message: string) {
-  root.classList.add("failed");
-  root.setAttribute("title", message);
+export function failed(root: Element, message: string, retry?: () => void) {
+  root.querySelector(":scope > .problem")?.remove();
+  root.prepend(problem(message, retry));
 }

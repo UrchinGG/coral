@@ -1,5 +1,5 @@
 import { load } from "@/lib/api";
-import { el } from "@/lib/dom";
+import { el, problem } from "@/lib/dom";
 import type { Labels } from "@/lib/members";
 
 export interface CursorPage<T> {
@@ -42,7 +42,8 @@ export function pager<T>(
       more.hidden = cursor === null;
       status.textContent = list.children.length ? "" : empty;
     } catch (error) {
-      status.textContent = (error as Error).message;
+      status.textContent = "";
+      status.append(problem((error as Error).message, next));
     }
   };
   more.addEventListener("click", next);

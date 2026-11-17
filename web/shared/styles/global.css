@@ -107,3 +107,8 @@
     }
   }
 }
+
+::placeholder {
+  color: var(--color-text-faint);
+  opacity: 1;
+}

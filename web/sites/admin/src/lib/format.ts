@@ -21,11 +21,19 @@ const scaled = (
   return `${value.toFixed(digits).replace(/\.0$/, "")}${space}${units[index]}`;
 };
 
+export const MISSING = "—";
+
+const known =
+  (format: (value: number) => string) =>
+  (value: number): string =>
+    Number.isFinite(value) ? format(value) : MISSING;
+
 export const FORMATS = {
-  number: (value: number) => grouped.format(value),
-  short: (value: number) =>
+  number: known((value) => grouped.format(value)),
+  short: known((value) =>
     value < STEP ? grouped.format(value) : scaled(value, STEP, UNITS, ""),
-  bytes: (value: number) => scaled(value, BYTE_STEP, BYTE_UNITS, " "),
+  ),
+  bytes: known((value) => scaled(value, BYTE_STEP, BYTE_UNITS, " ")),
   text: (value: unknown) => String(value),
 };
 

@@ -78,7 +78,7 @@ import { page } from "@/lib/paths";
   import { activityChart, memberRequestsTab } from "@/lib/tabs/requests";
   import { keyChart, sharedActivity, type KeyActivity } from "@/lib/keychart";
   import { load, send } from "@/lib/api";
-  import { el, panel, row, widePanel } from "@/lib/dom";
+  import { el, panel, problem, row, widePanel } from "@/lib/dom";
   import { FORMATS } from "@/lib/format";
   import { accessLabel, memberUrl, type Labels } from "@/lib/members";
   import {
@@ -513,7 +513,7 @@ import { page } from "@/lib/paths";
       container.replaceChildren(await tabContent(core, blocks));
     } catch (error) {
       container.replaceChildren(
-        el("p", { className: "muted", textContent: (error as Error).message }),
+        problem((error as Error).message, () => renderTab(core, blocks)),
       );
     }
   }
@@ -541,7 +541,10 @@ import { page } from "@/lib/paths";
       tabs(core, blocks);
       renderTab(core, blocks);
     } catch (error) {
-      part("status").textContent = (error as Error).message;
+      part("name").textContent = "Couldn't load this member";
+      part("status").replaceChildren(
+        problem((error as Error).message, () => location.reload()),
+      );
     }
   }
 

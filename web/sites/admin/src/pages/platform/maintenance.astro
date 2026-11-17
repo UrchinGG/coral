@@ -142,7 +142,7 @@ import Admin from "@/layouts/Admin.astro";
     const start = el("button", {
       type: "button",
       className: "button small",
-      textContent: "Start",
+      textContent: status?.state === "failed" ? "Retry" : "Start",
       disabled: !!status && ACTIVE_STATES.includes(status.state),
     });
     start.addEventListener("click", async () => {

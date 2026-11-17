@@ -99,25 +99,26 @@ import StatGroup from "@/components/StatGroup.astro";
     );
   }
 
-  load<Overview>("/overview").then(
-    (overview) => {
-      fill(root, overview);
-      markUnread(overview);
-      const tags = overview.blacklist.by_type.map(({ tag_type, count }) => {
-        const stat = template.content.firstElementChild!.cloneNode(
-          true,
-        ) as HTMLElement;
-        stat
-          .querySelector(".label")!
-          .replaceChildren(tagPill(tag_type, titleCase(tag_type)));
-        stat.querySelector("b")!.textContent = FORMATS.number(count);
-        return stat;
-      });
-      template.before(...tags);
-    },
-    (error: Error) => {
-      failed(root, error.message);
-      report(`Couldn't load the overview: ${error.message}`);
-    },
-  );
+  const show = () =>
+    load<Overview>("/overview").then(
+      (overview) => {
+        fill(root, overview);
+        markUnread(overview);
+        const tags = overview.blacklist.by_type.map(({ tag_type, count }) => {
+          const stat = template.content.firstElementChild!.cloneNode(
+            true,
+          ) as HTMLElement;
+          stat
+            .querySelector(".label")!
+            .replaceChildren(tagPill(tag_type, titleCase(tag_type)));
+          stat.querySelector("b")!.textContent = FORMATS.number(count);
+          return stat;
+        });
+        template.before(...tags);
+      },
+      (error: Error) =>
+        failed(root, `Couldn't load the overview. ${error.message}`, show),
+    );
+
+  show();
 </script>

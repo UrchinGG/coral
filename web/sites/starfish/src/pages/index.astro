@@ -48,9 +48,12 @@ const features = [
         <Legacy text="§6S§eta§fr§bfi§3sh" />
       </h1>
       <p>{tagline}</p>
-      <a class="button primary" href={`${URCHIN_URL}/dashboard`}>
-        Get Starfish
+      <a class="button primary" href={`${URCHIN_URL}/dashboard/account`}>
+        Sign in with Discord to download
       </a>
+      <p class="download-note">
+        Downloads are on your Urchin account, for Starfish license holders.
+      </p>
     </div>
     <ProcessesWindow />
   </Container>
@@ -130,6 +133,12 @@ const features = [
 
     & .button {
       margin-top: 0.5rem;
+    }
+
+    & .download-note {
+      margin-top: -0.5rem;
+      color: var(--color-text-muted);
+      font-size: var(--text-sm);
     }
   }
 

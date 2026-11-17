@@ -1,5 +1,5 @@
 import { load } from "@/lib/api";
-import { el, pressable } from "@/lib/dom";
+import { el, pressable, problem } from "@/lib/dom";
 import type { Labels } from "@/lib/members";
 import { refLink, type Ref } from "@/lib/refs";
 import { time, day } from "@/lib/time";
@@ -142,7 +142,9 @@ async function detail(row: RequestRow, box: HTMLElement) {
       body,
     );
   } catch (error) {
-    box.textContent = (error as Error).message;
+    box.replaceChildren(
+      problem((error as Error).message, () => detail(row, box)),
+    );
   }
 }
 

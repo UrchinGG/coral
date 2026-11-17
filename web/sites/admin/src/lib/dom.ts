@@ -46,3 +46,26 @@ export function widePanel(title: string, ...rows: Node[]) {
   section.classList.add("wide");
   return section;
 }
+
+/** problem is a load failure shown in place, with Retry when the load can be tried again. */
+export function problem(message: string, retry?: () => void) {
+  const box = el(
+    "div",
+    { className: "problem" },
+    el("span", { textContent: message }),
+  );
+  box.setAttribute("role", "alert");
+  if (retry) {
+    const again = el("button", {
+      type: "button",
+      className: "button small",
+      textContent: "Retry",
+    });
+    again.addEventListener("click", () => {
+      box.remove();
+      retry();
+    });
+    box.append(again);
+  }
+  return box;
+}

@@ -579,10 +579,13 @@ export async function loadCallers(state: TrafficState) {
     .callers;
 }
 
-const lastSeen = (hour: string) =>
-  Date.now() - Date.parse(hour) < HOUR_MS
+function lastSeen(hour: string) {
+  const at = Date.parse(hour);
+  if (Number.isNaN(at)) return ago(hour);
+  return Date.now() - at < HOUR_MS
     ? "This hour"
-    : ago(new Date(Date.parse(hour) + HOUR_MS).toISOString());
+    : ago(new Date(at + HOUR_MS).toISOString());
+}
 
 export function callerTable(
   callers: Caller[],

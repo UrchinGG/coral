@@ -70,7 +70,7 @@ import { page } from "@/lib/paths";
 <script>
   import { page } from "@/lib/paths";
   import { load, send } from "@/lib/api";
-  import { el, panel, row } from "@/lib/dom";
+  import { el, panel, problem, row } from "@/lib/dom";
   import { FORMATS } from "@/lib/format";
   import type { Labels } from "@/lib/members";
   import { refLink, type Ref } from "@/lib/refs";
@@ -409,7 +409,10 @@ import { page } from "@/lib/paths";
         ),
       );
     } catch (error) {
-      part("status").textContent = (error as Error).message;
+      part("name").textContent = "Couldn't load this plugin";
+      part("status").replaceChildren(
+        problem((error as Error).message, () => location.reload()),
+      );
     }
   }
 

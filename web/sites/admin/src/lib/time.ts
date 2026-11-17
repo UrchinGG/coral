@@ -2,6 +2,7 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 const WEEK = 7 * DAY;
+const MISSING = "—";
 
 const date = new Intl.DateTimeFormat("en-US", {
   month: "short",
@@ -27,6 +28,7 @@ export type Timestamp = string;
 export function ago(at: Timestamp | null) {
   if (at === null) return "Never";
   const elapsed = Date.now() - Date.parse(at);
+  if (Number.isNaN(elapsed)) return MISSING;
   if (elapsed < MINUTE) return "Just now";
   if (elapsed < HOUR) return `${Math.floor(elapsed / MINUTE)} min ago`;
   if (elapsed < DAY) return `${Math.floor(elapsed / HOUR)} h ago`;
@@ -34,8 +36,13 @@ export function ago(at: Timestamp | null) {
   return day(at);
 }
 
-export const day = (at: Timestamp) => date.format(new Date(at));
+const safely = (format: Intl.DateTimeFormat) => (at: Timestamp) => {
+  const when = new Date(at);
+  return Number.isNaN(when.getTime()) ? MISSING : format.format(when);
+};
 
-export const moment = (at: Timestamp) => dateTime.format(new Date(at));
+export const day = safely(date);
 
-export const time = (at: Timestamp) => clock.format(new Date(at));
+export const moment = safely(dateTime);
+
+export const time = safely(clock);

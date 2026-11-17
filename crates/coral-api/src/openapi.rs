@@ -108,7 +108,7 @@ use crate::{
     ),
     modifiers(&DocsAddon),
     info(
-        title = "Coral API",
+        title = "Urchin API",
         version = "0.1.0",
     ),
     servers(

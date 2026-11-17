@@ -66,7 +66,7 @@ import SnapshotStyles from "@/components/SnapshotStyles.astro";
 
 <script>
   import { load, send } from "@/lib/api";
-  import { el } from "@/lib/dom";
+  import { el, problem } from "@/lib/dom";
   import { FORMATS } from "@/lib/format";
   import { refLink } from "@/lib/refs";
   import { can, session, type Permission } from "@/lib/session";
@@ -286,7 +286,10 @@ import SnapshotStyles from "@/components/SnapshotStyles.astro";
       header(core);
       render(core);
     } catch (error) {
-      part("status").textContent = (error as Error).message;
+      part("name").textContent = "Couldn't load this player";
+      part("status").replaceChildren(
+        problem((error as Error).message, () => location.reload()),
+      );
     }
   }
 
