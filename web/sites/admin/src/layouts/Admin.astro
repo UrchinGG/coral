@@ -42,7 +42,9 @@ const current = (target: string) => (target === path ? "page" : undefined);
         <img src={page("/brand/urchin.svg")} alt="" width="22" height="22" />
         <span>Urchin</span>
       </a>
-      <a class="area" href={page(ACCOUNT.path)}>Dashboard</a>
+      <a class="area" href={page(ACCOUNT.path)}>
+        Dashboard
+      </a>
       <input
         class="search"
         type="search"
@@ -76,7 +78,9 @@ const current = (target: string) => (target === path ? "page" : undefined);
       ))}
       <div class="group site">
         <span class="label">urchin.gg</span>
-        {SITE.map(([title, href]) => <a href={href}>{title}</a>)}
+        {SITE.map(([title, href]) => (
+          <a href={href}>{title}</a>
+        ))}
       </div>
     </nav>
     <main id="content">
