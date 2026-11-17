@@ -5,6 +5,7 @@ use crate::{
     error::ErrorResponse,
     responses::*,
     routes::{
+        access::{AccessResponse, MemberAccess},
         batch::{BatchRequest, BatchResponse},
         cubelify::CubelifyQuery,
         guild::{GuildSessionResponse, GuildSnapshotDataResponse, GuildSnapshotListResponse},
@@ -28,6 +29,7 @@ use crate::{
 
         crate::routes::minecraft_auth::challenge,
         crate::routes::minecraft_auth::sign_in,
+        crate::routes::access::access,
 
         crate::routes::player::player_tags,
         crate::routes::player::player_face,
@@ -89,12 +91,13 @@ use crate::{
             ResolveResponse,
             StoreCodeRequest, RedeemCodeResponse,
             ChallengeResponse, SignInRequest, SignInResponse,
+            AccessResponse, MemberAccess,
             LinksResponse, LinkedAccount, LinkMethodsResponse, LinkRequest, LinkProof,
             LinkResponse, LinkedAs, SetPrimaryRequest,
         )
     ),
     tags(
-        (name = "Authentication", description = "Sign in with a Minecraft account instead of an API key."),
+        (name = "Authentication", description = "Sign in with a Minecraft account instead of an API key, and check what your credentials can do."),
         (name = "Cubelify", description = "Blacklist data formatted for the Cubelify overlay."),
         (name = "Player", description = "Hypixel player data, including tags, sessions, markers, winstreaks, and batch lookups."),
         (name = "Guild", description = "Historical guild snapshots and session deltas for guilds you are a member of."),

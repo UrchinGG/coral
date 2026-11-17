@@ -174,7 +174,10 @@ fn map_op_error(e: TagOpError) -> ApiError {
     }
 }
 
-async fn effective_level(state: &AppState, member: &database::Member) -> Result<i16, ApiError> {
+pub(crate) async fn effective_level(
+    state: &AppState,
+    member: &database::Member,
+) -> Result<i16, ApiError> {
     let rules = ReviewRulesRepository::new(state.db.pool())
         .current()
         .await

@@ -12,15 +12,16 @@ pub fn can_add(tag_type: &str, level: i16) -> bool {
     }
 }
 
+pub fn can_remove_any(level: i16) -> bool {
+    level >= HELPER
+}
+
 pub fn can_remove(_tag_type: &str, level: i16, is_own: bool, age_minutes: i64) -> bool {
-    if level >= HELPER {
-        return true;
-    }
-    is_own && age_minutes <= WINDOW_MINUTES
+    can_remove_any(level) || (is_own && age_minutes <= WINDOW_MINUTES)
 }
 
 pub fn can_overwrite(old_tag_type: &str, level: i16, is_own: bool, age_minutes: i64) -> bool {
-    if level >= HELPER {
+    if can_remove_any(level) {
         return true;
     }
     if level >= MEMBER {

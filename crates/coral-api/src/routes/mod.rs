@@ -6,6 +6,7 @@ use crate::{
     state::AppState,
 };
 
+pub mod access;
 pub mod batch;
 pub mod cubelify;
 pub mod guild;
@@ -23,6 +24,7 @@ pub mod winstreaks;
 
 pub fn router(state: AppState) -> Router<AppState> {
     let public = Router::new()
+        .merge(access::router())
         .merge(player::public_router())
         .merge(batch::router())
         .merge(tags::router())

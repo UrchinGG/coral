@@ -46,6 +46,22 @@ impl DiscordResolver {
         }
     }
 
+    pub async fn is_recent_guild_member(&self, guild_id: u64, user_id: u64) -> Option<bool> {
+        let cache_key = guild_member_cache_key(guild_id, user_id);
+        if self.redis.clone().exists(&cache_key).await.unwrap_or(false) {
+            return Some(true);
+        }
+        let member = self.is_guild_member(guild_id, user_id).await;
+        if member == Some(true) {
+            let _: Result<(), _> = self
+                .redis
+                .clone()
+                .set_ex(&cache_key, 1, CACHE_TTL_SECS)
+                .await;
+        }
+        member
+    }
+
     pub async fn resolve_username(&self, user_id: u64) -> Option<String> {
         self.resolve_profile(user_id)
             .await
@@ -99,6 +115,10 @@ impl DiscordResolver {
 
 fn profile_cache_key(user_id: u64) -> String {
     format!("cache:discord:profile:{user_id}")
+}
+
+fn guild_member_cache_key(guild_id: u64, user_id: u64) -> String {
+    format!("cache:discord:guild_member:{guild_id}:{user_id}")
 }
 
 #[cfg(test)]

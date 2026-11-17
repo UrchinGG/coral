@@ -466,13 +466,14 @@ fn session_endpoint_allowed(method: &Method, path: &str) -> bool {
             | ("GET", "/player/sessions/monthly")
             | ("GET", "/player/sessions/custom")
             | ("GET", "/player/winstreaks")
+            | ("GET", "/access")
     ) || is_tag_write(method, path)
 }
 
 fn minecraft_endpoint_allowed(method: &Method, path: &str) -> bool {
     matches!(
         (method.as_str(), path),
-        ("GET", "/player/tags") | ("POST", "/players")
+        ("GET", "/player/tags") | ("POST", "/players") | ("GET", "/access")
     ) || is_tag_write(method, path)
 }
 
