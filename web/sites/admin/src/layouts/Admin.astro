@@ -1,7 +1,7 @@
 ---
 import Head from "@shared/components/Head.astro";
-import SignIn from "@shared/components/SignIn.astro";
-import { ACCOUNT, SECTIONS, SITE, sectionOf } from "@/lib/nav";
+import Header from "@shared/components/Header.astro";
+import { ACCOUNT, SECTIONS, sectionOf } from "@/lib/nav";
 import { page, pagePath } from "@/lib/paths";
 import "@shared/styles/global.css";
 import "@shared/styles/controls.css";
@@ -26,25 +26,7 @@ const current = (target: string) => (target === path ? "page" : undefined);
     description="Your Urchin dashboard"
   />
   <body>
-    <header class="topbar">
-      <button
-        type="button"
-        class="nav-toggle"
-        aria-label="Open navigation"
-        aria-expanded="false"
-        aria-controls="drawer"
-      >
-        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M3 6h18M3 12h18M3 18h18"></path>
-        </svg>
-      </button>
-      <a class="brand" href="/" aria-label="Urchin home">
-        <img src={page("/brand/urchin.svg")} alt="" width="22" height="22" />
-        <span>Urchin</span>
-      </a>
-      <a class="area" href={page(ACCOUNT.path)}>
-        Dashboard
-      </a>
+    <Header site="urchin">
       <input
         class="search"
         type="search"
@@ -52,46 +34,40 @@ const current = (target: string) => (target === path ? "page" : undefined);
         aria-label="Search"
         hidden
       />
-      <SignIn />
-    </header>
-    <div class="backdrop" hidden></div>
-    <nav id="drawer" class="drawer" aria-label="Sections">
-      <div class="group">
-        <a href={page(ACCOUNT.path)} aria-current={current(ACCOUNT.path)}>
-          {ACCOUNT.title}
-        </a>
-      </div>
-      {SECTIONS.map((group) => (
-        <div class="group" hidden>
-          <span class="label">{group.name}</span>
-          {group.pages.map((entry) => (
-            <a
-              href={page(entry.path)}
-              data-needs={entry.needs}
-              aria-current={current(entry.path)}
-              hidden
-            >
-              {entry.title}
-            </a>
-          ))}
+    </Header>
+    <div class="shell">
+      <nav class="rail" aria-label="Dashboard" hidden>
+        <div class="group">
+          <a href={page(ACCOUNT.path)} aria-current={current(ACCOUNT.path)}>
+            {ACCOUNT.title}
+          </a>
         </div>
-      ))}
-      <div class="group site">
-        <span class="label">urchin.gg</span>
-        {SITE.map(([title, href]) => (
-          <a href={href}>{title}</a>
+        {SECTIONS.map((group) => (
+          <div class="group section" hidden>
+            <span class="label">{group.name}</span>
+            {group.pages.map((entry) => (
+              <a
+                href={page(entry.path)}
+                data-needs={entry.needs}
+                aria-current={current(entry.path)}
+                hidden
+              >
+                {entry.title}
+              </a>
+            ))}
+          </div>
         ))}
-      </div>
-    </nav>
-    <main id="content">
-      {crumbs && (
-        <h1 class="crumbs">
-          {section ? `${section.name} / ` : ""}
-          {title}
-        </h1>
-      )}
-      <slot />
-    </main>
+      </nav>
+      <main id="content">
+        {crumbs && (
+          <h1 class="crumbs">
+            {section ? `${section.name} / ` : ""}
+            {title}
+          </h1>
+        )}
+        <slot />
+      </main>
+    </div>
   </body>
 </html>
 
@@ -100,31 +76,15 @@ const current = (target: string) => (target === path ? "page" : undefined);
   import { omnibox } from "@/lib/omnibox";
   import { can, session, type Permission } from "@/lib/session";
 
-  const toggle = document.querySelector<HTMLButtonElement>(".nav-toggle")!;
-  const drawer = document.getElementById("drawer")!;
-  const backdrop = document.querySelector<HTMLElement>(".backdrop")!;
+  const rail = document.querySelector<HTMLElement>(".rail")!;
   const search = document.querySelector<HTMLInputElement>(".search")!;
 
-  const setOpen = (open: boolean) => {
-    toggle.setAttribute("aria-expanded", String(open));
-    drawer.classList.toggle("open", open);
-    backdrop.hidden = !open;
-  };
-
-  toggle.addEventListener("click", () =>
-    setOpen(toggle.getAttribute("aria-expanded") !== "true"),
-  );
-  backdrop.addEventListener("click", () => setOpen(false));
-  document.addEventListener(
-    "keydown",
-    (event) => event.key === "Escape" && setOpen(false),
-  );
-
   const viewer = await session();
-  for (const link of drawer.querySelectorAll<HTMLElement>("[data-needs]"))
+  for (const link of rail.querySelectorAll<HTMLElement>("[data-needs]"))
     link.hidden = !can(viewer, link.dataset.needs as Permission);
-  for (const group of drawer.querySelectorAll<HTMLElement>(".group[hidden]"))
+  for (const group of rail.querySelectorAll<HTMLElement>(".group[hidden]"))
     group.hidden = !group.querySelector("a:not([hidden])");
+  rail.hidden = !rail.querySelector(".section:not([hidden])");
   if (can(viewer, "staff")) {
     search.hidden = false;
     omnibox(search);

@@ -1,7 +1,6 @@
 :root {
-  --topbar: 56px;
-  --nav-height: var(--topbar);
-  --drawer: 240px;
+  --topbar: var(--nav-height);
+  --rail: 220px;
   --gutter: 20px;
   --syntax-text: #d4d4d4;
   --syntax-brace: #ffd700;
@@ -16,75 +15,8 @@ body {
   color: var(--color-text);
 }
 
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 30;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  height: var(--topbar);
-  padding: 0 var(--gutter);
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-background);
-}
-
-.nav-toggle {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-
-  & path {
-    stroke: currentColor;
-    stroke-width: 2;
-    stroke-linecap: round;
-  }
-
-  &:hover,
-  &[aria-expanded="true"] {
-    color: var(--color-text-strong);
-  }
-}
-
-.brand {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--color-text-strong);
-  font-weight: 600;
-  text-decoration: none;
-}
-
-.area {
-  flex: none;
-  padding-left: 14px;
-  border-left: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-  font-size: var(--text-sm);
-  text-decoration: none;
-
-  &:hover {
-    color: var(--color-text-strong);
-  }
-}
-
-.drawer .site {
-  margin-top: auto;
-  padding-top: 12px;
-  border-top: 1px solid var(--color-divider);
-}
-
 .search {
-  flex: 0 1 420px;
-  min-width: 0;
+  width: min(420px, 100%);
   height: 34px;
   padding: 0 10px;
   border: 1px solid var(--color-border);
@@ -95,47 +27,29 @@ body {
   font-size: var(--text-sm);
 }
 
-@media (max-width: 640px) {
-  .topbar {
-    gap: 10px;
-  }
+header .page:has(.search) {
+  position: relative;
+}
 
-  .search {
-    flex: 1 1 auto;
-  }
+.shell {
+  display: grid;
+  grid-template-columns: var(--rail) minmax(0, 1fr);
 
-  .brand span {
-    display: none;
+  &:has(> .rail[hidden]) {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
-.backdrop {
-  position: fixed;
-  inset: var(--topbar) 0 0;
-  z-index: 20;
-  background: var(--color-scrim);
-}
-
-.drawer {
-  position: fixed;
-  top: var(--topbar);
-  bottom: 0;
-  left: 0;
-  z-index: 25;
+.rail {
+  position: sticky;
+  top: calc(var(--topbar) + 1px);
   display: flex;
   flex-direction: column;
   gap: 18px;
-  width: var(--drawer);
+  height: calc(100dvh - var(--topbar) - 1px);
   padding: 16px 12px;
   overflow-y: auto;
   border-right: 1px solid var(--color-border);
-  background: var(--color-background);
-  transform: translateX(-100%);
-  transition: transform var(--transition);
-
-  &.open {
-    transform: none;
-  }
 
   & .group {
     display: flex;
@@ -158,6 +72,7 @@ body {
     color: var(--color-text-secondary);
     font-size: var(--text-sm);
     text-decoration: none;
+    white-space: nowrap;
 
     &:hover {
       background: var(--color-surface-hover);
@@ -167,6 +82,32 @@ body {
     &[aria-current="page"] {
       background: var(--color-surface-raised);
       color: var(--color-text-strong);
+    }
+  }
+}
+
+@media (max-width: 900px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rail {
+    position: static;
+    flex-direction: row;
+    gap: 16px;
+    height: auto;
+    padding: 8px var(--gutter);
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+
+    & .group {
+      flex-direction: row;
+      align-items: center;
+    }
+
+    & .label {
+      padding: 0 4px 0 0;
     }
   }
 }
@@ -1381,13 +1322,9 @@ button.table-row:hover:not(.head),
   align-self: flex-start;
 }
 
-.topbar {
-  position: sticky;
-}
-
 .omnibox {
   position: absolute;
-  top: calc(var(--topbar) - 6px);
+  top: calc(100% + 6px);
   left: 0;
   z-index: 40;
   display: flex;
@@ -1395,7 +1332,6 @@ button.table-row:hover:not(.head),
   width: min(560px, calc(100vw - 32px));
   max-height: 60vh;
   overflow: auto;
-  margin-left: var(--search-left, 160px);
   padding: 6px;
   border: 1px solid var(--color-border-hover);
   border-radius: var(--radius-sm);

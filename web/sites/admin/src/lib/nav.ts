@@ -17,12 +17,6 @@ export const ACCOUNT: Page = {
   needs: "signed_in",
 };
 
-export const SITE = [
-  ["Home", "/"],
-  ["API Docs", "/docs"],
-  ["Replays", "/replays"],
-] as const;
-
 export const SECTIONS: Section[] = [
   {
     name: "Urchin",
