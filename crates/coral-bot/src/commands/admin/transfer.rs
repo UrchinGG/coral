@@ -75,9 +75,7 @@ pub async fn handle_confirm(
         interact::parse_ids(&component.data.custom_id).ok_or_else(|| anyhow!("Invalid ID"))?;
     let source_id: u64 = source_raw.parse()?;
 
-    component
-        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
-        .await?;
+    interact::update_message(ctx, component, progress_view(source_id, target_id)).await?;
     let result = TransferRepository::new(data.db.pool())
         .transfer(source_id as i64, target_id as i64, invoker_id as i64)
         .await;
@@ -150,6 +148,14 @@ fn preflight_view(
                 .label("Cancel")
                 .style(ButtonStyle::Secondary),
         ])),
+    ]))]
+}
+
+fn progress_view(source_id: u64, target_id: u64) -> Vec<CreateComponent<'static>> {
+    vec![CreateComponent::Container(CreateContainer::new(vec![
+        text(format!(
+            "Transferring <@{source_id}>'s data to <@{target_id}>. This can take a minute.",
+        )),
     ]))]
 }
 
