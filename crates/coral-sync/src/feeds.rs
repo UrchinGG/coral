@@ -453,7 +453,13 @@ mod demo_tests {
             roles: &[],
             nick: None,
         };
-        let changes = engine::linked_changes(&settings, &context, &current, false, false);
+        let changes = engine::linked_changes(
+            &settings,
+            &context,
+            &current,
+            engine::NicknameMode::Synced,
+            false,
+        );
         assert_eq!(changes.nickname.as_deref(), Some("[gold] Nelly"));
     }
 }

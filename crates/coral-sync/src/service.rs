@@ -12,7 +12,7 @@ use tokio::sync::Semaphore;
 
 use database::{GuildConfigRepository, MemberRepository, SyncSourceRepository};
 
-use crate::engine::{self, Changes, Current, Settings};
+use crate::engine::{self, Changes, Current, NicknameMode, Settings};
 use crate::framework::Data;
 use crate::sources::{self, HYPIXEL_MAX_AGE, HypixelRead, Unavailable};
 use database::SyncSource;
@@ -532,12 +532,16 @@ async fn plan_linked(
         roles: &roles,
         nick: member.nick.as_deref(),
     };
-    let nickname_frozen = coral.nickname_paused || holds_bypass_role(member);
+    let mode = if coral.nickname_paused || holds_bypass_role(member) {
+        NicknameMode::Paused
+    } else {
+        NicknameMode::Synced
+    };
     Ok(engine::linked_changes(
         &server.settings,
         &context,
         &current,
-        nickname_frozen,
+        mode,
         preserve_custom,
     ))
 }
@@ -582,7 +586,42 @@ async fn apply(
         edit = edit.nickname(nick)
     }
     guild_id.edit_member(&ctx.http, user_id, edit).await?;
+    if changes.badge_reset {
+        notify_badge_reset(ctx, guild_id, user_id).await;
+    }
     Ok(true)
+}
+
+async fn notify_badge_reset(ctx: &Context, guild_id: GuildId, user_id: UserId) {
+    let server = ctx
+        .cache
+        .guild(guild_id)
+        .map(|guild| guild.name.to_string())
+        .unwrap_or_else(|| "a server".to_string());
+    let content = format!(
+        "Your nickname in **{server}** was reset because it showed a star badge without \
+         your own Minecraft name. Star badges only show stats Coral checked for your \
+         linked account, so they can only sit beside your own name. Any other nickname \
+         is fine."
+    );
+    let channel = match user_id.create_dm_channel(&ctx.http).await {
+        Ok(channel) => channel,
+        Err(e) => {
+            tracing::debug!("Could not open a DM with {user_id}: {e}");
+            return;
+        }
+    };
+    if let Err(e) = ctx
+        .http
+        .send_message(
+            channel.id.into(),
+            Vec::new(),
+            &CreateMessage::new().content(content),
+        )
+        .await
+    {
+        tracing::debug!("Could not DM {user_id} about a badge reset: {e}");
+    }
 }
 
 fn holds_bypass_role(member: &Member) -> bool {
