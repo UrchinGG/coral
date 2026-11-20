@@ -383,13 +383,22 @@ impl<'a> BlacklistRepository<'a> {
         &self,
         since: Option<DateTime<Utc>>,
         limit: i64,
-    ) -> Result<Vec<(i64, i64)>, sqlx::Error> {
+    ) -> Result<Vec<(i64, i64, i64)>, sqlx::Error> {
         match since {
             Some(ts) => {
                 sqlx::query_as(
-                    "SELECT author, COUNT(*) FROM player_events
-                 WHERE kind = 'tag_set' AND author IS NOT NULL AND author <> 0 AND ts >= $1
-                 GROUP BY author ORDER BY COUNT(*) DESC LIMIT $2",
+                    "SELECT
+                    ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, author ASC) AS rank,
+                    author,
+                    COUNT(*)
+                FROM player_events
+                WHERE kind = 'tag_set'
+                    AND author IS NOT NULL
+                    AND author <> 0
+                    AND ts >= $1
+                GROUP BY author
+                ORDER BY COUNT(*) DESC, author ASC
+                LIMIT $2",
                 )
                 .bind(ts)
                 .bind(limit)
@@ -398,11 +407,79 @@ impl<'a> BlacklistRepository<'a> {
             }
             None => {
                 sqlx::query_as(
-                    "SELECT author, COUNT(*) FROM player_events
-                 WHERE kind = 'tag_set' AND author IS NOT NULL AND author <> 0
-                 GROUP BY author ORDER BY COUNT(*) DESC LIMIT $1",
+                    "SELECT
+                    ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, author ASC) AS rank,
+                    author,
+                    COUNT(*)
+                FROM player_events
+                WHERE kind = 'tag_set'
+                    AND author IS NOT NULL
+                    AND author <> 0
+                GROUP BY author
+                ORDER BY COUNT(*) DESC, author ASC
+                LIMIT $1",
                 )
                 .bind(limit)
+                .fetch_all(self.pool)
+                .await
+            }
+        }
+    }
+
+    pub async fn nearby_taggers(
+        &self,
+        since: Option<DateTime<Utc>>,
+        author: i64,
+        span: u8,
+    ) -> Result<Vec<(i64, i64, i64)>, sqlx::Error> {
+        match since {
+            Some(ts) => {
+                sqlx::query_as(
+                    "WITH
+                    ranked AS (
+                        SELECT author,
+                               COUNT(*) AS total,
+                               ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, author ASC) AS rank
+                        FROM player_events
+                        WHERE kind = 'tag_set'
+                            AND author IS NOT NULL
+                            AND author <> 0
+                            AND ts >= $3
+                        GROUP BY author
+                    ),
+                    target AS (SELECT rank FROM ranked WHERE author = $1)
+                SELECT r.rank, r.author, r.total
+                FROM ranked r
+                JOIN target t ON r.rank BETWEEN t.rank - $2 AND t.rank + $2
+                ORDER BY r.rank ASC",
+                )
+                .bind(author)
+                .bind(i64::from(span))
+                .bind(ts)
+                .fetch_all(self.pool)
+                .await
+            }
+            None => {
+                sqlx::query_as(
+                    "WITH
+                    ranked AS (
+                        SELECT author,
+                               COUNT(*) AS total,
+                               ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, author ASC) AS rank
+                        FROM player_events
+                        WHERE kind = 'tag_set'
+                            AND author IS NOT NULL
+                            AND author <> 0
+                        GROUP BY author
+                    ),
+                    target AS (SELECT rank FROM ranked WHERE author = $1)
+                SELECT r.rank, r.author, r.total
+                FROM ranked r
+                JOIN target t ON r.rank BETWEEN t.rank - $2 AND t.rank + $2
+                ORDER BY r.rank ASC",
+                )
+                .bind(author)
+                .bind(i64::from(span))
                 .fetch_all(self.pool)
                 .await
             }
