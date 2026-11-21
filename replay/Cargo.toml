@@ -1,0 +1,42 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Aiden"]
+license = "MIT"
+
+[workspace.dependencies]
+replay-assets = { path = "crates/replay-assets" }
+replay-file = { path = "crates/replay-file" }
+replay-model = { path = "crates/replay-model" }
+replay-protocol = { path = "crates/replay-protocol" }
+replay-world = { path = "crates/replay-world" }
+replay-render = { path = "crates/replay-render" }
+replay-sim = { path = "crates/replay-sim" }
+brotli-decompressor = "6.1.1"
+bytemuck = { version = "1.25.2", features = ["derive"] }
+flate2 = "1.1.10"
+glam = { version = "0.34.1", features = ["bytemuck"] }
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+js-sys = "0.3.106"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha1 = "0.11.0"
+thiserror = "2"
+ureq = "3.5.0"
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4.79"
+web-sys = "0.3.106"
+wgpu = "30.0.1"
+zip = { version = "9.1.0", default-features = false, features = ["deflate"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+
+[profile.dev.package."*"]
+opt-level = 2

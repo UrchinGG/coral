@@ -1,6 +1,6 @@
 import type { ChatLine } from "../viewer/pkg/replay_viewer.js";
 import type { Player } from "./match";
-import { coloured, withoutPictographs } from "./mctext";
+import { colored, withoutPictographs } from "./mctext";
 import { teamNamed, type Team } from "./teams";
 
 export type GameEvent =
@@ -105,8 +105,8 @@ export const involved = (event: GameEvent) =>
       : (event.actor ?? event.victim);
 
 export const feedText = (event: GameEvent) => {
-  const player = ({ username, team }: Player) => coloured(username, team.color);
-  const team = ({ name, color }: Team) => coloured(name, color);
+  const player = ({ username, team }: Player) => colored(username, team.color);
+  const team = ({ name, color }: Team) => colored(name, color);
   switch (event.kind) {
     case "kill":
       return [player(event.actor), " killed ", player(event.victim)];

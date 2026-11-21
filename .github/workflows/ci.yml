@@ -43,6 +43,7 @@ jobs:
       packages: ${{ steps.affected.outputs.packages }}
       services: ${{ steps.affected.outputs.services }}
       web: ${{ steps.affected.outputs.web }}
+      replay: ${{ steps.affected.outputs.replay }}
       deploy: ${{ steps.affected.outputs.deploy }}
     steps:
       - uses: actions/checkout@v4
@@ -111,6 +112,22 @@ jobs:
         run: npm ci && npm run build:admin
       - run: mkdir -p web/sites/admin/dist
       - run: flock -s "$RUST_LOCK" cargo test $(printf -- '-p %s ' $PACKAGES)
+
+  replay:
+    needs: changes
+    if: needs.changes.outputs.replay == 'true'
+    runs-on: [self-hosted, linux, coral]
+    defaults:
+      run:
+        working-directory: replay
+    env:
+      CARGO_TARGET_DIR: /srv/ci/coral/replay
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+      - run: flock -s "$RUST_LOCK" cargo fmt --all -- --check
+      - run: flock -s "$RUST_LOCK" cargo clippy --workspace --exclude xtask --target wasm32-unknown-unknown
+      - run: flock -s "$RUST_LOCK" cargo clippy -p xtask
 
   web:
     needs: changes

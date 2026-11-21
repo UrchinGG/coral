@@ -1,0 +1,24 @@
+[package]
+name = "replay-viewer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+glam.workspace = true
+js-sys.workspace = true
+replay-assets.workspace = true
+replay-file.workspace = true
+replay-model.workspace = true
+replay-protocol.workspace = true
+replay-render.workspace = true
+replay-sim.workspace = true
+replay-world.workspace = true
+serde_json.workspace = true
+wasm-bindgen-futures.workspace = true
+wasm-bindgen.workspace = true
+web-sys = { workspace = true, features = ["console", "Document", "Element", "Event", "HtmlCanvasElement", "KeyboardEvent", "MouseEvent", "Performance", "PointerEvent", "WheelEvent", "Window"] }

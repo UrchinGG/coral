@@ -1,7 +1,7 @@
 import { countUntil, h } from "./dom";
 import type { EventKind } from "./events";
 import { isOut, stateOf, type Match, type Player } from "./match";
-import { coloured } from "./mctext";
+import { colored } from "./mctext";
 import { nickTag } from "./nicks";
 import { face } from "./skins";
 
@@ -78,7 +78,7 @@ export const showRoster = (
       h(
         "p",
         { className: "team-head mc" },
-        coloured(team.name[0], team.color),
+        colored(team.name[0], team.color),
         ` ${team.name}: `,
         state,
       ),

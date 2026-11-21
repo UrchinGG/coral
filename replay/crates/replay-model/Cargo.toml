@@ -1,0 +1,10 @@
+[package]
+name = "replay-model"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+replay-file.workspace = true
+replay-protocol.workspace = true

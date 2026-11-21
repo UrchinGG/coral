@@ -26,10 +26,10 @@ Merging to master publishes both sites.
 
 ## Replay viewer
 
-`/replays` needs the viewer's wasm, which is not in this repository yet. Without it the
-page loads but says the viewer could not start. To run it locally, build the wasm with
-`npm run build:viewer` from a checkout of urchin-replay next to coral, and add the baked
-textures and sounds to `sites/urchin/public/replay-assets`.
+`/replays` needs the viewer's wasm, which is built from [`replay/`](../replay/README.md)
+and not committed. Without it the page loads but says the viewer could not start. To run
+it locally, build the wasm with `npm run build:viewer` and add the baked textures and
+sounds to `sites/urchin/public/replay-assets`.
 
 ## Layout
 

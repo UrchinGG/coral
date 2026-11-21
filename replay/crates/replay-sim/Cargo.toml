@@ -1,0 +1,11 @@
+[package]
+name = "replay-sim"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+glam.workspace = true
+replay-model.workspace = true
+replay-world.workspace = true

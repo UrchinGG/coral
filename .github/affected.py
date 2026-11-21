@@ -85,6 +85,7 @@ def main():
         "packages": " ".join(sorted(affected)),
         "services": " ".join(services),
         "web": Path("web/package.json").is_file() and (site or changed("web/")),
+        "replay": changed("replay/"),
         "deploy": changed("deploy/"),
     }
     for key, value in outputs.items():

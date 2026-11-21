@@ -17,6 +17,7 @@ outdated() {
     for component in rustfmt clippy; do
         rustup component list --installed | grep "^$component" >/dev/null || return 0
     done
+    rustup target list --installed | grep '^wasm32-unknown-unknown$' >/dev/null || return 0
     return 1
 }
 
@@ -39,4 +40,5 @@ fi
 if outdated; then
     rustup update stable --no-self-update
     rustup component add rustfmt clippy
+    rustup target add wasm32-unknown-unknown
 fi

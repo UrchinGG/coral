@@ -1,0 +1,11 @@
+[package]
+name = "replay-world"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+bytemuck.workspace = true
+replay-assets.workspace = true
+replay-model.workspace = true

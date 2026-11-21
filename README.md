@@ -10,6 +10,7 @@ Coral is a Hypixel stats and player-blacklist platform.
 - `coral-admin` — internal admin panel (Discord OAuth, audit log)
 - `mc-verify` — 1.8 Minecraft server players join to prove ownership of an account
 - `web` — the urchin.gg and starfish.urchin.gg static sites (Astro); see [web/README.md](web/README.md)
+- `replay` — the Rust and wasm replay viewer behind urchin.gg/replays; see [replay/README.md](replay/README.md)
 
 ## Stack
 

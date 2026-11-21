@@ -1,0 +1,14 @@
+[package]
+name = "replay-render"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+bytemuck.workspace = true
+glam.workspace = true
+replay-assets.workspace = true
+replay-world.workspace = true
+thiserror.workspace = true
+wgpu = { workspace = true, features = ["webgl"] }
