@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -7,7 +7,7 @@ use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
 use reqwest::Client;
 
-use render::skin::{OutputType, Pose, Renderer, Skin};
+use render::skin::{OutputType, Pose, RenderOutput, Renderer, Skin};
 
 use crate::MojangClient;
 
@@ -37,7 +37,7 @@ pub trait SkinProvider: Send + Sync {
 pub struct LocalSkinProvider {
     http: Client,
     mojang: MojangClient,
-    renderer: Arc<Renderer>,
+    renderer: Arc<Mutex<Renderer>>,
     redis: ConnectionManager,
 }
 
@@ -53,7 +53,7 @@ impl LocalSkinProvider {
         Some(Self {
             http,
             mojang,
-            renderer: Arc::new(renderer),
+            renderer: Arc::new(Mutex::new(renderer)),
             redis,
         })
     }
@@ -74,6 +74,18 @@ impl LocalSkinProvider {
         Skin::from_bytes(&bytes).ok()
     }
 
+    // The GPU readback blocks its thread, so it must stay off the async workers.
+    async fn render(&self, skin: Skin, output: OutputType) -> Option<RenderOutput> {
+        let renderer = Arc::clone(&self.renderer);
+        tokio::task::spawn_blocking(move || {
+            let renderer = renderer.lock().ok()?;
+            renderer.render(&skin, &Pose::standing(), output).ok()
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
     async fn download_and_render(
         &self,
         uuid: &str,
@@ -87,18 +99,14 @@ impl LocalSkinProvider {
             skin.set_slim(slim);
         }
 
+        let slim = skin.is_slim();
         let output = self
-            .renderer
-            .render(
-                &skin,
-                &Pose::standing(),
-                OutputType::full_body(width, height),
-            )
-            .ok()?;
+            .render(skin, OutputType::full_body(width, height))
+            .await?;
 
         let skin_image = SkinImage {
             data: DynamicImage::ImageRgba8(output.image),
-            slim: skin.is_slim(),
+            slim,
         };
 
         self.cache_set(uuid, width, height, &skin_image).await;
@@ -169,11 +177,7 @@ impl SkinProvider for LocalSkinProvider {
         let mut skin = self.download_skin(&skin_url).await?;
         skin.set_slim(profile.slim);
 
-        let output = self
-            .renderer
-            .render(&skin, &Pose::standing(), OutputType::face(size))
-            .ok()?;
-
+        let output = self.render(skin, OutputType::face(size)).await?;
         output.to_png_bytes().ok()
     }
 }
