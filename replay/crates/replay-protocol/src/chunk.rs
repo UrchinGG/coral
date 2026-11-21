@@ -54,14 +54,14 @@ impl Reader<'_> {
 }
 
 fn sections(mask: u16, data: &[u8]) -> [Option<Section>; 16] {
-    let mut blocks = data.chunks_exact(BLOCK_BYTES);
+    let mut blocks = data.as_chunks::<BLOCK_BYTES>().0.iter();
     std::array::from_fn(|y| {
         if mask & 1 << y == 0 {
             return None;
         }
         let mut states = Box::new([0; 4096]);
-        for (state, bytes) in states.iter_mut().zip(blocks.next()?.chunks_exact(2)) {
-            *state = u16::from_le_bytes([bytes[0], bytes[1]]);
+        for (state, &bytes) in states.iter_mut().zip(blocks.next()?.as_chunks::<2>().0) {
+            *state = u16::from_le_bytes(bytes);
         }
         Some(states)
     })

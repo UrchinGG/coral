@@ -9,6 +9,7 @@ use wasm_bindgen::{JsCast, JsError, JsValue};
 use crate::skin;
 
 const TILE: usize = 16;
+const TILE_BYTES: usize = TILE * TILE * 4;
 const LAYER_HEADER: usize = 8;
 
 pub struct Assets {
@@ -53,7 +54,9 @@ impl Assets {
         let masks = item_rgba
             .get(LAYER_HEADER..)
             .unwrap_or_default()
-            .chunks_exact(TILE * TILE * 4)
+            .as_chunks::<TILE_BYTES>()
+            .0
+            .iter()
             .take(sprites as usize)
             .map(mask)
             .collect();
@@ -117,7 +120,7 @@ fn crop(rgba: &[u8], width: usize, rect: Rect) -> Vec<u8> {
         .collect()
 }
 
-fn mask(tile: &[u8]) -> [u16; TILE] {
+fn mask(tile: &[u8; TILE_BYTES]) -> [u16; TILE] {
     array::from_fn(|y| {
         (0..TILE)
             .filter(|x| tile[(y * TILE + x) * 4 + 3] > 0)

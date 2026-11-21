@@ -5,8 +5,9 @@ dist/
 .env.*
 !.env.example
 !.env.development
-sites/urchin/public/replay-assets/*
-!sites/urchin/public/replay-assets/nick-skins.json
+sites/urchin/public/replay-assets/*.bin
+sites/urchin/public/replay-assets/*.rgba
+sites/urchin/public/replay-assets/*.mcpr
 sites/urchin/src/viewer/pkg/*
 !sites/urchin/src/viewer/pkg/replay_viewer.js
 !sites/urchin/src/viewer/pkg/replay_viewer.d.ts

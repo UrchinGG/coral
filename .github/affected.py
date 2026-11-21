@@ -84,7 +84,7 @@ def main():
         "rust": bool(affected),
         "packages": " ".join(sorted(affected)),
         "services": " ".join(services),
-        "web": Path("web/package.json").is_file() and (site or changed("web/")),
+        "web": Path("web/package.json").is_file() and (site or changed("web/") or changed("replay/")),
         "replay": changed("replay/"),
         "deploy": changed("deploy/"),
     }

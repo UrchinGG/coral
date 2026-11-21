@@ -33,4 +33,6 @@ Run these from `replay/`:
 `npm run build:viewer` in `web/` builds the wasm into `sites/urchin/src/viewer/pkg`.
 
 `assets-src/` holds the 1.8 textures and tables from the `minecraft-assets` and
-`minecraft-data` npm packages and the mctext fonts. It is not committed.
+`minecraft-data` npm packages and the mctext fonts. It is not committed. Its baked output
+is, in `web/sites/urchin/public/replay-assets`, so bake into that folder to change what
+the site serves.

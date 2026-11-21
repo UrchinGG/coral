@@ -150,6 +150,13 @@ jobs:
           node-version: 22
       - run: npm ci
       - run: npx prettier --check .
+      - run: echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+      - name: Build the replay viewer
+        env:
+          CARGO_TARGET_DIR: /srv/ci/coral/replay
+        run: |
+          command -v wasm-pack >/dev/null || flock -x "$RUST_LOCK" cargo install wasm-pack --version 0.13.1 --locked
+          flock -s "$RUST_LOCK" npm run build:viewer
       - name: Build
         env:
           URCHIN_URL: ${{ github.event_name == 'pull_request' && format('https://pr-{0}.urchin.gg', github.event.pull_request.number) || 'https://urchin.gg' }}

@@ -27,9 +27,9 @@ Merging to master publishes both sites.
 ## Replay viewer
 
 `/replays` needs the viewer's wasm, which is built from [`replay/`](../replay/README.md)
-and not committed. Without it the page loads but says the viewer could not start. To run
-it locally, build the wasm with `npm run build:viewer` and add the baked textures and
-sounds to `sites/urchin/public/replay-assets`.
+and not committed. CI builds it for every deploy. Without it the page loads but says the
+viewer could not start. To run it locally, build the wasm with `npm run build:viewer`.
+The baked textures and sounds are in `sites/urchin/public/replay-assets`.
 
 ## Layout
 
