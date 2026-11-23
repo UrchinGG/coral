@@ -22,7 +22,6 @@ const SIGNED_IN: &str =
     "EXISTS (SELECT 1 FROM starfish_sessions s WHERE s.user_id = u.id AND s.expires_at > now())";
 const OVERVIEW_SQL: &str = "SELECT
     count(*) FILTER (WHERE license_status = 'active') AS licensed,
-    count(*) FILTER (WHERE license_status = 'suspended') AS suspended,
     (SELECT count(DISTINCT user_id) FROM starfish_sessions WHERE expires_at > now()) AS signed_in
   FROM starfish_users";
 
@@ -40,7 +39,7 @@ pub struct UsersQuery {
 #[serde(rename_all = "snake_case")]
 pub enum LicenseFilter {
     Active,
-    Suspended,
+    Inactive,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -53,7 +52,6 @@ pub enum SessionFilter {
 #[derive(Debug, Serialize, FromRow)]
 pub struct StarfishOverview {
     licensed: i64,
-    suspended: i64,
     signed_in: i64,
 }
 
@@ -173,7 +171,7 @@ impl LicenseFilter {
     fn status(self) -> &'static str {
         match self {
             Self::Active => "active",
-            Self::Suspended => "suspended",
+            Self::Inactive => "inactive",
         }
     }
 }

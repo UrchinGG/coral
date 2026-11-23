@@ -208,7 +208,7 @@ impl<'a> StarfishRepository<'a> {
         .map(|r| r.rows_affected() > 0)
     }
 
-    /// Applies one chargeback lifecycle step: an open dispute suspends the license, a won one
+    /// Applies one chargeback lifecycle step: an open dispute revokes the license, a won one
     /// restores it. PayNow may deliver steps out of order, so a step no newer than the last
     /// applied one is ignored.
     pub async fn apply_chargeback(
@@ -218,7 +218,7 @@ impl<'a> StarfishRepository<'a> {
         disputed: bool,
     ) -> Result<bool, sqlx::Error> {
         let (order_status, license_status) = match disputed {
-            true => ("chargeback", "suspended"),
+            true => ("chargeback", "inactive"),
             false => ("paid", "active"),
         };
         sqlx::query(
@@ -987,12 +987,12 @@ mod tests {
             .await
             .unwrap();
 
-        repo.set_license_status(did, "suspended").await.unwrap();
+        repo.set_license_status(did, "inactive").await.unwrap();
         repo.delete_user_sessions(user.id).await.unwrap();
         repo.delete_user_refresh_tokens(user.id).await.unwrap();
 
         let updated = repo.get_user_by_discord_id(did).await.unwrap().unwrap();
-        assert_eq!(updated.license_status, "suspended");
+        assert_eq!(updated.license_status, "inactive");
         assert!(
             repo.get_session_by_token("revoke_sess")
                 .await
@@ -1037,7 +1037,7 @@ mod tests {
         assert_eq!(status(&repo).await, "active");
 
         assert!(repo.apply_chargeback(&order_id, 1, true).await.unwrap());
-        assert_eq!(status(&repo).await, "suspended");
+        assert_eq!(status(&repo).await, "inactive");
         assert!(repo.apply_chargeback(&order_id, 3, false).await.unwrap());
         assert_eq!(status(&repo).await, "active");
         assert!(!repo.apply_chargeback(&order_id, 2, true).await.unwrap());

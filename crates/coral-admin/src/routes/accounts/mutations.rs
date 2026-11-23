@@ -26,7 +26,7 @@ const STRIKE_REASON_MAX_CHARS: usize = 100;
 const STRIKE_DURATION_DAYS: [i64; 2] = [14, 30];
 const DEV_KEY_LABEL_MAX_CHARS: usize = 64;
 const DEV_KEY_MAX_RATE_LIMIT: i32 = 100_000;
-const LICENSE_STATUSES: [&str; 3] = ["inactive", "active", "suspended"];
+const LICENSE_STATUSES: [&str; 2] = ["inactive", "active"];
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -677,8 +677,9 @@ mod tests {
     }
 
     #[test]
-    fn license_statuses_are_the_three_starfish_knows() {
-        assert_eq!(license_status("suspended").unwrap(), "suspended");
+    fn license_statuses_are_the_two_starfish_knows() {
+        assert_eq!(license_status("inactive").unwrap(), "inactive");
+        assert!(license_status("suspended").is_err());
         assert_eq!(license_status("revoked").unwrap_err().code(), "bad_request");
     }
 }

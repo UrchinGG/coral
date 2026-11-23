@@ -355,10 +355,10 @@ export async function starfishTab(id: string, refresh: () => void) {
   const licenseButton = el("button", {
     type: "button",
     className: license === "active" ? "button small danger" : "button small",
-    textContent: license === "active" ? "Suspend" : "Activate",
+    textContent: license === "active" ? "Revoke" : "Activate",
   });
   licenseButton.addEventListener("click", async () => {
-    const status = license === "active" ? "suspended" : "active";
+    const status = license === "active" ? "inactive" : "active";
     if (
       confirm(`${licenseButton.textContent} this license?`) &&
       (await send(`/accounts/${id}/starfish/license`, "POST", { status }))

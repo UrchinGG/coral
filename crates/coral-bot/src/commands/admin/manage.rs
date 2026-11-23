@@ -17,7 +17,7 @@ const NEW_DEV_KEY_LABEL: &str = "Developer Key";
 const NEW_DEV_KEY_PERMISSIONS: i64 = 0;
 const NEW_DEV_KEY_RATE_LIMIT: i32 = 600;
 const LICENSE_ACTIVE: &str = "active";
-const LICENSE_SUSPENDED: &str = "suspended";
+const LICENSE_INACTIVE: &str = "inactive";
 const VERIFIED_LINK_ACTION: &str = "link_member";
 const FORCED_LINK_ACTION: &str = "force_link_member";
 
@@ -382,7 +382,6 @@ pub(crate) async fn build_main_view(
             Some(u) => {
                 let status_label = match u.license_status.as_str() {
                     LICENSE_ACTIVE => "Active",
-                    LICENSE_SUSPENDED => "Suspended",
                     _ => "Inactive",
                 };
                 parts.push(text(format!(
@@ -1104,14 +1103,14 @@ pub async fn handle_sf_revoke(
             .await;
     };
 
-    repo.set_license_status(target_id as i64, LICENSE_SUSPENDED)
+    repo.set_license_status(target_id as i64, LICENSE_INACTIVE)
         .await?;
     audit::record(
         data,
         invoker_id,
         "set_license_status",
         target_id,
-        json!({"status": LICENSE_SUSPENDED}),
+        json!({"status": LICENSE_INACTIVE}),
     )
     .await;
 

@@ -98,7 +98,7 @@ pub(crate) async fn create_checkout(state: &AppState, discord_id: i64) -> Result
     let existing = StarfishRepository::new(state.db.pool())
         .get_user_by_discord_id(discord_id)
         .await?;
-    if existing.is_some_and(|user| user.license_status != "inactive") {
+    if existing.is_some_and(|user| user.license_status == "active") {
         return Err(ApiError::Conflict("already_licensed".into()));
     }
 
