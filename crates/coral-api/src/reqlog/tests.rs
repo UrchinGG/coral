@@ -11,7 +11,7 @@ use reqlog::{Caller, Cause, KeyKind, LogEntry, LogReceiver, ROUTE_TEMPLATES};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use crate::auth::{PERSONAL_RATE_LIMIT, SESSION_RATE_LIMIT};
+use crate::auth::{PERSONAL_RATE_LIMIT, personal_bucket};
 use crate::state::{AppState, StarfishConfig};
 
 const INTERNAL_KEY: &str = "internal-test-key";
@@ -240,10 +240,19 @@ async fn rate_limited_keys_are_attributed_on_429() {
         return;
     };
     let (member_id, api_key) = harness.member(false).await;
+    let discord_id: i64 = sqlx::query_scalar("SELECT discord_id FROM members WHERE id = $1")
+        .bind(member_id)
+        .fetch_one(harness.state.db.pool())
+        .await
+        .unwrap();
     harness
         .state
         .rate_limiter
-        .check_and_record_weighted(&api_key, PERSONAL_RATE_LIMIT, PERSONAL_RATE_LIMIT)
+        .check_and_record_weighted(
+            &personal_bucket(discord_id),
+            PERSONAL_RATE_LIMIT,
+            PERSONAL_RATE_LIMIT,
+        )
         .await
         .unwrap();
     let sent = harness
@@ -635,9 +644,9 @@ async fn rate_limited_sessions_keep_their_member() {
         .state
         .rate_limiter
         .check_and_record_weighted(
-            &format!("sf:{}", session.discord_id),
-            SESSION_RATE_LIMIT,
-            SESSION_RATE_LIMIT,
+            &personal_bucket(session.discord_id),
+            PERSONAL_RATE_LIMIT,
+            PERSONAL_RATE_LIMIT,
         )
         .await
         .unwrap();

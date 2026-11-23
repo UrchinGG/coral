@@ -288,12 +288,14 @@ async fn authorize_with_minecraft(
         },
     )?;
     record_caller(Caller::minecraft(member.as_ref().map(|m| m.id), user.uuid));
-    caller_rate_limit(
-        state,
-        &format!("mc:{}", user.uuid.simple()),
-        SESSION_RATE_LIMIT,
-    )
-    .await?;
+    let (bucket, limit) = match &member {
+        Some(member) => (personal_bucket(member.discord_id), PERSONAL_RATE_LIMIT),
+        None => (
+            format!("mc:{}", user.uuid.simple()),
+            UNLINKED_MINECRAFT_RATE_LIMIT,
+        ),
+    };
+    caller_rate_limit(state, &bucket, limit).await?;
 
     if block.is_some() {
         return Err(ApiError::Forbidden("minecraft account blocked".into()));
@@ -349,7 +351,7 @@ async fn resolve_session_member(
         existing.as_ref().map(|member| member.id),
         discord_id,
     ));
-    caller_rate_limit(state, &format!("sf:{discord_id}"), SESSION_RATE_LIMIT).await?;
+    caller_rate_limit(state, &personal_bucket(discord_id), PERSONAL_RATE_LIMIT).await?;
 
     let member = match existing {
         Some(member) => member,
@@ -532,7 +534,12 @@ async fn authenticate_key(state: &AppState, api_key: &str) -> Result<AuthResult,
             return Err(StatusCode::FORBIDDEN);
         }
         refuse_wasteful_key(state, member.id).await?;
-        check_rate_limit(state, api_key, PERSONAL_RATE_LIMIT).await?;
+        check_rate_limit(
+            state,
+            &personal_bucket(member.discord_id),
+            PERSONAL_RATE_LIMIT,
+        )
+        .await?;
         if let Err(e) = MemberRepository::new(state.db.pool())
             .increment_request_count(api_key)
             .await
@@ -597,7 +604,8 @@ fn internal_failure(context: &str, error: impl std::fmt::Display) -> StatusCode 
 }
 
 pub use coral_redis::{
-    KEY_DISTINCT_UUID_BUDGET, PERSONAL_RATE_LIMIT, SESSION_RATE_LIMIT, SESSION_UUID_BUDGET,
+    KEY_DISTINCT_UUID_BUDGET, PERSONAL_RATE_LIMIT, SESSION_UUID_BUDGET,
+    UNLINKED_MINECRAFT_RATE_LIMIT, personal_bucket,
 };
 
 fn is_internal_key(state: &AppState, api_key: &str) -> bool {

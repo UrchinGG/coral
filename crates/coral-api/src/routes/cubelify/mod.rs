@@ -128,8 +128,8 @@ async fn run_cubelify(
     state: &AppState,
     query: &CubelifyQuery,
 ) -> Result<CubelifyResponse, Rejected> {
-    validate_api_key(state, &query.key).await?;
-    check_rate_limit(state, &query.key).await?;
+    let discord_id = validate_api_key(state, &query.key).await?;
+    check_rate_limit(state, discord_id).await?;
     if !is_player_uuid(&query.uuid) {
         return Err(reject(&NOT_A_PLAYER));
     }
@@ -139,7 +139,7 @@ async fn run_cubelify(
     Ok(build_response(state, &tags).await)
 }
 
-async fn validate_api_key(state: &AppState, api_key: &str) -> Result<(), Rejected> {
+async fn validate_api_key(state: &AppState, api_key: &str) -> Result<i64, Rejected> {
     let Some(member) = MemberRepository::new(state.db.pool())
         .get_by_api_key(api_key)
         .await
@@ -156,13 +156,16 @@ async fn validate_api_key(state: &AppState, api_key: &str) -> Result<(), Rejecte
     if is_blocked(state, member.id).await {
         return Err(reject(&WASTING_HYPIXEL_CALLS));
     }
-    Ok(())
+    Ok(member.discord_id)
 }
 
-async fn check_rate_limit(state: &AppState, api_key: &str) -> Result<(), Rejected> {
+async fn check_rate_limit(state: &AppState, discord_id: i64) -> Result<(), Rejected> {
     match state
         .rate_limiter
-        .check_and_record(api_key, crate::auth::PERSONAL_RATE_LIMIT)
+        .check_and_record(
+            &crate::auth::personal_bucket(discord_id),
+            crate::auth::PERSONAL_RATE_LIMIT,
+        )
         .await
     {
         Ok(result) if crate::rate_limit_headers::admit(result) => Ok(()),

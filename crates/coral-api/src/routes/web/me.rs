@@ -5,7 +5,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, DurationRound, TimeDelta, Utc};
-use coral_redis::{LIMIT_WINDOW_SECS, PERSONAL_RATE_LIMIT};
+use coral_redis::{LIMIT_WINDOW_SECS, PERSONAL_RATE_LIMIT, personal_bucket};
 use database::{
     AccountRepository, CacheRepository, DeveloperKey, DeveloperKeyRepository, Member,
     MemberRepository, StarfishRepository, permissions,
@@ -50,6 +50,15 @@ pub struct KeyActivity {
     from: DateTime<Utc>,
     step_s: i64,
     by_key: Vec<KeySeries>,
+    rate_limit: RateLimitUsage,
+}
+
+/// The person's shared rate limit, used by their personal key, Starfish and Minecraft.
+#[derive(Serialize)]
+pub struct RateLimitUsage {
+    used: i64,
+    limit: i64,
+    window_secs: i64,
 }
 
 #[derive(Serialize)]
@@ -253,6 +262,11 @@ pub async fn activity(
         from: span.from,
         step_s: step.num_seconds(),
         by_key,
+        rate_limit: RateLimitUsage {
+            used: used(&state, &personal_bucket(user.discord_id)).await?,
+            limit: PERSONAL_RATE_LIMIT,
+            window_secs: LIMIT_WINDOW_SECS,
+        },
     }))
 }
 
@@ -276,7 +290,7 @@ async fn personal_key(state: &AppState, member: &Member) -> Result<Option<ApiKey
     .await?
     .flatten();
     Ok(Some(ApiKey {
-        used: used(state, &key).await?,
+        used: used(state, &personal_bucket(member.discord_id)).await?,
         key,
         permissions: None,
         limit: PERSONAL_RATE_LIMIT,

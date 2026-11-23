@@ -144,7 +144,7 @@ A personal key is issued through the Discord bot and carries the access rank of 
 
 ## Rate limits
 
-Each key is rate limited within a rolling five-minute window. A personal key allows 600 requests per window, while a developer key uses the limit assigned when it was issued. Once that limit is reached, further requests receive a 429 response until the window resets. Blacklist writes count against a separate per-account allowance that is determined by your rank.
+Limits apply within a rolling five-minute window. Your personal key, Starfish and your linked Minecraft accounts share one personal limit of 600 requests per window, while a developer key has its own limit, assigned when it was issued. Once that limit is reached, further requests receive a 429 response until the window resets. Blacklist writes count against a separate per-account allowance that is determined by your rank.
 
 Responses from rate limited endpoints carry these headers. When a request is subject to more than one limit, they describe the tightest:
 

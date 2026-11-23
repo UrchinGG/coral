@@ -1,7 +1,6 @@
-import { stackedBars } from "@/lib/chart";
+import { legend, stackedArea, type Series } from "@/lib/chart";
 import { el } from "@/lib/dom";
 import { FORMATS } from "@/lib/format";
-import { moment } from "@/lib/time";
 
 export interface KeySeries {
   key_kind: string;
@@ -21,11 +20,14 @@ const WINDOWS: [string, string][] = [
   ["7d", "7 d"],
   ["30d", "30 d"],
 ];
-const KEY_COLORS: Record<string, string> = {
-  personal: "#5b8def",
-  developer: "#e8a23a",
+const SOURCES: Record<string, { label: string; color: string }> = {
+  personal: { label: "API key", color: "#5b8def" },
+  session: { label: "Starfish", color: "#3fb8af" },
+  minecraft: { label: "Minecraft", color: "#55c06a" },
+  internal: { label: "Urchin bot", color: "#a78bfa" },
+  developer: { label: "Developer key", color: "#e8a23a" },
 };
-const FALLBACK_COLOR = "#8a8d94";
+const CHART_HEIGHT = 120;
 
 export function sharedActivity(load: ActivityLoader): ActivityLoader {
   const loaded = new Map<string, Promise<KeyActivity | undefined>>();
@@ -35,7 +37,29 @@ export function sharedActivity(load: ActivityLoader): ActivityLoader {
   };
 }
 
+/** Requests made with one key. */
 export function keyChart(kind: string, load: ActivityLoader) {
+  return activityPanel(load, (activity) => [seriesFor(activity, kind)], false);
+}
+
+/** Every request a person made without their developer key, stacked by source. */
+export function activityChart(load: ActivityLoader) {
+  return activityPanel(
+    load,
+    (activity) =>
+      Object.keys(SOURCES)
+        .filter((kind) => kind !== "developer")
+        .filter((kind) => activity.by_key.some((key) => key.key_kind === kind))
+        .map((kind) => seriesFor(activity, kind)),
+    true,
+  );
+}
+
+function activityPanel(
+  load: ActivityLoader,
+  seriesOf: (activity: KeyActivity) => Series[],
+  withLegend: boolean,
+) {
   const total = el("b", { className: "key-chart-total" });
   const seg = el("div", { className: "seg" });
   seg.setAttribute("role", "group");
@@ -57,14 +81,15 @@ export function keyChart(kind: string, load: ActivityLoader) {
       );
       return;
     }
-    const values = valuesFor(activity, kind);
+    const series = seriesOf(activity);
+    const sum = series
+      .flatMap((entry) => entry.values)
+      .reduce((acc, value) => acc + value, 0);
     const label = WINDOWS.find(([key]) => key === window)?.[1] ?? window;
-    total.textContent = `${FORMATS.number(values.reduce((sum, value) => sum + value, 0))} requests, ${label}`;
+    total.textContent = `${FORMATS.number(sum)} requests, ${label}`;
     plot.replaceChildren(
-      stackedBars(
-        [{ label: kind, color: KEY_COLORS[kind] ?? FALLBACK_COLOR, values }],
-        values.map((_, index) => moment(stepStart(activity, index))),
-      ),
+      ...(withLegend && series.length ? [legend(series)] : []),
+      stackedArea(series, null, CHART_HEIGHT),
     );
   };
   show(WINDOWS[0][0]);
@@ -76,18 +101,15 @@ export function keyChart(kind: string, load: ActivityLoader) {
   );
 }
 
-function valuesFor(activity: KeyActivity, kind: string) {
+function seriesFor(activity: KeyActivity, kind: string): Series {
   const steps = Math.max(0, ...activity.by_key.map((key) => key.values.length));
-  return (
-    activity.by_key.find((key) => key.key_kind === kind)?.values ??
-    new Array<number>(steps).fill(0)
-  );
-}
-
-function stepStart(activity: KeyActivity, index: number) {
-  return new Date(
-    Date.parse(activity.from) + index * activity.step_s * 1000,
-  ).toISOString();
+  const source = SOURCES[kind] ?? { label: kind, color: "#8a8d94" };
+  return {
+    ...source,
+    values:
+      activity.by_key.find((key) => key.key_kind === kind)?.values ??
+      new Array<number>(steps).fill(0),
+  };
 }
 
 function windowButton(

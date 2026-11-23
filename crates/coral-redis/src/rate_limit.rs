@@ -8,9 +8,14 @@ pub const LIMIT_WINDOW_SECS: i64 = 300;
 const KEY_PREFIX: &str = "ratelimit:";
 
 pub const PERSONAL_RATE_LIMIT: i64 = 600;
-pub const SESSION_RATE_LIMIT: i64 = 300;
+pub const UNLINKED_MINECRAFT_RATE_LIMIT: i64 = 300;
 pub const SESSION_UUID_BUDGET: i64 = 2000;
 pub const KEY_DISTINCT_UUID_BUDGET: i64 = 1000;
+
+/// The bucket a person's personal key, Starfish sessions and linked Minecraft accounts share.
+pub fn personal_bucket(discord_id: i64) -> String {
+    format!("user:{discord_id}")
+}
 
 static ACQUIRE: LazyLock<redis::Script> = LazyLock::new(|| {
     redis::Script::new(
