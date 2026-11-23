@@ -19,7 +19,7 @@ use crate::{
     error::ApiError,
     routes::starfish::{
         auth::{HWID_CHANGE_WINDOW_DAYS, HWID_MAX_CHANGES_PER_WINDOW},
-        latest_version,
+        create_checkout, latest_version,
     },
     state::AppState,
 };
@@ -82,6 +82,11 @@ pub struct ApiKey {
 struct Keys {
     personal: Option<ApiKey>,
     developer: Option<ApiKey>,
+}
+
+#[derive(Serialize)]
+pub struct StarfishCheckout {
+    url: String,
 }
 
 #[derive(Serialize)]
@@ -212,6 +217,18 @@ pub async fn starfish(
         changes_left: changes_left(changes),
         version: latest_version(&state).await,
     }))
+}
+
+pub async fn starfish_checkout(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<StarfishCheckout>, ApiError> {
+    if !from_dashboard(&headers) {
+        return Err(ApiError::Forbidden("Buy Starfish from urchin.gg".into()));
+    }
+    let user = signed_in(&state, &headers).await?;
+    let url = create_checkout(&state, user.discord_id).await?;
+    Ok(Json(StarfishCheckout { url }))
 }
 
 pub async fn activity(

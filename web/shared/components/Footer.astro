@@ -3,9 +3,16 @@ import Container from "./Container.astro";
 
 interface Props {
   siteName: string;
+  soldByPayNow?: boolean;
 }
 
-const { siteName } = Astro.props;
+const { siteName, soldByPayNow = false } = Astro.props;
+
+const payNowTerms = [
+  ["Terms of Use", "https://paynow.gg/legal/terms-of-use"],
+  ["Buyer Agreement", "https://paynow.gg/legal/buyer-agreement"],
+  ["Privacy Policy", "https://paynow.gg/legal/privacy-policy"],
+];
 ---
 
 <footer>
@@ -17,6 +24,21 @@ const { siteName } = Astro.props;
       {siteName} is not affiliated with Hypixel Inc., Mojang AB, or Microsoft.
     </small>
   </Container>
+  {soldByPayNow && (
+    <Container width="wide" class="row seller">
+      <small>
+        {siteName} is sold by PayNow, our authorized reseller and merchant of
+        record.
+      </small>
+      <ul role="list" aria-label="PayNow terms">
+        {payNowTerms.map(([label, href]) => (
+          <li>
+            <a href={href}>{label}</a>
+          </li>
+        ))}
+      </ul>
+    </Container>
+  )}
 </footer>
 
 <style>
@@ -36,5 +58,28 @@ const { siteName } = Astro.props;
 
   small {
     font-size: inherit;
+  }
+
+  .seller {
+    margin-top: 0.75rem;
+  }
+
+  ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+  }
+
+  a {
+    color: var(--color-text-muted);
+    text-decoration: underline;
+    text-decoration-color: var(--color-border-hover);
+    text-underline-offset: 0.2em;
+
+    @media (hover: hover) {
+      &:hover {
+        color: var(--color-text);
+      }
+    }
   }
 </style>

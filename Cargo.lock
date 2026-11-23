@@ -813,6 +813,7 @@ dependencies = [
  "form_urlencoded",
  "futures-util",
  "hex",
+ "hmac",
  "hypixel",
  "image",
  "rand 0.8.5",

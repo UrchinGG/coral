@@ -1,0 +1,109 @@
+---
+import { SIGN_IN } from "../account";
+
+interface Props {
+  /** Where sign-in returns to before continuing to checkout. */
+  returnTo: string;
+}
+
+const { returnTo } = Astro.props;
+const signInHref = `${SIGN_IN}?return=${encodeURIComponent(`${returnTo}?buy`)}`;
+---
+
+<div class="starfish-buy">
+  <a
+    class="button primary buy"
+    href={signInHref}
+    aria-label="$14.99 Lifetime, buy Starfish"
+  >
+    $14.99 <span class="term">Lifetime</span>
+  </a>
+  <p class="buy-status" role="status"></p>
+</div>
+
+<script>
+  import { account } from "../account";
+  import { DISCORD_URL } from "../links";
+  import { openCheckout, signInToBuy, takeBuyIntent } from "../purchase";
+
+  function failed(status: HTMLElement) {
+    const help = Object.assign(document.createElement("a"), {
+      href: DISCORD_URL,
+      textContent: "ask in Discord",
+    });
+    status.dataset.tone = "error";
+    status.replaceChildren("Checkout didn't open. Try again or ", help, ".");
+  }
+
+  async function checkout(root: HTMLElement) {
+    const buy = root.querySelector<HTMLAnchorElement>(".buy")!;
+    const status = root.querySelector<HTMLElement>(".buy-status")!;
+    if (buy.ariaDisabled === "true") return;
+    buy.ariaDisabled = "true";
+    status.dataset.tone = "";
+    status.textContent = "Opening checkout…";
+    if ((await openCheckout()) === "owned") return location.reload();
+    buy.removeAttribute("aria-disabled");
+    failed(status);
+  }
+
+  const roots = [...document.querySelectorAll<HTMLElement>(".starfish-buy")];
+  for (const root of roots)
+    root.querySelector<HTMLAnchorElement>(".buy")!.href = signInToBuy();
+
+  const wantsToBuy = takeBuyIntent();
+  const user = await account();
+  if (user && !user.starfish_licensed) {
+    for (const root of roots)
+      root.querySelector(".buy")!.addEventListener("click", (event) => {
+        event.preventDefault();
+        checkout(root);
+      });
+    if (wantsToBuy && roots[0]) checkout(roots[0]);
+  }
+</script>
+
+<style>
+  .starfish-buy {
+    display: grid;
+    justify-items: start;
+    gap: 0.75rem;
+  }
+
+  .buy {
+    gap: 0.75rem;
+    height: 3.25rem;
+    padding-inline: 1.5rem;
+    font-size: var(--text-lg);
+    font-weight: 600;
+
+    &[aria-disabled="true"] {
+      cursor: progress;
+      opacity: 0.6;
+    }
+  }
+
+  .term {
+    padding-left: 0.75rem;
+    border-left: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  }
+
+  .buy-status {
+    min-height: 1.5em;
+    margin: 0;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    white-space: nowrap;
+
+    &[data-tone="error"] {
+      color: var(--color-danger);
+    }
+
+    & :global(a) {
+      color: inherit;
+      text-decoration: underline;
+      text-underline-offset: 0.2em;
+    }
+  }
+</style>

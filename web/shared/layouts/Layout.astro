@@ -25,6 +25,6 @@ const { site, ...head } = Astro.props;
     <main id="content">
       <slot />
     </main>
-    <Footer siteName={head.siteName} />
+    <Footer siteName={head.siteName} soldByPayNow={site === "starfish"} />
   </body>
 </html>

@@ -32,7 +32,7 @@ mod routes;
 mod state;
 mod waste;
 
-use state::{AppState, StarfishConfig};
+use state::{AppState, PayNowConfig, StarfishConfig};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -138,8 +138,22 @@ fn parse_starfish_config() -> Option<StarfishConfig> {
             .expect("STARFISH_GITHUB_TOKEN required when Starfish is enabled"),
         github_repo: env::var("STARFISH_GITHUB_REPO")
             .expect("STARFISH_GITHUB_REPO required when Starfish is enabled"),
+        paynow: parse_paynow_config(),
     };
     tracing::info!("Starfish licensing enabled");
+    Some(config)
+}
+
+fn parse_paynow_config() -> Option<PayNowConfig> {
+    // Compose passes unset variables through as empty strings.
+    let var = |name| env::var(name).ok().filter(|value| !value.is_empty());
+    let config = PayNowConfig {
+        store_id: var("PAYNOW_STORE_ID")?,
+        product_id: var("PAYNOW_PRODUCT_ID")?,
+        api_key: var("PAYNOW_API_KEY")?,
+        webhook_secret: var("PAYNOW_WEBHOOK_SECRET")?,
+    };
+    tracing::info!("Starfish purchases enabled");
     Some(config)
 }
 

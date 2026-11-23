@@ -75,6 +75,7 @@ pub fn router() -> Router<AppState> {
             post(me::regenerate_personal_key),
         )
         .route("/me/starfish", get(me::starfish))
+        .route("/me/starfish/checkout", post(me::starfish_checkout))
         .route("/me/activity", get(me::activity))
 }
 

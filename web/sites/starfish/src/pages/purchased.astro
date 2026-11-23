@@ -1,0 +1,183 @@
+---
+import { URCHIN_URL } from "astro:env/server";
+import { SIGN_IN } from "@shared/account";
+import Container from "@shared/components/Container.astro";
+import Legacy from "@shared/components/Legacy.astro";
+import StarfishDownloads from "@shared/components/StarfishDownloads.astro";
+import Layout from "@/layouts/Layout.astro";
+import { page } from "@/lib/paths";
+
+const PREFIX = "§8[§6S§eta§fr§bfi§3sh§8]§r ";
+const signInHref = `${SIGN_IN}?return=${encodeURIComponent(
+  `${URCHIN_URL}/starfish/purchased`,
+)}`;
+---
+
+<Layout title="Thanks for Buying Starfish" description="Your Starfish license">
+  <Container width="narrow" class="purchased" data-state="waiting">
+    <h1 class="chat" aria-live="polite">
+      <Legacy
+        class="when-waiting"
+        text={`${PREFIX}§7Confirming your payment...`}
+      />
+      <Legacy
+        class="when-licensed"
+        text={`${PREFIX}§aLicense activated!`}
+      />
+      <Legacy
+        class="when-signed-out"
+        text={`${PREFIX}§cSign in to see your license.`}
+      />
+    </h1>
+
+    <div class="when-waiting lede">
+      <p>
+        This usually takes a few seconds. Crypto payments wait for network
+        confirmations and can take longer.
+      </p>
+      <p class="slow" hidden>
+        Still waiting on PayNow. You can close this page: once the payment
+        confirms, your license activates and the download is on <a
+          href={`${URCHIN_URL}/dashboard/account`}>your account page</a
+        >.
+      </p>
+    </div>
+
+    <div class="when-licensed next">
+      <StarfishDownloads />
+      <ol>
+        <li>Install Starfish and open it.</li>
+        <li>
+          Sign in with Discord as <strong class="username">yourself</strong>.
+        </li>
+        <li>
+          Start Minecraft 1.8.9 and inject Starfish from the Processes tab, or
+          turn on auto-inject.
+        </li>
+      </ol>
+      <a class="docs" href={page("/docs")}>Read the docs</a>
+    </div>
+
+    <div class="when-signed-out lede">
+      <p>
+        Your license belongs to the Discord account you bought it with. Sign in
+        with that account to check it and download Starfish.
+      </p>
+      <a class="button primary" href={signInHref}>Sign in with Discord</a>
+    </div>
+  </Container>
+</Layout>
+
+<script>
+  import { account } from "@shared/account";
+  import { checkLicense } from "@shared/purchase";
+
+  const POLL_MS = 3000;
+  const SLOW_AFTER_MS = 90_000;
+
+  const page = document.querySelector<HTMLElement>(".purchased")!;
+  const started = Date.now();
+
+  function show(state: "waiting" | "licensed" | "signed-out") {
+    page.dataset.state = state;
+  }
+
+  async function check() {
+    const license = await checkLicense();
+    if (license === "signed-out") return show("signed-out");
+    if (license === "licensed") return show("licensed");
+    page.querySelector<HTMLElement>(".slow")!.hidden =
+      Date.now() - started < SLOW_AFTER_MS;
+    setTimeout(check, POLL_MS);
+  }
+
+  const user = await account();
+  if (user) page.querySelector(".username")!.textContent = `@${user.username}`;
+  check();
+</script>
+
+<style>
+  .purchased {
+    display: grid;
+    gap: 1.5rem;
+    padding-block: 5rem 6rem;
+
+    &[data-state="waiting"] :global(:is(.when-licensed, .when-signed-out)),
+    &[data-state="licensed"] :global(:is(.when-waiting, .when-signed-out)),
+    &[data-state="signed-out"] :global(:is(.when-waiting, .when-licensed)) {
+      display: none;
+    }
+  }
+
+  .chat {
+    justify-self: start;
+    font-weight: 400;
+    max-width: 100%;
+    padding: 4px 6px;
+    overflow-x: auto;
+    background: var(--mc-chat);
+    font-size: 18px;
+    line-height: 20px;
+
+    @media (width < 30rem) {
+      font-size: 14px;
+      line-height: 16px;
+    }
+  }
+
+  .chat :global(.legacy) {
+    display: block;
+  }
+
+  .lede,
+  .next {
+    display: grid;
+    justify-items: start;
+    gap: 1rem;
+    color: var(--color-text-secondary);
+    line-height: 1.6;
+  }
+
+  .lede p {
+    max-width: 34rem;
+    text-wrap: pretty;
+  }
+
+  .slow {
+    color: var(--color-warning);
+  }
+
+  ol {
+    display: grid;
+    gap: 0.5rem;
+    padding-left: 1.25rem;
+    list-style: decimal;
+
+    & li::marker {
+      color: var(--color-text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    & strong {
+      color: var(--color-text);
+      font-weight: 500;
+    }
+  }
+
+  .docs {
+    font-size: var(--text-sm);
+  }
+
+  a:not(.button) {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: var(--color-border-hover);
+    text-underline-offset: 0.2em;
+
+    @media (hover: hover) {
+      &:hover {
+        color: var(--color-text);
+      }
+    }
+  }
+</style>

@@ -14,6 +14,14 @@ pub struct StarfishConfig {
     pub discord_client_secret: String,
     pub github_token: String,
     pub github_repo: String,
+    pub paynow: Option<PayNowConfig>,
+}
+
+pub struct PayNowConfig {
+    pub store_id: String,
+    pub product_id: String,
+    pub api_key: String,
+    pub webhook_secret: String,
 }
 
 #[derive(Clone)]

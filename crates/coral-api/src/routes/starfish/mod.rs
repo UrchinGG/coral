@@ -3,6 +3,7 @@ mod docs;
 mod download;
 mod license;
 pub mod plugins;
+mod purchase;
 pub mod session_auth;
 mod users;
 
@@ -15,6 +16,7 @@ use crate::{
 use axum::Router;
 
 pub(crate) use download::latest_version;
+pub(crate) use purchase::create_checkout;
 
 pub const MOUNT_PREFIX: &str = "/api/v1";
 /// Released Starfish builds call this path for licensing and updates.
@@ -83,6 +85,7 @@ pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .merge(auth::router(state.clone()))
         .merge(license::router())
+        .merge(purchase::router())
         .merge(docs::router())
         .merge(download::router())
         .merge(users::router(state.clone()))

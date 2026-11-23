@@ -162,6 +162,85 @@ impl<'a> StarfishRepository<'a> {
             .map(|r| r.rows_affected() > 0)
     }
 
+    /// Records a paid order and activates its buyer's license in one statement,
+    /// so a replayed order can never re-activate a license that was since revoked.
+    pub async fn record_paid_order(
+        &self,
+        order_id: &str,
+        discord_id: i64,
+        total_amount: i64,
+        currency: &str,
+    ) -> Result<bool, sqlx::Error> {
+        sqlx::query(
+            "WITH recorded AS (
+                 INSERT INTO starfish_orders (order_id, discord_id, total_amount, currency)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (order_id) DO NOTHING
+                 RETURNING discord_id
+             )
+             INSERT INTO starfish_users (discord_id, license_status)
+             SELECT discord_id, 'active' FROM recorded
+             ON CONFLICT (discord_id) DO UPDATE SET license_status = 'active', updated_at = NOW()",
+        )
+        .bind(order_id)
+        .bind(discord_id)
+        .bind(total_amount)
+        .bind(currency)
+        .execute(self.pool)
+        .await
+        .map(|r| r.rows_affected() > 0)
+    }
+
+    /// Marks an order refunded and deactivates its buyer's license.
+    pub async fn refund_order(&self, order_id: &str) -> Result<bool, sqlx::Error> {
+        sqlx::query(
+            "WITH refunded AS (
+                 UPDATE starfish_orders SET status = 'refunded', updated_at = NOW()
+                 WHERE order_id = $1 AND status IN ('paid', 'chargeback')
+                 RETURNING discord_id
+             )
+             UPDATE starfish_users SET license_status = 'inactive', updated_at = NOW()
+             FROM refunded WHERE starfish_users.discord_id = refunded.discord_id",
+        )
+        .bind(order_id)
+        .execute(self.pool)
+        .await
+        .map(|r| r.rows_affected() > 0)
+    }
+
+    /// Applies one chargeback lifecycle step: an open dispute suspends the license, a won one
+    /// restores it. PayNow may deliver steps out of order, so a step no newer than the last
+    /// applied one is ignored.
+    pub async fn apply_chargeback(
+        &self,
+        order_id: &str,
+        sequence: i64,
+        disputed: bool,
+    ) -> Result<bool, sqlx::Error> {
+        let (order_status, license_status) = match disputed {
+            true => ("chargeback", "suspended"),
+            false => ("paid", "active"),
+        };
+        sqlx::query(
+            "WITH changed AS (
+                 UPDATE starfish_orders
+                 SET status = $2, chargeback_sequence = $3, updated_at = NOW()
+                 WHERE order_id = $1 AND status IN ('paid', 'chargeback')
+                   AND COALESCE(chargeback_sequence, -1) < $3
+                 RETURNING discord_id
+             )
+             UPDATE starfish_users SET license_status = $4, updated_at = NOW()
+             FROM changed WHERE starfish_users.discord_id = changed.discord_id",
+        )
+        .bind(order_id)
+        .bind(order_status)
+        .bind(sequence)
+        .bind(license_status)
+        .execute(self.pool)
+        .await
+        .map(|r| r.rows_affected() > 0)
+    }
+
     pub async fn delete_user(&self, discord_id: i64) -> Result<bool, sqlx::Error> {
         sqlx::query("DELETE FROM starfish_users WHERE discord_id = $1")
             .bind(discord_id)
@@ -928,6 +1007,59 @@ mod tests {
         );
         assert!(repo.get_user_by_discord_id(did).await.unwrap().is_some());
 
+        cleanup(&repo, did).await;
+    }
+
+    #[tokio::test]
+    async fn order_lifecycle_drives_license() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let repo = StarfishRepository::new(&pool);
+        let did = test_discord_id(20);
+        let order_id = format!("test-order-{did}");
+        let status = async |repo: &StarfishRepository<'_>| {
+            let user = repo.get_user_by_discord_id(did).await.unwrap().unwrap();
+            user.license_status
+        };
+        cleanup(&repo, did).await;
+        sqlx::query("DELETE FROM starfish_orders WHERE order_id = $1")
+            .bind(&order_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert!(
+            repo.record_paid_order(&order_id, did, 1500, "usd")
+                .await
+                .unwrap()
+        );
+        assert_eq!(status(&repo).await, "active");
+
+        assert!(repo.apply_chargeback(&order_id, 1, true).await.unwrap());
+        assert_eq!(status(&repo).await, "suspended");
+        assert!(repo.apply_chargeback(&order_id, 3, false).await.unwrap());
+        assert_eq!(status(&repo).await, "active");
+        assert!(!repo.apply_chargeback(&order_id, 2, true).await.unwrap());
+        assert_eq!(status(&repo).await, "active");
+
+        assert!(repo.refund_order(&order_id).await.unwrap());
+        assert_eq!(status(&repo).await, "inactive");
+
+        assert!(
+            !repo
+                .record_paid_order(&order_id, did, 1500, "usd")
+                .await
+                .unwrap()
+        );
+        assert!(!repo.apply_chargeback(&order_id, 4, true).await.unwrap());
+        assert_eq!(status(&repo).await, "inactive");
+
+        sqlx::query("DELETE FROM starfish_orders WHERE order_id = $1")
+            .bind(&order_id)
+            .execute(&pool)
+            .await
+            .unwrap();
         cleanup(&repo, did).await;
     }
 }

@@ -3,6 +3,8 @@ import { page } from "@/lib/paths";
 import { URCHIN_URL } from "astro:env/server";
 import Container from "@shared/components/Container.astro";
 import Legacy from "@shared/components/Legacy.astro";
+import StarfishBuy from "@shared/components/StarfishBuy.astro";
+import StarfishDownloads from "@shared/components/StarfishDownloads.astro";
 import ChatPreview from "@/components/ChatPreview.astro";
 import ProcessesWindow from "@/components/ProcessesWindow.astro";
 import TabPreview from "@/components/TabPreview.astro";
@@ -48,12 +50,17 @@ const features = [
         <Legacy text="§6S§eta§fr§bfi§3sh" />
       </h1>
       <p>{tagline}</p>
-      <a class="button primary" href={`${URCHIN_URL}/dashboard/account`}>
-        Sign in with Discord to download
-      </a>
-      <p class="download-note">
-        Downloads are on your Urchin account, for Starfish license holders.
-      </p>
+      <div class="purchase" data-state="pending">
+        <StarfishBuy returnTo={`${URCHIN_URL}/starfish`} />
+        <StarfishDownloads />
+      </div>
+      <noscript>
+        <style is:inline>
+          .purchase {
+            visibility: visible !important;
+          }
+        </style>
+      </noscript>
     </div>
     <ProcessesWindow />
   </Container>
@@ -87,6 +94,15 @@ const features = [
     </ul>
   </Container>
 </Layout>
+
+<script>
+  import { account } from "@shared/account";
+
+  const purchase = document.querySelector<HTMLElement>(".purchase")!;
+  purchase.dataset.state = (await account())?.starfish_licensed
+    ? "owner"
+    : "buyer";
+</script>
 
 <style>
   .hero,
@@ -131,14 +147,21 @@ const features = [
       text-wrap: pretty;
     }
 
-    & .button {
-      margin-top: 0.5rem;
+  }
+
+  .purchase {
+    display: grid;
+    justify-items: start;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+
+    &[data-state="pending"] {
+      visibility: hidden;
     }
 
-    & .download-note {
-      margin-top: -0.5rem;
-      color: var(--color-text-muted);
-      font-size: var(--text-sm);
+    &:not([data-state="owner"]) :global(.starfish-downloads),
+    &[data-state="owner"] :global(.starfish-buy) {
+      display: none;
     }
   }
 

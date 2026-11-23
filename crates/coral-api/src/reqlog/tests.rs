@@ -76,6 +76,7 @@ fn starfish_config() -> StarfishConfig {
         discord_client_secret: "secret".into(),
         github_token: "token".into(),
         github_repo: "owner/repo".into(),
+        paynow: None,
     }
 }
 

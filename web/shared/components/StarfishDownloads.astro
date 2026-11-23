@@ -1,0 +1,59 @@
+---
+import { STARFISH_URL } from "astro:env/server";
+
+const platforms = [
+  { id: "windows", label: "Windows" },
+  { id: "macos", label: "macOS" },
+  { id: "linux", label: "Linux" },
+];
+---
+
+<div class="starfish-downloads">
+  {platforms.map(({ id, label }) => (
+    <a
+      class="button"
+      href={`${STARFISH_URL}/api/v1/download/latest?platform=${id}`}
+      data-platform={id}
+      data-label={label}
+    >
+      {label}
+    </a>
+  ))}
+</div>
+
+<script>
+  function visitorPlatform() {
+    const agent = navigator.userAgent;
+    if (/Mac/.test(agent)) return "macos";
+    if (/Linux|X11/.test(agent) && !/Android/.test(agent)) return "linux";
+    return "windows";
+  }
+
+  const platform = visitorPlatform();
+  for (const downloads of document.querySelectorAll(".starfish-downloads")) {
+    const link = downloads.querySelector<HTMLAnchorElement>(
+      `[data-platform="${platform}"]`,
+    )!;
+    link.classList.add("primary");
+    link.textContent = `Download for ${link.dataset.label}`;
+    downloads.prepend(link);
+  }
+</script>
+
+<style>
+  .starfish-downloads {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  @media (width < 30rem) {
+    .starfish-downloads > :global(.button) {
+      flex: 1;
+    }
+
+    .starfish-downloads > :global(.primary) {
+      flex-basis: 100%;
+    }
+  }
+</style>
