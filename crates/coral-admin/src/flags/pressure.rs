@@ -49,11 +49,9 @@ fn summary(usage: LimitUsage) -> String {
 
 fn limiter_label(limiter: Limiter) -> &'static str {
     match limiter {
-        Limiter::Personal => "personal key limit",
+        Limiter::Personal => "personal limit",
         Limiter::Developer => "developer key limit",
-        Limiter::Session => "Starfish session limit",
         Limiter::SessionUuids => "Starfish batch player budget",
-        Limiter::Minecraft => "Minecraft session limit",
         Limiter::MinecraftUuids => "Minecraft batch player budget",
         Limiter::KeyUuids => "distinct player budget",
         Limiter::Tagging => "tagging limit",

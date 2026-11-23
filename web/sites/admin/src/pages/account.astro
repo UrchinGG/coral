@@ -185,12 +185,19 @@ import { page } from "@/lib/paths";
 
   function showStarfish(starfish: Starfish) {
     const section = document.getElementById("starfish")!;
-    section.querySelector(".meta")!.replaceChildren(
-      el("span", { className: "licensed", textContent: "Licensed" }),
-      ...(starfish.version
-        ? [el("span", { className: "version", textContent: starfish.version })]
-        : []),
-    );
+    section
+      .querySelector(".meta")!
+      .replaceChildren(
+        el("span", { className: "licensed", textContent: "Licensed" }),
+        ...(starfish.version
+          ? [
+              el("span", {
+                className: "version",
+                textContent: starfish.version,
+              }),
+            ]
+          : []),
+      );
     const plural = starfish.changes_left === 1 ? "change" : "changes";
     section.querySelector(".changes")!.textContent =
       `${starfish.changes_left} device ${plural} left this month.`;

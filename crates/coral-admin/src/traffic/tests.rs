@@ -3,7 +3,7 @@ use coral_redis::minute_history::{
     CHANGED_SNAPSHOTS, FIRST_SNAPSHOTS, HYPIXEL_ERRORS, HYPIXEL_HISTORY, HYPIXEL_REQUESTS,
     SNAPSHOT_HISTORY,
 };
-use coral_redis::{PERSONAL_RATE_LIMIT, RedisPool, key};
+use coral_redis::{PERSONAL_RATE_LIMIT, RedisPool, key, personal_bucket};
 use database::Database;
 use redis::AsyncCommands;
 use reqlog::rollup::Span;
@@ -461,7 +461,11 @@ async fn clear_pressed(pool: &PgPool, redis: &RedisPool) {
         .execute(pool)
         .await
         .unwrap();
-    let () = redis.connection().del(key(PRESSED_KEY)).await.unwrap();
+    let () = redis
+        .connection()
+        .del(key(&personal_bucket(PRESSED_DISCORD)))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -495,7 +499,7 @@ async fn pressure_counts_the_limits_of_recent_callers_and_keeps_those_near_one()
         .collect();
     let () = redis
         .connection()
-        .zadd_multiple(key(PRESSED_KEY), &entries)
+        .zadd_multiple(key(&personal_bucket(PRESSED_DISCORD)), &entries)
         .await
         .unwrap();
     let found = pressure(&pool, &redis, now()).await;

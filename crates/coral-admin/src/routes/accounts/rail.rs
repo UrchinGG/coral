@@ -2,8 +2,8 @@ use axum::Json;
 use axum::extract::{Path, State};
 use chrono::{DateTime, Utc};
 use coral_redis::{
-    KEY_DISTINCT_UUID_BUDGET, PERSONAL_RATE_LIMIT, RateLimiter, SESSION_RATE_LIMIT,
-    SESSION_UUID_BUDGET, tag_limit_for_access,
+    KEY_DISTINCT_UUID_BUDGET, PERSONAL_RATE_LIMIT, RateLimiter, SESSION_UUID_BUDGET,
+    personal_bucket, tag_limit_for_access,
 };
 use database::{AccountRepository, MemberRepository, ReviewRulesRepository, standing};
 use serde::Serialize;
@@ -68,7 +68,6 @@ struct DeveloperLimit {
 
 #[derive(Default)]
 struct LimiterSource {
-    personal_key: Option<String>,
     developer: Option<DeveloperLimit>,
     tag_level: Option<i16>,
     minecraft: Vec<Uuid>,
@@ -159,7 +158,6 @@ pub async fn known_limiters(
         tag_level: member
             .as_ref()
             .map(|member| standing::effective_level(member, &rules)),
-        personal_key: member.and_then(|member| member.api_key),
         developer,
         minecraft: minecraft
             .iter()
@@ -184,15 +182,12 @@ async fn developer_limit(
 }
 
 fn limiters_for(discord_id: i64, source: LimiterSource) -> Vec<KnownLimiter> {
-    let mut known = Vec::new();
-    if let Some(key) = source.personal_key {
-        known.push(KnownLimiter {
-            limiter: Limiter::Personal,
-            name: key,
-            limit: Some(PERSONAL_RATE_LIMIT),
-            player: None,
-        });
-    }
+    let mut known = vec![KnownLimiter {
+        limiter: Limiter::Personal,
+        name: personal_bucket(discord_id),
+        limit: Some(PERSONAL_RATE_LIMIT),
+        player: None,
+    }];
     if let Some(developer) = source.developer {
         known.push(KnownLimiter {
             limiter: Limiter::Developer,
@@ -201,21 +196,13 @@ fn limiters_for(discord_id: i64, source: LimiterSource) -> Vec<KnownLimiter> {
             player: None,
         });
     }
-    known.extend([
-        KnownLimiter {
-            limiter: Limiter::Session,
-            name: format!("sf:{discord_id}"),
-            limit: Some(SESSION_RATE_LIMIT),
-            player: None,
-        },
-        KnownLimiter {
-            limiter: Limiter::SessionUuids,
-            name: format!("sfuuids:{discord_id}"),
-            limit: Some(SESSION_UUID_BUDGET),
-            player: None,
-        },
-    ]);
-    known.extend(source.minecraft.into_iter().flat_map(minecraft_limiters));
+    known.push(KnownLimiter {
+        limiter: Limiter::SessionUuids,
+        name: format!("sfuuids:{discord_id}"),
+        limit: Some(SESSION_UUID_BUDGET),
+        player: None,
+    });
+    known.extend(source.minecraft.into_iter().map(minecraft_limiter));
     let Some(tag_level) = source.tag_level else {
         return known;
     };
@@ -237,22 +224,13 @@ fn limiters_for(discord_id: i64, source: LimiterSource) -> Vec<KnownLimiter> {
     known
 }
 
-fn minecraft_limiters(player: Uuid) -> [KnownLimiter; 2] {
-    let uuid = player.simple();
-    [
-        KnownLimiter {
-            limiter: Limiter::Minecraft,
-            name: format!("mc:{uuid}"),
-            limit: Some(SESSION_RATE_LIMIT),
-            player: Some(player),
-        },
-        KnownLimiter {
-            limiter: Limiter::MinecraftUuids,
-            name: format!("mcuuids:{uuid}"),
-            limit: Some(SESSION_UUID_BUDGET),
-            player: Some(player),
-        },
-    ]
+fn minecraft_limiter(player: Uuid) -> KnownLimiter {
+    KnownLimiter {
+        limiter: Limiter::MinecraftUuids,
+        name: format!("mcuuids:{}", player.simple()),
+        limit: Some(SESSION_UUID_BUDGET),
+        player: Some(player),
+    }
 }
 
 #[cfg(test)]
@@ -266,7 +244,6 @@ mod tests {
         let known = limiters_for(
             42,
             LimiterSource {
-                personal_key: Some("personal-key".into()),
                 developer: Some(DeveloperLimit {
                     key: "developer-key".into(),
                     rate_limit: 900,
@@ -279,19 +256,17 @@ mod tests {
         assert_eq!(
             names,
             [
-                "personal-key",
+                "user:42",
                 "developer-key",
-                "sf:42",
                 "sfuuids:42",
-                "mc:2c1f6a0e7d4b4f3a9e1d5b8c0a6f3e21",
                 "mcuuids:2c1f6a0e7d4b4f3a9e1d5b8c0a6f3e21",
                 "keyuuids:42",
                 "tag:42"
             ]
         );
         assert_eq!(known[1].limit, Some(900));
-        assert_eq!(known[4].player, Some(PLAYER));
-        assert_eq!(known[7].limit, None);
+        assert_eq!(known[3].player, Some(PLAYER));
+        assert_eq!(known[5].limit, None);
     }
 
     #[test]
@@ -319,9 +294,9 @@ mod tests {
     }
 
     #[test]
-    fn a_discord_user_without_an_account_has_only_session_limiters() {
+    fn a_discord_user_without_an_account_has_only_personal_and_session_limiters() {
         let known = limiters_for(7, LimiterSource::default());
         let limiters: Vec<Limiter> = known.iter().map(|known| known.limiter).collect();
-        assert_eq!(limiters, [Limiter::Session, Limiter::SessionUuids]);
+        assert_eq!(limiters, [Limiter::Personal, Limiter::SessionUuids]);
     }
 }
