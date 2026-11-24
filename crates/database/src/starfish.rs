@@ -162,6 +162,23 @@ impl<'a> StarfishRepository<'a> {
             .map(|r| r.rows_affected() > 0)
     }
 
+    /// Records that a buyer agreed to a version of the Starfish terms, keeping the first time.
+    pub async fn record_terms_acceptance(
+        &self,
+        discord_id: i64,
+        terms_version: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO starfish_terms_acceptances (discord_id, terms_version)
+             VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(discord_id)
+        .bind(terms_version)
+        .execute(self.pool)
+        .await
+        .map(|_| ())
+    }
+
     /// Records a paid order and activates its buyer's license in one statement,
     /// so a replayed order can never re-activate a license that was since revoked.
     pub async fn record_paid_order(
@@ -1061,5 +1078,40 @@ mod tests {
             .await
             .unwrap();
         cleanup(&repo, did).await;
+    }
+
+    #[tokio::test]
+    async fn the_first_acceptance_of_a_terms_version_is_kept() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let repo = StarfishRepository::new(&pool);
+        let did = test_discord_id(21);
+        let accepted_at = async || -> Vec<chrono::DateTime<chrono::Utc>> {
+            sqlx::query_scalar(
+                "SELECT accepted_at FROM starfish_terms_acceptances WHERE discord_id = $1",
+            )
+            .bind(did)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        };
+        sqlx::query("DELETE FROM starfish_terms_acceptances WHERE discord_id = $1")
+            .bind(did)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        repo.record_terms_acceptance(did, "test").await.unwrap();
+        let first = accepted_at().await;
+        repo.record_terms_acceptance(did, "test").await.unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(accepted_at().await, first);
+
+        sqlx::query("DELETE FROM starfish_terms_acceptances WHERE discord_id = $1")
+            .bind(did)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 }

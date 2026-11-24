@@ -98,6 +98,11 @@ pub struct StarfishCheckout {
     url: String,
 }
 
+#[derive(Deserialize)]
+pub struct CheckoutRequest {
+    terms_version: String,
+}
+
 #[derive(Serialize)]
 pub struct StarfishDevice {
     licensed: bool,
@@ -231,12 +236,13 @@ pub async fn starfish(
 pub async fn starfish_checkout(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Json(request): Json<CheckoutRequest>,
 ) -> Result<Json<StarfishCheckout>, ApiError> {
     if !from_dashboard(&headers) {
         return Err(ApiError::Forbidden("Buy Starfish from urchin.gg".into()));
     }
     let user = signed_in(&state, &headers).await?;
-    let url = create_checkout(&state, user.discord_id).await?;
+    let url = create_checkout(&state, user.discord_id, &request.terms_version).await?;
     Ok(Json(StarfishCheckout { url }))
 }
 

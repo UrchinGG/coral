@@ -30,6 +30,8 @@ const RETURN_URL: &str = "https://urchin.gg/starfish/purchased";
 const CANCEL_URL: &str = "https://urchin.gg/starfish";
 const SIGNATURE_TOLERANCE_MS: i64 = 5 * 60 * 1000;
 const CHECKOUTS_PER_WINDOW: i64 = 10;
+/// The Starfish terms buyers agree to; matches `TERMS_VERSION` on the website.
+const TERMS_VERSION: &str = "2026-11-24";
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/paynow/webhook", post(receive_webhook))
@@ -85,7 +87,14 @@ struct ChargebackStep {
 }
 
 /// Creates a PayNow checkout for one Starfish license and returns the page to send the buyer to.
-pub(crate) async fn create_checkout(state: &AppState, discord_id: i64) -> Result<String, ApiError> {
+pub(crate) async fn create_checkout(
+    state: &AppState,
+    discord_id: i64,
+    terms_version: &str,
+) -> Result<String, ApiError> {
+    if terms_version != TERMS_VERSION {
+        return Err(ApiError::BadRequest("terms_outdated".into()));
+    }
     let starfish = require_starfish(state)?;
     let paynow = require_paynow(&starfish)?;
     rate_limit(
@@ -95,19 +104,23 @@ pub(crate) async fn create_checkout(state: &AppState, discord_id: i64) -> Result
     )
     .await?;
 
-    let existing = StarfishRepository::new(state.db.pool())
-        .get_user_by_discord_id(discord_id)
-        .await?;
+    let repo = StarfishRepository::new(state.db.pool());
+    let existing = repo.get_user_by_discord_id(discord_id).await?;
     if existing.is_some_and(|user| user.license_status == "active") {
         return Err(ApiError::Conflict("already_licensed".into()));
     }
+    repo.record_terms_acceptance(discord_id, TERMS_VERSION)
+        .await?;
 
     let customer_id = paynow_customer_id(paynow, discord_id).await?;
     let checkout: PayNowCheckout = paynow_json(
         paynow_request(paynow, Method::POST, "checkouts").json(&json!({
             "customer_id": customer_id,
             "lines": [{ "product_id": paynow.product_id, "quantity": 1 }],
-            "metadata": { "discord_id": discord_id.to_string() },
+            "metadata": {
+                "discord_id": discord_id.to_string(),
+                "terms_version": TERMS_VERSION,
+            },
             "return_url": RETURN_URL,
             "cancel_url": CANCEL_URL,
         })),

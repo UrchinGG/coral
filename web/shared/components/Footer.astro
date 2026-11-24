@@ -1,4 +1,5 @@
 ---
+import { PAYNOW_BUYER_AGREEMENT_URL, STARFISH_TERMS_URL } from "../links";
 import Container from "./Container.astro";
 
 interface Props {
@@ -8,9 +9,10 @@ interface Props {
 
 const { siteName, soldByPayNow = false } = Astro.props;
 
-const payNowTerms = [
-  ["Terms of Use", "https://paynow.gg/legal/terms-of-use"],
-  ["Buyer Agreement", "https://paynow.gg/legal/buyer-agreement"],
+const saleTerms = [
+  [`${siteName} Terms`, STARFISH_TERMS_URL],
+  ["PayNow Terms of Use", "https://paynow.gg/legal/terms-of-use"],
+  ["Buyer Agreement", PAYNOW_BUYER_AGREEMENT_URL],
   ["Privacy Policy", "https://paynow.gg/legal/privacy-policy"],
 ];
 ---
@@ -30,8 +32,8 @@ const payNowTerms = [
         {siteName} is sold by PayNow, our authorized reseller and merchant of
         record.
       </small>
-      <ul role="list" aria-label="PayNow terms">
-        {payNowTerms.map(([label, href]) => (
+      <ul role="list" aria-label="Terms of sale">
+        {saleTerms.map(([label, href]) => (
           <li>
             <a href={href}>{label}</a>
           </li>

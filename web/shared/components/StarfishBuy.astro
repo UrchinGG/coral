@@ -1,5 +1,6 @@
 ---
 import { SIGN_IN } from "../account";
+import { PAYNOW_BUYER_AGREEMENT_URL, STARFISH_TERMS_URL } from "../links";
 
 interface Props {
   /** Where sign-in returns to before continuing to checkout. */
@@ -19,12 +20,86 @@ const signInHref = `${SIGN_IN}?return=${encodeURIComponent(`${returnTo}?buy`)}`;
     $14.99 <span class="term">Lifetime</span>
   </a>
   <p class="buy-status" role="status"></p>
+
+  <dialog class="terms" aria-labelledby="terms-title">
+    <form method="dialog">
+      <header>
+        <h2 id="terms-title">Before you buy</h2>
+        <button class="close" type="submit" aria-label="Close">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+            <path d="M4.2 3.2 8 7l3.8-3.8 1 1L9 8l3.8 3.8-1 1L8 9l-3.8 3.8-1-1L7 8 3.2 4.2z"></path>
+          </svg>
+        </button>
+      </header>
+
+      <div class="points">
+        <p>
+          <strong>
+            This license is for <span class="who">you</span>.
+          </strong>{" "}
+          It's tied to this Discord account and can't be transferred.{" "}
+          <button class="switch" type="button">
+            Not you? Switch account
+          </button>
+        </p>
+        <p>
+          <strong>
+            We guarantee Starfish works with any Minecraft 1.8.9 process.
+          </strong>{" "}
+          If it doesn't work for you, we'll work with you until it does. If
+          you'd rather not wait, or we can't fix it in reasonable time, you can
+          get a full refund. Refunds are open for 14 days after you buy and stay
+          open while we're working on your issue. A refund ends your license.
+        </p>
+        <p>
+          <strong>
+            Use Starfish at your own risk, as with any game modification.
+          </strong>{" "}
+          Check server rules before use and make sure you understand how the
+          plugins you install interact with your game. We aren't responsible for
+          plugins published by other users. Starfish isn't affiliated with
+          Hypixel, Mojang or Microsoft.
+        </p>
+        <p>
+          <strong>This is a lifetime license.</strong> It never expires, and if
+          we ever stop maintaining Starfish, we'll release the source code
+          without license checks.
+        </p>
+        <p class="fine">
+          We reserve the right to revoke, without refund, a license that's
+          shared, charged back or used for abuse.
+        </p>
+      </div>
+
+      <footer>
+        <label class="agree">
+          <input type="checkbox" />
+          <span>
+            I agree to the{" "}
+            <a href={STARFISH_TERMS_URL} target="_blank">
+              Starfish Terms
+            </a>{" "}
+            and PayNow's{" "}
+            <a href={PAYNOW_BUYER_AGREEMENT_URL} target="_blank">
+              Buyer Agreement
+            </a>
+            .
+          </span>
+        </label>
+        <button class="button primary continue" type="button" disabled>
+          Continue to payment
+        </button>
+      </footer>
+    </form>
+  </dialog>
 </div>
 
 <script>
-  import { account } from "../account";
+  import { account, type Account } from "../account";
   import { DISCORD_URL } from "../links";
   import { openCheckout, signInToBuy, takeBuyIntent } from "../purchase";
+
+  const CONTINUE_LABEL = "Continue to payment";
 
   function failed(status: HTMLElement) {
     const help = Object.assign(document.createElement("a"), {
@@ -35,16 +110,43 @@ const signInHref = `${SIGN_IN}?return=${encodeURIComponent(`${returnTo}?buy`)}`;
     status.replaceChildren("Checkout didn't open. Try again or ", help, ".");
   }
 
+  function askToAgree(root: HTMLElement, user: Account) {
+    const dialog = root.querySelector("dialog")!;
+    dialog.querySelector(".who")!.textContent = `@${user.username}`;
+    dialog.querySelector<HTMLInputElement>(".agree input")!.checked = false;
+    dialog.querySelector<HTMLButtonElement>(".continue")!.disabled = true;
+    root.querySelector(".buy-status")!.replaceChildren();
+    dialog.showModal();
+  }
+
   async function checkout(root: HTMLElement) {
-    const buy = root.querySelector<HTMLAnchorElement>(".buy")!;
-    const status = root.querySelector<HTMLElement>(".buy-status")!;
-    if (buy.ariaDisabled === "true") return;
-    buy.ariaDisabled = "true";
-    status.dataset.tone = "";
-    status.textContent = "Opening checkout…";
-    if ((await openCheckout()) === "owned") return location.reload();
-    buy.removeAttribute("aria-disabled");
-    failed(status);
+    const dialog = root.querySelector("dialog")!;
+    const proceed = dialog.querySelector<HTMLButtonElement>(".continue")!;
+    proceed.disabled = true;
+    proceed.textContent = "Opening checkout…";
+    const result = await openCheckout();
+    if (result === "owned") return location.reload();
+    dialog.close();
+    proceed.textContent = CONTINUE_LABEL;
+    failed(root.querySelector(".buy-status")!);
+  }
+
+  async function switchAccount() {
+    await fetch("/auth/logout", { method: "POST" }).catch(() => undefined);
+    location.assign(signInToBuy());
+  }
+
+  function wire(root: HTMLElement, user: Account) {
+    const dialog = root.querySelector("dialog")!;
+    const agree = dialog.querySelector<HTMLInputElement>(".agree input")!;
+    const proceed = dialog.querySelector<HTMLButtonElement>(".continue")!;
+    root.querySelector(".buy")!.addEventListener("click", (event) => {
+      event.preventDefault();
+      askToAgree(root, user);
+    });
+    agree.addEventListener("change", () => (proceed.disabled = !agree.checked));
+    proceed.addEventListener("click", () => checkout(root));
+    dialog.querySelector(".switch")!.addEventListener("click", switchAccount);
   }
 
   const roots = [...document.querySelectorAll<HTMLElement>(".starfish-buy")];
@@ -54,12 +156,8 @@ const signInHref = `${SIGN_IN}?return=${encodeURIComponent(`${returnTo}?buy`)}`;
   const wantsToBuy = takeBuyIntent();
   const user = await account();
   if (user && !user.starfish_licensed) {
-    for (const root of roots)
-      root.querySelector(".buy")!.addEventListener("click", (event) => {
-        event.preventDefault();
-        checkout(root);
-      });
-    if (wantsToBuy && roots[0]) checkout(roots[0]);
+    for (const root of roots) wire(root, user);
+    if (wantsToBuy && roots[0]) askToAgree(roots[0], user);
   }
 </script>
 
@@ -76,11 +174,6 @@ const signInHref = `${SIGN_IN}?return=${encodeURIComponent(`${returnTo}?buy`)}`;
     padding-inline: 1.5rem;
     font-size: var(--text-lg);
     font-weight: 600;
-
-    &[aria-disabled="true"] {
-      cursor: progress;
-      opacity: 0.6;
-    }
   }
 
   .term {
@@ -104,6 +197,166 @@ const signInHref = `${SIGN_IN}?return=${encodeURIComponent(`${returnTo}?buy`)}`;
       color: inherit;
       text-decoration: underline;
       text-underline-offset: 0.2em;
+    }
+  }
+
+  .terms {
+    width: min(36rem, 100vw - 2rem);
+    max-height: calc(100dvh - 2rem);
+    margin: auto;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+    color: var(--color-text-secondary);
+    box-shadow: var(--shadow-float);
+    font-size: var(--text-sm);
+    line-height: 1.6;
+    transition:
+      opacity var(--transition),
+      scale var(--transition),
+      display var(--transition) allow-discrete,
+      overlay var(--transition) allow-discrete;
+
+    &:not([open]) {
+      opacity: 0;
+      scale: 0.98;
+    }
+
+    @starting-style {
+      opacity: 0;
+      scale: 0.98;
+    }
+
+    &::backdrop {
+      background: var(--color-scrim);
+    }
+  }
+
+  form {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    max-height: calc(100dvh - 2rem);
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 0.75rem 0.75rem 1.5rem;
+    border-bottom: 1px solid var(--color-divider);
+
+    & h2 {
+      color: var(--color-text-strong);
+      font-size: var(--text-base);
+      font-weight: 600;
+    }
+  }
+
+  .close,
+  .switch {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+  }
+
+  .close {
+    display: grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: var(--radius-sm);
+    color: var(--color-text-muted);
+    cursor: pointer;
+
+    & svg {
+      fill: currentColor;
+    }
+
+    @media (hover: hover) {
+      &:hover {
+        background: var(--color-surface-hover);
+        color: var(--color-text);
+      }
+    }
+  }
+
+  .points {
+    display: grid;
+    gap: 1rem;
+    padding: 1.25rem 1.5rem;
+    overflow-y: auto;
+    font-size: var(--text-sm);
+
+    & p {
+      text-wrap: pretty;
+    }
+
+    & strong {
+      color: var(--color-text);
+      font-weight: 500;
+    }
+  }
+
+  .switch {
+    color: var(--color-text-muted);
+    text-decoration: underline;
+    text-decoration-color: var(--color-border-hover);
+    text-underline-offset: 0.2em;
+    cursor: pointer;
+
+    @media (hover: hover) {
+      &:hover {
+        color: var(--color-text);
+      }
+    }
+  }
+
+  .fine {
+    color: var(--color-text-muted);
+  }
+
+  footer {
+    display: grid;
+    gap: 1rem;
+    padding: 1.25rem 1.5rem 1.5rem;
+    border-top: 1px solid var(--color-divider);
+  }
+
+  .agree {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    color: var(--color-text);
+    cursor: pointer;
+
+    & input {
+      flex: none;
+      width: 1rem;
+      height: 1rem;
+      margin-top: 0.3em;
+      accent-color: var(--color-text-strong);
+      cursor: pointer;
+    }
+
+    & a {
+      color: inherit;
+      text-decoration: underline;
+      text-decoration-color: var(--color-border-hover);
+      text-underline-offset: 0.2em;
+    }
+  }
+
+  .continue {
+    justify-self: stretch;
+    height: 2.75rem;
+    font-size: var(--text-base);
+
+    &:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
     }
   }
 </style>

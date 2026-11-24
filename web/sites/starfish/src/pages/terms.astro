@@ -1,0 +1,190 @@
+---
+import Container from "@shared/components/Container.astro";
+import { DISCORD_URL, PAYNOW_BUYER_AGREEMENT_URL } from "@shared/links";
+import Layout from "@/layouts/Layout.astro";
+---
+
+<Layout title="Starfish Terms" description="The terms of a Starfish license">
+  <Container width="narrow" class="terms">
+    <h1>Starfish Terms</h1>
+    <p class="updated">Last updated: November 24, 2026</p>
+
+    <p>
+      These Starfish Terms (the "Terms") form a binding agreement between you
+      and the developers of Starfish ("we", "us" or "our") governing your
+      purchase of a Starfish license and your use of the Starfish software
+      ("Starfish"). By purchasing a license, you agree to these Terms. Licenses
+      are sold by PayNow, our authorized reseller and merchant of record, and
+      your payment is governed by PayNow's{" "}
+      <a href={PAYNOW_BUYER_AGREEMENT_URL}>Buyer Agreement</a>.
+    </p>
+
+    <section>
+      <h2>1. License Grant</h2>
+      <p>
+        Subject to these Terms, we grant you a personal, non-exclusive,
+        non-transferable, revocable license to use Starfish. The license is
+        bound to the Discord account used to purchase it and may not be sold,
+        transferred, shared or assigned. Starfish limits the number of times per
+        month a license may be moved to a different device.
+      </p>
+    </section>
+
+    <section>
+      <h2>2. Term</h2>
+      <p>
+        The license is granted for a one-time fee with no recurring charges and
+        does not expire. It remains in effect until it is refunded or revoked
+        under these Terms. If we discontinue maintenance of Starfish, we will
+        release its source code with license checks removed.
+      </p>
+    </section>
+
+    <section>
+      <h2>3. Compatibility Guarantee and Refunds</h2>
+      <p>
+        We guarantee that Starfish is compatible with any Minecraft 1.8.9
+        process. If Starfish does not function on your system, contact us and we
+        will work with you to resolve the issue. If you choose not to wait for a
+        resolution, or we are unable to resolve it within a reasonable time, you
+        are entitled to a full refund. Refund requests must be made within
+        fourteen (14) days of purchase. If you reported the issue within that
+        period, you may request a refund for as long as we are working to
+        resolve it. Refunds are issued through PayNow, and a refund terminates
+        your license.
+      </p>
+    </section>
+
+    <section>
+      <h2>4. Assumption of Risk</h2>
+      <p>
+        Starfish modifies your game client, and you use it at your own risk. You
+        are solely responsible for complying with the rules of any server on
+        which you use it. Some servers prohibit client modifications and may
+        take action against your account, and we are not liable for any such
+        action. Starfish is not affiliated with, endorsed by or sponsored by
+        Hypixel Inc., Mojang AB or Microsoft Corporation.
+      </p>
+    </section>
+
+    <section>
+      <h2>5. Third-Party Plugins</h2>
+      <p>
+        We develop Starfish and its official plugins. Plugins published by other
+        users are third-party content for which their authors are solely
+        responsible. We do not review or endorse them and accept no liability
+        for them. You are responsible for understanding what a plugin does
+        before installing it.
+      </p>
+    </section>
+
+    <section>
+      <h2>6. Termination</h2>
+      <p>
+        We reserve the right to revoke your license without refund if you share
+        it, initiate a chargeback, or abuse Starfish or our services, including
+        by attacking or overloading our services or circumventing the license
+        system.
+      </p>
+    </section>
+
+    <section>
+      <h2>7. Disclaimer of Warranties</h2>
+      <p>
+        Except for the compatibility guarantee in Section 3, and to the maximum
+        extent permitted by applicable law, Starfish is provided "as is" and "as
+        available", without warranties of any kind, express or implied,
+        including implied warranties of merchantability, fitness for a
+        particular purpose and non-infringement.
+      </p>
+    </section>
+
+    <section>
+      <h2>8. Limitation of Liability</h2>
+      <p>
+        To the maximum extent permitted by applicable law, we shall not be
+        liable for any indirect, incidental, special, consequential or punitive
+        damages, and our total liability arising out of or relating to these
+        Terms or Starfish shall not exceed the amount you paid for your license.
+        Nothing in these Terms limits any rights you have under applicable law
+        that cannot be waived.
+      </p>
+    </section>
+
+    <section>
+      <h2>9. Amendments</h2>
+      <p>
+        We may amend these Terms from time to time. Amendments apply only to
+        purchases made after they take effect, and the date of the current
+        version is shown above.
+      </p>
+    </section>
+
+    <section>
+      <h2>10. Severability</h2>
+      <p>
+        If any provision of these Terms is held unenforceable, the remaining
+        provisions remain in full force and effect.
+      </p>
+    </section>
+
+    <section>
+      <h2>11. Contact</h2>
+      <p>
+        For support, refund requests or questions about these Terms, contact us
+        in the <a href={DISCORD_URL}>Urchin Discord</a>.
+      </p>
+    </section>
+  </Container>
+</Layout>
+
+<style>
+  .terms {
+    display: grid;
+    gap: 1.5rem;
+    padding-block: 4rem 6rem;
+    color: var(--color-text-secondary);
+    line-height: 1.7;
+  }
+
+  h1 {
+    color: var(--color-text-strong);
+    font-size: var(--text-2xl);
+    font-weight: 600;
+  }
+
+  .updated {
+    margin-top: -1rem;
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+
+  section {
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  h2 {
+    color: var(--color-text);
+    font-size: var(--text-base);
+    font-weight: 600;
+  }
+
+  p {
+    max-width: 40rem;
+    text-wrap: pretty;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: var(--color-border-hover);
+    text-underline-offset: 0.2em;
+
+    @media (hover: hover) {
+      &:hover {
+        color: var(--color-text);
+      }
+    }
+  }
+</style>

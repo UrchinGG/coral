@@ -3,6 +3,8 @@ import { SIGN_IN } from "./account";
 export type CheckoutResult = "owned" | "failed";
 
 const BUY_PARAM = "buy";
+/** The Starfish terms the buyer agrees to; the server refuses any other version. */
+export const TERMS_VERSION = "2026-11-24";
 
 /** Sign-in link that brings the visitor back here and straight on to checkout. */
 export function signInToBuy() {
@@ -24,6 +26,8 @@ export function takeBuyIntent() {
 export async function openCheckout(): Promise<CheckoutResult> {
   const response = await fetch("/me/starfish/checkout", {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ terms_version: TERMS_VERSION }),
   }).catch(() => undefined);
   if (response?.status === 409) return "owned";
   const checkout = response?.ok ? await response.json() : undefined;
