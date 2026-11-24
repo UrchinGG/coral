@@ -122,7 +122,7 @@ const BRANCHES: &[Branch] = &[
                 WHEN later.id IS NULL THEN NULL
                 WHEN later.kind = 'tag_set' OR EXISTS (
                     SELECT 1 FROM player_events paired
-                    WHERE paired.uuid = later.uuid AND paired.kind = 'tag_set'
+                    WHERE paired.uuid = e.uuid AND paired.kind = 'tag_set'
                       AND paired.ts = later.ts AND paired.id > later.id) THEN 'replaced'
                 ELSE 'cleared'
             END)",
