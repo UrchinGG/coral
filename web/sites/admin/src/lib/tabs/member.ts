@@ -193,11 +193,14 @@ async function addedTags(
   return [tags, labels];
 }
 
+const ENDED_STATES: Record<string, string> = {
+  cleared: "Removed",
+  replaced: "Replaced",
+  expired: "Expired",
+};
+
 function tagState(event: TimelineEvent) {
-  if (event.data?.ended_by === "tag_clear") return "Removed";
-  if (event.data?.ended_by === TAG_SET) return "Replaced";
-  const expires = event.data?.expires_at;
-  return expires && Date.parse(expires) <= Date.now() ? "Expired" : "Active";
+  return ENDED_STATES[event.data?.ended_by ?? ""] ?? "Active";
 }
 
 function tagsView(tags: AddedTag[], labels: Labels, state: FilterState) {

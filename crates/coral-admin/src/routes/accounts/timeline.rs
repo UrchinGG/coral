@@ -116,10 +116,22 @@ const BRANCHES: &[Branch] = &[
         key: "'authored:' || e.id",
         at: "e.ts",
         columns: "e.author, NULL, e.uuid, e.kind, e.reason, jsonb_build_object('tag_type', e.tag_type, 'expires_at', e.expires_at,
-            'ended_by', (SELECT later.kind FROM player_events later
-                         WHERE later.uuid = e.uuid AND later.tag_type = e.tag_type AND (later.ts, later.id) > (e.ts, e.id)
-                         ORDER BY later.ts, later.id LIMIT 1))",
-        source: "player_events e WHERE e.author = $2 AND e.uuid NOT IN (SELECT uuid FROM member_mc_links WHERE member_id = $1)",
+            'ended_by', CASE
+                WHEN e.kind <> 'tag_set' THEN NULL
+                WHEN e.expires_at <= COALESCE(later.ts, now()) THEN 'expired'
+                WHEN later.id IS NULL THEN NULL
+                WHEN later.kind = 'tag_set' OR EXISTS (
+                    SELECT 1 FROM player_events paired
+                    WHERE paired.uuid = later.uuid AND paired.kind = 'tag_set'
+                      AND paired.ts = later.ts AND paired.id > later.id) THEN 'replaced'
+                ELSE 'cleared'
+            END)",
+        source: "player_events e
+            LEFT JOIN LATERAL (SELECT later.id, later.kind, later.ts FROM player_events later
+                               WHERE later.uuid = e.uuid AND later.tag_type = e.tag_type
+                                 AND later.kind IN ('tag_set', 'tag_clear') AND (later.ts, later.id) > (e.ts, e.id)
+                               ORDER BY later.ts, later.id LIMIT 1) later ON true
+            WHERE e.author = $2 AND e.uuid NOT IN (SELECT uuid FROM member_mc_links WHERE member_id = $1)",
     },
     Branch {
         kind: "tag_reviewed",
@@ -474,5 +486,98 @@ mod tests {
             ]
         );
         assert!(seen.windows(2).all(|pair| pair[0].0 >= pair[1].0));
+    }
+
+    #[tokio::test]
+    async fn authored_tags_say_how_they_ended() {
+        let Some(pool) = pool().await else {
+            return;
+        };
+        let target = member(&pool, &unique_key()).await;
+        let author = target.discord_id;
+        let other = author + 1;
+        let [active, removed, overwritten, retyped, lapsed, retagged] =
+            [(); 6].map(|()| uuid::Uuid::new_v4().simple().to_string());
+        let insert = |uuid: &str,
+                      kind: &str,
+                      tag_type: &str,
+                      by: i64,
+                      minute: i64,
+                      expires: Option<i64>| {
+            sqlx::query(
+                "INSERT INTO player_events (uuid, kind, tag_type, author, ts, expires_at) VALUES ($1, $2, $3, $4, $5, $6)",
+            )
+            .bind(uuid.to_string())
+            .bind(kind.to_string())
+            .bind(tag_type.to_string())
+            .bind(by)
+            .bind(at(minute))
+            .bind(expires.map(at))
+            .execute(&pool)
+        };
+        insert(&active, "tag_set", "sniper", author, 1, None)
+            .await
+            .unwrap();
+        insert(&removed, "tag_set", "sniper", author, 2, None)
+            .await
+            .unwrap();
+        insert(&removed, "tag_clear", "sniper", other, 3, None)
+            .await
+            .unwrap();
+        insert(&overwritten, "tag_set", "sniper", author, 4, None)
+            .await
+            .unwrap();
+        insert(&overwritten, "tag_clear", "sniper", other, 5, None)
+            .await
+            .unwrap();
+        insert(&overwritten, "tag_set", "sniper", other, 5, None)
+            .await
+            .unwrap();
+        insert(&retyped, "tag_set", "sniper", author, 6, None)
+            .await
+            .unwrap();
+        insert(&retyped, "tag_clear", "sniper", other, 7, None)
+            .await
+            .unwrap();
+        insert(&retyped, "tag_set", "closet_cheater", other, 7, None)
+            .await
+            .unwrap();
+        insert(&lapsed, "tag_set", "sniper", author, 8, Some(9))
+            .await
+            .unwrap();
+        insert(&retagged, "tag_set", "sniper", author, 10, Some(11))
+            .await
+            .unwrap();
+        insert(&retagged, "tag_set", "sniper", other, 12, None)
+            .await
+            .unwrap();
+        let kinds = vec!["tag_authored".to_string()];
+        let rows = read_events(
+            &pool,
+            target,
+            &TimelineCursor::newest(),
+            Some(&kinds),
+            None,
+            50,
+        )
+        .await
+        .unwrap();
+        let ended = |uuid: &str| {
+            rows.iter()
+                .find(|row| row.player.as_deref() == Some(uuid))
+                .and_then(|row| {
+                    row.data
+                        .as_ref()?
+                        .get("ended_by")?
+                        .as_str()
+                        .map(str::to_string)
+                })
+        };
+        assert_eq!(ended(&active), None);
+        assert_eq!(ended(&removed).as_deref(), Some("cleared"));
+        assert_eq!(ended(&overwritten).as_deref(), Some("replaced"));
+        assert_eq!(ended(&retyped).as_deref(), Some("replaced"));
+        assert_eq!(ended(&lapsed).as_deref(), Some("expired"));
+        assert_eq!(ended(&retagged).as_deref(), Some("expired"));
     }
 }

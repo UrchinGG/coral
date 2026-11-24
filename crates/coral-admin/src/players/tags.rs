@@ -349,7 +349,7 @@ fn tag_history(rows: &[EventRow], members: &MemberIds, now: DateTime<Utc>) -> Ve
         if row.kind == TAG_SET {
             records.push(TagRecord {
                 tag: tag_view(row, members),
-                ended: ending(row, next, members, now),
+                ended: ending(row, next, &tag_events, members, now),
             });
         }
     }
@@ -359,24 +359,29 @@ fn tag_history(rows: &[EventRow], members: &MemberIds, now: DateTime<Utc>) -> Ve
 fn ending(
     set: &EventRow,
     next: Option<&EventRow>,
+    tag_events: &[&EventRow],
     members: &MemberIds,
     now: DateTime<Utc>,
 ) -> Option<TagEnding> {
-    if let Some(next) = next {
+    let ended_by_then = next.map_or(now, |next| next.ts);
+    if let Some(expires) = set.expires_at.filter(|expires| *expires <= ended_by_then) {
         return Some(TagEnding {
-            how: match next.kind == TAG_CLEAR {
-                true => EndedBy::Cleared,
-                false => EndedBy::Replaced,
-            },
-            by: next.author.map(|id| members.account(id)),
-            at: next.ts,
+            how: EndedBy::Expired,
+            by: None,
+            at: expires,
         });
     }
-    let expires = set.expires_at.filter(|expires| *expires <= now)?;
+    let next = next?;
+    let overwritten = tag_events
+        .iter()
+        .any(|row| row.kind == TAG_SET && row.ts == next.ts && row.id > next.id);
     Some(TagEnding {
-        how: EndedBy::Expired,
-        by: None,
-        at: expires,
+        how: match next.kind == TAG_CLEAR && !overwritten {
+            true => EndedBy::Cleared,
+            false => EndedBy::Replaced,
+        },
+        by: next.author.map(|id| members.account(id)),
+        at: next.ts,
     })
 }
 
@@ -505,6 +510,49 @@ mod tests {
         assert_eq!(history[0].ended.as_ref().unwrap().at, at(5));
         let before_expiry = tag_history(&rows, &MemberIds::default(), at(4));
         assert_eq!(before_expiry[0].ended, None);
+    }
+
+    #[test]
+    fn an_overwrite_replaces_the_tag_it_clears() {
+        let rows = [
+            event(1, TAG_SET, Some("caution"), 7, 1),
+            event(2, TAG_CLEAR, Some("caution"), 9, 3),
+            event(3, TAG_SET, Some("sniper"), 9, 3),
+            event(4, TAG_SET, Some("closet_cheater"), 7, 4),
+            event(5, TAG_CLEAR, Some("closet_cheater"), 9, 5),
+            event(6, TAG_SET, Some("closet_cheater"), 9, 5),
+        ];
+        let history = tag_history(&rows, &MemberIds::default(), at(10));
+        let ended: Vec<(i64, Option<EndedBy>)> = history
+            .iter()
+            .map(|record| (record.tag.id, record.ended.as_ref().map(|end| end.how)))
+            .collect();
+        assert_eq!(
+            ended,
+            vec![
+                (6, None),
+                (4, Some(EndedBy::Replaced)),
+                (3, None),
+                (1, Some(EndedBy::Replaced)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tag_that_lapsed_before_it_was_set_again_expired() {
+        let rows = [
+            EventRow {
+                expires_at: Some(at(3)),
+                ..event(1, TAG_SET, Some("sniper"), 7, 1)
+            },
+            event(2, TAG_SET, Some("sniper"), 8, 5),
+        ];
+        let history = tag_history(&rows, &MemberIds::default(), at(10));
+        let lapsed = history[1].ended.as_ref().unwrap();
+        assert_eq!(
+            (lapsed.how, lapsed.at, &lapsed.by),
+            (EndedBy::Expired, at(3), &None)
+        );
     }
 
     #[test]
