@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use database::starfish::HwidComponents;
 
-use crate::{error::ApiError, state::AppState};
+use crate::{error::ApiError, reqlog::client_ip, state::AppState};
 
 use super::{
     auth::{SESSION_MAX_LIFETIME_DAYS, SESSION_SLIDING_HOURS, UnlockKey, build_unlock_key},
@@ -29,6 +29,8 @@ pub struct ValidateRequest {
     pub hwid: String,
     pub signature: String,
     pub hwid_components: HwidComponents,
+    #[serde(default)]
+    pub nonce: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -50,6 +52,7 @@ fn failed_validation(reason: &str) -> Json<ValidateResponse> {
 
 async fn validate_session(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<ValidateRequest>,
 ) -> Result<Json<ValidateResponse>, ApiError> {
     let config = require_starfish(&state)?;
@@ -58,7 +61,8 @@ async fn validate_session(
     let repo = database::StarfishRepository::new(state.db.pool());
 
     let verified = match resolve_verified_session(
-        &repo,
+        &state,
+        client_ip(&headers),
         &req.session_token,
         &req.hwid,
         &req.signature,
@@ -86,7 +90,8 @@ async fn validate_session(
         verified.session.expires_at.timestamp() as u64,
         &verified.session.signature,
         None,
-    );
+    )
+    .answering(&config, req.nonce.as_deref())?;
 
     Ok(Json(ValidateResponse {
         valid: true,
@@ -122,6 +127,7 @@ fn fail_heartbeat(reason: &str) -> Json<HeartbeatResponse> {
 
 async fn heartbeat(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<HeartbeatRequest>,
 ) -> Result<Json<HeartbeatResponse>, ApiError> {
     require_starfish(&state)?;
@@ -129,8 +135,14 @@ async fn heartbeat(
     rate_limit(&state, &format!("sf:sess:{}", req.session_token), 30).await?;
     let repo = database::StarfishRepository::new(state.db.pool());
 
-    if let Err(e) =
-        resolve_verified_session(&repo, &req.session_token, &req.hwid, &req.signature).await
+    if let Err(e) = resolve_verified_session(
+        &state,
+        client_ip(&headers),
+        &req.session_token,
+        &req.hwid,
+        &req.signature,
+    )
+    .await
     {
         return Ok(fail_heartbeat(match e {
             ApiError::Forbidden(_) => "license_revoked",

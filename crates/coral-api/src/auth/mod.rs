@@ -340,9 +340,9 @@ async fn resolve_session_member(
     require_starfish(state)?;
     validate_hwid(&triad.hwid)?;
 
-    let sessions = StarfishRepository::new(state.db.pool());
     let verified =
-        resolve_verified_session(&sessions, &triad.token, &triad.hwid, &triad.signature).await?;
+        resolve_verified_session(state, triad.ip, &triad.token, &triad.hwid, &triad.signature)
+            .await?;
     let discord_id = verified.user.discord_id;
 
     let members = MemberRepository::new(state.db.pool());
@@ -497,6 +497,7 @@ struct SessionTriad {
     token: String,
     hwid: String,
     signature: String,
+    ip: Option<std::net::IpAddr>,
 }
 
 impl SessionTriad {
@@ -505,6 +506,7 @@ impl SessionTriad {
             token: session_header(request, "X-Starfish-Session")?,
             hwid: session_header(request, "X-Starfish-HWID")?,
             signature: session_header(request, "X-Starfish-Signature")?,
+            ip: crate::reqlog::client_ip(request.headers()),
         })
     }
 }

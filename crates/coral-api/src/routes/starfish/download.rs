@@ -246,12 +246,14 @@ async fn authorize_download(
     headers: &axum::http::HeaderMap,
     query: &DownloadQuery,
 ) -> Result<(), ApiError> {
-    let repo = database::StarfishRepository::new(state.db.pool());
     if let Some((token, hwid, signature)) = starfish_session_headers(headers) {
         super::auth::validate_hwid(&hwid)?;
-        session_auth::resolve_verified_session(&repo, &token, &hwid, &signature).await?;
+        let ip = crate::reqlog::client_ip(headers);
+        session_auth::resolve_verified_session(state, ip, &token, &hwid, &signature).await?;
         return Ok(());
     }
+
+    let repo = database::StarfishRepository::new(state.db.pool());
 
     if let Some(signed_in) = web::session::current_user(state, headers).await {
         return require_license(repo.get_user_by_discord_id(signed_in.discord_id).await?);

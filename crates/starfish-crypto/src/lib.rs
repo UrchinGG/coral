@@ -5,6 +5,8 @@ use sha2::{Digest, Sha256};
 
 type HmacSha256 = Hmac<Sha256>;
 
+const FRESH_PAYLOAD_TAG: &[u8] = b"starfish-fresh-v1";
+
 pub fn sign_unlock_key(
     discord_id: i64,
     hwid: &str,
@@ -78,6 +80,17 @@ pub fn build_attestation_payload(
     payload.extend_from_slice(&expires_at.to_le_bytes());
     payload.extend_from_slice(core_data_hash);
     payload
+}
+
+/// What a session's fresh signature covers: the client's one-time nonce and the session's
+/// own signature, so a captured response can't answer a later request.
+pub fn build_fresh_payload(nonce: &[u8; 32], server_signature: &[u8; 64]) -> Vec<u8> {
+    [
+        FRESH_PAYLOAD_TAG,
+        nonce.as_slice(),
+        server_signature.as_slice(),
+    ]
+    .concat()
 }
 
 pub fn hash_for_attestation(data: &[u8]) -> [u8; 32] {
@@ -161,6 +174,15 @@ fn encrypt_aes256_cbc(data: &[u8], key: &[u8; 32]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_fresh_payload_is_the_tag_then_the_nonce_then_the_session_signature() {
+        let payload = build_fresh_payload(&[1; 32], &[2; 64]);
+        assert_eq!(
+            payload,
+            [b"starfish-fresh-v1".as_slice(), &[1; 32], &[2; 64]].concat()
+        );
+    }
 
     #[test]
     fn encrypt_decrypt_roundtrip() {

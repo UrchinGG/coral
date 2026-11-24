@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use database::{StarfishRepository, starfish::HwidComponents};
 use starfish_crypto::{
-    base64_encode, build_attestation_payload, derive_attestation_key, ed25519_sign,
-    encrypt_core_data, generate_refresh_token, generate_session_token, hash_for_attestation,
-    hash_refresh_token, sign_unlock_key,
+    base64_encode, build_attestation_payload, build_fresh_payload, derive_attestation_key,
+    ed25519_sign, encrypt_core_data, generate_refresh_token, generate_session_token,
+    hash_for_attestation, hash_refresh_token, sign_unlock_key,
 };
 
 use crate::{
@@ -178,6 +178,8 @@ pub struct PollRequest {
     pub device_code: String,
     pub hwid: String,
     pub hwid_components: HwidComponents,
+    #[serde(default)]
+    pub nonce: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -203,6 +205,37 @@ pub struct UnlockKey {
     pub server_signature: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fresh_signature: Option<String>,
+}
+
+impl UnlockKey {
+    /// Signs the client's nonce over this key, which clients since 1.0 require; older
+    /// clients send none and get the key unchanged.
+    pub fn answering(
+        mut self,
+        config: &StarfishConfig,
+        nonce: Option<&str>,
+    ) -> Result<Self, ApiError> {
+        let Some(nonce) = nonce else {
+            return Ok(self);
+        };
+        let invalid = || ApiError::BadRequest("Invalid nonce".into());
+        let nonce: [u8; 32] = hex::decode(nonce)
+            .map_err(|_| invalid())?
+            .try_into()
+            .map_err(|_| invalid())?;
+        let server_signature: [u8; 64] = hex::decode(&self.server_signature)
+            .ok()
+            .and_then(|bytes| bytes.try_into().ok())
+            .ok_or_else(|| ApiError::Internal("unlock key has no server signature".into()))?;
+        let fresh = ed25519_sign(
+            &build_fresh_payload(&nonce, &server_signature),
+            &config.signing_key,
+        );
+        self.fresh_signature = Some(hex::encode(fresh));
+        Ok(self)
+    }
 }
 
 #[derive(Deserialize)]
@@ -284,7 +317,9 @@ async fn poll_for_token(
 
     repo.delete_device_code(&req.device_code).await.ok();
 
-    Ok(Json(PollResponse::Complete { unlock_key }))
+    Ok(Json(PollResponse::Complete {
+        unlock_key: unlock_key.answering(&config, req.nonce.as_deref())?,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -293,6 +328,8 @@ pub struct OAuthCallbackRequest {
     pub redirect_port: u16,
     pub hwid: String,
     pub hwid_components: HwidComponents,
+    #[serde(default)]
+    pub nonce: Option<String>,
 }
 
 async fn oauth_callback(
@@ -341,7 +378,9 @@ async fn oauth_callback(
     let unlock_key =
         create_session(&config, &repo, discord_id, &req.hwid, &req.hwid_components).await?;
 
-    Ok(Json(PollResponse::Complete { unlock_key }))
+    Ok(Json(PollResponse::Complete {
+        unlock_key: unlock_key.answering(&config, req.nonce.as_deref())?,
+    }))
 }
 
 pub async fn fetch_discord_user(access_token: &str) -> Result<DiscordUser, ApiError> {
@@ -395,6 +434,7 @@ pub fn build_unlock_key(
         signature: hex::encode(signature),
         server_signature: hex::encode(server_sig),
         refresh_token,
+        fresh_signature: None,
     }
 }
 
@@ -483,6 +523,8 @@ pub struct RefreshRequest {
     pub refresh_token: String,
     pub hwid: String,
     pub hwid_components: HwidComponents,
+    #[serde(default)]
+    pub nonce: Option<String>,
 }
 
 async fn refresh_session(
@@ -550,7 +592,9 @@ async fn refresh_session(
     )
     .await?;
 
-    Ok(Json(PollResponse::Complete { unlock_key }))
+    Ok(Json(PollResponse::Complete {
+        unlock_key: unlock_key.answering(&config, req.nonce.as_deref())?,
+    }))
 }
 
 async fn logout(
@@ -612,4 +656,68 @@ async fn adopt_drifted_hwid(
     let record = repo.rebind_drifted_hwid(user_id, hwid_id, hwid).await?;
     repo.activate_hwid(user_id, record.id).await?;
     Ok(record)
+}
+
+#[cfg(test)]
+mod tests {
+    use ed25519_dalek::{Signature, Verifier};
+
+    use super::*;
+
+    fn config() -> StarfishConfig {
+        StarfishConfig {
+            hmac_secret: [7; 32],
+            signing_key: ed25519_dalek::SigningKey::from_bytes(&[9; 32]),
+            discord_client_id: String::new(),
+            discord_client_secret: String::new(),
+            github_token: String::new(),
+            github_repo: String::new(),
+            paynow: None,
+        }
+    }
+
+    fn key(config: &StarfishConfig) -> UnlockKey {
+        build_unlock_key(config, "token", 1, &"a".repeat(64), 10, 20, &[1], None)
+    }
+
+    #[test]
+    fn a_key_answers_the_nonce_it_was_asked_with() {
+        let config = config();
+        let nonce = [3u8; 32];
+        let key = key(&config)
+            .answering(&config, Some(&hex::encode(nonce)))
+            .unwrap();
+
+        let server_signature: [u8; 64] = hex::decode(&key.server_signature)
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let fresh = hex::decode(key.fresh_signature.unwrap()).unwrap();
+        let fresh = Signature::from_slice(&fresh).unwrap();
+        assert!(
+            config
+                .signing_key
+                .verifying_key()
+                .verify(&build_fresh_payload(&nonce, &server_signature), &fresh)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_key_for_an_older_client_has_no_fresh_signature() {
+        let config = config();
+        assert!(
+            key(&config)
+                .answering(&config, None)
+                .unwrap()
+                .fresh_signature
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_malformed_nonce_is_refused() {
+        let config = config();
+        assert!(key(&config).answering(&config, Some("abc")).is_err());
+    }
 }

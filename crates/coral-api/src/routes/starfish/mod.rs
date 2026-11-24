@@ -33,7 +33,11 @@ pub(crate) async fn rate_limit(state: &AppState, key: &str, limit: i64) -> Resul
     match state.rate_limiter.check_and_record(key, limit).await {
         Ok(result) if crate::rate_limit_headers::admit(result) => Ok(()),
         Ok(_) => Err(ApiError::RateLimited),
-        Err(_) => Ok(()),
+        Err(e) => {
+            // Failing open keeps sign-in working through a Redis outage.
+            tracing::warn!("Starfish rate limit {key} skipped, Redis failed: {e}");
+            Ok(())
+        }
     }
 }
 
