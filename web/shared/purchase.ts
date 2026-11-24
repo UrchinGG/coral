@@ -30,6 +30,10 @@ export async function openCheckout(): Promise<CheckoutResult> {
     body: JSON.stringify({ terms_version: TERMS_VERSION }),
   }).catch(() => undefined);
   if (response?.status === 409) return "owned";
+  if (response?.status === 400 && (await termsOutdated(response))) {
+    location.reload();
+    return new Promise(() => {});
+  }
   const checkout = response?.ok ? await response.json() : undefined;
   if (!checkout?.url) return "failed";
   location.assign(checkout.url);
@@ -46,4 +50,9 @@ export async function checkLicense(): Promise<LicenseCheck> {
   if (response?.status === 401) return "signed-out";
   if (!response?.ok) return "unknown";
   return (await response.json()).starfish_licensed ? "licensed" : "unlicensed";
+}
+
+async function termsOutdated(response: Response) {
+  const body = await response.json().catch(() => undefined);
+  return body?.error === "terms_outdated";
 }
