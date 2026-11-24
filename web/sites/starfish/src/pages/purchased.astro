@@ -5,9 +5,9 @@ import Container from "@shared/components/Container.astro";
 import Legacy from "@shared/components/Legacy.astro";
 import StarfishDownloads from "@shared/components/StarfishDownloads.astro";
 import Layout from "@/layouts/Layout.astro";
+import { CHAT_PREFIX as PREFIX } from "@/lib/chat";
 import { page } from "@/lib/paths";
 
-const PREFIX = "§8[§6S§eta§fr§bfi§3sh§8]§r ";
 const signInHref = `${SIGN_IN}?return=${encodeURIComponent(
   `${URCHIN_URL}/starfish/purchased`,
 )}`;

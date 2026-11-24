@@ -1,0 +1,79 @@
+---
+import { DISCORD_URL } from "@shared/links";
+import Container from "@shared/components/Container.astro";
+import Legacy from "@shared/components/Legacy.astro";
+import Layout from "@/layouts/Layout.astro";
+import { CHAT_PREFIX as PREFIX } from "@/lib/chat";
+---
+
+<Layout title="Signed In to Starfish" description="Starfish sign-in">
+  <Container width="narrow" class="signed-in" data-state="signed-in">
+    <h1 class="chat">
+      <Legacy
+        class="when-signed-in"
+        text={`${PREFIX}§aSigned in! Return to Starfish.`}
+      />
+      <Legacy class="when-failed" text={`${PREFIX}§cSign-in failed.`} />
+    </h1>
+    <p class="when-failed lede">
+      Close this tab and sign in again from Starfish. If it keeps failing,{" "}
+      <a href={DISCORD_URL}>ask in Discord</a>.
+    </p>
+  </Container>
+</Layout>
+
+<script>
+  if (new URLSearchParams(location.search).has("error"))
+    document.querySelector<HTMLElement>(".signed-in")!.dataset.state = "failed";
+</script>
+
+<style>
+  .signed-in {
+    display: grid;
+    gap: 1.5rem;
+    padding-block: 5rem 6rem;
+
+    &[data-state="signed-in"] :global(.when-failed),
+    &[data-state="failed"] :global(.when-signed-in) {
+      display: none;
+    }
+  }
+
+  .chat {
+    justify-self: start;
+    font-weight: 400;
+    max-width: 100%;
+    overflow-x: auto;
+    font-size: 18px;
+    line-height: 20px;
+
+    @media (width < 30rem) {
+      font-size: 14px;
+      line-height: 16px;
+    }
+  }
+
+  .chat :global(.legacy) {
+    display: block;
+  }
+
+  .lede {
+    max-width: 34rem;
+    color: var(--color-text-secondary);
+    line-height: 1.6;
+    text-wrap: pretty;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: var(--color-border-hover);
+    text-underline-offset: 0.2em;
+
+    @media (hover: hover) {
+      &:hover {
+        color: var(--color-text);
+      }
+    }
+  }
+</style>
