@@ -73,6 +73,13 @@ struct OrderLine {
     product_id: String,
 }
 
+#[derive(Debug, PartialEq)]
+enum Buyer {
+    OtherProduct,
+    Unknown,
+    Discord(i64),
+}
+
 #[derive(Deserialize)]
 struct Refund {
     order_id: String,
@@ -168,22 +175,13 @@ async fn complete_order(
     paynow: &PayNowConfig,
     order: Order,
 ) -> Result<(), ApiError> {
-    if !order
-        .lines
-        .iter()
-        .any(|line| line.product_id == paynow.product_id)
-    {
-        return Ok(());
-    }
-
-    let discord_id = order
-        .checkout
-        .as_ref()
-        .and_then(|checkout| checkout.metadata.get("discord_id"))
-        .and_then(|id| id.parse::<i64>().ok());
-    let Some(discord_id) = discord_id else {
-        tracing::error!(order_id = %order.id, "Starfish order has no Discord ID; grant its license by hand");
-        return Ok(());
+    let discord_id = match buyer(&order, &paynow.product_id) {
+        Buyer::OtherProduct => return Ok(()),
+        Buyer::Unknown => {
+            tracing::error!(order_id = %order.id, "Starfish order has no Discord ID; grant its license by hand");
+            return Ok(());
+        }
+        Buyer::Discord(discord_id) => discord_id,
     };
 
     if repo
@@ -193,6 +191,19 @@ async fn complete_order(
         tracing::info!(order_id = %order.id, discord_id, "Starfish license purchased");
     }
     Ok(())
+}
+
+/// Who a completed order licenses, from the Discord ID our checkout put in its metadata.
+fn buyer(order: &Order, product_id: &str) -> Buyer {
+    if !order.lines.iter().any(|line| line.product_id == product_id) {
+        return Buyer::OtherProduct;
+    }
+    order
+        .checkout
+        .as_ref()
+        .and_then(|checkout| checkout.metadata.get("discord_id"))
+        .and_then(|id| id.parse().ok())
+        .map_or(Buyer::Unknown, Buyer::Discord)
 }
 
 async fn refund_order(repo: &StarfishRepository<'_>, refund: Refund) -> Result<(), ApiError> {
@@ -351,5 +362,43 @@ mod tests {
     #[test]
     fn rejects_a_wrong_secret() {
         assert!(verify_signature("other", &signed_headers(), BODY, SENT_MS).is_err());
+    }
+
+    fn order(product_id: &str, metadata: Value) -> Order {
+        serde_json::from_value(json!({
+            "id": "628600000000000001",
+            "currency": "usd",
+            "total_amount": 1499,
+            "checkout": { "id": "628600000000000002", "metadata": metadata },
+            "lines": [{ "product_id": product_id, "quantity": 1 }],
+            "customer": { "id": "628600000000000003", "name": "354598337325826048" },
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn an_order_licenses_the_discord_account_our_checkout_named() {
+        let order = order(
+            "starfish",
+            json!({ "discord_id": "354598337325826048", "terms_version": "2026-11-24" }),
+        );
+        assert_eq!(
+            buyer(&order, "starfish"),
+            Buyer::Discord(354_598_337_325_826_048)
+        );
+    }
+
+    #[test]
+    fn an_order_without_our_metadata_licenses_nobody() {
+        assert_eq!(
+            buyer(&order("starfish", json!({})), "starfish"),
+            Buyer::Unknown
+        );
+    }
+
+    #[test]
+    fn an_order_for_another_product_is_ignored() {
+        let order = order("other", json!({ "discord_id": "1" }));
+        assert_eq!(buyer(&order, "starfish"), Buyer::OtherProduct);
     }
 }
