@@ -149,13 +149,21 @@ impl<'a> StarfishRepository<'a> {
         .await
     }
 
+    /// Sets a license by hand. Revoking also marks the buyer's orders revoked, so a chargeback
+    /// won later can't quietly restore a license staff took away.
     pub async fn set_license_status(
         &self,
         discord_id: i64,
         status: &str,
     ) -> Result<bool, sqlx::Error> {
-        sqlx::query("UPDATE starfish_users SET license_status = $2, updated_at = NOW() WHERE discord_id = $1")
-            .bind(discord_id)
+        sqlx::query(
+            "WITH revoked_orders AS (
+                 UPDATE starfish_orders SET status = 'revoked', updated_at = NOW()
+                 WHERE discord_id = $1 AND $2 = 'inactive' AND status IN ('paid', 'chargeback')
+             )
+             UPDATE starfish_users SET license_status = $2, updated_at = NOW() WHERE discord_id = $1",
+        )
+        .bind(discord_id)
             .bind(status)
             .execute(self.pool)
             .await
@@ -208,16 +216,22 @@ impl<'a> StarfishRepository<'a> {
         .map(|r| r.rows_affected() > 0)
     }
 
-    /// Marks an order refunded and deactivates its buyer's license.
+    /// Marks an order refunded and deactivates its buyer's license, unless another order of
+    /// theirs is still paid.
     pub async fn refund_order(&self, order_id: &str) -> Result<bool, sqlx::Error> {
         sqlx::query(
             "WITH refunded AS (
                  UPDATE starfish_orders SET status = 'refunded', updated_at = NOW()
-                 WHERE order_id = $1 AND status IN ('paid', 'chargeback')
+                 WHERE order_id = $1 AND status IN ('paid', 'chargeback', 'revoked')
                  RETURNING discord_id
              )
              UPDATE starfish_users SET license_status = 'inactive', updated_at = NOW()
-             FROM refunded WHERE starfish_users.discord_id = refunded.discord_id",
+             FROM refunded WHERE starfish_users.discord_id = refunded.discord_id
+               AND NOT EXISTS (
+                   SELECT 1 FROM starfish_orders other
+                   WHERE other.discord_id = refunded.discord_id
+                     AND other.order_id <> $1 AND other.status = 'paid'
+               )",
         )
         .bind(order_id)
         .execute(self.pool)
@@ -247,7 +261,12 @@ impl<'a> StarfishRepository<'a> {
                  RETURNING discord_id
              )
              UPDATE starfish_users SET license_status = $4, updated_at = NOW()
-             FROM changed WHERE starfish_users.discord_id = changed.discord_id",
+             FROM changed WHERE starfish_users.discord_id = changed.discord_id
+               AND ($4 = 'active' OR NOT EXISTS (
+                   SELECT 1 FROM starfish_orders other
+                   WHERE other.discord_id = changed.discord_id
+                     AND other.order_id <> $1 AND other.status = 'paid'
+               ))",
         )
         .bind(order_id)
         .bind(order_status)
@@ -1071,6 +1090,39 @@ mod tests {
         );
         assert!(!repo.apply_chargeback(&order_id, 4, true).await.unwrap());
         assert_eq!(status(&repo).await, "inactive");
+
+        let disputed = format!("{order_id}-disputed");
+        let newer = format!("{order_id}-newer");
+        assert!(
+            repo.record_paid_order(&disputed, did, 1499, "usd")
+                .await
+                .unwrap()
+        );
+        assert!(repo.apply_chargeback(&disputed, 1, true).await.unwrap());
+        repo.set_license_status(did, "inactive").await.unwrap();
+        assert!(!repo.apply_chargeback(&disputed, 2, false).await.unwrap());
+        assert_eq!(
+            status(&repo).await,
+            "inactive",
+            "a won dispute keeps a staff revoke"
+        );
+
+        assert!(
+            repo.record_paid_order(&newer, did, 1499, "usd")
+                .await
+                .unwrap()
+        );
+        assert!(!repo.refund_order(&disputed).await.unwrap());
+        assert_eq!(
+            status(&repo).await,
+            "active",
+            "refunding an old order keeps a newer one"
+        );
+        sqlx::query("DELETE FROM starfish_orders WHERE order_id = ANY($1)")
+            .bind([disputed, newer])
+            .execute(&pool)
+            .await
+            .unwrap();
 
         sqlx::query("DELETE FROM starfish_orders WHERE order_id = $1")
             .bind(&order_id)
