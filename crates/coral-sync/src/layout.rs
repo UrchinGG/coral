@@ -170,6 +170,7 @@ mod tests {
             trusted: false,
             tags: Vec::new(),
             nickname_paused: false,
+            starfish: false,
         };
         let context = sources::context(&player, Some("nelly"), &coral);
         let mut root = player.clone();
@@ -182,5 +183,20 @@ mod tests {
             expr::render_template(STARTER, &root).to_truncated(32)
         );
         assert!(rewritten.contains("{hypixel.displayname}"));
+    }
+
+    #[test]
+    fn a_rule_can_give_starfish_buyers_a_role() {
+        let facts = |starfish| CoralFacts {
+            access: 0,
+            trusted: false,
+            tags: Vec::new(),
+            nickname_paused: false,
+            starfish,
+        };
+        let buyer = sources::context(&json!({}), None, &facts(true));
+        let other = sources::context(&json!({}), None, &facts(false));
+        assert!(expr::eval_condition("coral.starfish", &buyer).unwrap());
+        assert!(!expr::eval_condition("coral.starfish", &other).unwrap());
     }
 }

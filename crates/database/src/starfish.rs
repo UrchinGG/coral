@@ -216,6 +216,13 @@ impl<'a> StarfishRepository<'a> {
         .map(|r| r.rows_affected() > 0)
     }
 
+    pub async fn order_buyer(&self, order_id: &str) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar("SELECT discord_id FROM starfish_orders WHERE order_id = $1")
+            .bind(order_id)
+            .fetch_optional(self.pool)
+            .await
+    }
+
     /// Marks an order refunded and deactivates its buyer's license, unless another order of
     /// theirs is still paid.
     pub async fn refund_order(&self, order_id: &str) -> Result<bool, sqlx::Error> {

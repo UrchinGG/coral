@@ -16,6 +16,7 @@ use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use sha2::Sha256;
 
+use coral_redis::SyncEvent;
 use database::StarfishRepository;
 
 use crate::{
@@ -153,11 +154,22 @@ async fn receive_webhook(
 
     let event: WebhookEvent = parse(&body)?;
     let repo = StarfishRepository::new(state.db.pool());
-    match event.event_type.as_str() {
+    let changed_license = match event.event_type.as_str() {
         "ON_ORDER_COMPLETED" => complete_order(&repo, paynow, parse_value(event.body)?).await?,
         "ON_REFUND" => refund_order(&repo, parse_value(event.body)?).await?,
         "ON_CHARGEBACK_LIFECYCLE" => apply_chargeback(&repo, parse_value(event.body)?).await?,
-        other => tracing::debug!(event_type = other, "ignoring PayNow event"),
+        other => {
+            tracing::debug!(event_type = other, "ignoring PayNow event");
+            None
+        }
+    };
+    if let Some(discord_id) = changed_license {
+        state
+            .sync_events
+            .publish(&SyncEvent::SyncUser {
+                discord_id: discord_id as u64,
+            })
+            .await;
     }
 
     Ok(StatusCode::NO_CONTENT)
@@ -174,12 +186,12 @@ async fn complete_order(
     repo: &StarfishRepository<'_>,
     paynow: &PayNowConfig,
     order: Order,
-) -> Result<(), ApiError> {
+) -> Result<Option<i64>, ApiError> {
     let discord_id = match buyer(&order, &paynow.product_id) {
-        Buyer::OtherProduct => return Ok(()),
+        Buyer::OtherProduct => return Ok(None),
         Buyer::Unknown => {
             tracing::error!(order_id = %order.id, "Starfish order has no Discord ID; grant its license by hand");
-            return Ok(());
+            return Ok(None);
         }
         Buyer::Discord(discord_id) => discord_id,
     };
@@ -189,8 +201,9 @@ async fn complete_order(
         .await?
     {
         tracing::info!(order_id = %order.id, discord_id, "Starfish license purchased");
+        return Ok(Some(discord_id));
     }
-    Ok(())
+    Ok(None)
 }
 
 /// Who a completed order licenses, from the Discord ID our checkout put in its metadata.
@@ -206,34 +219,39 @@ fn buyer(order: &Order, product_id: &str) -> Buyer {
         .map_or(Buyer::Unknown, Buyer::Discord)
 }
 
-async fn refund_order(repo: &StarfishRepository<'_>, refund: Refund) -> Result<(), ApiError> {
+async fn refund_order(
+    repo: &StarfishRepository<'_>,
+    refund: Refund,
+) -> Result<Option<i64>, ApiError> {
     if matches!(refund.status.as_deref(), Some("canceled" | "failed")) {
-        return Ok(());
+        return Ok(None);
     }
 
-    if repo.refund_order(&refund.order_id).await? {
-        tracing::info!(order_id = %refund.order_id, "Starfish order refunded");
+    if !repo.refund_order(&refund.order_id).await? {
+        return Ok(None);
     }
-    Ok(())
+    tracing::info!(order_id = %refund.order_id, "Starfish order refunded");
+    Ok(repo.order_buyer(&refund.order_id).await?)
 }
 
 async fn apply_chargeback(
     repo: &StarfishRepository<'_>,
     step: ChargebackStep,
-) -> Result<(), ApiError> {
+) -> Result<Option<i64>, ApiError> {
     let disputed = match step.transition.as_str() {
         "opened" => true,
         "won" | "prevented" => false,
-        _ => return Ok(()),
+        _ => return Ok(None),
     };
 
-    if repo
+    if !repo
         .apply_chargeback(&step.order_id, step.sequence, disputed)
         .await?
     {
-        tracing::info!(order_id = %step.order_id, transition = %step.transition, "Starfish chargeback applied");
+        return Ok(None);
     }
-    Ok(())
+    tracing::info!(order_id = %step.order_id, transition = %step.transition, "Starfish chargeback applied");
+    Ok(repo.order_buyer(&step.order_id).await?)
 }
 
 async fn paynow_customer_id(paynow: &PayNowConfig, discord_id: i64) -> Result<String, ApiError> {

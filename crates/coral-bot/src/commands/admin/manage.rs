@@ -1074,6 +1074,7 @@ pub async fn handle_sf_grant(
     repo.upsert_user(target_id as i64).await?;
     repo.set_license_status(target_id as i64, LICENSE_ACTIVE)
         .await?;
+    resync_member(data, target_id).await;
     audit::record(
         data,
         invoker_id,
@@ -1108,6 +1109,7 @@ pub async fn handle_sf_revoke(
 
     repo.set_license_status(target_id as i64, LICENSE_INACTIVE)
         .await?;
+    resync_member(data, target_id).await;
     audit::record(
         data,
         invoker_id,
@@ -1252,4 +1254,10 @@ pub async fn handle_toggle_name_updates(
 
     repo.update_config(member.discord_id, &new_config).await?;
     refresh_main(ctx, component, data, invoker_rank, target_id).await
+}
+
+async fn resync_member(data: &Data, discord_id: u64) {
+    data.sync_event_publisher
+        .publish(&coral_redis::SyncEvent::SyncUser { discord_id })
+        .await;
 }

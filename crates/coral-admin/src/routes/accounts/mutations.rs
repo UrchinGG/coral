@@ -5,7 +5,7 @@ use axum::routing::{delete, post};
 use axum::{Extension, Json, Router};
 use chrono::{TimeDelta, Utc};
 use coral_redis::waste;
-use coral_redis::{BlacklistEvent, EventPublisher};
+use coral_redis::{BlacklistEvent, EventPublisher, SyncEvent, SyncEventPublisher};
 use database::{
     AccessRank, DeveloperKeyRepository, MemberRepository, StarfishRepository, StrikeRepository,
     permissions,
@@ -474,6 +474,11 @@ async fn set_license(
     if !updated {
         return Err(audited.target.no_starfish_user());
     }
+    SyncEventPublisher::new(state.redis.clone())
+        .publish(&SyncEvent::SyncUser {
+            discord_id: audited.target.discord_id as u64,
+        })
+        .await;
     audited
         .record("set_license_status", json!({ "status": status }))
         .await;

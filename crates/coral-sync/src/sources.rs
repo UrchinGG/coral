@@ -13,7 +13,8 @@ use reqwest::StatusCode;
 use serde_json::{Value, json};
 
 use database::{
-    BlacklistRepository, CacheRepository, MemberRepository, SyncSource, SyncSourceRepository,
+    BlacklistRepository, CacheRepository, MemberRepository, StarfishRepository, SyncSource,
+    SyncSourceRepository,
 };
 
 use crate::framework::Data;
@@ -50,6 +51,7 @@ pub struct CoralFacts {
     pub trusted: bool,
     pub tags: Vec<String>,
     pub nickname_paused: bool,
+    pub starfish: bool,
 }
 
 pub async fn hypixel(data: &Data, uuid: &str, read: HypixelRead) -> Option<Value> {
@@ -76,6 +78,12 @@ pub async fn coral(data: &Data, discord_id: u64, uuid: &str) -> CoralFacts {
         .into_iter()
         .filter_map(|row| row.tag_type)
         .collect();
+    let starfish = StarfishRepository::new(data.db.pool())
+        .get_user_by_discord_id(discord_id as i64)
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|user| user.license_status == "active");
     CoralFacts {
         access: member.as_ref().map_or(0, |m| m.access_level),
         trusted: member.as_ref().is_some_and(|m| m.tag_granted),
@@ -85,6 +93,7 @@ pub async fn coral(data: &Data, discord_id: u64, uuid: &str) -> CoralFacts {
             .and_then(|m| m.config.get(PAUSE_NAME_UPDATES))
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        starfish,
     }
 }
 
@@ -174,7 +183,7 @@ pub fn context(hypixel: &Value, discord_name: Option<&str>, coral: &CoralFacts) 
         layout::HYPIXEL: player,
         "bedwars": { "bracket_open": bracket_open, "bracket_close": bracket_close },
         "discord": { "name": discord_name },
-        "coral": { "access": coral.access, "linked": true },
+        "coral": { "access": coral.access, "linked": true, "starfish": coral.starfish },
         "standing": { "trusted": coral.trusted },
         "blacklist": blacklist(&coral.tags),
     })
