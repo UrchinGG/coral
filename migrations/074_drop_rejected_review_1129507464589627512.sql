@@ -26,7 +26,7 @@ SELECT
         'correction', 'void_rejected',
         'label', 'Drop a rejected review',
         'count', 1,
-        'reason', 'Applied by migration 070',
+        'reason', 'Applied by migration 074',
         'before', jsonb_build_object(
             'accepted_tags', b.accepted_tags,
             'rejected_tags', b.rejected_tags,
