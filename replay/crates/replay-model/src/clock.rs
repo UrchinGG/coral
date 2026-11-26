@@ -1,7 +1,5 @@
 use replay_file::Recording;
-use replay_protocol::{Clientbound, decode, flatten_text};
-
-use crate::strip;
+use replay_protocol::{Clientbound, decode, plain_text};
 
 const FINISH_TAIL: u32 = 2500;
 const END_GRACE: u32 = 2000;
@@ -85,7 +83,7 @@ impl Clock {
 
 impl ActionBar {
     fn parse(json: &str) -> Option<ActionBar> {
-        let text = plain(json);
+        let text = plain_text(json);
         let (current, duration) = text
             .char_indices()
             .find_map(|(index, _)| clock_at(&text[index..]))?;
@@ -98,10 +96,6 @@ impl ActionBar {
             state,
         })
     }
-}
-
-pub(crate) fn plain(json: &str) -> String {
-    strip(&flatten_text(json))
 }
 
 pub(crate) fn clock_at(text: &str) -> Option<(u32, u32)> {

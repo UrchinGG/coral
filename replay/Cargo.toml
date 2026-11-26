@@ -22,6 +22,7 @@ flate2 = "1.1.10"
 glam = { version = "0.34.1", features = ["bytemuck"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 js-sys = "0.3.106"
+mctext = { git = "https://github.com/Hexze/mctext", rev = "3fd2e059b95396cd911a5f4e43ad4d68623b9743", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha1 = "0.11.0"

@@ -106,7 +106,7 @@ pub fn bake_assets(out: &Path) -> Result<(), Box<dyn Error>> {
 
     let items = items::bake(&source, grass, foliage)?;
     let (atlas, entities) = entities::bake(&assets)?;
-    let (glyphs, font) = glyphs::bake(&assets.join("font"))?;
+    let (glyphs, font) = glyphs::bake()?;
     let blocks = textures.bake(grass)?;
     let models = &baker.table;
     let header =

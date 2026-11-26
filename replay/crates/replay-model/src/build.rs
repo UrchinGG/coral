@@ -1,12 +1,14 @@
 use std::{collections::HashMap, f32::consts::TAU};
 
 use replay_file::Recording;
-use replay_protocol::{Clientbound, Metadata, MetadataValue, Slot, legacy_color, segments};
+use replay_protocol::{
+    Clientbound, Metadata, MetadataValue, Slot, legacy_color, plain_text, segments,
+};
 
 use crate::{
     Effect, EffectKind, EntityState, Equipment, Event, EventKind, Info, Item, Look, MoveKind,
     Moves, Object, ObjectKind, Player, Replay,
-    clock::{Clock, clock_at, plain},
+    clock::{Clock, clock_at},
     item::Items,
     roster::Roster,
     scoreboard::{Scoreboard, Sidebar},
@@ -299,7 +301,7 @@ impl Builder {
     }
 
     fn chat(&mut self, json: &str) {
-        let text = plain(json);
+        let text = plain_text(json);
         let text = text.trim();
         if is_replay_chat(text) {
             self.event(EventKind::Chat {

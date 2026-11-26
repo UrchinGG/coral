@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 flate2.workspace = true
 image.workspace = true
+mctext = { workspace = true, features = ["legacy"] }
 replay-assets.workspace = true
 replay-file.workspace = true
 replay-model.workspace = true
