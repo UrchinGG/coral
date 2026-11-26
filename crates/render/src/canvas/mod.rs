@@ -1,5 +1,7 @@
 use std::sync::OnceLock;
 
+use mctext::Font;
+
 mod canvas;
 mod color;
 mod context;
@@ -10,29 +12,20 @@ mod text;
 pub use canvas::Canvas;
 pub use color::{BLACK, BOX_BACKGROUND, CANVAS_BACKGROUND, TRANSPARENT, WHITE, blend, rgb, rgba};
 pub use context::DrawContext;
-pub use mctext::{FontSystem, FontVariant, MCText, NamedColor};
+pub use mctext::{MCText, NamedColor};
 pub use shape::Shape;
 pub use shapes::*;
 pub use text::TextRenderer;
 
 pub use image::{DynamicImage, Rgba, RgbaImage};
 
-static FONT_SYSTEM: OnceLock<FontSystem> = OnceLock::new();
+static FONT: OnceLock<Font> = OnceLock::new();
 
 pub fn init() {
-    let fs = FONT_SYSTEM.get_or_init(FontSystem::modern);
-    for variant in [
-        FontVariant::Regular,
-        FontVariant::Bold,
-        FontVariant::Italic,
-        FontVariant::BoldItalic,
-    ] {
-        fs.measure_char('A', 16.0, variant);
-    }
+    FONT.get_or_init(|| Font::modern().expect("bundled Minecraft font loads"));
 }
 
-pub(crate) fn font_system() -> &'static FontSystem {
-    FONT_SYSTEM
-        .get()
+pub(crate) fn font() -> &'static Font {
+    FONT.get()
         .expect("render::canvas::init() must be called before rendering")
 }
