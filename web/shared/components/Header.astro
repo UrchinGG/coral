@@ -1,5 +1,6 @@
 ---
 import { DISCORD_URL, pagePath } from "@shared/links";
+import "@shared/styles/minecraft.css";
 import Discord from "./Discord.astro";
 import SignIn from "./SignIn.astro";
 
@@ -186,6 +187,12 @@ const sections = [
     font-size: var(--text-base);
     font-weight: 700;
     letter-spacing: -0.025em;
+  }
+
+  .bar .name {
+    font-family: "Minecraft", var(--font-sans);
+    font-weight: 400;
+    letter-spacing: 0;
   }
 
   .page {
