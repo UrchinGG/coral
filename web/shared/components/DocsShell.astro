@@ -159,6 +159,11 @@ const { heading, summary, ...nav } = Astro.props;
     line-height: 1.6;
   }
 
+  /* Shiki inlines its theme's background; keep the docs' own surface. */
+  .doc :global(pre.astro-code) {
+    background-color: var(--color-surface-raised) !important;
+  }
+
   .doc :global(table) {
     width: 100%;
     border-collapse: collapse;

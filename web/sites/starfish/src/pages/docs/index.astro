@@ -1,4 +1,5 @@
 ---
+import { Code } from "astro:components";
 import * as paths from "@/lib/paths";
 import Card from "@shared/components/Card.astro";
 import DocSection from "@/components/DocSection.astro";
@@ -20,7 +21,11 @@ import { docGroups, docs } from "@/lib/starfish";
     <p>
       <Prose text={docs.templateReference} />
     </p>
-    <pre><code>{docs.template.trimEnd()}</code></pre>
+    <Code
+      code={docs.template.trimEnd()}
+      lang="lua"
+      theme="github-dark-default"
+    />
   </section>
 
   <DocSection section={docs.sharedTypes} />

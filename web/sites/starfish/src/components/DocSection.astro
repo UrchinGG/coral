@@ -1,4 +1,5 @@
 ---
+import { Code } from "astro:components";
 import type { DocSection } from "@/lib/starfish";
 import Prose from "./Prose.astro";
 
@@ -19,7 +20,7 @@ const columns = table?.columns ?? ["Field", "Type", "Description"];
   )}
   {entries.map(({ signature, description }) => (
     <>
-      <pre><code>{signature}</code></pre>
+      <Code code={signature} lang="lua" theme="github-dark-default" />
       {description && (
         <p>
           <Prose text={description} />
