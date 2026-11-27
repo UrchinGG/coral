@@ -11,8 +11,8 @@ use render::canvas::{
     TextBlock, TextBox,
 };
 use render::cards::{
-    BAR_COLOR, TagIcon, color_name_to_named, draw_progress_bar, duels_colors as colors,
-    format_number, format_percent, format_ratio, format_timestamp, stat_line,
+    BAR_COLOR, TagIcon, draw_progress_bar, duels_colors as colors, format_number, format_percent,
+    format_ratio, format_timestamp, stat_line,
 };
 
 const BOX_CORNER_RADIUS: u32 = 18;
@@ -896,8 +896,8 @@ impl Shape for DuelsGuildBox<'_> {
         let color = self
             .guild
             .tag_color
-            .as_ref()
-            .and_then(|c| color_name_to_named(c))
+            .as_deref()
+            .and_then(NamedColor::from_name)
             .unwrap_or(NamedColor::Gray);
 
         let lines = [
@@ -976,7 +976,7 @@ fn format_division_name((division, level): (DuelsDivision, u32)) -> String {
 }
 
 pub(crate) fn division_color(name: &str) -> NamedColor {
-    color_name_to_named(name).unwrap_or(NamedColor::Gray)
+    NamedColor::from_name(name).unwrap_or(NamedColor::Gray)
 }
 
 pub(crate) fn roman(value: u32) -> String {

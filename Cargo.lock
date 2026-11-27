@@ -2161,6 +2161,7 @@ name = "hypixel"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "mctext",
  "serde",
  "serde_json",
  "uuid",

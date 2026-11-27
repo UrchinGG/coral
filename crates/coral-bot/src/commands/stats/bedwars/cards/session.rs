@@ -14,7 +14,7 @@ use render::canvas::{
 };
 use render::cards::{
     BAR_COLOR, ModeGames, SessionType, TagIcon, VerticalGamesBox, bedwars_colors as colors,
-    color_name_to_named, draw_progress_bar, format_number, format_percent, format_ratio, stat_line,
+    draw_progress_bar, format_number, format_percent, format_ratio, stat_line,
 };
 
 const BOX_CORNER_RADIUS: u32 = 18;
@@ -625,8 +625,8 @@ impl Shape for GuildBox<'_> {
             .stats
             .guild
             .tag_color
-            .as_ref()
-            .and_then(|c| color_name_to_named(c))
+            .as_deref()
+            .and_then(NamedColor::from_name)
             .unwrap_or(NamedColor::Gray);
 
         let lines = [
