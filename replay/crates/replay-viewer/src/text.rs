@@ -1,5 +1,6 @@
 use glam::{Vec2, Vec3, vec2};
-use replay_assets::{GLYPH_HEIGHT, TEXELS_PER_PIXEL};
+use replay_assets::{GLYPH_HEIGHT, Glyphs, TEXELS_PER_PIXEL};
+use replay_protocol::Segment;
 use replay_render::{MeshVertex, PLAIN, SHEET, quad};
 
 use crate::draw::Draw;
@@ -22,7 +23,8 @@ pub fn name_tag(draw: &mut Draw, anchor: Vec3, text: &str, color: u32, sneaking:
     let (right, down) = (billboard.x_axis * SCALE, billboard.y_axis * -SCALE);
     let drop = if sneaking { SNEAKING_DROP } else { 0.0 };
     let at = |x: f32, y: f32| anchor + right * x + down * (y + drop);
-    let half = (draw.assets.glyphs.width(text) / 2) as f32;
+    let segments = replay_protocol::legacy_segments(text, color);
+    let half = (width(&draw.assets.glyphs, &segments) / 2) as f32;
     let background = quad(
         [
             at(-half - 1.0, -1.0),
@@ -44,7 +46,7 @@ pub fn name_tag(draw: &mut Draw, anchor: Vec3, text: &str, color: u32, sneaking:
     let first = faint.len();
 
     let mut x = -half;
-    for segment in replay_protocol::legacy_segments(text, color) {
+    for segment in segments {
         let style = segment.style;
         for c in segment.text.chars() {
             let Some(glyph) = draw.assets.glyphs.get(c, style.bold) else {
@@ -70,4 +72,13 @@ pub fn name_tag(draw: &mut Draw, anchor: Vec3, text: &str, color: u32, sneaking:
             ..*vertex
         }));
     }
+}
+
+fn width(glyphs: &Glyphs, segments: &[Segment]) -> u32 {
+    segments
+        .iter()
+        .flat_map(|segment| segment.text.chars().map(|c| (c, segment.style.bold)))
+        .filter_map(|(c, bold)| glyphs.get(c, bold))
+        .map(|glyph| u32::from(glyph.advance) / TEXELS_PER_PIXEL)
+        .sum()
 }

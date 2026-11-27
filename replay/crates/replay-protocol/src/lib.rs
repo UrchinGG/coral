@@ -6,7 +6,7 @@ mod packet;
 mod reader;
 mod textures;
 
-pub use chat::{Segment, Style, legacy_color, legacy_segments, plain_text, segments};
+pub use chat::{Segment, Style, color_after, legacy_color, legacy_segments, plain_text, segments};
 pub use chunk::{BIOME_BYTES, BLOCK_BYTES, Column, LIGHT_BYTES, Section};
 pub use metadata::{Metadata, MetadataValue, Slot};
 pub use nbt::Nbt;

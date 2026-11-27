@@ -18,6 +18,7 @@ pub struct Segment {
 const WHITE: u32 = 0xFFFFFF;
 const MISDECODED_FORMAT_SIGN: &str = "Â§";
 const FORMAT_SIGN: &str = "§";
+const PROBE: char = 'x';
 
 pub fn segments(json: &str) -> Vec<Segment> {
     let text = repair(json);
@@ -32,6 +33,11 @@ pub fn legacy_segments(text: &str, color: u32) -> Vec<Segment> {
 pub fn plain_text(json: &str) -> String {
     let text = repair(json);
     MCText::parse_json(&text).map_or_else(|_| strip_codes(&text), |parsed| parsed.plain_text())
+}
+
+pub fn color_after(prefix: &str) -> Option<u32> {
+    let probed = format!("{}{PROBE}", repair(prefix));
+    MCText::parse(&probed).spans().last()?.color.map(pack)
 }
 
 pub fn legacy_color(code: char) -> Option<u32> {

@@ -33,27 +33,6 @@ impl Glyphs {
         self.glyphs.get(usize::from(bold) * COVERED + code).copied()
     }
 
-    pub fn width(&self, text: &str) -> u32 {
-        let mut chars = text.chars();
-        let mut bold = false;
-        let mut width = 0;
-        while let Some(c) = chars.next() {
-            if c == '§' {
-                match chars.next() {
-                    Some('l' | 'L') => bold = true,
-                    Some('r' | 'R') => bold = false,
-                    _ => {}
-                }
-                continue;
-            }
-            let advance = self
-                .get(c, false)
-                .map_or(0, |glyph| u32::from(glyph.advance) / TEXELS_PER_PIXEL);
-            width += advance + u32::from(bold && advance > 0);
-        }
-        width
-    }
-
     pub fn encode(&self) -> Vec<u8> {
         let mut out = MAGIC.to_vec();
         write_list(&mut out, &self.glyphs, |out, glyph| {

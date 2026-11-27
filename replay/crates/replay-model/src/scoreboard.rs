@@ -1,6 +1,6 @@
 use std::{cmp::Reverse, collections::HashMap};
 
-use replay_protocol::{TeamAction, TeamInfo, legacy_color};
+use replay_protocol::{TeamAction, TeamInfo, color_after};
 
 use crate::strip;
 
@@ -106,14 +106,7 @@ impl Scoreboard {
                 .iter()
                 .any(|member| strip(member).eq_ignore_ascii_case(username))
         })?;
-        let code = team
-            .prefix
-            .split('§')
-            .skip(1)
-            .filter_map(|code| code.chars().next())
-            .filter(char::is_ascii_hexdigit)
-            .last()?;
-        legacy_color(code)
+        color_after(&team.prefix)
     }
 
     fn sidebar_lines(&self) -> Vec<String> {
