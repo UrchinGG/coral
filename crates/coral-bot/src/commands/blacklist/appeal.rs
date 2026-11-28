@@ -5,7 +5,7 @@ use serenity::all::*;
 use crate::framework::Data;
 use crate::utils::format_uuid_dashed;
 
-const TICKET_URL: &str = "https://discord.com/channels/1339318572069158962/1342235914746986556";
+const TICKET_URL: &str = "https://discord.com/channels/1339318572069158962/1563910345532113027";
 
 #[derive(Default)]
 pub struct NoticeDelivery {
